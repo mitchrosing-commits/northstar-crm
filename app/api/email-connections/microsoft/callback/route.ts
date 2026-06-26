@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getRequestContext, resolveCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { verifyEmailOAuthState } from "@/lib/email/oauth-state";
+import { buildAppUrl } from "@/lib/public-url";
 import {
   assertMicrosoftOAuthReady,
   exchangeMicrosoftAuthorizationCode,
@@ -12,7 +13,7 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const settingsUrl = new URL("/settings", request.url);
+  const settingsUrl = new URL(buildAppUrl("/settings", { requestUrl: request.url }));
   const error = request.nextUrl.searchParams.get("error");
   const code = request.nextUrl.searchParams.get("code");
 

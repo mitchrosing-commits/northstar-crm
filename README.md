@@ -203,7 +203,7 @@ MICROSOFT_OAUTH_REDIRECT_URI
 MICROSOFT_OAUTH_TENANT_ID
 ```
 
-The shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` are also accepted. The shorter Microsoft aliases `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` are also accepted. Microsoft uses the `common` tenant unless `MICROSOFT_OAUTH_TENANT_ID` is set.
+The documented `GOOGLE_OAUTH_*` names take precedence over the shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` when both are present. The documented `MICROSOFT_OAUTH_*` names take precedence over the shorter Microsoft aliases `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` when both are present. Microsoft uses the `common` tenant unless `MICROSOFT_OAUTH_TENANT_ID` is set.
 
 Optional password-reset email variables:
 

@@ -126,6 +126,10 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Outlook" })).toBeVisible();
         await expect(page.getByText("IMAP/SMTP is planned as a fallback for Yahoo Mail")).toBeVisible();
         await expect(page.getByRole("heading", { name: "Recent Email Activity" })).toBeVisible();
+        const overflowingProviderCards = await page.locator(".provider-card").evaluateAll((cards) =>
+          cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length
+        );
+        expect(overflowingProviderCards, "Expected provider card text and controls to stay inside their cards").toBe(0);
       }
       if (path === "/settings") {
         await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();

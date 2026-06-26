@@ -11,6 +11,7 @@ const emailConnectionService = readFileSync(join(process.cwd(), "lib/services/em
 const manualEmailPanel = readFileSync(join(process.cwd(), "components/manual-email-log-panel.tsx"), "utf8");
 const middleware = readFileSync(join(process.cwd(), "middleware.ts"), "utf8");
 const settingsPage = readFileSync(join(process.cwd(), "app/settings/page.tsx"), "utf8");
+const globalCss = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 
 describe("Email UX v1 discoverability", () => {
   it("adds Email to the authenticated app navigation and protected-route guard", () => {
@@ -128,5 +129,15 @@ describe("Email UX v1 discoverability", () => {
     expect(settingsPage).toContain("Email Connections");
     expect(emailPage).toContain("href=\"/settings#email-connections\"");
     expect(emailPage).toContain("Email settings");
+  });
+
+  it("keeps provider cards resilient to long provider/account/status text", () => {
+    expect(globalCss).toContain("grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))");
+    expect(globalCss).toContain(".provider-card .badge");
+    expect(globalCss).toContain("white-space: normal");
+    expect(globalCss).toContain("overflow-wrap: anywhere");
+    expect(globalCss).toContain(".provider-card .button-primary");
+    expect(globalCss).toContain(".provider-card .button-secondary");
+    expect(globalCss).toContain("word-break: break-word");
   });
 });
