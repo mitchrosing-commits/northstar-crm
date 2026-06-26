@@ -47,18 +47,24 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(page.getByText("This password reset link is invalid or expired.")).toBeVisible();
 
     for (const path of [
+      "/",
       "/dashboard",
       "/pipeline",
       "/deals",
+      "/deals/new",
       dealHref,
       communicationDealPath,
       "/leads",
+      "/leads/new",
       leadHref,
       "/contacts",
+      "/contacts/new",
       contactHref,
       "/organizations",
+      "/organizations/new",
       organizationHref,
       "/activities",
+      "/activities/new",
       "/email",
       "/products",
       "/reports",
@@ -106,6 +112,26 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByText("NDA").first()).toBeVisible();
         await expect(page.getByText("MSA").first()).toBeVisible();
         await expect(page.getByText("SOW").first()).toBeVisible();
+      }
+      if (path === "/deals/new") {
+        await expect(page.getByRole("heading", { name: "New deal" })).toBeVisible();
+        await expect(page.getByLabel("Title")).toBeVisible();
+      }
+      if (path === "/contacts/new") {
+        await expect(page.getByRole("heading", { name: "New Contact" })).toBeVisible();
+        await expect(page.getByLabel("Name")).toBeVisible();
+      }
+      if (path === "/organizations/new") {
+        await expect(page.getByRole("heading", { name: "New Organization" })).toBeVisible();
+        await expect(page.getByLabel("Name")).toBeVisible();
+      }
+      if (path === "/leads/new") {
+        await expect(page.getByRole("heading", { name: "New Lead" })).toBeVisible();
+        await expect(page.getByLabel("Title")).toBeVisible();
+      }
+      if (path === "/activities/new") {
+        await expect(page.getByRole("heading", { name: "New Activity" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Create Follow-up" })).toBeVisible();
       }
       if (path === "/deals") {
         await expect(page.getByRole("heading", { name: "Saved deal views" })).toBeVisible();
