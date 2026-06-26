@@ -21,7 +21,7 @@ export default async function NewOrganizationPage() {
           <h1 className="page-title">New Organization</h1>
         </div>
       </header>
-      <OrganizationForm mode="create" owners={owners} workspaceId={workspace.id} />
+      <OrganizationForm defaultOwnerId={actorUserId} mode="create" owners={owners} workspaceId={workspace.id} />
     </AppShell>
   );
 }

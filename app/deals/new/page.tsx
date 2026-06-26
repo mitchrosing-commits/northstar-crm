@@ -24,6 +24,7 @@ export default async function NewDealPage() {
         </div>
       </header>
       <DealForm
+        defaultOwnerId={actorUserId}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         owners={workspaceDetail.memberships.map((membership) => ({

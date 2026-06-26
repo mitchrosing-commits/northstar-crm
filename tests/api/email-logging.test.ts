@@ -127,11 +127,15 @@ describe("manual email logging and templates foundation", () => {
     expect(settingsPage).toContain("Manual logging available");
     expect(settingsPage).toContain("Password reset delivery runs through");
     expect(settingsPage).toContain("background job queue");
-    expect(settingsPage).toContain("Gmail can connect when OAuth env and encrypted token");
-    expect(settingsPage).toContain("Manual sync imports recent matched messages from known contacts only.");
+    expect(settingsPage).toContain("Gmail / Google Workspace and Microsoft 365 / Outlook");
+    expect(settingsPage).toContain("can connect when OAuth env and encrypted token");
+    expect(settingsPage).toContain("Manual sync imports recent matched");
+    expect(settingsPage).toContain("metadata/snippets from known contacts only.");
     expect(settingsPage).toContain("Sync recent Gmail");
     expect(settingsPage).toContain("disabled type=\"button\"");
     expect(settingsPage).toContain("provider.actionLabel");
+    expect(settingsPage).toContain("Connected account: {provider.accountEmail}");
+    expect(settingsPage).toContain("Last sync: {formatDate(provider.lastSyncAt)}");
     expect(settingsPage).not.toContain("Connect Gmail");
     expect(settingsPage).not.toContain("Connect Outlook");
   });
@@ -139,7 +143,7 @@ describe("manual email logging and templates foundation", () => {
   it("documents the manual-only email boundary", () => {
     expect(currentStatus).toContain("Manual email logs can be created");
     expect(currentStatus).toContain("Gmail/Outlook background sync");
-    expect(currentStatus).toContain("manual recent Gmail metadata sync action");
+    expect(currentStatus).toContain("manual recent metadata sync actions");
     expect(architecture).toContain("Manual email logs are workspace-scoped plain-text records");
     expect(architecture).toContain("do not send email");
     expect(routeMap).toContain("/api/v1/workspaces/:workspaceId/email-logs");

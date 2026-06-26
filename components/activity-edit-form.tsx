@@ -1,6 +1,7 @@
 "use client";
 
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -95,15 +96,16 @@ export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: 
         </label>
 
         <label className="form-field">
-          <span>Owner</span>
+          <span>Assigned to</span>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">Unassigned</option>
+            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
               <option key={owner.id} value={owner.id}>
                 {owner.name}
               </option>
             ))}
           </select>
+          <OwnerHint owners={owners} />
         </label>
 
         <label className="form-field form-field-wide">
@@ -124,4 +126,30 @@ export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: 
 function toDateInput(value: Date | string | null) {
   if (!value) return "";
   return new Date(value).toISOString().slice(0, 10);
+}
+
+function OwnerHint({ owners }: { owners: EntityOption[] }) {
+  if (owners.length === 1) {
+    return (
+      <small className="form-hint">
+        You are the only workspace member right now. Invite teammates later from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  if (owners.length === 0) {
+    return (
+      <small className="form-hint">
+        Save unassigned for now, then manage workspace members from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  return null;
 }

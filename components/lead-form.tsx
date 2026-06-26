@@ -28,6 +28,7 @@ type LeadFormProps = {
   people: EntityOption[];
   organizations: EntityOption[];
   owners: EntityOption[];
+  defaultOwnerId?: string;
   initialLead?: LeadFormInitial;
 };
 
@@ -37,13 +38,16 @@ export function LeadForm({
   people,
   organizations,
   owners,
+  defaultOwnerId,
   initialLead
 }: LeadFormProps) {
   const router = useRouter();
+  const defaultCreateOwnerId =
+    mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
   const [title, setTitle] = useState(initialLead?.title ?? "");
   const [source, setSource] = useState(initialLead?.source ?? "");
   const [status, setStatus] = useState<LeadStatus>(initialLead?.status ?? "NEW");
-  const [ownerId, setOwnerId] = useState(initialLead?.ownerId ?? "");
+  const [ownerId, setOwnerId] = useState(initialLead?.ownerId ?? defaultCreateOwnerId);
   const [personId, setPersonId] = useState(initialLead?.personId ?? "");
   const [organizationId, setOrganizationId] = useState(initialLead?.organizationId ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -142,15 +146,16 @@ export function LeadForm({
         </label>
 
         <label className="form-field">
-          <span>Owner</span>
+          <span>Assigned to</span>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">Unassigned</option>
+            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
               <option key={owner.id} value={owner.id}>
                 {owner.name}
               </option>
             ))}
           </select>
+          <OwnerHint owners={owners} />
         </label>
 
         <label className="form-field">
@@ -190,4 +195,30 @@ export function LeadForm({
       </div>
     </form>
   );
+}
+
+function OwnerHint({ owners }: { owners: EntityOption[] }) {
+  if (owners.length === 1) {
+    return (
+      <small className="form-hint">
+        You are the only workspace member right now. Invite teammates later from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  if (owners.length === 0) {
+    return (
+      <small className="form-hint">
+        Save unassigned for now, then manage workspace members from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  return null;
 }

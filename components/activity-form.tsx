@@ -1,6 +1,7 @@
 "use client";
 
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -42,10 +43,15 @@ export function ActivityForm({
   submitLabel = "Add activity"
 }: ActivityFormProps) {
   const router = useRouter();
+  const resolvedDefaultOwnerId = owners.some((owner) => owner.id === defaultOwnerId)
+    ? defaultOwnerId
+    : owners.length === 1
+      ? owners[0]?.id ?? ""
+      : "";
   const [title, setTitle] = useState("");
   const [type, setType] = useState<ActivityType>("TASK");
   const [dueAt, setDueAt] = useState("");
-  const [ownerId, setOwnerId] = useState(defaultOwnerId);
+  const [ownerId, setOwnerId] = useState(resolvedDefaultOwnerId);
   const [description, setDescription] = useState("");
   const [completed, setCompleted] = useState(false);
   const [selectedAttachment, setSelectedAttachment] = useState(attachmentOptions[0]?.value ?? "");
@@ -91,7 +97,7 @@ export function ActivityForm({
     setTitle("");
     setType("TASK");
     setDueAt("");
-    setOwnerId(defaultOwnerId);
+    setOwnerId(resolvedDefaultOwnerId);
     setDescription("");
     setCompleted(false);
     if (!attachment) setSelectedAttachment(attachmentOptions[0]?.value ?? "");
@@ -127,15 +133,16 @@ export function ActivityForm({
         </label>
 
         <label className="form-field">
-          <span>Owner</span>
+          <span>Assigned to</span>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">Unassigned</option>
+            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
               <option key={owner.id} value={owner.id}>
                 {owner.name}
               </option>
             ))}
           </select>
+          <OwnerHint owners={owners} />
         </label>
 
         {!attachment ? (
@@ -175,6 +182,32 @@ export function ActivityForm({
       </div>
     </form>
   );
+}
+
+function OwnerHint({ owners }: { owners: EntityOption[] }) {
+  if (owners.length === 1) {
+    return (
+      <small className="form-hint">
+        You are the only workspace member right now. Invite teammates later from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  if (owners.length === 0) {
+    return (
+      <small className="form-hint">
+        Save unassigned for now, then manage workspace members from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  return null;
 }
 
 function parseAttachmentValue(value: string): ActivityAttachment | null {

@@ -41,7 +41,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailService).toContain("where: { workspaceId: actor.workspaceId }");
   });
 
-  it("shows four major provider cards without fake-live Microsoft or Outlook support", () => {
+  it("shows four major provider cards with honest Google and Microsoft provider paths", () => {
     expect(emailPage).toContain("buildMajorProviderCards");
     expect(emailPage).toContain("name: \"Gmail\"");
     expect(emailPage).toContain("name: \"Google Workspace\"");
@@ -52,10 +52,19 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("provider.actionLabel");
     expect(emailPage).toContain("provider.syncAvailable");
     expect(emailPage).toContain("syncRecentGmailFromEmailPageAction");
+    expect(emailPage).toContain("syncRecentMicrosoftFromEmailPageAction");
     expect(emailPage).toContain("Sync recent Gmail");
+    expect(emailPage).toContain("Sync recent Google Workspace");
+    expect(emailPage).toContain("Sync recent Microsoft 365 mail");
+    expect(emailPage).toContain("Sync recent Outlook mail");
     expect(emailPage).toContain("href={provider.href as Route}");
+    expect(emailPage).toContain("Connected account: {provider.accountEmail}");
+    expect(emailPage).toContain("Last sync: {formatDate(provider.lastSyncAt)}");
     expect(emailConnectionService).toContain("Connect Gmail");
     expect(emailConnectionService).toContain("Reconnect Gmail");
+    expect(emailConnectionService).toContain("Connect Microsoft");
+    expect(emailConnectionService).toContain("Reconnect Microsoft");
+    expect(emailConnectionService).toContain("href: \"/api/email-connections/microsoft/connect\"");
     expect(emailPage).toContain("return `Connect ${label}`");
     expect(emailPage).toContain("return `Reconnect ${label}`");
     expect(emailPage).toContain("Microsoft 365 uses the Microsoft Graph provider path.");
@@ -63,7 +72,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailConnectionService).toContain("syncAvailable: connection?.status === \"CONNECTED\"");
     expect(emailConnectionService).toContain("Microsoft 365 / Outlook");
     expect(emailConnectionService).toContain("IMAP / SMTP");
-    expect(emailConnectionService).toContain("Microsoft 365 / Outlook is the next planned first-class provider.");
+    expect(emailConnectionService).toContain("Add the Microsoft OAuth client id, client secret, redirect URI, and token encryption key");
     expect(emailConnectionService).toContain("Planned fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, custom domains, and hosting-provider email.");
     expect(emailConnectionService).toContain("disabled: true");
     expect(emailConnectionService).not.toContain("Yahoo OAuth");
@@ -88,7 +97,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailService).toContain("options: { limit?: number } = {}");
     expect(emailService).toContain("take");
     expect(emailPage).toContain("emailLog.subject");
-    expect(emailPage).toContain("emailLog.provider === \"GOOGLE_WORKSPACE\" ? \"Gmail\" : \"Manual\"");
+    expect(emailPage).toContain("formatEmailProvider(emailLog.provider)");
+    expect(emailPage).toContain("if (provider === \"GOOGLE_WORKSPACE\") return \"Gmail\"");
+    expect(emailPage).toContain("if (provider === \"MICROSOFT_365\") return \"Microsoft\"");
     expect(emailPage).toContain("emailLog.direction === \"INBOUND\" ? \"Inbound\" : \"Outbound\"");
     expect(emailPage).toContain("emailLog.fromText");
     expect(emailPage).toContain("emailLog.toText");

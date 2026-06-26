@@ -312,8 +312,9 @@ function EmailConnectionsPanel({
       </div>
       <p className="empty-copy" style={{ marginBottom: 16 }}>
         Use manual email logging on deals, contacts, organizations, and leads today. Password reset delivery runs through
-        the background job queue when webhook email is configured. Gmail can connect when OAuth env and encrypted token
-        storage are configured. Manual sync imports recent matched messages from known contacts only.
+        the background job queue when webhook email is configured. Gmail / Google Workspace and Microsoft 365 / Outlook
+        can connect when OAuth env and encrypted token storage are configured. Manual sync imports recent matched
+        metadata/snippets from known contacts only.
       </p>
       {statusCopy ? <p className="empty-copy">{statusCopy}</p> : null}
       <div className="provider-card-grid">
@@ -324,7 +325,9 @@ function EmailConnectionsPanel({
               <span className="badge">{provider.status}</span>
             </div>
             <p>{provider.detail}</p>
-            {provider.scopes.length > 0 ? <p>Planned scopes: {provider.scopes.join(", ")}</p> : null}
+            {provider.accountEmail ? <p>Connected account: {provider.accountEmail}</p> : null}
+            {provider.lastSyncAt ? <p>Last sync: {formatDate(provider.lastSyncAt)}</p> : null}
+            {provider.scopes.length > 0 ? <p>Scopes: {provider.scopes.join(", ")}</p> : null}
             {provider.disabled || !provider.href ? (
               <button className="button-secondary button-compact" disabled type="button">
                 {provider.actionLabel}

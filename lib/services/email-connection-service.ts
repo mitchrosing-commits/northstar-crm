@@ -16,10 +16,12 @@ type GmailFetch = typeof fetch;
 type MicrosoftFetch = typeof fetch;
 
 export type EmailProviderCard = {
+  accountEmail?: string | null;
   actionLabel: string;
   detail: string;
   disabled: boolean;
   href?: string;
+  lastSyncAt?: Date | null;
   name: string;
   provider: EmailConnectionProvider;
   scopes: string[];
@@ -1089,7 +1091,7 @@ function googleProviderCard({
   tokenEncryptionReady
 }: {
   config: ProviderConfig;
-  connection?: { accountEmail: string | null; status: EmailConnectionStatus };
+  connection?: { accountEmail: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
   provider: "GOOGLE_WORKSPACE";
   tokenEncryptionReady: boolean;
 }): EmailProviderCard {
@@ -1120,18 +1122,20 @@ function googleProviderCard({
   }
 
   return {
+    accountEmail: connection?.accountEmail,
     actionLabel: connection?.status === "CONNECTED" ? "Reconnect Gmail" : "Connect Gmail",
     detail:
       connection?.status === "CONNECTED" && connection.accountEmail
         ? `Connected to ${connection.accountEmail}. Use manual sync to import recent matched metadata from known contacts.`
         : "Connect Gmail with read-only profile and Gmail metadata scopes. This stores encrypted OAuth tokens only; manual sync imports matched recent metadata after connection.",
-      disabled: false,
-      href: "/api/email-connections/google/connect",
-      name: providerLabels[provider],
-      provider,
-      scopes: [...gmailOAuthScopes],
-      syncAvailable: connection?.status === "CONNECTED",
-      status: connection?.status === "CONNECTED" ? "Connected" : "Ready to connect"
+    disabled: false,
+    href: "/api/email-connections/google/connect",
+    lastSyncAt: connection?.lastSyncAt,
+    name: providerLabels[provider],
+    provider,
+    scopes: [...gmailOAuthScopes],
+    syncAvailable: connection?.status === "CONNECTED",
+    status: connection?.status === "CONNECTED" ? "Connected" : "Ready to connect"
   };
 }
 
@@ -1141,7 +1145,7 @@ function microsoftProviderCard({
   connectionStatus,
   tokenEncryptionReady
 }: {
-  connection?: { accountEmail: string | null; status: EmailConnectionStatus };
+  connection?: { accountEmail: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
   config: ProviderConfig;
   connectionStatus?: EmailConnectionStatus;
   tokenEncryptionReady: boolean;
@@ -1151,14 +1155,14 @@ function microsoftProviderCard({
 
   if (!configured) {
     return {
-      actionLabel: "Coming soon",
+      actionLabel: "Configure OAuth",
       detail:
-        "Microsoft 365 / Outlook is the next planned first-class provider. OAuth env can be documented now, but the Microsoft Graph callback and sync path are not live yet.",
+        "Add the Microsoft OAuth client id, client secret, redirect URI, and token encryption key before Microsoft 365 or Outlook can connect.",
       disabled: true,
       name: providerLabels.MICROSOFT_365,
       provider: "MICROSOFT_365",
       scopes,
-      status: "Not configured yet"
+      status: "Not configured"
     };
   }
 
@@ -1175,12 +1179,14 @@ function microsoftProviderCard({
   }
 
   return {
+    accountEmail: connection?.accountEmail,
     actionLabel: connection?.status === "CONNECTED" ? "Reconnect Microsoft" : "Connect Microsoft",
     detail: connectionStatus
       ? `Connected to ${connection?.accountEmail ?? "Microsoft 365 / Outlook"}. Use manual sync to import recent matched metadata from known contacts.`
       : "Connect Microsoft 365 or Outlook with read-only profile and mail scopes. This stores encrypted OAuth tokens only; manual sync imports matched recent metadata after connection.",
     disabled: false,
     href: "/api/email-connections/microsoft/connect",
+    lastSyncAt: connection?.lastSyncAt,
     name: providerLabels.MICROSOFT_365,
     provider: "MICROSOFT_365",
     scopes,

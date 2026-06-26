@@ -26,6 +26,7 @@ export default async function NewContactPage() {
         </div>
       </header>
       <ContactForm
+        defaultOwnerId={actorUserId}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         owners={owners}

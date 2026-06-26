@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -19,6 +21,7 @@ type OrganizationFormProps = {
   mode: "create" | "edit";
   workspaceId: string;
   owners: EntityOption[];
+  defaultOwnerId?: string;
   initialOrganization?: OrganizationFormInitial;
 };
 
@@ -26,12 +29,15 @@ export function OrganizationForm({
   mode,
   workspaceId,
   owners,
+  defaultOwnerId,
   initialOrganization
 }: OrganizationFormProps) {
   const router = useRouter();
+  const defaultCreateOwnerId =
+    mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
   const [name, setName] = useState(initialOrganization?.name ?? "");
   const [domain, setDomain] = useState(initialOrganization?.domain ?? "");
-  const [ownerId, setOwnerId] = useState(initialOrganization?.ownerId ?? "");
+  const [ownerId, setOwnerId] = useState(initialOrganization?.ownerId ?? defaultCreateOwnerId);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -90,15 +96,16 @@ export function OrganizationForm({
         </label>
 
         <label className="form-field">
-          <span>Owner</span>
+          <span>Assigned to</span>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">Unassigned</option>
+            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
               <option key={owner.id} value={owner.id}>
                 {owner.name}
               </option>
             ))}
           </select>
+          <OwnerHint owners={owners} />
         </label>
       </div>
 
@@ -112,4 +119,30 @@ export function OrganizationForm({
       </div>
     </form>
   );
+}
+
+function OwnerHint({ owners }: { owners: EntityOption[] }) {
+  if (owners.length === 1) {
+    return (
+      <small className="form-hint">
+        You are the only workspace member right now. Invite teammates later from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  if (owners.length === 0) {
+    return (
+      <small className="form-hint">
+        Save unassigned for now, then manage workspace members from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  return null;
 }

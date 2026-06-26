@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -23,6 +25,7 @@ type ContactFormProps = {
   workspaceId: string;
   organizations: EntityOption[];
   owners: EntityOption[];
+  defaultOwnerId?: string;
   initialContact?: ContactFormInitial;
 };
 
@@ -31,14 +34,17 @@ export function ContactForm({
   workspaceId,
   organizations,
   owners,
+  defaultOwnerId,
   initialContact
 }: ContactFormProps) {
   const router = useRouter();
+  const defaultCreateOwnerId =
+    mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
   const [name, setName] = useState(formatNameInput(initialContact));
   const [email, setEmail] = useState(initialContact?.email ?? "");
   const [phone, setPhone] = useState(initialContact?.phone ?? "");
   const [organizationId, setOrganizationId] = useState(initialContact?.organizationId ?? "");
-  const [ownerId, setOwnerId] = useState(initialContact?.ownerId ?? "");
+  const [ownerId, setOwnerId] = useState(initialContact?.ownerId ?? defaultCreateOwnerId);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -118,15 +124,16 @@ export function ContactForm({
         </label>
 
         <label className="form-field">
-          <span>Owner</span>
+          <span>Assigned to</span>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">Unassigned</option>
+            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
               <option key={owner.id} value={owner.id}>
                 {owner.name}
               </option>
             ))}
           </select>
+          <OwnerHint owners={owners} />
         </label>
       </div>
 
@@ -155,4 +162,30 @@ function parseName(value: string) {
     firstName,
     lastName: rest.length > 0 ? rest.join(" ") : null
   };
+}
+
+function OwnerHint({ owners }: { owners: EntityOption[] }) {
+  if (owners.length === 1) {
+    return (
+      <small className="form-hint">
+        You are the only workspace member right now. Invite teammates later from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  if (owners.length === 0) {
+    return (
+      <small className="form-hint">
+        Save unassigned for now, then manage workspace members from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  return null;
 }

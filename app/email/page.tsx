@@ -70,6 +70,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                 <span className="badge">{provider.status}</span>
               </div>
               <p>{provider.detail}</p>
+              {provider.accountEmail ? <p>Connected account: {provider.accountEmail}</p> : null}
+              {provider.lastSyncAt ? <p>Last sync: {formatDate(provider.lastSyncAt)}</p> : null}
               {provider.scopes.length > 0 ? <p>Scopes: {provider.scopes.join(", ")}</p> : null}
               {provider.disabled || !provider.href ? (
                 <button className="button-secondary button-compact" disabled type="button">
@@ -130,7 +132,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                     <strong>{emailLog.subject}</strong>
                   </td>
                   <td>
-                    <span className="badge">{emailLog.provider === "GOOGLE_WORKSPACE" ? "Gmail" : "Manual"}</span>
+                    <span className="badge">{formatEmailProvider(emailLog.provider)}</span>
                   </td>
                   <td>{emailLog.direction === "INBOUND" ? "Inbound" : "Outbound"}</td>
                   <td>
@@ -178,17 +180,17 @@ function buildMajorProviderCards({
     status: "Not configured"
   };
   const microsoftBase = microsoftProvider ?? {
-    actionLabel: "Coming soon",
-    detail: "Microsoft Graph OAuth and metadata sync are planned, but not live yet.",
+    actionLabel: "Configure OAuth",
+    detail: "Add Microsoft OAuth env vars and token encryption before Microsoft 365 or Outlook can connect.",
     disabled: true,
     name: "Microsoft 365",
     provider: "MICROSOFT_365" as const,
     scopes: [],
-    status: "Coming soon"
+    status: "Not configured"
   };
 
   return [
-    { ...gmailBase, actionLabel: gmailActionLabel(gmailBase, "Gmail"), name: "Gmail" },
+    { ...gmailBase, actionLabel: gmailActionLabel(gmailBase, "Gmail"), name: "Gmail", syncLabel: "Sync recent Gmail" },
     {
       ...gmailBase,
       actionLabel: gmailActionLabel(gmailBase, "Google Workspace"),
@@ -196,7 +198,8 @@ function buildMajorProviderCards({
         gmailBase.status === "Connected"
           ? "Google Workspace mailbox connected through the existing Gmail metadata sync path."
           : "Connect a Google Workspace mailbox through the same Google OAuth and Gmail metadata sync path.",
-      name: "Google Workspace"
+      name: "Google Workspace",
+      syncLabel: "Sync recent Google Workspace"
     },
     {
       ...microsoftBase,
@@ -206,6 +209,7 @@ function buildMajorProviderCards({
       href: microsoftBase.href,
       name: "Microsoft 365",
       syncAvailable: microsoftBase.syncAvailable,
+      syncLabel: "Sync recent Microsoft 365 mail",
       status: microsoftBase.status
     },
     {
@@ -216,6 +220,7 @@ function buildMajorProviderCards({
       href: microsoftBase.href,
       name: "Outlook",
       syncAvailable: microsoftBase.syncAvailable,
+      syncLabel: "Sync recent Outlook mail",
       status: microsoftBase.status
     }
   ];
@@ -242,6 +247,12 @@ function microsoftProviderDetail(provider: ProviderCard, label: "Microsoft 365" 
   return label === "Microsoft 365"
     ? "Connect Microsoft 365 through Microsoft Graph with read-only profile and mail scopes."
     : "Connect Outlook through the same Microsoft Graph metadata sync path.";
+}
+
+function formatEmailProvider(provider: string | null) {
+  if (provider === "GOOGLE_WORKSPACE") return "Gmail";
+  if (provider === "MICROSOFT_365") return "Microsoft";
+  return "Manual";
 }
 
 function emailStatusCopy(searchParams: Awaited<EmailPageProps["searchParams"]>) {

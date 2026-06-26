@@ -175,10 +175,11 @@ Railway setup:
 4. Set `AUTH_MODE=local`.
 5. Set `AUTH_SESSION_SECRET` to a new random 32+ character secret.
 6. Set `APP_BASE_URL` to the public Railway app URL after Railway assigns it.
-7. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a new random 32+ byte secret if Gmail OAuth will be enabled.
-8. Optional Gmail OAuth: rotate the Google OAuth client secret before hosted use, set the Google redirect URI to `https://<host>/api/email-connections/google/callback`, then set the Google OAuth env vars in Railway.
-9. Deploy. Railway should install dependencies, run the configured build, run `npm run prisma:deploy`, start the app, and health-check `/api/health`.
-10. Optional demo data: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo environment. Do not run seed against a real-use database after users create data because the seed script resets the seeded demo workspace.
+7. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a new random 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
+8. Optional Gmail / Google Workspace OAuth: rotate the Google OAuth client secret before hosted use, set the Google redirect URI to `https://<host>/api/email-connections/google/callback`, then set the Google OAuth env vars in Railway.
+9. Optional Microsoft 365 / Outlook OAuth: create a Microsoft Entra app registration, set its web redirect URI to `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
+10. Deploy. Railway should install dependencies, run the configured build, run `npm run prisma:deploy`, start the app, and health-check `/api/health`.
+11. Optional demo data: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo environment. Do not run seed against a real-use database after users create data because the seed script resets the seeded demo workspace.
 
 Required hosted variables:
 
@@ -189,16 +190,20 @@ AUTH_SESSION_SECRET
 APP_BASE_URL
 ```
 
-Optional Gmail variables:
+Optional email OAuth variables:
 
 ```text
 EMAIL_TOKEN_ENCRYPTION_KEY
 GOOGLE_OAUTH_CLIENT_ID
 GOOGLE_OAUTH_CLIENT_SECRET
 GOOGLE_OAUTH_REDIRECT_URI
+MICROSOFT_OAUTH_CLIENT_ID
+MICROSOFT_OAUTH_CLIENT_SECRET
+MICROSOFT_OAUTH_REDIRECT_URI
+MICROSOFT_OAUTH_TENANT_ID
 ```
 
-The shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` are also accepted.
+The shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` are also accepted. The shorter Microsoft aliases `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` are also accepted. Microsoft uses the `common` tenant unless `MICROSOFT_OAUTH_TENANT_ID` is set.
 
 Optional password-reset email variables:
 
@@ -210,7 +215,7 @@ AUTH_EMAIL_FROM
 
 Production password reset email delivery also needs a worker process (`npm run jobs:work`) or scheduled one-off processing (`npm run jobs:run-once`). The core CRM demo and signup path do not require a worker today unless password reset email delivery must be live.
 
-Do not commit `.env` or real secrets. Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback`; short-lived OAuth authorization codes should not be retained in application, proxy, CDN, or platform logs.
+Do not commit `.env` or real secrets. Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived OAuth authorization codes should not be retained in application, proxy, CDN, or platform logs.
 
 ## Development Auth
 
@@ -409,8 +414,8 @@ TEST_DATABASE_URL="postgresql://crm:crm@localhost:5432/crm_mvp_test?schema=publi
 - Docker and Docker Compose are not currently included. The supported downloadable path is local Node.js plus PostgreSQL using the commands above.
 - Local login and signup are available, but SSO, OAuth providers, 2FA, email change, account deletion, and billing are not implemented.
 - Password reset email delivery is queued, webhook-only, and password-reset-only. `npm run jobs:work` can process queued jobs continuously and recover stale `RUNNING` jobs after a timeout, `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored sent-email table, general SMTP sending, or Gmail/Outlook background sync.
-- Gmail / Google Workspace, Microsoft 365 / Outlook, and IMAP / SMTP cards are visible in Settings. Gmail can connect through OAuth when Google env vars and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured, and OAuth tokens are stored only as encrypted payloads. Connected Gmail accounts can run a manual recent metadata sync that imports only matched known-contact messages as conservative email logs. Microsoft 365 / Outlook and IMAP / SMTP remain planned/disabled, and there is no whole-mailbox sync.
-- Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback`; short-lived authorization codes should not be retained in application, proxy, CDN, or platform logs.
+- Gmail / Google Workspace, Microsoft 365 / Outlook, and IMAP / SMTP cards are visible in Email and Settings. Gmail / Google Workspace and Microsoft 365 / Outlook can connect through OAuth when provider env vars and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured, and OAuth tokens are stored only as encrypted payloads. Connected accounts can run manual recent metadata sync that imports only matched known-contact messages as conservative email logs. IMAP / SMTP remains planned/disabled, and there is no whole-mailbox sync.
+- Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived authorization codes should not be retained in application, proxy, CDN, or platform logs.
 - Workspace switching only supports existing memberships plus workspaces the signed-in user creates or accepts by invitation. Invitation email delivery, advanced role policy, workspace deletion, and billing are not implemented.
 - Member removal does not delete user accounts or CRM records, and the service blocks removing the last owner/admin.
 - Price books, inventory, line-item discounts beyond quote-level adjustments, tax rules/jurisdictions, subscriptions, stored PDF files, background Gmail/Outlook sync, general SMTP sending, inbound email processing, payments, e-signature, document generation, and approvals are not implemented.

@@ -47,11 +47,12 @@ Railway steps:
 5. Set `AUTH_MODE=local`.
 6. Set `AUTH_SESSION_SECRET` to a newly generated 32+ character random secret.
 7. Set `APP_BASE_URL` to the public Railway app URL once Railway assigns the domain.
-8. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a newly generated 32+ byte secret if Gmail OAuth will be enabled.
-9. For Gmail OAuth, rotate the Google OAuth client secret before hosted use, add the authorized redirect URI `https://<host>/api/email-connections/google/callback` in Google Cloud, then set the Google OAuth env vars in Railway.
-10. Deploy the web service. The pre-deploy command applies committed Prisma migrations before the app starts.
-11. Optional demo seed: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo database. Do not seed a real-use database after users have created records; the seed script resets tenant-owned data for the seeded demo workspace.
-12. Open `https://<host>/signup` for new local-auth users or `https://<host>/login` for existing seeded/local users.
+8. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a newly generated 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
+9. For Gmail / Google Workspace OAuth, rotate the Google OAuth client secret before hosted use, add the authorized redirect URI `https://<host>/api/email-connections/google/callback` in Google Cloud, then set the Google OAuth env vars in Railway.
+10. For Microsoft 365 / Outlook OAuth, create or update a Microsoft Entra app registration, add the web redirect URI `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
+11. Deploy the web service. The pre-deploy command applies committed Prisma migrations before the app starts.
+12. Optional demo seed: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo database. Do not seed a real-use database after users have created records; the seed script resets tenant-owned data for the seeded demo workspace.
+13. Open `https://<host>/signup` for new local-auth users or `https://<host>/login` for existing seeded/local users.
 
 Production command summary:
 
@@ -82,7 +83,7 @@ Optional:
 - `AUTH_EMAIL_WEBHOOK_TOKEN`: optional bearer token sent to the password reset email webhook.
 - `AUTH_EMAIL_FROM`: optional sender/from label included in the password reset email webhook payload.
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`: optional Gmail / Google Workspace OAuth configuration. The shorter `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` aliases are also accepted. Gmail Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured.
-- `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT_ID`, `MICROSOFT_OAUTH_REDIRECT_URI`: optional Microsoft 365 / Outlook OAuth configuration placeholders. Provider connection stays disabled until token encryption and callback routes are implemented.
+- `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT_ID`, `MICROSOFT_OAUTH_REDIRECT_URI`: optional Microsoft 365 / Outlook OAuth configuration. The shorter `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` aliases are also accepted. Microsoft Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured. `MICROSOFT_OAUTH_TENANT_ID` is optional and defaults to `common`.
 - `EMAIL_TOKEN_ENCRYPTION_KEY`: secret used to derive AES-256-GCM keys for email OAuth token encryption. It must decode to at least 32 bytes. Raw 32+ character strings work for local setup; production should use a random secret.
 - `DEV_ACTOR_EMAIL`: temporary development actor email. Defaults to `alex@example.test`.
 - `DEV_WORKSPACE_SLUG`: temporary development workspace slug. Defaults to `northstar-revenue`.
@@ -95,7 +96,21 @@ Do not commit real secrets or production database URLs.
 
 Runtime validation lives in `lib/env.ts`. The app validates `DATABASE_URL` before creating the Prisma client and validates optional deployment/auth/demo variables when present. In production, missing `AUTH_EMAIL_WEBHOOK_URL` is reported as a readiness warning because password reset email delivery is disabled, but forgot-password responses remain generic. Gmail and Microsoft OAuth env groups must be complete if any provider var is set; when OAuth env is configured without `EMAIL_TOKEN_ENCRYPTION_KEY`, Settings keeps provider actions disabled and reports that token encryption is required.
 
-Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback`. OAuth authorization codes are short-lived and exchanged before token storage, but callback query strings should not be retained in application, proxy, CDN, or platform logs.
+Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`. OAuth authorization codes are short-lived and exchanged before token storage, but callback query strings should not be retained in application, proxy, CDN, or platform logs.
+
+## Microsoft 365 / Outlook Live Setup
+
+Use Microsoft Graph for both Microsoft 365 and Outlook; do not configure separate fake providers for each brand.
+
+1. In Microsoft Entra, create an app registration for the hosted Northstar environment.
+2. Add a Web redirect URI: `https://<host>/api/email-connections/microsoft/callback`.
+3. Create a client secret for the hosted app registration.
+4. In Railway, set `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_REDIRECT_URI`, and `EMAIL_TOKEN_ENCRYPTION_KEY`. Set `MICROSOFT_OAUTH_TENANT_ID` only if the deployment should be tenant-specific; otherwise the app uses `common`.
+5. Redeploy the Railway web service so the provider card can read the new env.
+6. Open `/email`, connect either Microsoft 365 or Outlook, then run `Sync recent Microsoft 365 mail` or `Sync recent Outlook mail`.
+7. Verify matched known-contact messages appear on `/email` and the related CRM timelines.
+
+Microsoft sync uses read-only sign-in/profile/mail scopes: `openid`, `email`, `profile`, `offline_access`, `User.Read`, and `Mail.Read`. It imports recent metadata/snippets only, skips unmatched messages, deduplicates by provider message id, and does not send, delete, archive, sync attachments, import full inboxes, or store full message bodies.
 
 ## Production Local-Auth Checklist
 
@@ -249,9 +264,9 @@ The queued password reset email payload includes the reset URL and must be treat
 
 ## Known Limitations
 
-- SSO, Microsoft/IMAP OAuth providers, and 2FA are not implemented.
-- Password reset email delivery is password-reset-only through queued `auth.password_reset_email` jobs and the provider-neutral auth email webhook. Gmail OAuth connection can store encrypted tokens when configured and can run a manual recent metadata sync for matched known-contact messages, but there is no sent-email storage, delivery analytics, general SMTP sending, or whole-mailbox/background sync.
-- Production access/proxy logs should redact OAuth callback query strings, especially for `/api/email-connections/google/callback`; short-lived authorization codes should not be retained in logs.
+- SSO, IMAP OAuth/provider setup, and 2FA are not implemented.
+- Password reset email delivery is password-reset-only through queued `auth.password_reset_email` jobs and the provider-neutral auth email webhook. Gmail / Google Workspace and Microsoft 365 / Outlook OAuth connections can store encrypted tokens when configured and can run manual recent metadata sync for matched known-contact messages, but there is no sent-email storage, delivery analytics, general SMTP sending, IMAP setup, or whole-mailbox/background sync.
+- Production access/proxy logs should redact OAuth callback query strings, especially for `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived authorization codes should not be retained in logs.
 - Background jobs foundation currently includes the `Job` table, internal service, explicit handler registry, harmless `internal.noop` handler, queued password reset email handler, read-only status command, single-run batch command, continuous worker command, stale `RUNNING` recovery in continuous mode, and aggregate-only terminal cleanup command. There is no broader product job handler runtime, event outbox, automation runtime, reminder runtime, or webhook platform.
 - Invitation email delivery, workspace deletion, and billing are not implemented. Workspace switching is limited to current memberships plus newly created or accepted workspaces, while role editing and ownership transfer remain intentionally narrow.
 - Member removal only removes access. It does not delete user accounts or CRM records, and the service blocks removal of the last owner/admin.

@@ -37,6 +37,7 @@ type DealFormProps = {
   people: EntityOption[];
   organizations: EntityOption[];
   owners: EntityOption[];
+  defaultOwnerId?: string;
   initialDeal?: DealFormInitial;
 };
 
@@ -47,17 +48,20 @@ export function DealForm({
   people,
   organizations,
   owners,
+  defaultOwnerId,
   initialDeal
 }: DealFormProps) {
   const router = useRouter();
   const defaultStage = initialDeal?.stageId ?? stages[0]?.id ?? "";
+  const defaultCreateOwnerId =
+    mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
   const [title, setTitle] = useState(initialDeal?.title ?? "");
   const [value, setValue] = useState(initialDeal?.valueCents == null ? "" : String(initialDeal.valueCents / 100));
   const [currency, setCurrency] = useState(initialDeal?.currency ?? "USD");
   const [stageId, setStageId] = useState(defaultStage);
   const [personId, setPersonId] = useState(initialDeal?.personId ?? "");
   const [organizationId, setOrganizationId] = useState(initialDeal?.organizationId ?? "");
-  const [ownerId, setOwnerId] = useState(initialDeal?.ownerId ?? "");
+  const [ownerId, setOwnerId] = useState(initialDeal?.ownerId ?? defaultCreateOwnerId);
   const [expectedCloseAt, setExpectedCloseAt] = useState(formatDateInput(initialDeal?.expectedCloseAt));
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -228,15 +232,16 @@ export function DealForm({
         </label>
 
         <label className="form-field">
-          <span>Owner</span>
+          <span>Deal owner</span>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">Unassigned</option>
+            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
               <option key={owner.id} value={owner.id}>
                 {owner.name}
               </option>
             ))}
           </select>
+          <OwnerHint owners={owners} />
         </label>
 
         <label className="form-field">
@@ -255,6 +260,32 @@ export function DealForm({
       </div>
     </form>
   );
+}
+
+function OwnerHint({ owners }: { owners: EntityOption[] }) {
+  if (owners.length === 1) {
+    return (
+      <small className="form-hint">
+        You are the only workspace member right now. Invite teammates later from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  if (owners.length === 0) {
+    return (
+      <small className="form-hint">
+        Save unassigned for now, then manage workspace members from{" "}
+        <Link className="inline-link" href={"/settings" as Route}>
+          Settings
+        </Link>
+        .
+      </small>
+    );
+  }
+  return null;
 }
 
 function parseValueCents(value: string) {

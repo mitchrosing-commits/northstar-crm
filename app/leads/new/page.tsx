@@ -27,6 +27,7 @@ export default async function NewLeadPage() {
         </div>
       </header>
       <LeadForm
+        defaultOwnerId={actorUserId}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         owners={owners}
