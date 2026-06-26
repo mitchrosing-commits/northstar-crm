@@ -226,6 +226,7 @@ describe("production readiness foundation", () => {
     expect(prismaConfig).toContain("seed: \"tsx prisma/seed.ts\"");
     expect(envExample).toContain("DATABASE_URL=");
     expect(envExample).toContain("APP_BASE_URL=");
+    expect(envExample).toContain("RAILWAY_SERVICE_ROLE=");
     expect(envExample).toContain("AUTH_MODE=");
     expect(envExample).toContain("AUTH_USER_ID_HEADER=");
     expect(envExample).toContain("AUTH_SESSION_SECRET=");
@@ -243,7 +244,8 @@ describe("production readiness foundation", () => {
     expect(readinessDoc).toContain("Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` for direct Resend delivery");
     expect(readinessDoc).toContain("or set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint");
     expect(readinessDoc).toContain("Railway Password Reset Email Worker");
-    expect(readinessDoc).toContain("Set the worker start command to `npm run jobs:work`.");
+    expect(readinessDoc).toContain("Set `RAILWAY_SERVICE_ROLE=worker` on the worker service.");
+    expect(readinessDoc).toContain("npm run railway:start");
     expect(readinessDoc).toContain("Without a worker or scheduled one-off job run, reset email jobs stay queued");
     expect(readinessDoc).toContain("queues a password-reset-only email job");
     expect(readinessDoc).toContain("npm run jobs:run-once");

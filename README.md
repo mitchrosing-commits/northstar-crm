@@ -150,12 +150,12 @@ Useful routes:
 
 ## Hosted Deployment On Railway
 
-Use Railway for the fastest hosted preview today. Northstar runs as a single Next.js web service backed by Railway PostgreSQL. The included `railway.json` uses:
+Use Railway for the fastest hosted preview today. Northstar runs as a Next.js web service backed by Railway PostgreSQL, with an optional worker service from the same repo for password reset email delivery. The included `railway.json` uses:
 
 ```text
 Build: npm run prisma:generate && npm run build
 Pre-deploy: npm run prisma:deploy
-Start: npm run start
+Start: npm run railway:start
 Health check: /api/health
 ```
 
@@ -172,14 +172,15 @@ Railway setup:
 1. Create a Railway project from the GitHub repo.
 2. Add a Railway PostgreSQL database service.
 3. In the web service variables, add `DATABASE_URL` from the Railway Postgres service reference.
-4. Set `AUTH_MODE=local`.
-5. Set `AUTH_SESSION_SECRET` to a new random 32+ character secret.
-6. Set `APP_BASE_URL` to the public Railway app URL after Railway assigns it.
-7. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a new random 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
-8. Optional Gmail / Google Workspace OAuth: rotate the Google OAuth client secret before hosted use, set the Google redirect URI to `https://<host>/api/email-connections/google/callback`, then set the Google OAuth env vars in Railway.
-9. Optional Microsoft 365 / Outlook OAuth: create a Microsoft Entra app registration, set its web redirect URI to `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
-10. Deploy. Railway should install dependencies, run the configured build, run `npm run prisma:deploy`, start the app, and health-check `/api/health`.
-11. Optional demo data: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo environment. Do not run seed against a real-use database after users create data because the seed script resets the seeded demo workspace.
+4. Leave `RAILWAY_SERVICE_ROLE` unset or set `RAILWAY_SERVICE_ROLE=web`.
+5. Set `AUTH_MODE=local`.
+6. Set `AUTH_SESSION_SECRET` to a new random 32+ character secret.
+7. Set `APP_BASE_URL` to the public Railway app URL after Railway assigns it.
+8. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a new random 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
+9. Optional Gmail / Google Workspace OAuth: rotate the Google OAuth client secret before hosted use, set the Google redirect URI to `https://<host>/api/email-connections/google/callback`, then set the Google OAuth env vars in Railway.
+10. Optional Microsoft 365 / Outlook OAuth: create a Microsoft Entra app registration, set its web redirect URI to `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
+11. Deploy. Railway should install dependencies, run the configured build, run `npm run prisma:deploy`, start the app through `npm run railway:start`, and health-check `/api/health`.
+12. Optional demo data: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo environment. Do not run seed against a real-use database after users create data because the seed script resets the seeded demo workspace.
 
 Required hosted variables:
 
@@ -188,6 +189,12 @@ DATABASE_URL
 AUTH_MODE
 AUTH_SESSION_SECRET
 APP_BASE_URL
+```
+
+For the web service, leave `RAILWAY_SERVICE_ROLE` unset or set:
+
+```text
+RAILWAY_SERVICE_ROLE=web
 ```
 
 Optional email OAuth variables:
@@ -295,6 +302,7 @@ Optional deployment/demo values:
 
 ```text
 APP_BASE_URL
+RAILWAY_SERVICE_ROLE
 AUTH_MODE
 AUTH_USER_ID_HEADER
 AUTH_SESSION_SECRET
@@ -369,10 +377,10 @@ Production password reset email delivery needs `APP_BASE_URL`, either Resend (`R
 On Railway, use a second service from the same repo for continuous password reset delivery:
 
 ```text
-Worker start command: npm run jobs:work
+RAILWAY_SERVICE_ROLE=worker
 ```
 
-The worker should share the same `DATABASE_URL`, `APP_BASE_URL`, `AUTH_MODE`, `AUTH_SESSION_SECRET`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables as the web service. It does not need a public domain. If the worker is not running, forgot-password remains account-enumeration-safe but reset email jobs stay queued and no email is sent. For Resend testing before a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
+The shared `railway.json` start command runs `npm run railway:start`; that dispatcher runs `next start` for the web service and `npm run jobs:work` when `RAILWAY_SERVICE_ROLE=worker`. The worker should share the same `DATABASE_URL`, `APP_BASE_URL`, `AUTH_MODE`, `AUTH_SESSION_SECRET`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables as the web service. It does not need a public domain. If the worker is not running, forgot-password remains account-enumeration-safe but reset email jobs stay queued and no email is sent. For Resend testing before a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
 
 ## Quality Checks
 

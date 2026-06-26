@@ -26,7 +26,7 @@ The included `railway.json` is intentionally small:
 ```text
 Build command: npm run prisma:generate && npm run build
 Pre-deploy command: npm run prisma:deploy
-Start command: npm run start
+Start command: npm run railway:start
 Health check path: /api/health
 ```
 
@@ -44,15 +44,16 @@ Railway steps:
 2. Add a Railway PostgreSQL service.
 3. Add a web service from the repo if Railway did not create one automatically.
 4. In the web service variables, set `DATABASE_URL` from the Railway Postgres service reference.
-5. Set `AUTH_MODE=local`.
-6. Set `AUTH_SESSION_SECRET` to a newly generated 32+ character random secret.
-7. Set `APP_BASE_URL` to the public Railway app URL once Railway assigns the domain.
-8. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a newly generated 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
-9. For Gmail / Google Workspace OAuth, rotate the Google OAuth client secret before hosted use, add the authorized redirect URI `https://<host>/api/email-connections/google/callback` in Google Cloud, then set the Google OAuth env vars in Railway.
-10. For Microsoft 365 / Outlook OAuth, create or update a Microsoft Entra app registration, add the web redirect URI `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
-11. Deploy the web service. The pre-deploy command applies committed Prisma migrations before the app starts.
-12. Optional demo seed: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo database. Do not seed a real-use database after users have created records; the seed script resets tenant-owned data for the seeded demo workspace.
-13. Open `https://<host>/signup` for new local-auth users or `https://<host>/login` for existing seeded/local users.
+5. Leave `RAILWAY_SERVICE_ROLE` unset or set `RAILWAY_SERVICE_ROLE=web`.
+6. Set `AUTH_MODE=local`.
+7. Set `AUTH_SESSION_SECRET` to a newly generated 32+ character random secret.
+8. Set `APP_BASE_URL` to the public Railway app URL once Railway assigns the domain.
+9. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a newly generated 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
+10. For Gmail / Google Workspace OAuth, rotate the Google OAuth client secret before hosted use, add the authorized redirect URI `https://<host>/api/email-connections/google/callback` in Google Cloud, then set the Google OAuth env vars in Railway.
+11. For Microsoft 365 / Outlook OAuth, create or update a Microsoft Entra app registration, add the web redirect URI `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
+12. Deploy the web service. The pre-deploy command applies committed Prisma migrations before the app starts, and `npm run railway:start` dispatches to `next start`.
+13. Optional demo seed: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo database. Do not seed a real-use database after users have created records; the seed script resets tenant-owned data for the seeded demo workspace.
+14. Open `https://<host>/signup` for new local-auth users or `https://<host>/login` for existing seeded/local users.
 
 Production command summary:
 
@@ -60,9 +61,9 @@ Production command summary:
 Install: npm ci
 Build: npm run prisma:generate && npm run build
 Migrate: npm run prisma:deploy
-Start: npm run start
+Start: npm run railway:start
 Optional demo seed: npm run prisma:seed
-Optional password-reset worker: npm run jobs:work
+Optional password-reset worker: RAILWAY_SERVICE_ROLE=worker
 ```
 
 Railway runs install/build/start automatically from the connected repo and `railway.json`. Run seed only as an intentional one-off.
@@ -80,11 +81,12 @@ To enable hosted password reset email delivery on Railway:
 3. Create a second Railway service from the same repo, for example `northstar-worker`.
 4. Use the same Railway PostgreSQL `DATABASE_URL` reference as the web service.
 5. Give the worker the same runtime secrets needed by the web app, including `AUTH_MODE`, `AUTH_SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables being used.
-6. Set the worker start command to `npm run jobs:work`.
-7. Deploy the web service first so migrations run, then deploy or restart the worker.
-8. Use a Railway one-off command such as `npm run jobs:status` to confirm only aggregate queue counts are printed.
+6. Set `RAILWAY_SERVICE_ROLE=worker` on the worker service. The shared `railway.json` start command runs `npm run railway:start`, which dispatches to `npm run jobs:work` for worker services.
+7. Leave the web service `RAILWAY_SERVICE_ROLE` unset or set it to `web`; it will dispatch to `next start`.
+8. Deploy the web service first so migrations run, then deploy or restart the worker. The same pre-deploy migration command may run on both services and is idempotent.
+9. Use a Railway one-off command such as `npm run jobs:status` to confirm only aggregate queue counts are printed.
 
-The worker does not need a public domain. If a continuous worker service is not available, run `npm run jobs:run-once` on a schedule instead. Treat queued password reset job payloads as sensitive because they contain one-time reset URLs until the job reaches a terminal state and is cleaned up.
+The worker does not need a public domain. Because the shared Railway config includes `/api/health`, the worker dispatcher exposes a tiny health response while the job worker runs. If a continuous worker service is not available, run `npm run jobs:run-once` on a schedule instead. Treat queued password reset job payloads as sensitive because they contain one-time reset URLs until the job reaches a terminal state and is cleaned up.
 
 ## Required Environment
 
@@ -95,6 +97,7 @@ Required:
 Optional:
 
 - `APP_BASE_URL`: canonical app URL used for displaying absolute public quote links and password reset email URLs. If unset, the app shows relative `/q/:token` quote links. If set, it must be a valid `http` or `https` URL. When password reset email delivery is configured in production, this must be `https`.
+- `RAILWAY_SERVICE_ROLE`: optional Railway process selector. Leave unset or set to `web` for the Next.js web service. Set to `worker` for the background job worker service.
 - `AUTH_MODE`: `demo` for seeded local/demo fallback, `local` for the built-in email/password session MVP, or `trusted-header` for an upstream/session layer that provides the current user id. Production defaults to `trusted-header` when unset.
 - `AUTH_USER_ID_HEADER`: trusted request header containing the current user id. Required when the effective auth mode is `trusted-header`; use a dedicated safe header name such as `x-northstar-user-id`.
 - `AUTH_SESSION_SECRET`: signing secret for local session cookies. Required when `AUTH_MODE=local`; use at least 32 random characters.

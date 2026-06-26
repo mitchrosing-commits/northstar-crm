@@ -6,7 +6,7 @@
   },
   "deploy": {
     "preDeployCommand": "npm run prisma:deploy",
-    "startCommand": "npm run start",
+    "startCommand": "npm run railway:start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
