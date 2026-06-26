@@ -1,0 +1,47 @@
+{
+  "name": "crm-mvp-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:browser": "env -u NO_COLOR playwright test --config=playwright.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:watch": "vitest",
+    "jobs:run-once": "tsx scripts/jobs-run-once.ts",
+    "jobs:cleanup": "tsx scripts/jobs-cleanup.ts",
+    "jobs:status": "tsx scripts/jobs-status.ts",
+    "jobs:work": "tsx scripts/jobs-work.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "prisma db seed",
+    "prisma:validate": "prisma validate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.0",
+    "lucide-react": "^0.468.0",
+    "next": "^15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.26.0",
+    "eslint-config-next": "^15.3.0",
+    "prisma": "^6.8.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}

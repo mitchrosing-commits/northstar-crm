@@ -1,0 +1,18 @@
+node_modules
+.next
+.pnpm-store
+out
+dist
+coverage
+playwright-report
+test-results
+tsconfig.tsbuildinfo
+.env
+.env.local
+.env.*.local
+*.log
+prisma/dev.db
+
+# Mac
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,743 @@
+import { EmailConnectionProvider, EmailConnectionStatus, Prisma, type EmailDirection } from "@prisma/client";
+
+import { ApiError } from "@/lib/api/responses";
+import { prisma } from "@/lib/db/prisma";
+import { canUseEmailTokenEncryptionKey, decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
+import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
+
+type ProviderConfig = {
+  clientId?: string;
+  clientSecret?: string;
+  redirectUri?: string;
+};
+
+type EmailConnectionEnv = Record<string, string | undefined>;
+type GmailFetch = typeof fetch;
+
+export type EmailProviderCard = {
+  actionLabel: string;
+  detail: string;
+  disabled: boolean;
+  href?: string;
+  name: string;
+  provider: EmailConnectionProvider;
+  scopes: string[];
+  syncAvailable?: boolean;
+  status: string;
+};
+
+export type GoogleTokenResponse = {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  scope?: string;
+  token_type?: string;
+};
+
+export type GoogleUserProfile = {
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+};
+
+type GmailListResponse = {
+  messages?: { id?: string; threadId?: string }[];
+  nextPageToken?: string;
+};
+
+type GmailMessageResponse = {
+  id?: string;
+  internalDate?: string;
+  payload?: {
+    headers?: { name?: string; value?: string }[];
+  };
+  snippet?: string;
+  threadId?: string;
+};
+
+export type GmailSyncResult = {
+  created: number;
+  skippedDuplicates: number;
+  skippedUnmatched: number;
+  totalFetched: number;
+};
+
+export const gmailOAuthScopes = ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"] as const;
+
+const providerLabels: Record<EmailConnectionProvider, string> = {
+  GOOGLE_WORKSPACE: "Gmail / Google Workspace",
+  MICROSOFT_365: "Microsoft 365 / Outlook",
+  IMAP_SMTP: "IMAP / SMTP"
+};
+
+export async function listEmailConnectionProviderCards(
+  actor: WorkspaceActor,
+  env: EmailConnectionEnv = process.env
+): Promise<EmailProviderCard[]> {
+  await ensureWorkspaceAccess(actor);
+  const connections = await prisma.emailConnection.findMany({
+    where: { workspaceId: actor.workspaceId, deletedAt: null },
+    orderBy: [{ provider: "asc" }, { updatedAt: "desc" }]
+  });
+  const latestConnectionByProvider = new Map<(typeof connections)[number]["provider"], (typeof connections)[number]>();
+  for (const connection of connections) {
+    if (!latestConnectionByProvider.has(connection.provider)) {
+      latestConnectionByProvider.set(connection.provider, connection);
+    }
+  }
+  const tokenEncryptionReady = isTokenEncryptionConfigured(env);
+
+  return [
+    googleProviderCard({
+      connection: latestConnectionByProvider.get("GOOGLE_WORKSPACE"),
+      config: resolveGoogleOAuthConfig(env),
+      provider: "GOOGLE_WORKSPACE",
+      tokenEncryptionReady
+    }),
+    providerCard({
+      connectionStatus: latestConnectionByProvider.get("MICROSOFT_365")?.status,
+      config: resolveMicrosoftOAuthConfig(env),
+      detailWhenConfigured:
+        "Microsoft OAuth configuration is present, but the OAuth callback and encrypted token storage are not enabled yet.",
+      provider: "MICROSOFT_365",
+      scopes: ["Mail.Read", "User.Read"],
+      tokenEncryptionReady
+    }),
+    {
+      actionLabel: "Planned",
+      detail: "Manual email logging is available now. IMAP/SMTP is planned as a future fallback for iCloud, Yahoo, AOL, and other mailboxes.",
+      disabled: true,
+      name: providerLabels.IMAP_SMTP,
+      provider: "IMAP_SMTP",
+      scopes: [],
+      status: latestConnectionByProvider.get("IMAP_SMTP")?.status ?? "Planned"
+    }
+  ];
+}
+
+export function isTokenEncryptionConfigured(env: EmailConnectionEnv = process.env) {
+  return canUseEmailTokenEncryptionKey(env);
+}
+
+export function resolveGoogleOAuthConfig(env: EmailConnectionEnv = process.env): ProviderConfig {
+  return {
+    clientId: readNonEmpty(env.GOOGLE_OAUTH_CLIENT_ID) ?? readNonEmpty(env.GOOGLE_CLIENT_ID),
+    clientSecret: readNonEmpty(env.GOOGLE_OAUTH_CLIENT_SECRET) ?? readNonEmpty(env.GOOGLE_CLIENT_SECRET),
+    redirectUri: readNonEmpty(env.GOOGLE_OAUTH_REDIRECT_URI) ?? readNonEmpty(env.GOOGLE_REDIRECT_URI)
+  };
+}
+
+export function resolveMicrosoftOAuthConfig(env: EmailConnectionEnv = process.env): ProviderConfig {
+  return {
+    clientId: readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_ID) ?? readNonEmpty(env.MICROSOFT_CLIENT_ID),
+    clientSecret: readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_SECRET) ?? readNonEmpty(env.MICROSOFT_CLIENT_SECRET),
+    redirectUri: readNonEmpty(env.MICROSOFT_OAUTH_REDIRECT_URI) ?? readNonEmpty(env.MICROSOFT_REDIRECT_URI)
+  };
+}
+
+export function assertGoogleOAuthReady(env: EmailConnectionEnv = process.env) {
+  const config = resolveGoogleOAuthConfig(env);
+  if (!isProviderConfigured(config)) {
+    throw new ApiError("EMAIL_PROVIDER_NOT_CONFIGURED", "Gmail OAuth is not configured.", 400);
+  }
+  if (!isTokenEncryptionConfigured(env)) {
+    throw new ApiError("EMAIL_TOKEN_ENCRYPTION_NOT_CONFIGURED", "Email token encryption is not configured.", 400);
+  }
+  return config as Required<ProviderConfig>;
+}
+
+export function buildGoogleAuthorizationUrl({
+  config,
+  state
+}: {
+  config: Required<ProviderConfig>;
+  state: string;
+}) {
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("include_granted_scopes", "true");
+  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("redirect_uri", config.redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", gmailOAuthScopes.join(" "));
+  url.searchParams.set("state", state);
+  return url;
+}
+
+export async function exchangeGoogleAuthorizationCode({
+  code,
+  config,
+  fetchImpl = fetch
+}: {
+  code: string;
+  config: Required<ProviderConfig>;
+  fetchImpl?: typeof fetch;
+}): Promise<GoogleTokenResponse> {
+  const response = await fetchImpl("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: config.redirectUri
+    })
+  });
+
+  if (!response.ok) {
+    throw new ApiError("EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED", "Gmail authorization could not be completed.", 400);
+  }
+
+  const tokenResponse = (await response.json()) as GoogleTokenResponse;
+  if (!tokenResponse.access_token) {
+    throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
+  }
+
+  return tokenResponse;
+}
+
+export async function fetchGoogleUserProfile({
+  accessToken,
+  fetchImpl = fetch
+}: {
+  accessToken: string;
+  fetchImpl?: typeof fetch;
+}): Promise<GoogleUserProfile> {
+  const response = await fetchImpl("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!response.ok) {
+    throw new ApiError("EMAIL_OAUTH_PROFILE_FAILED", "Gmail account profile could not be loaded.", 400);
+  }
+
+  const profile = (await response.json()) as GoogleUserProfile;
+  if (!profile.email) {
+    throw new ApiError("EMAIL_OAUTH_PROFILE_MISSING_EMAIL", "Gmail did not return an account email address.", 400);
+  }
+
+  return profile;
+}
+
+export async function storeGoogleOAuthConnection({
+  actor,
+  profile,
+  tokenResponse,
+  env = process.env
+}: {
+  actor: WorkspaceActor;
+  profile: Required<Pick<GoogleUserProfile, "email">> & GoogleUserProfile;
+  tokenResponse: GoogleTokenResponse;
+  env?: EmailConnectionEnv;
+}) {
+  await ensureWorkspaceAccess(actor);
+  if (!tokenResponse.access_token) {
+    throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
+  }
+
+  const scopes = normalizeScopes(tokenResponse.scope);
+  const accountEmail = profile.email.toLowerCase();
+  const connection = await prisma.emailConnection.upsert({
+    where: {
+      workspaceId_provider_accountEmail: {
+        workspaceId: actor.workspaceId,
+        provider: "GOOGLE_WORKSPACE",
+        accountEmail
+      }
+    },
+    create: {
+      accountEmail,
+      createdById: actor.actorUserId,
+      displayName: profile.name,
+      provider: "GOOGLE_WORKSPACE",
+      scopes,
+      status: "CONNECTED",
+      workspaceId: actor.workspaceId
+    },
+    update: {
+      displayName: profile.name,
+      lastError: null,
+      scopes,
+      status: "CONNECTED"
+    }
+  });
+
+  const existingSecret = await prisma.emailConnectionSecret.findUnique({
+    where: { connectionId: connection.id },
+    select: { encryptedRefreshToken: true }
+  });
+  const encryptedRefreshToken = tokenResponse.refresh_token
+    ? encryptEmailToken(tokenResponse.refresh_token, env)
+    : existingSecret?.encryptedRefreshToken;
+  const accessTokenExpiresAt = tokenResponse.expires_in ? new Date(Date.now() + tokenResponse.expires_in * 1000) : null;
+
+  await prisma.emailConnectionSecret.upsert({
+    where: { connectionId: connection.id },
+    create: {
+      accessTokenExpiresAt,
+      accountEmail,
+      connectionId: connection.id,
+      encryptedAccessToken: encryptEmailToken(tokenResponse.access_token, env),
+      encryptedRefreshToken,
+      provider: "GOOGLE_WORKSPACE",
+      scopes,
+      userId: actor.actorUserId,
+      workspaceId: actor.workspaceId
+    },
+    update: {
+      accessTokenExpiresAt,
+      accountEmail,
+      encryptedAccessToken: encryptEmailToken(tokenResponse.access_token, env),
+      encryptedRefreshToken,
+      scopes,
+      userId: actor.actorUserId
+    }
+  });
+
+  await writeAuditLog(actor, "email_connection.connected", "EmailConnection", connection.id, {
+    accountEmail,
+    provider: "GOOGLE_WORKSPACE",
+    scopes
+  });
+
+  return connection;
+}
+
+export async function syncRecentGmailMessages({
+  actor,
+  env = process.env,
+  fetchImpl = fetch,
+  maxResults = 10
+}: {
+  actor: WorkspaceActor;
+  env?: EmailConnectionEnv;
+  fetchImpl?: GmailFetch;
+  maxResults?: number;
+}): Promise<GmailSyncResult> {
+  await ensureWorkspaceAccess(actor);
+  const config = assertGoogleOAuthReady(env);
+  const connection = await prisma.emailConnection.findFirst({
+    where: {
+      workspaceId: actor.workspaceId,
+      provider: "GOOGLE_WORKSPACE",
+      status: "CONNECTED",
+      deletedAt: null
+    },
+    include: { secret: true },
+    orderBy: { updatedAt: "desc" }
+  });
+
+  if (!connection?.secret) {
+    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
+  }
+
+  const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
+  const contacts = await prisma.person.findMany({
+    where: {
+      workspaceId: actor.workspaceId,
+      deletedAt: null,
+      email: { not: null }
+    },
+    select: {
+      email: true,
+      id: true,
+      organizationId: true
+    }
+  });
+  const contactByEmail = new Map(
+    contacts
+      .map((contact) => [normalizeEmailAddress(contact.email), contact] as const)
+      .filter((item): item is readonly [string, (typeof contacts)[number]] => Boolean(item[0]))
+  );
+
+  if (contactByEmail.size === 0) {
+    await prisma.emailConnection.update({
+      where: { id: connection.id },
+      data: { lastError: null, lastSyncAt: new Date() }
+    });
+    return { created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 };
+  }
+
+  const messages = await listRecentGmailMessages({ accessToken, fetchImpl, maxResults });
+  const ids = messages.map((message) => message.id).filter((id): id is string => Boolean(id));
+  const existingLogs = ids.length
+    ? await prisma.emailLog.findMany({
+        where: {
+          workspaceId: actor.workspaceId,
+          provider: "GOOGLE_WORKSPACE",
+          providerMessageId: { in: ids }
+        },
+        select: { providerMessageId: true }
+      })
+    : [];
+  const existingIds = new Set(existingLogs.map((log) => log.providerMessageId).filter(Boolean));
+  let created = 0;
+  let skippedDuplicates = 0;
+  let skippedUnmatched = 0;
+
+  for (const message of messages) {
+    if (!message.id) continue;
+    if (existingIds.has(message.id)) {
+      skippedDuplicates += 1;
+      continue;
+    }
+
+    const metadata = await getGmailMessageMetadata({ accessToken, fetchImpl, messageId: message.id });
+    const normalized = normalizeGmailMessage(metadata, connection.accountEmail ?? connection.secret.accountEmail);
+    const match = matchGmailMessageToContact(normalized, contactByEmail);
+    if (!match) {
+      skippedUnmatched += 1;
+      continue;
+    }
+
+    try {
+      await prisma.emailLog.create({
+        data: {
+          body: normalized.snippet ? `Gmail snippet: ${normalized.snippet}` : "Gmail metadata imported without message body.",
+          direction: normalized.direction as EmailDirection,
+          fromText: normalized.fromText,
+          organizationId: match.organizationId,
+          occurredAt: normalized.occurredAt,
+          personId: match.id,
+          provider: "GOOGLE_WORKSPACE",
+          providerMessageId: message.id,
+          providerThreadId: metadata.threadId ?? message.threadId ?? null,
+          subject: normalized.subject,
+          toText: normalized.toText,
+          workspaceId: actor.workspaceId,
+          createdById: actor.actorUserId
+        }
+      });
+      existingIds.add(message.id);
+      created += 1;
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        skippedDuplicates += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  await prisma.emailConnection.update({
+    where: { id: connection.id },
+    data: {
+      lastError: null,
+      lastSyncAt: new Date(),
+      lastSyncCursor: messages[0]?.id ?? connection.lastSyncCursor
+    }
+  });
+  await writeAuditLog(actor, "email_connection.synced", "EmailConnection", connection.id, {
+    created,
+    provider: "GOOGLE_WORKSPACE",
+    skippedDuplicates,
+    skippedUnmatched,
+    totalFetched: messages.length
+  });
+
+  return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length };
+}
+
+async function resolveUsableGoogleAccessToken({
+  config,
+  connection,
+  env,
+  fetchImpl
+}: {
+  config: Required<ProviderConfig>;
+  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  env: EmailConnectionEnv;
+  fetchImpl: GmailFetch;
+}) {
+  const secret = connection.secret;
+  if (!secret) {
+    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
+  }
+
+  if (!secret.accessTokenExpiresAt || secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000) {
+    return decryptEmailToken(secret.encryptedAccessToken, env);
+  }
+
+  if (!secret.encryptedRefreshToken) {
+    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING", "Reconnect Gmail before syncing; the access token expired.", 400);
+  }
+
+  const refreshed = await refreshGoogleAccessToken({
+    config,
+    fetchImpl,
+    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
+  });
+  const accessTokenExpiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null;
+
+  await prisma.emailConnectionSecret.update({
+    where: { connectionId: connection.id },
+    data: {
+      accessTokenExpiresAt,
+      encryptedAccessToken: encryptEmailToken(refreshed.access_token as string, env)
+    }
+  });
+
+  return refreshed.access_token as string;
+}
+
+async function refreshGoogleAccessToken({
+  config,
+  fetchImpl,
+  refreshToken
+}: {
+  config: Required<ProviderConfig>;
+  fetchImpl: GmailFetch;
+  refreshToken: string;
+}) {
+  const response = await fetchImpl("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken
+    })
+  });
+
+  if (!response.ok) {
+    throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Gmail access token could not be refreshed.", 400);
+  }
+
+  const tokenResponse = (await response.json()) as GoogleTokenResponse;
+  if (!tokenResponse.access_token) {
+    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING_ACCESS", "Gmail did not return a refreshed access token.", 400);
+  }
+
+  return tokenResponse;
+}
+
+async function listRecentGmailMessages({
+  accessToken,
+  fetchImpl,
+  maxResults
+}: {
+  accessToken: string;
+  fetchImpl: GmailFetch;
+  maxResults: number;
+}) {
+  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  url.searchParams.set("maxResults", String(Math.min(Math.max(maxResults, 1), 25)));
+  const response = await fetchImpl(url, {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!response.ok) {
+    throw new ApiError("EMAIL_GMAIL_LIST_FAILED", "Recent Gmail messages could not be listed.", 400);
+  }
+
+  const body = (await response.json()) as GmailListResponse;
+  return body.messages?.filter((message) => message.id) ?? [];
+}
+
+async function getGmailMessageMetadata({
+  accessToken,
+  fetchImpl,
+  messageId
+}: {
+  accessToken: string;
+  fetchImpl: GmailFetch;
+  messageId: string;
+}) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
+  url.searchParams.set("format", "metadata");
+  for (const header of ["Subject", "From", "To", "Cc", "Date"]) {
+    url.searchParams.append("metadataHeaders", header);
+  }
+  const response = await fetchImpl(url, {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!response.ok) {
+    throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", "Gmail message metadata could not be loaded.", 400);
+  }
+
+  return (await response.json()) as GmailMessageResponse;
+}
+
+function normalizeGmailMessage(message: GmailMessageResponse, accountEmail: string) {
+  const headers = new Map((message.payload?.headers ?? []).map((header) => [header.name?.toLowerCase() ?? "", header.value ?? ""]));
+  const fromText = optionalText(headers.get("from"));
+  const toText = optionalText(headers.get("to"));
+  const ccText = optionalText(headers.get("cc"));
+  const account = normalizeEmailAddress(accountEmail);
+  const fromEmails = extractEmailAddresses(fromText);
+  const toEmails = [...extractEmailAddresses(toText), ...extractEmailAddresses(ccText)];
+  const direction = account && fromEmails.includes(account) ? "OUTBOUND" : "INBOUND";
+  const occurredAt = parseGmailDate(headers.get("date"), message.internalDate);
+
+  return {
+    ccText,
+    direction,
+    fromEmails,
+    fromText,
+    occurredAt,
+    snippet: optionalText(message.snippet),
+    subject: optionalText(headers.get("subject")) ?? "(No subject)",
+    toEmails,
+    toText
+  };
+}
+
+function matchGmailMessageToContact(
+  message: ReturnType<typeof normalizeGmailMessage>,
+  contactByEmail: Map<string, { email: string | null; id: string; organizationId: string | null }>
+) {
+  const candidates = message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
+  for (const email of candidates) {
+    const contact = contactByEmail.get(email);
+    if (contact) return contact;
+  }
+  return null;
+}
+
+function googleProviderCard({
+  config,
+  connection,
+  provider,
+  tokenEncryptionReady
+}: {
+  config: ProviderConfig;
+  connection?: { accountEmail: string | null; status: EmailConnectionStatus };
+  provider: "GOOGLE_WORKSPACE";
+  tokenEncryptionReady: boolean;
+}): EmailProviderCard {
+  const configured = isProviderConfigured(config);
+
+  if (!configured) {
+    return {
+      actionLabel: "Configure OAuth",
+      detail: "Add the Google OAuth client id, client secret, and redirect URI env vars before Gmail can connect.",
+      disabled: true,
+      name: providerLabels[provider],
+      provider,
+      scopes: [...gmailOAuthScopes],
+      status: "Not configured"
+    };
+  }
+
+  if (!tokenEncryptionReady) {
+    return {
+      actionLabel: "Encryption required",
+      detail: "Google OAuth config is present, but token encryption is not configured. Northstar will not store OAuth tokens in plaintext.",
+      disabled: true,
+      name: providerLabels[provider],
+      provider,
+      scopes: [...gmailOAuthScopes],
+      status: "Token encryption required"
+    };
+  }
+
+  return {
+    actionLabel: connection?.status === "CONNECTED" ? "Reconnect Gmail" : "Connect Gmail",
+    detail:
+      connection?.status === "CONNECTED" && connection.accountEmail
+        ? `Connected to ${connection.accountEmail}. Use manual sync to import recent matched metadata from known contacts.`
+        : "Connect Gmail with read-only profile and Gmail metadata scopes. This stores encrypted OAuth tokens only; manual sync imports matched recent metadata after connection.",
+      disabled: false,
+      href: "/api/email-connections/google/connect",
+      name: providerLabels[provider],
+      provider,
+      scopes: [...gmailOAuthScopes],
+      syncAvailable: connection?.status === "CONNECTED",
+      status: connection?.status === "CONNECTED" ? "Connected" : "Ready to connect"
+  };
+}
+
+function providerCard({
+  config,
+  connectionStatus,
+  detailWhenConfigured,
+  provider,
+  scopes,
+  tokenEncryptionReady
+}: {
+  config: ProviderConfig;
+  connectionStatus?: EmailConnectionStatus;
+  detailWhenConfigured: string;
+  provider: "GOOGLE_WORKSPACE" | "MICROSOFT_365";
+  scopes: string[];
+  tokenEncryptionReady: boolean;
+}): EmailProviderCard {
+  const configured = isProviderConfigured(config);
+
+  if (!configured) {
+    return {
+      actionLabel: "Configure OAuth",
+      detail: "Add the OAuth client id, client secret, and redirect URI env vars before connection flows can be enabled.",
+      disabled: true,
+      name: providerLabels[provider],
+      provider,
+      scopes,
+      status: "Not configured"
+    };
+  }
+
+  if (!tokenEncryptionReady) {
+    return {
+      actionLabel: "Encryption required",
+      detail: "OAuth config is present, but token encryption is not configured. Northstar will not store OAuth tokens in plaintext.",
+      disabled: true,
+      name: providerLabels[provider],
+      provider,
+      scopes,
+      status: "Token encryption required"
+    };
+  }
+
+  return {
+    actionLabel: "OAuth route pending",
+    detail: connectionStatus ? `Saved connection metadata exists with status ${connectionStatus}. ${detailWhenConfigured}` : detailWhenConfigured,
+    disabled: true,
+    name: providerLabels[provider],
+    provider,
+    scopes,
+    status: connectionStatus ?? "Ready for OAuth setup"
+  };
+}
+
+function isProviderConfigured(config: ProviderConfig) {
+  return Boolean(readNonEmpty(config.clientId) && readNonEmpty(config.clientSecret) && readNonEmpty(config.redirectUri));
+}
+
+function normalizeScopes(scope: string | undefined) {
+  const scopes = scope?.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+  return scopes && scopes.length > 0 ? scopes : [...gmailOAuthScopes];
+}
+
+function readNonEmpty(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function parseGmailDate(dateHeader: string | undefined, internalDate: string | undefined) {
+  const headerDate = dateHeader ? new Date(dateHeader) : null;
+  if (headerDate && !Number.isNaN(headerDate.getTime())) return headerDate;
+  const internalTimestamp = internalDate ? Number(internalDate) : NaN;
+  if (!Number.isNaN(internalTimestamp)) return new Date(internalTimestamp);
+  return new Date();
+}
+
+function extractEmailAddresses(value: string | null) {
+  if (!value) return [];
+  return [...value.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map((match) => match[0].toLowerCase());
+}
+
+function normalizeEmailAddress(value: string | null | undefined) {
+  return value?.trim().toLowerCase() || "";
+}
+
+function optionalText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}

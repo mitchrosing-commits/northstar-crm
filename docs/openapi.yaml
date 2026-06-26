@@ -1,0 +1,1227 @@
+openapi: 3.0.3
+info:
+  title: Northstar CRM API
+  version: 0.1.0
+  description: Workspace-scoped REST API for the Northstar CRM MVP.
+servers:
+  - url: /api/v1
+security:
+  - TrustedUserHeader: []
+components:
+  securitySchemes:
+    TrustedUserHeader:
+      type: apiKey
+      in: header
+      name: x-user-id
+      description: Trusted upstream/session user id header or local session cookie. Local signup/login are browser-action flows; OAuth, SSO, API keys, and webhook subscriptions are not implemented yet. Password reset is browser-action based and not part of this workspace REST API.
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+    PipelineId:
+      name: pipelineId
+      in: path
+      required: true
+      schema:
+        type: string
+    StageId:
+      name: stageId
+      in: path
+      required: true
+      schema:
+        type: string
+    DealId:
+      name: dealId
+      in: path
+      required: true
+      schema:
+        type: string
+    LeadId:
+      name: leadId
+      in: path
+      required: true
+      schema:
+        type: string
+    PersonId:
+      name: personId
+      in: path
+      required: true
+      schema:
+        type: string
+    OrganizationId:
+      name: organizationId
+      in: path
+      required: true
+      schema:
+        type: string
+    ActivityId:
+      name: activityId
+      in: path
+      required: true
+      schema:
+        type: string
+    NoteId:
+      name: noteId
+      in: path
+      required: true
+      schema:
+        type: string
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+    QuoteId:
+      name: quoteId
+      in: path
+      required: true
+      schema:
+        type: string
+    LineItemId:
+      name: lineItemId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              nullable: true
+    WorkspaceInput:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+    PipelineInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        sortOrder:
+          type: integer
+    StageInput:
+      type: object
+      required: [name, sortOrder]
+      properties:
+        name:
+          type: string
+        probability:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        sortOrder:
+          type: integer
+    DealInput:
+      type: object
+      required: [pipelineId, stageId, title]
+      properties:
+        pipelineId:
+          type: string
+        stageId:
+          type: string
+        ownerId:
+          type: string
+          nullable: true
+        personId:
+          type: string
+          nullable: true
+        organizationId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        valueCents:
+          type: integer
+          nullable: true
+        currency:
+          type: string
+          default: USD
+        status:
+          type: string
+          enum: [OPEN, WON, LOST]
+        expectedCloseAt:
+          type: string
+          format: date-time
+          nullable: true
+    CloseDealInput:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [WON, LOST]
+        lostReason:
+          type: string
+          nullable: true
+          maxLength: 1000
+    LeadInput:
+      type: object
+      required: [title]
+      properties:
+        ownerId:
+          type: string
+          nullable: true
+        personId:
+          type: string
+          nullable: true
+        organizationId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        source:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [NEW, QUALIFIED, DISQUALIFIED, CONVERTED]
+    ConvertLeadInput:
+      type: object
+      required: [pipelineId, stageId]
+      properties:
+        pipelineId:
+          type: string
+        stageId:
+          type: string
+        title:
+          type: string
+          nullable: true
+    PersonInput:
+      type: object
+      required: [firstName]
+      properties:
+        ownerId:
+          type: string
+          nullable: true
+        organizationId:
+          type: string
+          nullable: true
+        firstName:
+          type: string
+        lastName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+    OrganizationInput:
+      type: object
+      required: [name]
+      properties:
+        ownerId:
+          type: string
+          nullable: true
+        name:
+          type: string
+        domain:
+          type: string
+          nullable: true
+    ActivityInput:
+      type: object
+      required: [type, title]
+      properties:
+        ownerId:
+          type: string
+          nullable: true
+        dealId:
+          type: string
+          nullable: true
+        leadId:
+          type: string
+          nullable: true
+        personId:
+          type: string
+          nullable: true
+        organizationId:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [CALL, EMAIL, MEETING, TASK]
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+    NoteInput:
+      type: object
+      required: [body]
+      properties:
+        dealId:
+          type: string
+          nullable: true
+        leadId:
+          type: string
+          nullable: true
+        personId:
+          type: string
+          nullable: true
+        organizationId:
+          type: string
+          nullable: true
+        body:
+          type: string
+    EmailLogInput:
+      type: object
+      required: [subject, body, direction, occurredAt]
+      description: Manual email logging only. This does not send email, sync inboxes, process inbound email, or create background jobs.
+      properties:
+        dealId:
+          type: string
+          nullable: true
+        leadId:
+          type: string
+          nullable: true
+        personId:
+          type: string
+          nullable: true
+        organizationId:
+          type: string
+          nullable: true
+        subject:
+          type: string
+        body:
+          type: string
+        direction:
+          type: string
+          enum: [INBOUND, OUTBOUND]
+        occurredAt:
+          type: string
+          format: date-time
+        fromText:
+          type: string
+          nullable: true
+        toText:
+          type: string
+          nullable: true
+        ccText:
+          type: string
+          nullable: true
+    EmailTemplateInput:
+      type: object
+      required: [name, subject, body]
+      description: Workspace-scoped reusable text for manual email logs only. No sending or merge variables are implemented.
+      properties:
+        name:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+    CustomFieldInput:
+      type: object
+      required: [entityType, name, key, fieldType]
+      description: MVP custom field definition creation is limited to Deal, Contact/Person, Organization, and Lead fields.
+      properties:
+        entityType:
+          type: string
+          enum: [DEAL, PERSON, ORGANIZATION, LEAD]
+        name:
+          type: string
+        key:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        fieldType:
+          type: string
+          enum: [TEXT, NUMBER, DATE, BOOLEAN]
+          description: SELECT, MULTI_SELECT, and URL definitions may exist in seeded/demo data but are read-only in the MVP UI.
+        required:
+          type: boolean
+        options:
+          nullable: true
+    CustomFieldDefinition:
+      type: object
+      properties:
+        id:
+          type: string
+        workspaceId:
+          type: string
+        entityType:
+          type: string
+          enum: [DEAL, LEAD, PERSON, ORGANIZATION]
+        name:
+          type: string
+        key:
+          type: string
+        fieldType:
+          type: string
+          enum: [TEXT, NUMBER, DATE, BOOLEAN, SELECT, MULTI_SELECT, URL]
+        required:
+          type: boolean
+        options:
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CustomFieldValuesInput:
+      type: object
+      required: [entityType, entityId, values]
+      description: Updates custom field values for one Deal, Contact/Person, Organization, or unconverted Lead record.
+      properties:
+        entityType:
+          type: string
+          enum: [DEAL, PERSON, ORGANIZATION, LEAD]
+        entityId:
+          type: string
+          description: Deal ID when entityType is DEAL, Contact/Person ID when entityType is PERSON, Organization ID when entityType is ORGANIZATION, or Lead ID when entityType is LEAD.
+        values:
+          type: object
+          additionalProperties: true
+          description: Map of custom field definition IDs to values.
+      example:
+        entityType: LEAD
+        entityId: lead_123
+        values:
+          field_text_123: "High urgency"
+          field_number_123: 42
+          field_date_123: "2026-07-15"
+          field_boolean_123: true
+  responses:
+    Ok:
+      description: Successful response.
+    Created:
+      description: Created response.
+    NoContent:
+      description: No content.
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+paths:
+  /workspaces:
+    get:
+      summary: List workspaces for the actor
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}:
+    get:
+      summary: Get a workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/pipelines:
+    get:
+      summary: List pipelines with stages and stage deals
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a pipeline
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/pipelines/{pipelineId}:
+    patch:
+      summary: Update a pipeline
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PipelineId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      summary: Soft delete a pipeline
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PipelineId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/pipelines/{pipelineId}/stages:
+    get:
+      summary: List stages for a pipeline
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PipelineId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a stage in a pipeline
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PipelineId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StageInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/stages/{stageId}:
+    patch:
+      summary: Update a stage
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/StageId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StageInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      summary: Soft delete a stage
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/StageId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/deals:
+    get:
+      summary: List deals
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a deal
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/deals/{dealId}:
+    get:
+      summary: Get a deal with related records
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    patch:
+      summary: Update an open deal
+      description: Also supports stage movement inside the deal's current pipeline. Closed deals reject normal updates.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      summary: Soft delete a deal
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/deals/{dealId}/close:
+    post:
+      summary: Mark a deal won or lost
+      description: Preserves pipeline/stage and writes deal.won or deal.lost audit events.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseDealInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/deals/{dealId}/reopen:
+    post:
+      summary: Reopen a won or lost deal
+      description: Sets a won or lost deal back to OPEN, preserves pipeline/stage, and writes a deal.reopened audit event. OPEN deals return a conflict-style error.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/deals/{dealId}/line-items:
+    post:
+      summary: Add a deal line item
+      description: Snapshots product name, price, currency, and quantity onto the deal line item without changing deal value.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/deals/{dealId}/quotes:
+    post:
+      summary: Create an internal quote draft from deal line items
+      description: Requires at least one deal line item and one currency. Quote items snapshot current deal line items.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/deal-line-items/{lineItemId}:
+    delete:
+      summary: Remove a deal line item
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/LineItemId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/quotes/{quoteId}/mark-sent:
+    post:
+      summary: Mark a draft quote sent
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/quotes/{quoteId}/accept:
+    post:
+      summary: Mark an internal quote accepted
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/quotes/{quoteId}/decline:
+    post:
+      summary: Mark an internal quote declined
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/quotes/{quoteId}/adjustments:
+    patch:
+      summary: Update draft quote-level discount and tax adjustments
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/quotes/{quoteId}/public-link:
+    post:
+      summary: Create or return the active public quote link
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+    delete:
+      summary: Revoke the active public quote link
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/quotes/{quoteId}/sync-deal-value:
+    post:
+      summary: Sync an accepted quote total to its linked deal value
+      description: Explicit accepted-quote-only action. Repeated syncs are no-ops when the deal already matches the quote.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/products:
+    get:
+      summary: List products
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a product
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/products/{productId}:
+    patch:
+      summary: Update a product
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/products/{productId}/deactivate:
+    post:
+      summary: Deactivate a product
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/products/{productId}/activate:
+    post:
+      summary: Reactivate a product
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/leads:
+    get:
+      summary: List leads
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a lead
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeadInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/leads/{leadId}:
+    get:
+      summary: Get a lead with related records
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/LeadId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    patch:
+      summary: Update an unconverted lead
+      description: Converted leads reject normal updates.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/LeadId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeadInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/leads/{leadId}/convert:
+    post:
+      summary: Convert a lead to a deal
+      description: Creates a deal transactionally, marks the lead converted, reattaches lead activities/notes to the new deal, and writes audit events.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/LeadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConvertLeadInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/people:
+    get:
+      summary: List contacts
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a contact
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/people/{personId}:
+    get:
+      summary: Get a contact
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PersonId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    patch:
+      summary: Update a contact
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PersonId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      summary: Soft delete a contact
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/PersonId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/organizations:
+    get:
+      summary: List organizations
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create an organization
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrganizationInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/organizations/{organizationId}:
+    get:
+      summary: Get an organization
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/OrganizationId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    patch:
+      summary: Update an organization
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/OrganizationId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrganizationInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      summary: Soft delete an organization
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/OrganizationId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/activities:
+    get:
+      summary: List activities
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create an activity
+      description: Activities can attach to deals, leads, contacts, or organizations. Converted leads reject new activities.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivityInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/activities/{activityId}:
+    patch:
+      summary: Update, reschedule, or complete an activity
+      description: Set completedAt to complete an open activity. Open activities can edit title, type, dueAt, ownerId, and description. Completed activities reject normal edits, and attachments cannot be changed.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ActivityId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivityInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    delete:
+      summary: Soft delete an activity
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ActivityId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/notes:
+    get:
+      summary: List notes
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a note
+      description: Notes can attach to deals, leads, contacts, or organizations. Converted leads reject new notes.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/notes/{noteId}:
+    delete:
+      summary: Soft delete a note
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/email-logs:
+    get:
+      summary: List manual email logs
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a manual email log
+      description: Email logs can attach to deals, unconverted leads, contacts, or organizations. This route records CRM history only and never sends email.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailLogInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/email-templates:
+    get:
+      summary: List email templates
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create an email template
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailTemplateInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/email-templates/{templateId}:
+    patch:
+      summary: Update an email template
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailTemplateInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/email-templates/{templateId}/deactivate:
+    post:
+      summary: Deactivate an email template
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/email-templates/{templateId}/activate:
+    post:
+      summary: Reactivate an email template
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/custom-fields:
+    get:
+      summary: List custom field definitions
+      description: Lists workspace custom field definitions. Deal, Contact/Person, Organization, and Lead fields are currently surfaced in the UI.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Custom field definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomFieldDefinition"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create a custom field definition
+      description: Creates a Deal, Contact/Person, Organization, or Lead custom field definition. Supported editable field types are TEXT, NUMBER, DATE, and BOOLEAN.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomFieldInput"
+      responses:
+        "201":
+          description: Custom field definition created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomFieldDefinition"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          description: Validation error, such as unsupported entity type, unsupported field type, or invalid key format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /workspaces/{workspaceId}/custom-field-values:
+    patch:
+      summary: Update Deal, Contact, Organization, or Lead custom field values
+      description: Updates values for Deal, Contact/Person, Organization, or unconverted Lead custom fields. Converted leads reject custom field value updates. Values are validated by field type. Unsupported field types such as seeded SELECT fields are read-only and return a validation-style error if submitted.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomFieldValuesInput"
+      responses:
+        "200":
+          description: Updated custom field definitions with current values included.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: "#/components/schemas/CustomFieldDefinition"
+                    - type: object
+                      properties:
+                        values:
+                          type: array
+                          items:
+                            type: object
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Record or custom field definition was not found in the workspace, or the field definition does not match the requested entity type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Converted lead cannot be updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Validation error, such as invalid entity type, invalid value for field type, missing required value, or read-only unsupported field type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /workspaces/{workspaceId}/audit-logs:
+    get:
+      summary: List recent audit logs
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/exports/deals:
+    get:
+      summary: Export deals as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.
+  /workspaces/{workspaceId}/exports/contacts:
+    get:
+      summary: Export contacts as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.
+  /workspaces/{workspaceId}/exports/organizations:
+    get:
+      summary: Export organizations as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.
+  /workspaces/{workspaceId}/exports/leads:
+    get:
+      summary: Export leads as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.
+  /workspaces/{workspaceId}/exports/activities:
+    get:
+      summary: Export activities as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.
+  /workspaces/{workspaceId}/exports/quotes:
+    get:
+      summary: Export quotes as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.

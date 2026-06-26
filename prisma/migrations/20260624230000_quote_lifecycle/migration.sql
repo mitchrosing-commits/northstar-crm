@@ -1,0 +1,4 @@
+-- AlterEnum
+ALTER TYPE "QuoteStatus" ADD VALUE 'SENT';
+ALTER TYPE "QuoteStatus" ADD VALUE 'ACCEPTED';
+ALTER TYPE "QuoteStatus" ADD VALUE 'DECLINED';

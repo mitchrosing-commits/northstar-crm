@@ -1,0 +1,110 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const signupActions = readFileSync(join(process.cwd(), "app/signup/actions.ts"), "utf8");
+const signupForm = readFileSync(join(process.cwd(), "app/signup/signup-form.tsx"), "utf8");
+const loginActions = readFileSync(join(process.cwd(), "app/login/actions.ts"), "utf8");
+const workspaceService = readFileSync(join(process.cwd(), "lib/services/workspace-service.ts"), "utf8");
+const pipelineService = readFileSync(join(process.cwd(), "lib/services/pipeline-service.ts"), "utf8");
+const dashboardService = readFileSync(join(process.cwd(), "lib/services/dashboard-service.ts"), "utf8");
+const dashboardPage = readFileSync(join(process.cwd(), "app/dashboard/page.tsx"), "utf8");
+const pipelineBoard = readFileSync(join(process.cwd(), "components/pipeline-board.tsx"), "utf8");
+const dealsPage = readFileSync(join(process.cwd(), "app/deals/page.tsx"), "utf8");
+const contactsPage = readFileSync(join(process.cwd(), "app/contacts/page.tsx"), "utf8");
+const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
+const activitiesPage = readFileSync(join(process.cwd(), "app/activities/page.tsx"), "utf8");
+const quoteDraftsPanel = readFileSync(join(process.cwd(), "components/quote-drafts-panel.tsx"), "utf8");
+
+describe("first-run clean workspace experience", () => {
+  it("keeps normal signup clean while provisioning only the workspace and default pipeline foundation", () => {
+    expect(signupActions).toContain("signupWithEmailAndPassword({ email, name, password })");
+    expect(signupActions).toContain("createWorkspaceFromName(result.user.id, workspaceName)");
+    expect(workspaceService).toContain("await ensureDefaultPipelineForWorkspace(workspace.id)");
+    expect(pipelineService).toContain("export const defaultPipelineName = \"New Business\"");
+    expect(pipelineService).toContain("{ name: \"Qualified\", probability: 20 }");
+    expect(pipelineService).toContain("{ name: \"Discovery\", probability: 35 }");
+    expect(pipelineService).toContain("{ name: \"Proposal\", probability: 60 }");
+    expect(pipelineService).toContain("{ name: \"Negotiation\", probability: 80 }");
+    expect(pipelineService).toContain("{ name: \"Closed\", probability: 100 }");
+
+    const signupPath = [signupActions, workspaceService].join("\n");
+    expect(signupPath).not.toContain("prisma.deal.create");
+    expect(signupPath).not.toContain("prisma.person.create");
+    expect(signupPath).not.toContain("prisma.organization.create");
+    expect(signupPath).not.toContain("prisma.activity.create");
+    expect(signupPath).not.toContain("prisma.note.create");
+    expect(signupPath).not.toContain("prisma.quote.create");
+    expect(signupPath).not.toContain("prisma.product.create");
+    expect(signupPath).not.toContain("prisma.emailLog.create");
+    expect(signupPath).not.toContain("prisma.emailTemplate.create");
+    expect(signupPath).not.toContain("prisma.emailConnection.create");
+    expect(signupPath).not.toContain("prisma.emailConnectionSecret.create");
+    expect(signupPath).not.toContain("NDA Status");
+    expect(signupPath).not.toContain("MSA Status");
+    expect(signupPath).not.toContain("SOW Status");
+  });
+
+  it("preserves email-based signup and login identity", () => {
+    expect(signupForm).toContain("name=\"email\"");
+    expect(signupForm).toContain("type=\"email\"");
+    expect(signupActions).toContain("const email = String(formData.get(\"email\") ?? \"\")");
+    expect(signupActions).toContain("signupWithEmailAndPassword({ email, name, password })");
+    expect(loginActions).toContain("const email = String(formData.get(\"email\") ?? \"\")");
+    expect(loginActions).toContain("loginWithEmailAndPassword(email, password)");
+  });
+
+  it("shows first-run onboarding only for clean workspaces and keeps dashboard records visible", () => {
+    expect(dashboardService).toContain("hasMeaningfulCrmData");
+    expect(dashboardService).toContain("isCleanWorkspace: !hasMeaningfulCrmData");
+    expect(dashboardService).toContain("prisma.deal.groupBy");
+    expect(dashboardService).toContain("prisma.lead.count");
+    expect(dashboardService).toContain("prisma.person.count");
+    expect(dashboardService).toContain("prisma.organization.count");
+    expect(dashboardService).toContain("prisma.activity.count");
+    expect(dashboardService).toContain("prisma.quote.count");
+    expect(dashboardService).toContain("prisma.product.count");
+    expect(dashboardService).toContain("prisma.note.count");
+    expect(dashboardService).toContain("where: { workspaceId: actor.workspaceId, ...activeWhere }");
+
+    expect(dashboardPage).toContain("summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null");
+    expect(dashboardPage).toContain("summary.recentOpenDeals.length > 0");
+    expect(dashboardPage).toContain("summary.priorityActivities.length > 0");
+    expect(dashboardPage).toContain("summary.recentQuotes.length > 0");
+    expect(dashboardPage).toContain("Pipeline By Stage");
+    expect(dashboardPage).toContain("Recent Changes");
+  });
+
+  it("renders a polished first-run checklist with useful CRM actions", () => {
+    expect(dashboardPage).toContain("Set up your sales workspace");
+    expect(dashboardPage).toContain("Your workspace is clean and ready.");
+    expect(dashboardPage).toContain("Create your first deal");
+    expect(dashboardPage).toContain("href: \"/deals/new\"");
+    expect(dashboardPage).toContain("Add a contact");
+    expect(dashboardPage).toContain("href: \"/contacts/new\"");
+    expect(dashboardPage).toContain("Add an organization");
+    expect(dashboardPage).toContain("href: \"/organizations/new\"");
+    expect(dashboardPage).toContain("Add your first follow-up activity");
+    expect(dashboardPage).toContain("href: \"/activities/new\"");
+    expect(dashboardPage).toContain("Create a quote when ready");
+    expect(dashboardPage).toContain("href: \"/deals\"");
+  });
+
+  it("keeps fresh-workspace empty states product-facing and action-oriented", () => {
+    const emptyStateSources = [dashboardPage, pipelineBoard, dealsPage, contactsPage, organizationsPage, activitiesPage, quoteDraftsPanel].join("\n");
+
+    expect(pipelineBoard).toContain("Your stages are ready.");
+    expect(pipelineBoard).toContain("Create your first deal to start moving opportunities through this board.");
+    expect(pipelineBoard).toContain("href=\"/deals/new\"");
+    expect(dealsPage).toContain("Create a deal or convert a lead to start tracking opportunities.");
+    expect(contactsPage).toContain("Create a contact to start linking people to deals, activities, and organizations.");
+    expect(organizationsPage).toContain("Create a company or account to group contacts, deals, activities, and notes.");
+    expect(activitiesPage).toContain("No activities yet. Create a follow-up to plan the next call, email, meeting, or task.");
+    expect(activitiesPage).toContain("href=\"/activities/new\"");
+    expect(dashboardPage).toContain("No quotes yet. Quotes usually come after a deal has a customer conversation and line items to review.");
+    expect(quoteDraftsPanel).toContain("No internal quote drafts yet. Create one after the deal has line items to review a frozen snapshot.");
+    expect(emptyStateSources).not.toContain("run seed script");
+    expect(emptyStateSources).not.toContain("Run the seed script");
+  });
+});

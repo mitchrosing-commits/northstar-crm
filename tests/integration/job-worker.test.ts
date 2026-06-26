@@ -1,0 +1,693 @@
+import { JobStatus } from "@prisma/client";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  internalNoopJobType,
+  jobHandlers,
+  passwordResetEmailJobType,
+  type JobHandlerRegistry
+} from "@/lib/jobs/handlers";
+import { runJobsOnce } from "@/lib/jobs/run-once";
+import { runJobsWorker } from "@/lib/jobs/work";
+import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
+
+type CrmServices = typeof import("@/lib/services/crm");
+type Fixture = Awaited<ReturnType<typeof createIntegrationFixture>>;
+
+let crm: CrmServices;
+let fixture: Fixture | undefined;
+
+beforeAll(async () => {
+  crm = await import("@/lib/services/crm");
+});
+
+beforeEach(async () => {
+  fixture = await createIntegrationFixture();
+});
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await fixture?.cleanup();
+  fixture = undefined;
+});
+
+afterAll(async () => {
+  await disconnectPrisma();
+});
+
+describe("single-run job worker", () => {
+  it("exits cleanly when there are no due jobs", async () => {
+    const result = await runJobsOnce({
+      workerId: "worker-empty",
+      now: new Date("2030-03-01T11:00:00.000Z")
+    });
+
+    expect(result).toEqual({ claimed: 0, succeeded: 0, failed: 0, dead: 0 });
+  });
+
+  it("continuous worker exits after idle timeout when there are no jobs", async () => {
+    const result = await runJobsWorker({
+      idleExitAfterMs: 0,
+      pollIntervalMs: 1,
+      workerId: "worker-idle",
+      now: new Date("2030-03-01T11:30:00.000Z")
+    });
+
+    expect(result).toEqual({
+      batches: 1,
+      claimed: 0,
+      recovered: 0,
+      succeeded: 0,
+      failed: 0,
+      dead: 0,
+      stopped: false
+    });
+  });
+
+  it("processes the internal noop job and marks it succeeded", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-01T12:00:00.000Z");
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { purpose: "worker mechanics only" },
+      runAt: now
+    });
+
+    const result = await runJobsOnce({ workerId: "worker-noop", now });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+    expect(reloaded).toMatchObject({
+      status: JobStatus.SUCCEEDED,
+      attempts: 1,
+      lockedAt: null,
+      lockedBy: null,
+      failedAt: null,
+      lastError: null
+    });
+    expect(reloaded.processedAt?.toISOString()).toBe(now.toISOString());
+  });
+
+  it("continuous worker processes the internal noop job and then exits after idle timeout", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-01T12:30:00.000Z");
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { purpose: "continuous worker mechanics" },
+      runAt: now
+    });
+
+    const result = await runJobsWorker({
+      idleExitAfterMs: 0,
+      pollIntervalMs: 1,
+      workerId: "worker-continuous-noop",
+      now
+    });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result).toMatchObject({
+      claimed: 1,
+      succeeded: 1,
+      failed: 0,
+      dead: 0,
+      stopped: false
+    });
+    expect(result.batches).toBeGreaterThanOrEqual(2);
+    expect(reloaded).toMatchObject({
+      status: JobStatus.SUCCEEDED,
+      attempts: 1,
+      lockedAt: null,
+      lockedBy: null,
+      lastError: null
+    });
+  });
+
+  it("continuous worker recovers stale running jobs before processing a batch", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-01T12:40:00.000Z");
+    let observedRecovery = 0;
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { purpose: "stale recovery mechanics" },
+      runAt: new Date("2030-03-01T12:00:00.000Z")
+    });
+    await fx.prisma.job.update({
+      where: { id: job.id },
+      data: {
+        status: JobStatus.RUNNING,
+        attempts: 2,
+        lockedAt: new Date("2030-03-01T12:10:00.000Z"),
+        lockedBy: "crashed-worker"
+      }
+    });
+
+    const result = await runJobsWorker({
+      idleExitAfterMs: 0,
+      onRecoveryResult: (recovery) => {
+        observedRecovery += recovery.recovered;
+      },
+      pollIntervalMs: 1,
+      staleAfterMs: 15 * 60 * 1000,
+      workerId: "worker-stale-recovery",
+      now
+    });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(observedRecovery).toBe(1);
+    expect(result).toMatchObject({
+      recovered: 1,
+      claimed: 1,
+      succeeded: 1,
+      failed: 0,
+      dead: 0,
+      stopped: false
+    });
+    expect(result.batches).toBeGreaterThanOrEqual(2);
+    expect(reloaded).toMatchObject({
+      status: JobStatus.SUCCEEDED,
+      attempts: 3,
+      lockedAt: null,
+      lockedBy: null,
+      lastError: null
+    });
+  });
+
+  it("continuous worker passes the normalized worker id to claimed jobs", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-01T12:45:00.000Z");
+    let observedLockedBy: string | null | undefined;
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: "internal.inspect_worker",
+      payload: {},
+      runAt: now
+    });
+
+    const result = await runJobsWorker({
+      handlers: {
+        "internal.inspect_worker": async ({ job }) => {
+          const claimed = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+          observedLockedBy = claimed.lockedBy;
+        }
+      },
+      idleExitAfterMs: 0,
+      pollIntervalMs: 1,
+      workerId: "  worker-visible  ",
+      now
+    });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result.succeeded).toBe(1);
+    expect(observedLockedBy).toBe("worker-visible");
+    expect(reloaded.status).toBe(JobStatus.SUCCEEDED);
+  });
+
+  it("continuous worker stops gracefully after the current batch when aborted", async () => {
+    const fx = currentFixture();
+    const abortController = new AbortController();
+    const now = new Date("2030-03-01T12:50:00.000Z");
+    await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: {},
+      runAt: now
+    });
+
+    const result = await runJobsWorker({
+      idleExitAfterMs: 1000,
+      onBatchResult: () => abortController.abort(),
+      pollIntervalMs: 1,
+      signal: abortController.signal,
+      workerId: "worker-graceful-stop",
+      now
+    });
+
+    expect(result).toMatchObject({
+      batches: 1,
+      claimed: 1,
+      recovered: 0,
+      succeeded: 1,
+      failed: 0,
+      dead: 0,
+      stopped: true
+    });
+  });
+
+  it("handles internal noop validation failures without storing payload details in lastError", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-01T13:00:00.000Z");
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: "payload-secret-reset-token",
+      maxAttempts: 1,
+      runAt: now
+    });
+
+    const result = await runJobsOnce({ workerId: "worker-noop-invalid", now });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+    expect(reloaded.status).toBe(JobStatus.DEAD);
+    expect(reloaded.lastError).toBe("Invalid internal noop job payload.");
+    expect(reloaded.lastError).not.toContain("payload-secret-reset-token");
+  });
+
+  it("handles unknown job types safely through retry semantics", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-02T12:00:00.000Z");
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: "unknown.job_type",
+      payload: { ignored: true },
+      maxAttempts: 2,
+      runAt: now
+    });
+
+    const result = await runJobsOnce({ workerId: "worker-unknown", now });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, dead: 0 });
+    expect(reloaded).toMatchObject({
+      status: JobStatus.PENDING,
+      attempts: 1,
+      lockedAt: null,
+      lockedBy: null,
+      processedAt: null,
+      failedAt: null
+    });
+    expect(reloaded.runAt.getTime()).toBeGreaterThan(now.getTime());
+    expect(reloaded.lastError).toContain("No job handler registered for type: unknown.job_type");
+  });
+
+  it("processes queued password reset email jobs through the webhook sender", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: "Northstar CRM <no-reply@example.test>",
+      AUTH_EMAIL_WEBHOOK_TOKEN: "webhook-token",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:00:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:30:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=queued-reset-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-email", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded.status).toBe(JobStatus.SUCCEEDED);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://mail.example.test/auth-email",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            type: "password_reset",
+            to: fx.userA.email,
+            from: "Northstar CRM <no-reply@example.test>",
+            resetUrl: "https://crm.example.test/reset-password?token=queued-reset-token",
+            expiresAt: "2030-03-02T13:30:00.000Z"
+          })
+        })
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("shows password reset jobs as due pending before run-once and succeeded after processing", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:15:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:45:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=status-flow-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+
+    try {
+      const before = await crm.getJobQueueStatus({ now });
+      const result = await runJobsOnce({ workerId: "worker-password-reset-status-flow", now });
+      const after = await crm.getJobQueueStatus({ now: new Date("2030-03-02T13:16:00.000Z") });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(before).toMatchObject({
+        duePendingCount: 1,
+        futurePendingCount: 0,
+        total: 1
+      });
+      expect(before.byStatus[JobStatus.PENDING]).toBe(1);
+      expect(before.oldestDuePendingRunAt?.toISOString()).toBe(now.toISOString());
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded.status).toBe(JobStatus.SUCCEEDED);
+      expect(after).toMatchObject({
+        duePendingCount: 0,
+        futurePendingCount: 0,
+        total: 1
+      });
+      expect(after.byStatus[JobStatus.PENDING]).toBe(0);
+      expect(after.byStatus[JobStatus.SUCCEEDED]).toBe(1);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("retries password reset email jobs safely when webhook config is missing", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: undefined
+    });
+    const now = new Date("2030-03-02T14:00:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T14:30:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=missing-config-token",
+        to: fx.userA.email
+      },
+      maxAttempts: 1,
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-missing-config", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+      expect(reloaded.status).toBe(JobStatus.DEAD);
+      expect(reloaded.lastError).toBe("Password reset email webhook is not configured.");
+      expect(reloaded.lastError).not.toContain("missing-config-token");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("retries password reset email webhook delivery failures without storing reset URLs or tokens in lastError", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
+    const now = new Date("2030-03-02T15:00:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T15:30:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=provider-failure-token",
+        to: fx.userA.email
+      },
+      maxAttempts: 2,
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-failed-delivery", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, dead: 0 });
+      expect(reloaded).toMatchObject({
+        status: JobStatus.PENDING,
+        attempts: 1,
+        lockedAt: null,
+        lockedBy: null
+      });
+      expect(reloaded.lastError).toBe("Password reset email webhook failed.");
+      expect(reloaded.lastError).not.toContain("provider-failure-token");
+      expect(reloaded.lastError).not.toContain("reset-password");
+      expect(reloaded.lastError).not.toContain(fx.userA.email);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("redacts reset URLs from handler errors before storing lastError", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-02T16:00:00.000Z");
+    const job = await crm.enqueueJob({
+      type: "internal.reset_url_failure",
+      payload: {},
+      maxAttempts: 1,
+      runAt: now
+    });
+    const handlers: JobHandlerRegistry = {
+      "internal.reset_url_failure": async () => {
+        throw new Error("Failed https://crm.example.test/reset-password?token=raw-reset-token for recipient@example.test");
+      }
+    };
+
+    const result = await runJobsOnce({ handlers, workerId: "worker-reset-url-redaction", now });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+    expect(reloaded.lastError).toContain("[redacted reset url]");
+    expect(reloaded.lastError).not.toContain("raw-reset-token");
+    expect(reloaded.lastError).not.toContain("/reset-password");
+  });
+
+  it("dead-letters handler failures at max attempts", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-03T12:00:00.000Z");
+    const job = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: "internal.test_failure",
+      payload: { shouldFail: true },
+      maxAttempts: 1,
+      runAt: now
+    });
+    const handlers: JobHandlerRegistry = {
+      "internal.test_failure": async () => {
+        throw new Error("Handler failed with Bearer secret-token and /reset-password?token=raw-token");
+      }
+    };
+
+    const result = await runJobsOnce({ handlers, workerId: "worker-dead", now });
+    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+    expect(reloaded).toMatchObject({
+      status: JobStatus.DEAD,
+      attempts: 1,
+      lockedAt: null,
+      lockedBy: null,
+      processedAt: null
+    });
+    expect(reloaded.failedAt?.toISOString()).toBe(now.toISOString());
+    expect(reloaded.lastError).toContain("Bearer [redacted]");
+    expect(reloaded.lastError).toContain("[redacted reset url]");
+    expect(reloaded.lastError).not.toContain("secret-token");
+    expect(reloaded.lastError).not.toContain("raw-token");
+  });
+
+  it("does not process future or non-pending jobs", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-04T12:00:00.000Z");
+    const futureJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: {},
+      runAt: new Date("2030-03-04T12:05:00.000Z")
+    });
+    const runningJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: {},
+      runAt: now
+    });
+    const succeededJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: {},
+      runAt: now
+    });
+    const deadJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: {},
+      runAt: now
+    });
+    await fx.prisma.job.update({ where: { id: runningJob.id }, data: { status: JobStatus.RUNNING } });
+    await fx.prisma.job.update({ where: { id: succeededJob.id }, data: { status: JobStatus.SUCCEEDED } });
+    await fx.prisma.job.update({ where: { id: deadJob.id }, data: { status: JobStatus.DEAD } });
+
+    const result = await runJobsOnce({ workerId: "worker-skip", now });
+
+    expect(result).toEqual({ claimed: 0, succeeded: 0, failed: 0, dead: 0 });
+    await expect(fx.prisma.job.findUniqueOrThrow({ where: { id: futureJob.id } })).resolves.toMatchObject({
+      status: JobStatus.PENDING,
+      attempts: 0
+    });
+  });
+
+  it("respects batch size and continues after a bad job", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-05T12:00:00.000Z");
+    const badJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: "internal.unknown_for_batch",
+      payload: { bad: true },
+      maxAttempts: 1,
+      runAt: new Date("2030-03-05T11:58:00.000Z")
+    });
+    const goodJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { good: true },
+      runAt: new Date("2030-03-05T11:59:00.000Z")
+    });
+    const unclaimedJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { later: true },
+      runAt: new Date("2030-03-05T12:00:00.000Z")
+    });
+
+    const result = await runJobsOnce({ workerId: "worker-batch", limit: 2, now });
+    const [reloadedBad, reloadedGood, reloadedUnclaimed] = await Promise.all([
+      fx.prisma.job.findUniqueOrThrow({ where: { id: badJob.id } }),
+      fx.prisma.job.findUniqueOrThrow({ where: { id: goodJob.id } }),
+      fx.prisma.job.findUniqueOrThrow({ where: { id: unclaimedJob.id } })
+    ]);
+
+    expect(result).toEqual({ claimed: 2, succeeded: 1, failed: 0, dead: 1 });
+    expect(reloadedBad.status).toBe(JobStatus.DEAD);
+    expect(reloadedGood.status).toBe(JobStatus.SUCCEEDED);
+    expect(reloadedUnclaimed).toMatchObject({
+      status: JobStatus.PENDING,
+      attempts: 0,
+      lockedAt: null,
+      lockedBy: null
+    });
+  });
+
+  it("continuous worker continues polling after one failed job", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-05T12:30:00.000Z");
+    const badJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: "internal.continuous_unknown",
+      payload: { bad: true },
+      maxAttempts: 1,
+      runAt: new Date("2030-03-05T12:28:00.000Z")
+    });
+    const goodJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { good: true },
+      runAt: new Date("2030-03-05T12:29:00.000Z")
+    });
+
+    const result = await runJobsWorker({
+      idleExitAfterMs: 0,
+      limit: 1,
+      pollIntervalMs: 1,
+      workerId: "worker-continuous-failure",
+      now
+    });
+    const [reloadedBad, reloadedGood] = await Promise.all([
+      fx.prisma.job.findUniqueOrThrow({ where: { id: badJob.id } }),
+      fx.prisma.job.findUniqueOrThrow({ where: { id: goodJob.id } })
+    ]);
+
+    expect(result).toMatchObject({
+      claimed: 2,
+      succeeded: 1,
+      failed: 0,
+      dead: 1,
+      stopped: false
+    });
+    expect(result.batches).toBeGreaterThanOrEqual(3);
+    expect(reloadedBad.status).toBe(JobStatus.DEAD);
+    expect(reloadedGood.status).toBe(JobStatus.SUCCEEDED);
+  });
+
+  it("retries injected handler failures below max attempts while later jobs still succeed", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-06T12:00:00.000Z");
+    const failedJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: "internal.retry_failure",
+      payload: { fail: true },
+      maxAttempts: 2,
+      runAt: new Date("2030-03-06T11:58:00.000Z")
+    });
+    const goodJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { good: true },
+      runAt: new Date("2030-03-06T11:59:00.000Z")
+    });
+    const handlers: JobHandlerRegistry = {
+      ...jobHandlers,
+      "internal.retry_failure": async () => {
+        throw new Error("Temporary internal failure");
+      }
+    };
+
+    const result = await runJobsOnce({ handlers, workerId: "worker-retry", limit: 2, now });
+    const [reloadedFailed, reloadedGood] = await Promise.all([
+      fx.prisma.job.findUniqueOrThrow({ where: { id: failedJob.id } }),
+      fx.prisma.job.findUniqueOrThrow({ where: { id: goodJob.id } })
+    ]);
+
+    expect(result).toEqual({ claimed: 2, succeeded: 1, failed: 1, dead: 0 });
+    expect(reloadedFailed).toMatchObject({
+      status: JobStatus.PENDING,
+      attempts: 1,
+      lockedAt: null,
+      lockedBy: null,
+      lastError: "Temporary internal failure"
+    });
+    expect(reloadedFailed.runAt.getTime()).toBeGreaterThan(now.getTime());
+    expect(reloadedGood.status).toBe(JobStatus.SUCCEEDED);
+  });
+});
+
+function currentFixture() {
+  if (!fixture) throw new Error("Integration fixture was not initialized.");
+  return fixture;
+}
+
+function setAuthEmailEnv(nextEnv: Record<string, string | undefined>) {
+  const previousEnv = Object.fromEntries(Object.keys(nextEnv).map((key) => [key, process.env[key]]));
+
+  for (const [key, value] of Object.entries(nextEnv)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  return () => {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+}
