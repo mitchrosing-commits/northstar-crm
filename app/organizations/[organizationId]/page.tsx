@@ -13,6 +13,7 @@ import { RecordTimeline } from "@/components/record-timeline";
 import { StatusBadge } from "@/components/status-badge";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { getOrganization, getRecordTimeline, getWorkspace, listEmailTemplates, listOrganizationCustomFields } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,16 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
           <h1 className="page-title">{organization.name}</h1>
         </div>
         <div className="header-actions">
+          <Link
+            className="button-secondary"
+            href={buildActivityFollowUpHref({
+              related: { type: "organization", id: organization.id },
+              title: `Follow up with ${organization.name}`,
+              type: "TASK"
+            })}
+          >
+            Add follow-up
+          </Link>
           <Link className="button-secondary" href="/organizations">
             Back to organizations
           </Link>

@@ -13,6 +13,7 @@ import { RecordTimeline } from "@/components/record-timeline";
 import { StatusBadge } from "@/components/status-badge";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { getPerson, getRecordTimeline, getWorkspace, listEmailTemplates, listPersonCustomFields } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,16 @@ export default async function ContactDetailPage({ params }: PageProps) {
           <h1 className="page-title">{personName}</h1>
         </div>
         <div className="header-actions">
+          <Link
+            className="button-secondary"
+            href={buildActivityFollowUpHref({
+              related: { type: "person", id: person.id },
+              title: `Follow up with ${personName}`,
+              type: "TASK"
+            })}
+          >
+            Add follow-up
+          </Link>
           <Link className="button-secondary" href="/contacts">
             Back to contacts
           </Link>

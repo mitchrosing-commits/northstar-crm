@@ -101,9 +101,22 @@ export type GmailSyncResult = {
   skippedDuplicates: number;
   skippedUnmatched: number;
   totalFetched: number;
+  unmatchedPreviews: EmailSyncPreview[];
 };
 
 export type MicrosoftSyncResult = GmailSyncResult;
+
+export type EmailSyncPreview = {
+  direction: "INBOUND" | "OUTBOUND";
+  email: string | null;
+  fromText: string | null;
+  occurredAt: string;
+  provider: "GOOGLE_WORKSPACE" | "MICROSOFT_365";
+  providerMessageId: string;
+  snippet: string | null;
+  subject: string;
+  toText: string | null;
+};
 
 export const gmailOAuthScopes = ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"] as const;
 export const microsoftOAuthScopes = ["openid", "email", "profile", "offline_access", "User.Read", "Mail.Read"] as const;
@@ -559,6 +572,12 @@ export async function syncRecentGmailMessages({
       email: { not: null }
     },
     select: {
+      deals: {
+        where: { deletedAt: null, status: "OPEN" },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true },
+        take: 1
+      },
       email: true,
       id: true,
       organizationId: true
@@ -569,14 +588,6 @@ export async function syncRecentGmailMessages({
       .map((contact) => [normalizeEmailAddress(contact.email), contact] as const)
       .filter((item): item is readonly [string, (typeof contacts)[number]] => Boolean(item[0]))
   );
-
-  if (contactByEmail.size === 0) {
-    await prisma.emailConnection.update({
-      where: { id: connection.id },
-      data: { lastError: null, lastSyncAt: new Date() }
-    });
-    return { created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 };
-  }
 
   const messages = await listRecentGmailMessages({ accessToken, fetchImpl, maxResults });
   const ids = messages.map((message) => message.id).filter((id): id is string => Boolean(id));
@@ -594,6 +605,7 @@ export async function syncRecentGmailMessages({
   let created = 0;
   let skippedDuplicates = 0;
   let skippedUnmatched = 0;
+  const unmatchedPreviews: EmailSyncPreview[] = [];
 
   for (const message of messages) {
     if (!message.id) continue;
@@ -607,6 +619,7 @@ export async function syncRecentGmailMessages({
     const match = matchGmailMessageToContact(normalized, contactByEmail);
     if (!match) {
       skippedUnmatched += 1;
+      addUnmatchedPreview(unmatchedPreviews, "GOOGLE_WORKSPACE", message.id, normalized);
       continue;
     }
 
@@ -614,6 +627,7 @@ export async function syncRecentGmailMessages({
       await prisma.emailLog.create({
         data: {
           body: normalized.snippet ? `Gmail snippet: ${normalized.snippet}` : "Gmail metadata imported without message body.",
+          dealId: match.deals[0]?.id ?? null,
           direction: normalized.direction as EmailDirection,
           fromText: normalized.fromText,
           organizationId: match.organizationId,
@@ -655,7 +669,7 @@ export async function syncRecentGmailMessages({
     totalFetched: messages.length
   });
 
-  return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length };
+  return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
 }
 
 export async function syncRecentMicrosoftMessages({
@@ -694,20 +708,18 @@ export async function syncRecentMicrosoftMessages({
       email: { not: null }
     },
     select: {
+      deals: {
+        where: { deletedAt: null, status: "OPEN" },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true },
+        take: 1
+      },
       email: true,
       id: true,
       organizationId: true
     }
   });
   const contactByEmail = buildContactEmailMap(contacts);
-
-  if (contactByEmail.size === 0) {
-    await prisma.emailConnection.update({
-      where: { id: connection.id },
-      data: { lastError: null, lastSyncAt: new Date() }
-    });
-    return { created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 };
-  }
 
   const messages = await listRecentMicrosoftMessages({ accessToken, fetchImpl, maxResults });
   const ids = messages.map((message) => message.id).filter((id): id is string => Boolean(id));
@@ -725,6 +737,7 @@ export async function syncRecentMicrosoftMessages({
   let created = 0;
   let skippedDuplicates = 0;
   let skippedUnmatched = 0;
+  const unmatchedPreviews: EmailSyncPreview[] = [];
 
   for (const message of messages) {
     if (!message.id) continue;
@@ -737,6 +750,7 @@ export async function syncRecentMicrosoftMessages({
     const match = matchEmailMessageToContact(normalized, contactByEmail);
     if (!match) {
       skippedUnmatched += 1;
+      addUnmatchedPreview(unmatchedPreviews, "MICROSOFT_365", message.id, normalized);
       continue;
     }
 
@@ -744,6 +758,7 @@ export async function syncRecentMicrosoftMessages({
       await prisma.emailLog.create({
         data: {
           body: normalized.snippet ? `Microsoft snippet: ${normalized.snippet}` : "Microsoft metadata imported without message body.",
+          dealId: match.deals[0]?.id ?? null,
           direction: normalized.direction as EmailDirection,
           fromText: normalized.fromText,
           organizationId: match.organizationId,
@@ -785,7 +800,7 @@ export async function syncRecentMicrosoftMessages({
     totalFetched: messages.length
   });
 
-  return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length };
+  return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
 }
 
 async function resolveUsableGoogleAccessToken({
@@ -1067,14 +1082,14 @@ function normalizeMicrosoftMessage(message: MicrosoftMessageResponse, accountEma
 
 function matchGmailMessageToContact(
   message: ReturnType<typeof normalizeGmailMessage>,
-  contactByEmail: Map<string, { email: string | null; id: string; organizationId: string | null }>
+  contactByEmail: Map<string, { deals: { id: string }[]; email: string | null; id: string; organizationId: string | null }>
 ) {
   return matchEmailMessageToContact(message, contactByEmail);
 }
 
 function matchEmailMessageToContact(
   message: { direction: string; fromEmails: string[]; toEmails: string[] },
-  contactByEmail: Map<string, { email: string | null; id: string; organizationId: string | null }>
+  contactByEmail: Map<string, { deals: { id: string }[]; email: string | null; id: string; organizationId: string | null }>
 ) {
   const candidates = message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
   for (const email of candidates) {
@@ -1082,6 +1097,37 @@ function matchEmailMessageToContact(
     if (contact) return contact;
   }
   return null;
+}
+
+function addUnmatchedPreview(
+  previews: EmailSyncPreview[],
+  provider: EmailSyncPreview["provider"],
+  providerMessageId: string,
+  message: ReturnType<typeof normalizeGmailMessage> | ReturnType<typeof normalizeMicrosoftMessage>
+) {
+  if (previews.length >= 5) return;
+  previews.push({
+    direction: message.direction as EmailSyncPreview["direction"],
+    email: primaryExternalEmail(message),
+    fromText: truncateEmailPreviewText(message.fromText, 160),
+    occurredAt: message.occurredAt.toISOString(),
+    provider,
+    providerMessageId,
+    snippet: truncateEmailPreviewText(message.snippet, 240),
+    subject: truncateEmailPreviewText(message.subject, 160) ?? "(No subject)",
+    toText: truncateEmailPreviewText(message.toText, 160)
+  });
+}
+
+function primaryExternalEmail(message: { direction: string; fromEmails: string[]; toEmails: string[] }) {
+  const candidates = message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
+  return candidates[0] ?? null;
+}
+
+function truncateEmailPreviewText(value: string | null | undefined, maxLength: number) {
+  const trimmed = optionalText(value);
+  if (!trimmed) return null;
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}...` : trimmed;
 }
 
 function googleProviderCard({
@@ -1235,7 +1281,7 @@ function normalizeEmailAddress(value: string | null | undefined) {
   return value?.trim().toLowerCase() || "";
 }
 
-function buildContactEmailMap(contacts: { email: string | null; id: string; organizationId: string | null }[]) {
+function buildContactEmailMap<T extends { email: string | null }>(contacts: T[]) {
   return new Map(
     contacts
       .map((contact) => [normalizeEmailAddress(contact.email), contact] as const)

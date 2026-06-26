@@ -6,6 +6,7 @@ import { FormEvent, useState } from "react";
 type ProductCreateFormProps = {
   workspaceId: string;
   mode?: "create" | "edit";
+  variant?: "card" | "compact";
   initialProduct?: {
     id: string;
     name: string;
@@ -15,7 +16,7 @@ type ProductCreateFormProps = {
   };
 };
 
-export function ProductCreateForm({ workspaceId, mode = "create", initialProduct }: ProductCreateFormProps) {
+export function ProductCreateForm({ workspaceId, mode = "create", variant = "card", initialProduct }: ProductCreateFormProps) {
   const router = useRouter();
   const [name, setName] = useState(initialProduct?.name ?? "");
   const [description, setDescription] = useState(initialProduct?.description ?? "");
@@ -70,7 +71,7 @@ export function ProductCreateForm({ workspaceId, mode = "create", initialProduct
   }
 
   return (
-    <form className="form-card" onSubmit={onSubmit}>
+    <form className={variant === "compact" ? "inline-form product-edit-form" : "form-card"} onSubmit={onSubmit}>
       {error ? <div className="form-error">{error}</div> : null}
       <div className="form-grid">
         <label className="form-field">

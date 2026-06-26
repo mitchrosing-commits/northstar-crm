@@ -44,11 +44,16 @@ describe("contact and organization create/edit behavior", () => {
     expect(contactsList).toContain("href=\"/contacts/new\"");
     expect(contactDetail).toContain("href={`/contacts/${person.id}/edit`}");
     expect(newContactPage).toContain("ContactForm");
+    expect(newContactPage).toContain("searchParams");
+    expect(newContactPage).toContain("defaultEmail={firstSearchParam(resolvedSearchParams?.email)}");
+    expect(newContactPage).toContain("defaultName={firstSearchParam(resolvedSearchParams?.name)}");
     expect(editContactPage).toContain("getPerson(actor, personId)");
     expect(contactForm).toContain("/api/v1/workspaces/${workspaceId}/people");
     expect(contactForm).toContain("router.push(`/contacts/${contact.id}`)");
     expect(contactForm).toContain("organizationId");
     expect(contactForm).toContain("ownerId");
+    expect(contactForm).toContain("defaultEmail?: string");
+    expect(contactForm).toContain("defaultName?: string");
   });
 
   it("adds organization entry points, pages, and forms", () => {

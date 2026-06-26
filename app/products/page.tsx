@@ -30,57 +30,55 @@ export default async function ProductsPage() {
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Product Catalog</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Description</th>
-              <th>Unit price</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Edit</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.length > 0 ? (
-              products.map((product) => (
-                <tr key={product.id}>
-                  <td>
-                    <strong>{product.name}</strong>
-                  </td>
-                  <td>{product.description ?? ""}</td>
-                  <td>{formatMoney(product.unitPriceCents, product.currency)}</td>
-                  <td>
-                    <span className="badge">{product.active ? "Active" : "Inactive"}</span>
-                  </td>
-                  <td>{formatDate(product.createdAt)}</td>
-                  <td style={{ minWidth: 360 }}>
-                    <ProductCreateForm
-                      initialProduct={{
-                        id: product.id,
-                        name: product.name,
-                        description: product.description,
-                        unitPriceCents: product.unitPriceCents,
-                        currency: product.currency
-                      }}
-                      mode="edit"
-                      workspaceId={workspace.id}
-                    />
-                  </td>
-                  <td>
-                    <ProductStatusButton active={product.active} productId={product.id} workspaceId={workspace.id} />
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={7}>No products have been created. Create one to add deal line items.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <div className="panel-title-row">
+          <h2 className="panel-title">Product Catalog</h2>
+          <span className="badge">{products.length} total</span>
+        </div>
+        {products.length > 0 ? (
+          <div className="product-catalog-grid">
+            {products.map((product) => (
+              <article className="product-catalog-card" key={product.id}>
+                <div className="panel-title-row">
+                  <div>
+                    <h3 className="compact-title">{product.name}</h3>
+                    <p className="empty-copy">{product.description ?? "No description"}</p>
+                  </div>
+                  <span className="badge">{product.active ? "Active" : "Inactive"}</span>
+                </div>
+                <div className="deal-context-metrics">
+                  <div>
+                    <span>Unit price</span>
+                    <strong>{formatMoney(product.unitPriceCents, product.currency)}</strong>
+                  </div>
+                  <div>
+                    <span>Created</span>
+                    <strong>{formatDate(product.createdAt)}</strong>
+                  </div>
+                </div>
+                <ProductCreateForm
+                  initialProduct={{
+                    id: product.id,
+                    name: product.name,
+                    description: product.description,
+                    unitPriceCents: product.unitPriceCents,
+                    currency: product.currency
+                  }}
+                  mode="edit"
+                  variant="compact"
+                  workspaceId={workspace.id}
+                />
+                <div className="form-actions">
+                  <ProductStatusButton active={product.active} productId={product.id} workspaceId={workspace.id} />
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state empty-state-compact">
+            <h3>No products yet</h3>
+            <p>Create a product to add reusable pricing to deal line items and quote drafts.</p>
+          </div>
+        )}
       </section>
     </AppShell>
   );

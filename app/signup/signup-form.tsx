@@ -13,11 +13,12 @@ const initialState: SignupActionState = {
   workspaceName: ""
 };
 
-export function SignupForm() {
+export function SignupForm({ nextPath }: { nextPath: string }) {
   const [state, formAction] = useActionState(signupAction, initialState);
 
   return (
     <form action={formAction} className="login-form">
+      <input type="hidden" name="next" value={nextPath} />
       <label className="form-label" htmlFor="name">
         Name
       </label>

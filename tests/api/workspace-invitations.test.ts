@@ -32,7 +32,7 @@ describe("workspace invitations MVP", () => {
     expect(workspaceService).toContain("removeWorkspaceMember");
     expect(workspaceService).toContain("ensureWorkspaceSettingsAdmin");
     expect(workspaceService).toContain("Workspace invitations cannot grant owner access.");
-    expect(workspaceService).toContain("Invitations can only be created for existing users.");
+    expect(workspaceService).toContain("if (invitedUser)");
     expect(workspaceService).toContain("A pending invitation already exists for this email.");
     expect(workspaceService).toContain("This invitation does not belong to the signed-in user.");
     expect(workspaceService).toContain("assertAcceptedInvitationStillHasMembership");
@@ -54,7 +54,8 @@ describe("workspace invitations MVP", () => {
     expect(workspaceActions).toContain("Share the accept link from the pending invitations table.");
     expect(settingsPage).toContain("Team / Workspace Invitations");
     expect(settingsPage).toContain("Manual link sharing");
-    expect(settingsPage).toContain("invitation record and accept link");
+    expect(settingsPage).toContain("Invite a teammate by email.");
+    expect(settingsPage).toContain("they can create one from the invite");
     expect(settingsPage).toContain("invitation email delivery is not configured");
     expect(settingsPage).toContain("Open invite link");
     expect(settingsPage).toContain("Hosted Use Notes");
@@ -73,7 +74,8 @@ describe("workspace invitations MVP", () => {
     expect(acceptPage).toContain("Accept invitation");
     expect(acceptPage).toContain("Invitation already accepted");
     expect(acceptPage).toContain("Continue to workspace");
-    expect(acceptPage).toContain("signed in with the invited email address");
+    expect(acceptPage).toContain("create an account with the invited email address");
+    expect(acceptPage).toContain("href={`/signup?next=/workspaces/invitations/${invitationId}` as Route}");
     expect(acceptPage).toContain("return await getWorkspaceInvitationForAcceptance(actorUserId, invitationId)");
     expect(acceptPage).toContain("redirect(`/login?next=/workspaces/invitations/${invitationId}`)");
   });
@@ -84,7 +86,7 @@ describe("workspace invitations MVP", () => {
     expect(routeMap).toContain("acceptWorkspaceInvitationAction");
     expect(routeMap).toContain("blocks old accepted links after member removal");
     expect(routeMap).toContain("removeWorkspaceMemberAction");
-    expect(currentStatus).toContain("Workspace invitations are available for existing users only");
+    expect(currentStatus).toContain("Workspace invitations");
     expect(currentStatus).toContain("Owners/admins can remove non-admin workspace members");
     expect(currentStatus).toContain("No invitation email delivery is implemented");
     expect(currentStatus).toContain("accepted invitations are idempotent only while the accepted membership still exists");

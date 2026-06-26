@@ -99,7 +99,16 @@ describe("Microsoft Graph metadata sync", () => {
       });
 
       const first = await syncRecentMicrosoftMessages({ actor: fixture.actorA, env, fetchImpl });
-      expect(first).toEqual({ created: 1, skippedDuplicates: 0, skippedUnmatched: 1, totalFetched: 2 });
+      expect(first).toMatchObject({ created: 1, skippedDuplicates: 0, skippedUnmatched: 1, totalFetched: 2 });
+      expect(first.unmatchedPreviews).toEqual([
+        expect.objectContaining({
+          email: "vendor@example.test",
+          provider: "MICROSOFT_365",
+          providerMessageId: "ms-noise-1",
+          snippet: "This should not enter CRM history.",
+          subject: "Unmatched vendor note"
+        })
+      ]);
 
       const logs = await fixture.prisma.emailLog.findMany({
         where: { workspaceId: fixture.workspaceA.id, provider: "MICROSOFT_365" }
@@ -107,6 +116,7 @@ describe("Microsoft Graph metadata sync", () => {
       expect(logs).toHaveLength(1);
       expect(logs[0]).toMatchObject({
         body: "Microsoft snippet: Following up on the MSA.",
+        dealId: fixture.recordsA.deal.id,
         direction: "INBOUND",
         personId: fixture.recordsA.person.id,
         providerMessageId: "ms-match-1",
@@ -117,7 +127,8 @@ describe("Microsoft Graph metadata sync", () => {
       expect(logs[0].body).not.toContain("attachment");
 
       const second = await syncRecentMicrosoftMessages({ actor: fixture.actorA, env, fetchImpl });
-      expect(second).toEqual({ created: 0, skippedDuplicates: 1, skippedUnmatched: 1, totalFetched: 2 });
+      expect(second).toMatchObject({ created: 0, skippedDuplicates: 1, skippedUnmatched: 1, totalFetched: 2 });
+      expect(second.unmatchedPreviews).toHaveLength(1);
     } finally {
       await fixture.cleanup();
     }
@@ -139,7 +150,8 @@ describe("Microsoft Graph metadata sync", () => {
       });
 
       const result = await syncRecentMicrosoftMessages({ actor: fixture.actorA, env, fetchImpl });
-      expect(result).toEqual({ created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 });
+      expect(result).toMatchObject({ created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 });
+      expect(result.unmatchedPreviews).toEqual([]);
 
       const secret = await fixture.prisma.emailConnectionSecret.findUniqueOrThrow({
         where: { connectionId: connection.id }

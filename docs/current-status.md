@@ -14,7 +14,7 @@
 - Authenticated users can create a new workspace from Settings, become its owner, and have it selected as the active workspace immediately after creation.
 - Workspace Settings shows the current workspace, current user's role, settings-access status, account display-name settings, active member list, conservative role editing and ownership-transfer controls, member-removal controls, a simple workspace creation form, and owner/admin invitation controls.
 - Settings includes a Developer/API overview for the workspace-scoped REST surface, OpenAPI and route-map references, CSV export endpoints, and planned disabled API-key/webhook controls.
-- Workspace invitations are available for existing users only: owners/admins can create and revoke pending invitations, invited signed-in users can accept invitations matching their email, and accepted workspaces become active immediately.
+- Workspace invitations are email-based: owners/admins can create and revoke pending invitations, invitees can sign up or sign in with the invited email, accept the shared link, and the accepted workspace becomes active immediately.
 - Owners/admins can remove non-admin workspace members from Settings, while only owners can remove admins. Workspace owners can promote/demote Admin/Member roles and transfer ownership to another active member, with audit logs for role changes, ownership transfer, and member removal.
 - Role and account permission boundaries are pinned by source and integration tests covering workspace member management, ownership transfer, cross-workspace membership targeting, and display-name-only account updates.
 - Runtime environment validation checks required database configuration and optional deployment/demo values.
@@ -83,7 +83,7 @@
 - Workspace switching is limited to existing memberships plus workspaces the signed-in user creates or accepts by invitation. Broader member management, ownership transfer beyond a single current owner handing off to another active member, and workspace deletion are not implemented.
 - Duplicate workspace display names are allowed; new workspaces receive unique generated slugs for routing/API identity.
 - No invitation email delivery is implemented. Invitation links are visible in Settings and must be shared manually.
-- Invitations do not create users or sign users up; invitee email must already belong to an existing active user, and `OWNER` invitations are blocked.
+- Invitations do not send email automatically; invitees without an account can create one with the invited email before accepting, and `OWNER` invitations are blocked.
 - Invitation management is intentionally narrow: duplicate pending invitations are rejected, pending invitations can be revoked, accepted invitations are idempotent only while the accepted membership still exists, removed members cannot rejoin from old accepted links, and invitations still cannot grant `OWNER`.
 - Member management is intentionally narrow: normal members cannot remove others or edit roles, Admins can manage settings but cannot promote/demote admins, remove admins, or transfer ownership, normal role edits cannot assign `OWNER`, current-owner transfer demotes the previous owner to `ADMIN`, current owner removal remains blocked, and the service blocks changes that would leave the workspace without an owner/admin.
 - Custom fields are currently supported for Deals, Contacts/People, Organizations, and Leads in the UI.

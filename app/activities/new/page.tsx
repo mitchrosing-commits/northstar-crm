@@ -8,7 +8,22 @@ import { getWorkspace, listDeals, listLeads, listOrganizations, listPeople } fro
 
 export const dynamic = "force-dynamic";
 
-export default async function NewActivityPage() {
+type PageProps = {
+  searchParams?: Promise<{
+    dealId?: string;
+    description?: string;
+    due?: string;
+    leadId?: string;
+    organizationId?: string;
+    personId?: string;
+    related?: string;
+    title?: string;
+    type?: string;
+  }>;
+};
+
+export default async function NewActivityPage({ searchParams }: PageProps) {
+  const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
   const [workspaceRecord, deals, people, organizations, leads] = await Promise.all([
@@ -33,6 +48,12 @@ export default async function NewActivityPage() {
       .filter((lead) => lead.status !== "CONVERTED")
       .map((lead) => ({ label: `Lead: ${lead.title}`, value: `lead:${lead.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
+  const initialAttachmentValue = parseInitialAttachmentValue(resolvedSearchParams);
+  const hasPrefill =
+    Boolean(resolvedSearchParams?.title) ||
+    Boolean(resolvedSearchParams?.description) ||
+    Boolean(resolvedSearchParams?.due) ||
+    Boolean(initialAttachmentValue);
 
   return (
     <AppShell workspace={workspace}>
@@ -48,6 +69,11 @@ export default async function NewActivityPage() {
 
       <section className="data-card">
         <h2 className="panel-title">Create Follow-up</h2>
+        {hasPrefill ? (
+          <p className="form-hint" style={{ marginBottom: 12 }}>
+            We prefilled this activity from the record you were viewing. Review the details, then save the follow-up.
+          </p>
+        ) : null}
         {attachmentOptions.length === 0 ? (
           <div className="empty-state" style={{ marginBottom: 16 }}>
             <h3>Create something to follow up on</h3>
@@ -74,6 +100,11 @@ export default async function NewActivityPage() {
         <ActivityForm
           attachmentOptions={attachmentOptions}
           defaultOwnerId={actorUserId}
+          initialAttachmentValue={initialAttachmentValue}
+          initialDescription={trimParam(resolvedSearchParams?.description)}
+          initialDueAt={parseDueDateParam(resolvedSearchParams?.due)}
+          initialTitle={trimParam(resolvedSearchParams?.title)}
+          initialType={parseActivityType(resolvedSearchParams?.type)}
           owners={owners}
           redirectTo={"/activities" as Route}
           submitLabel="Create activity"
@@ -86,4 +117,34 @@ export default async function NewActivityPage() {
 
 function formatPersonName(person: { firstName: string; lastName: string | null }) {
   return [person.firstName, person.lastName].filter(Boolean).join(" ");
+}
+
+function parseInitialAttachmentValue(searchParams: Awaited<PageProps["searchParams"]>) {
+  if (searchParams?.related) return normalizeAttachmentValue(searchParams.related);
+  if (searchParams?.dealId) return `deal:${searchParams.dealId}`;
+  if (searchParams?.leadId) return `lead:${searchParams.leadId}`;
+  if (searchParams?.personId) return `person:${searchParams.personId}`;
+  if (searchParams?.organizationId) return `organization:${searchParams.organizationId}`;
+  return "";
+}
+
+function normalizeAttachmentValue(value: string) {
+  const [type, id] = value.split(":");
+  if (!id) return "";
+  if (["deal", "lead", "person", "organization"].includes(type)) return `${type}:${id}`;
+  return "";
+}
+
+function parseActivityType(value: string | undefined) {
+  if (value === "CALL" || value === "EMAIL" || value === "MEETING" || value === "TASK") return value;
+  return "TASK";
+}
+
+function parseDueDateParam(value: string | undefined) {
+  const trimmed = trimParam(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : "";
+}
+
+function trimParam(value: string | undefined) {
+  return value?.trim().slice(0, 500) ?? "";
 }

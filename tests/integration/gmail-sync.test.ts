@@ -46,7 +46,16 @@ describe("Gmail metadata sync", () => {
       });
 
       const first = await syncRecentGmailMessages({ actor: fixture.actorA, env, fetchImpl });
-      expect(first).toEqual({ created: 1, skippedDuplicates: 0, skippedUnmatched: 1, totalFetched: 2 });
+      expect(first).toMatchObject({ created: 1, skippedDuplicates: 0, skippedUnmatched: 1, totalFetched: 2 });
+      expect(first.unmatchedPreviews).toEqual([
+        expect.objectContaining({
+          email: "vendor@example.test",
+          provider: "GOOGLE_WORKSPACE",
+          providerMessageId: "gmail-noise-1",
+          snippet: "This should not enter CRM history.",
+          subject: "Unmatched vendor note"
+        })
+      ]);
 
       const logs = await fixture.prisma.emailLog.findMany({
         where: { workspaceId: fixture.workspaceA.id, provider: "GOOGLE_WORKSPACE" }
@@ -54,6 +63,7 @@ describe("Gmail metadata sync", () => {
       expect(logs).toHaveLength(1);
       expect(logs[0]).toMatchObject({
         body: "Gmail snippet: Following up on the NDA.",
+        dealId: fixture.recordsA.deal.id,
         direction: "INBOUND",
         personId: fixture.recordsA.person.id,
         providerMessageId: "gmail-match-1",
@@ -62,7 +72,8 @@ describe("Gmail metadata sync", () => {
       });
 
       const second = await syncRecentGmailMessages({ actor: fixture.actorA, env, fetchImpl });
-      expect(second).toEqual({ created: 0, skippedDuplicates: 1, skippedUnmatched: 1, totalFetched: 2 });
+      expect(second).toMatchObject({ created: 0, skippedDuplicates: 1, skippedUnmatched: 1, totalFetched: 2 });
+      expect(second.unmatchedPreviews).toHaveLength(1);
     } finally {
       await fixture.cleanup();
     }
@@ -84,13 +95,59 @@ describe("Gmail metadata sync", () => {
       });
 
       const result = await syncRecentGmailMessages({ actor: fixture.actorA, env, fetchImpl });
-      expect(result).toEqual({ created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 });
+      expect(result).toMatchObject({ created: 0, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 0 });
+      expect(result.unmatchedPreviews).toEqual([]);
 
       const secret = await fixture.prisma.emailConnectionSecret.findUniqueOrThrow({
         where: { connectionId: connection.id }
       });
       expect(secret.encryptedAccessToken).not.toContain("fresh-access");
       expect(decryptEmailToken(secret.encryptedAccessToken, env)).toBe("fresh-access");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("returns unmatched previews when no workspace contacts can match synced messages", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await fixture.prisma.person.updateMany({
+        where: { workspaceId: fixture.workspaceA.id },
+        data: { email: null }
+      });
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            id: "gmail-new-contact-1",
+            headers: {
+              Date: "Fri, 26 Jun 2026 11:00:00 -0400",
+              From: "New Buyer <new-buyer@example.test>",
+              Subject: "Interested in Northstar",
+              To: "Alex <alex@example.test>"
+            },
+            snippet: "Could we talk next week?"
+          }
+        ]
+      });
+
+      const result = await syncRecentGmailMessages({ actor: fixture.actorA, env, fetchImpl });
+      expect(result).toMatchObject({ created: 0, skippedDuplicates: 0, skippedUnmatched: 1, totalFetched: 1 });
+      expect(result.unmatchedPreviews).toEqual([
+        expect.objectContaining({
+          email: "new-buyer@example.test",
+          providerMessageId: "gmail-new-contact-1",
+          subject: "Interested in Northstar"
+        })
+      ]);
+      const logs = await fixture.prisma.emailLog.findMany({
+        where: { workspaceId: fixture.workspaceA.id, provider: "GOOGLE_WORKSPACE" }
+      });
+      expect(logs).toHaveLength(0);
     } finally {
       await fixture.cleanup();
     }

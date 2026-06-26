@@ -6,14 +6,14 @@ import { AuditEventList } from "@/components/audit-event-list";
 import { AppShell } from "@/components/app-shell";
 import { formatActivityType, formatDate, formatMoney } from "@/components/format";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { getDashboardSummary } from "@/lib/services/crm";
+import { getDashboardSummary, getNeedsAttentionSummary, type NeedsAttentionItem } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
-  const summary = await getDashboardSummary(actor);
+  const [summary, needsAttention] = await Promise.all([getDashboardSummary(actor), getNeedsAttentionSummary(actor)]);
 
   return (
     <AppShell workspace={workspace}>
@@ -25,6 +25,8 @@ export default async function DashboardPage() {
       </header>
 
       {summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null}
+
+      <NeedsAttentionPanel items={needsAttention} isCleanWorkspace={summary.onboarding.isCleanWorkspace} />
 
       <section className="stat-grid">
         <MetricCard href="/deals?status=OPEN" label="Open pipeline value" value={formatMoney(summary.metrics.openPipelineValueCents)} />
@@ -279,6 +281,66 @@ function SnapshotItem({ label, value }: { label: string; value: number }) {
       <p className="field-value">{value}</p>
     </div>
   );
+}
+
+function NeedsAttentionPanel({ items, isCleanWorkspace }: { items: NeedsAttentionItem[]; isCleanWorkspace: boolean }) {
+  return (
+    <section className="panel needs-attention-panel" aria-labelledby="needs-attention-title">
+      <div className="panel-title-row">
+        <div>
+          <p className="page-kicker">Sales Assistant</p>
+          <h2 className="panel-title" id="needs-attention-title">
+            Needs Attention
+          </h2>
+        </div>
+        <span className="badge">{items.length > 0 ? `${items.length} next action${items.length === 1 ? "" : "s"}` : "Caught up"}</span>
+      </div>
+      {items.length > 0 ? (
+        <div className="needs-attention-list">
+          {items.map((item) => (
+            <article className="needs-attention-item" key={item.id}>
+              <div>
+                <span className={`attention-kind attention-kind-${item.kind}`}>{attentionKindLabel(item.kind)}</span>
+                <h3>
+                  <Link className="inline-link" href={item.href as Route}>
+                    {item.title}
+                  </Link>
+                </h3>
+                <p>{item.reason}</p>
+              </div>
+              <Link className="button-secondary button-compact" href={item.actionHref as Route}>
+                {item.actionLabel}
+              </Link>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state empty-state-compact">
+          <h3>{isCleanWorkspace ? "No follow-ups yet" : "Nothing urgent right now"}</h3>
+          <p>
+            {isCleanWorkspace
+              ? "As you add real deals, activities, quotes, and emails, Northstar will highlight the next actions here."
+              : "Overdue work, stale deals, waiting quotes, and contract follow-ups will appear here automatically."}
+          </p>
+          <Link className="button-secondary button-compact" href={isCleanWorkspace ? "/deals/new" : "/activities"}>
+            {isCleanWorkspace ? "Create first deal" : "View activities"}
+          </Link>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function attentionKindLabel(kind: NeedsAttentionItem["kind"]) {
+  if (kind === "overdue-activity") return "Overdue";
+  if (kind === "activity-due-today") return "Due today";
+  if (kind === "deal-no-next-activity") return "No next activity";
+  if (kind === "stale-deal") return "Stale deal";
+  if (kind === "lead-no-activity") return "Lead";
+  if (kind === "quote-waiting") return "Quote waiting";
+  if (kind === "contract-attention") return "Contract";
+  if (kind === "closing-soon") return "Closing soon";
+  return "Email follow-up";
 }
 
 function RelatedLinks({

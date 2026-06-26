@@ -24,9 +24,11 @@ describe("Contract workflow on deal detail", () => {
     expect(contractPanel).toContain("NDA Status");
     expect(contractPanel).toContain("MSA Status");
     expect(contractPanel).toContain("SOW Status");
-    expect(contractPanel).toContain("Track the agreement path from NDA through MSA and SOW");
+    expect(contractPanel).toContain("Track whether NDA, MSA, and SOW are requested, sent, signed, or blocked.");
     expect(contractPanel).toContain("Document generation and e-signature can be added later.");
     expect(contractPanel).toContain("href=\"/custom-fields\"");
+    expect(contractPanel).toContain("Add contract follow-up");
+    expect(contractPanel).toContain("buildActivityFollowUpHref");
   });
 
   it("maps seeded statuses in the intended order and handles missing values", () => {

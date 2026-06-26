@@ -26,6 +26,8 @@ describe("global workspace search", () => {
     expect(service).toContain("prisma.organization.findMany");
     expect(service).toContain("prisma.activity.findMany");
     expect(service).toContain("prisma.note.findMany");
+    expect(service).toContain("prisma.quote.findMany");
+    expect(service).toContain("prisma.emailLog.findMany");
   });
 
   it("adds a query-driven grouped search page with useful empty states", () => {
@@ -37,11 +39,15 @@ describe("global workspace search", () => {
     expect(searchPage).toContain("SearchSection title=\"Organizations\"");
     expect(searchPage).toContain("SearchSection title=\"Activities\"");
     expect(searchPage).toContain("SearchSection title=\"Notes\"");
+    expect(searchPage).toContain("SearchSection title=\"Quotes\"");
+    expect(searchPage).toContain("SearchSection title=\"Emails\"");
     expect(searchPage).toContain("Search workspace records");
     expect(searchPage).toContain("Search your workspace");
-    expect(searchPage).toContain("internal note text");
+    expect(searchPage).toContain("quote number, email subject");
     expect(searchPage).toContain("No results found");
-    expect(searchPage).toContain("Try a record name, email, domain, activity title, or note text.");
+    expect(searchPage).toContain("Try a record name, email, domain, quote number");
+    expect(searchPage).toContain("Create deal");
+    expect(searchPage).toContain("Add contact");
   });
 
   it("renders readable activity and note result context without raw internal labels", () => {
@@ -63,5 +69,7 @@ describe("global workspace search", () => {
     expect(searchPage).toContain("href={`/organizations/${organization.id}` as Route}");
     expect(searchPage).toContain("function attachmentTarget");
     expect(searchPage).toContain("return \"/activities\"");
+    expect(searchPage).toContain("href={`/deals/${quote.dealId}/quotes/${quote.id}` as Route}");
+    expect(searchPage).toContain("emailLogTarget(emailLog)");
   });
 });

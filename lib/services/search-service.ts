@@ -15,13 +15,15 @@ export async function searchCrm(actor: WorkspaceActor, rawQuery: string) {
       people: [],
       organizations: [],
       activities: [],
-      notes: []
+      notes: [],
+      quotes: [],
+      emailLogs: []
     };
   }
 
   const contains = { contains: query, mode: "insensitive" as const };
   const scoped = { workspaceId: actor.workspaceId, ...activeWhere };
-  const [deals, leads, people, organizations, activities, notes] = await Promise.all([
+  const [deals, leads, people, organizations, activities, notes, quotes, emailLogs] = await Promise.all([
     prisma.deal.findMany({
       where: { ...scoped, title: contains },
       include: { stage: true, organization: true, person: true },
@@ -59,8 +61,30 @@ export async function searchCrm(actor: WorkspaceActor, rawQuery: string) {
       include: { deal: true, lead: true, person: true, organization: true, author: { select: userDisplaySelect } },
       orderBy: { createdAt: "desc" },
       take: searchTake
+    }),
+    prisma.quote.findMany({
+      where: {
+        workspaceId: actor.workspaceId,
+        OR: [
+          { number: contains },
+          { deal: { is: { title: contains } } },
+          { deal: { is: { organization: { is: { name: contains } } } } }
+        ]
+      },
+      include: { deal: { include: { organization: true, person: true } } },
+      orderBy: { updatedAt: "desc" },
+      take: searchTake
+    }),
+    prisma.emailLog.findMany({
+      where: {
+        workspaceId: actor.workspaceId,
+        OR: [{ subject: contains }, { body: contains }, { fromText: contains }, { toText: contains }]
+      },
+      include: { deal: true, lead: true, person: true, organization: true },
+      orderBy: { occurredAt: "desc" },
+      take: searchTake
     })
   ]);
 
-  return { query, deals, leads, people, organizations, activities, notes };
+  return { query, deals, leads, people, organizations, activities, notes, quotes, emailLogs };
 }

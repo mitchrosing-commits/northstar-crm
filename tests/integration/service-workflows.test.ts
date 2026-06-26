@@ -1160,6 +1160,106 @@ describe("database-backed CRM service workflows", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  it("surfaces deterministic Needs Attention items for overdue activities and deals without next activity", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-03-20T12:00:00.000Z");
+    const overdueAt = new Date("2030-03-19T09:00:00.000Z");
+    const noNextDeal = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      ownerId: fx.userA.id,
+      title: "Assistant no-next deal",
+      valueCents: 76000,
+      currency: "USD"
+    });
+    const overdueActivity = await crm.createActivity(fx.actorA, {
+      dealId: fx.recordsA.deal.id,
+      ownerId: fx.userA.id,
+      type: "CALL",
+      title: "Assistant overdue call",
+      dueAt: overdueAt
+    });
+
+    const items = await crm.getNeedsAttentionSummary(fx.actorA, now);
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionHref: `/activities/${overdueActivity.id}/edit`,
+          kind: "overdue-activity",
+          reason: "This activity is overdue.",
+          title: "Assistant overdue call"
+        }),
+        expect.objectContaining({
+          actionHref: `/deals/${noNextDeal.id}#add-activity`,
+          href: `/deals/${noNextDeal.id}`,
+          kind: "deal-no-next-activity",
+          reason: "This open deal has no next activity scheduled.",
+          title: "Assistant no-next deal"
+        })
+      ])
+    );
+    expect(items.map((item) => item.href)).not.toContain(`/deals/${fx.recordsB.deal.id}`);
+  });
+
+  it("customizes pipeline and stage names while adding a new stage", async () => {
+    const fx = currentFixture();
+
+    const renamedPipeline = await crm.updatePipeline(fx.actorA, fx.recordsA.pipeline.id, {
+      name: "Enterprise Sales"
+    });
+    const renamedStage = await crm.updateStage(fx.actorA, fx.recordsA.stageOne.id, {
+      name: "Discovery Complete",
+      probability: 45
+    });
+    const addedStage = await crm.createStage(fx.actorA, fx.recordsA.pipeline.id, {
+      name: "Legal Review",
+      probability: 70,
+      sortOrder: 3
+    });
+    const pipelines = await crm.listPipelines(fx.actorA);
+    const pipeline = pipelines.find((item) => item.id === fx.recordsA.pipeline.id);
+
+    expect(renamedPipeline.name).toBe("Enterprise Sales");
+    expect(renamedStage).toMatchObject({ name: "Discovery Complete", probability: 45 });
+    expect(addedStage).toMatchObject({ name: "Legal Review", probability: 70 });
+    expect(pipeline?.stages.map((stage) => stage.name)).toContain("Legal Review");
+    await expect(
+      crm.updateStage(fx.actorA, fx.recordsB.stageOne.id, { name: "Cross-workspace rename" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("creates suggested automation activities once per template and related record", async () => {
+    const fx = currentFixture();
+
+    const first = await crm.createAutomationTemplateActivity(fx.actorA, {
+      dealId: fx.recordsA.deal.id,
+      templateId: "deal-next-activity"
+    });
+    const duplicate = await crm.createAutomationTemplateActivity(fx.actorA, {
+      dealId: fx.recordsA.deal.id,
+      templateId: "deal-next-activity"
+    });
+    const leadOutreach = await crm.createAutomationTemplateActivity(fx.actorA, {
+      leadId: fx.recordsA.lead.id,
+      templateId: "lead-first-outreach"
+    });
+    const activities = await crm.listActivities(fx.actorA, { relatedType: "deal", relatedId: fx.recordsA.deal.id });
+    const leadActivities = await crm.listActivities(fx.actorA, { relatedType: "lead", relatedId: fx.recordsA.lead.id });
+
+    expect(first.created).toBe(true);
+    expect(duplicate).toEqual({ activityId: first.activityId, created: false });
+    expect(activities.filter((activity) => activity.title === "Schedule next step: Alpha Needle Deal")).toHaveLength(1);
+    expect(leadOutreach.created).toBe(true);
+    expect(leadActivities.map((activity) => activity.title)).toContain("First outreach: Alpha Needle Lead");
+    await expect(
+      crm.createAutomationTemplateActivity(fx.actorA, {
+        dealId: fx.recordsB.deal.id,
+        templateId: "deal-next-activity"
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("keeps search results scoped to the current workspace", async () => {
     const fx = currentFixture();
 

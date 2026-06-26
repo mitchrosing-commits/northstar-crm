@@ -237,7 +237,9 @@ describe("quote draft MVP", () => {
   it("renders an internal quote drafts panel on deal detail", () => {
     expect(dealPage).toContain("<QuoteDraftsPanel");
     expect(dealPage).toContain("quotes={deal.quotes}");
-    expect(quotePanel).toContain("Create draft quote");
+    expect(quotePanel).toContain("Create quote draft");
+    expect(quotePanel).toContain("quoteLifecycleStatuses");
+    expect(quotePanel).toContain("Add quote follow-up");
     expect(quotePanel).toContain("internal snapshots of current line items");
     expect(quotePanel).toContain("Status changes are internal tracking only");
     expect(quotePanel).toContain("public links, PDFs, and customer acceptance are managed from quote detail");
@@ -251,6 +253,8 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain("getQuote(actor, dealId, quoteId)");
     expect(quoteDetailPage).toContain("Internal quote");
     expect(quoteDetailPage).toContain("<QuoteStatusActions");
+    expect(quoteDetailPage).toContain("Add follow-up");
+    expect(quoteDetailPage).toContain("buildActivityFollowUpHref");
     expect(quoteDetailPage).toContain("<QuoteAdjustmentsForm");
     expect(quoteDetailPage).toContain("<QuotePublicLinkControls");
     expect(quoteDetailPage).toContain("buildPublicQuoteUrl(publicLink.token)");

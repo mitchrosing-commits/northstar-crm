@@ -5,7 +5,12 @@ import { getWorkspace, listOrganizations } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewContactPage() {
+export default async function NewContactPage({
+  searchParams
+}: {
+  searchParams?: Promise<{ email?: string; name?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
   const [organizations, workspaceDetail] = await Promise.all([
@@ -26,6 +31,8 @@ export default async function NewContactPage() {
         </div>
       </header>
       <ContactForm
+        defaultEmail={firstSearchParam(resolvedSearchParams?.email)}
+        defaultName={firstSearchParam(resolvedSearchParams?.name)}
         defaultOwnerId={actorUserId}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
@@ -34,4 +41,9 @@ export default async function NewContactPage() {
       />
     </AppShell>
   );
+}
+
+function firstSearchParam(value: string | string[] | undefined) {
+  const first = Array.isArray(value) ? value[0] : value;
+  return first?.slice(0, 160);
 }

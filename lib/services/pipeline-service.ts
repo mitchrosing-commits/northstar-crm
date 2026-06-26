@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, QuoteStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
@@ -34,6 +34,20 @@ export async function listPipelines(actor: WorkspaceActor) {
               activities: {
                 where: { ...activeWhere, completedAt: null },
                 orderBy: [{ dueAt: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+                take: 1
+              },
+              notes: {
+                where: activeWhere,
+                orderBy: { createdAt: "desc" },
+                take: 1
+              },
+              emailLogs: {
+                orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+                take: 1
+              },
+              quotes: {
+                where: { status: QuoteStatus.SENT },
+                orderBy: { updatedAt: "desc" },
                 take: 1
               }
             },

@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import type { Route } from "next";
 
 import { acceptWorkspaceInvitationAction } from "@/app/workspaces/actions";
 import { ApiError } from "@/lib/api/responses";
@@ -22,7 +24,18 @@ export default async function WorkspaceInvitationPage({ params }: WorkspaceInvit
           <p className="page-kicker">Workspace Invitation</p>
           <h1 className="page-title">Invitation unavailable</h1>
           <p className="empty-copy">{invitation.error}</p>
-          <p className="empty-copy">Sign in with the invited email address, or ask a workspace owner/admin for a new link.</p>
+          <p className="empty-copy">
+            Sign in or create an account with the invited email address, then reopen the shared invite link. Ask a
+            workspace owner/admin for a new link if this one was revoked.
+          </p>
+          <div className="form-actions">
+            <Link className="button-primary" href={`/login?next=/workspaces/invitations/${invitationId}` as Route}>
+              Sign in
+            </Link>
+            <Link className="button-secondary" href={`/signup?next=/workspaces/invitations/${invitationId}` as Route}>
+              Create account
+            </Link>
+          </div>
         </section>
       </main>
     );
@@ -38,7 +51,7 @@ export default async function WorkspaceInvitationPage({ params }: WorkspaceInvit
         <p className="empty-copy">
           {alreadyAccepted
             ? `You are already a member of ${invitation.workspace.name} as ${invitation.roleLabel}. Continue to Settings to work in this workspace.`
-            : `Accept this invitation for ${invitation.email} to join ${invitation.workspace.name} as ${invitation.roleLabel}. Email delivery is not implemented yet, so invitations are accepted from a shared link while signed in with the invited email address.`}
+            : `Accept this invitation for ${invitation.email} to join ${invitation.workspace.name} as ${invitation.roleLabel}. If you do not have an account yet, create one with this email first; email delivery is not implemented yet, so invitations are accepted from a shared link.`}
         </p>
         <form action={acceptWorkspaceInvitationAction} className="form-actions">
           <input name="invitationId" type="hidden" value={invitation.id} />

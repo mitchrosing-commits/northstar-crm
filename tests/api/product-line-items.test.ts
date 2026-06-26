@@ -17,6 +17,7 @@ const productForm = readFileSync(join(process.cwd(), "components/product-create-
 const productStatusButton = readFileSync(join(process.cwd(), "components/product-status-button.tsx"), "utf8");
 const dealPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/page.tsx"), "utf8");
 const lineItemsPanel = readFileSync(join(process.cwd(), "components/deal-line-items-panel.tsx"), "utf8");
+const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
 const architecture = readFileSync(join(process.cwd(), "docs/architecture.md"), "utf8");
 
@@ -73,6 +74,14 @@ describe("product catalog and deal line items MVP", () => {
     expect(productsPage).toContain("<ProductCreateForm");
     expect(productsPage).toContain("<ProductStatusButton");
     expect(productsPage).toContain("Product Catalog");
+    expect(productsPage).toContain("product-catalog-grid");
+    expect(productsPage).toContain("product-catalog-card");
+    expect(productsPage).toContain("variant=\"compact\"");
+    expect(productForm).toContain("variant?: \"card\" | \"compact\"");
+    expect(productForm).toContain("product-edit-form");
+    expect(globalStyles).toContain(".product-catalog-grid");
+    expect(globalStyles).toContain(".product-catalog-card");
+    expect(globalStyles).toContain(".product-edit-form .form-grid");
     expect(productForm).toContain("/api/v1/workspaces/${workspaceId}/products");
     expect(productForm).toContain("mode === \"create\" ? \"POST\" : \"PATCH\"");
     expect(productStatusButton).toContain("/products/${productId}/${action}");

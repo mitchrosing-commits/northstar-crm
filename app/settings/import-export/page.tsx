@@ -38,6 +38,33 @@ const exportLabels: Record<ExportResource, { title: string; description: string 
   }
 };
 
+const importSamples = [
+  {
+    title: "Contacts",
+    required: "firstName or name",
+    optional: "lastName, email, phone, organizationName, ownerEmail",
+    csv: "name,email,phone,organizationName,ownerEmail\nAvery Stone,avery@example.test,555-0101,Acme Corporation,owner@example.test"
+  },
+  {
+    title: "Organizations",
+    required: "name",
+    optional: "domain, ownerEmail",
+    csv: "name,domain,ownerEmail\nAcme Corporation,acme.example,owner@example.test"
+  },
+  {
+    title: "Leads",
+    required: "title",
+    optional: "status, source, contactEmail, contactName, organizationName, ownerEmail",
+    csv: "title,status,source,contactEmail,organizationName\nWebsite inquiry,NEW,Website,avery@example.test,Acme Corporation"
+  },
+  {
+    title: "Deals",
+    required: "title, pipeline, stage",
+    optional: "status, value, currency, expectedCloseAt, contactEmail, organizationName, ownerEmail",
+    csv: "title,pipeline,stage,value,currency,status,contactEmail,organizationName\nExpansion deal,New Business,Qualified,1200.00,USD,OPEN,avery@example.test,Acme Corporation"
+  }
+] as const;
+
 export default async function ImportExportPage() {
   const { workspace } = await getCurrentWorkspaceContext();
 
@@ -78,6 +105,28 @@ export default async function ImportExportPage() {
               </div>
             );
           })}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2 className="panel-title">Sample CSV Templates</h2>
+        <p className="empty-copy">
+          Use these small samples as starting points. Imports remain preview-first: paste a CSV, review validation, then
+          import valid rows.
+        </p>
+        <div className="sample-csv-grid">
+          {importSamples.map((sample) => (
+            <div className="sample-csv-card" key={sample.title}>
+              <h3>{sample.title}</h3>
+              <p>
+                <strong>Required:</strong> {sample.required}
+              </p>
+              <p>
+                <strong>Optional:</strong> {sample.optional}
+              </p>
+              <pre>{sample.csv}</pre>
+            </div>
+          ))}
         </div>
       </section>
 

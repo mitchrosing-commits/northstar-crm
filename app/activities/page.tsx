@@ -5,6 +5,7 @@ import { ActivityList } from "@/components/activity-list";
 import { AppShell } from "@/components/app-shell";
 import { FilterPanel } from "@/components/filter-panel";
 import { PaginationControls } from "@/components/pagination-controls";
+import { classifyActivityDue } from "@/lib/activity-due";
 import { buildActivityQuickLinks, type ActivityQuickLink } from "@/lib/activity-quick-links";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { enumSearchParam, getSearchParam, hasActiveListFilters, parsePagination, type ListSearchParams } from "@/lib/list-page-query";
@@ -45,6 +46,7 @@ export default async function ActivitiesPage({ searchParams }: PageProps) {
   const relatedOptions = buildRelatedOptions(allActivities);
   const hasActiveFilters = hasActiveListFilters(params, ["status", "ownerId", "related", "due"]);
   const quickLinks = buildActivityQuickLinks(actorUserId);
+  const agenda = buildActivityAgenda(allActivities);
 
   return (
     <AppShell workspace={workspace}>
@@ -66,6 +68,8 @@ export default async function ActivitiesPage({ searchParams }: PageProps) {
       </section>
 
       <ActivityQuickLinks links={quickLinks} />
+
+      <ActivityAgendaPanel agenda={agenda} workspaceId={workspace.id} />
 
       <FilterPanel action="/activities" resetHref="/activities">
           <label className="form-field">
@@ -136,6 +140,12 @@ export default async function ActivitiesPage({ searchParams }: PageProps) {
 }
 
 type ActivityWithLinks = Awaited<ReturnType<typeof listActivities>>[number];
+type ActivityAgenda = {
+  overdue: ActivityWithLinks[];
+  dueToday: ActivityWithLinks[];
+  upcoming: ActivityWithLinks[];
+  completed: ActivityWithLinks[];
+};
 type RelatedFilter = {
   type: "deal" | "lead" | "person" | "organization";
   id: string;
@@ -159,6 +169,55 @@ function buildRelatedOptions(activities: ActivityWithLinks[]) {
     if (activity.organization) options.set(`organization:${activity.organization.id}`, `Organization: ${activity.organization.name}`);
   }
   return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function buildActivityAgenda(activities: ActivityWithLinks[]): ActivityAgenda {
+  return {
+    overdue: activities.filter((activity) => !activity.completedAt && classifyActivityDue(activity) === "overdue").slice(0, 5),
+    dueToday: activities.filter((activity) => !activity.completedAt && classifyActivityDue(activity) === "today").slice(0, 5),
+    upcoming: activities.filter((activity) => !activity.completedAt && classifyActivityDue(activity) === "upcoming").slice(0, 5),
+    completed: activities.filter((activity) => activity.completedAt).slice(0, 5)
+  };
+}
+
+function ActivityAgendaPanel({ agenda, workspaceId }: { agenda: ActivityAgenda; workspaceId: string }) {
+  const sections = [
+    { activities: agenda.overdue, title: "Overdue", empty: "No overdue activities." },
+    { activities: agenda.dueToday, title: "Due today", empty: "Nothing due today." },
+    { activities: agenda.upcoming, title: "Upcoming", empty: "No upcoming activities scheduled." },
+    { activities: agenda.completed, title: "Recently completed", empty: "Completed activities will appear here." }
+  ] as const;
+
+  return (
+    <section className="panel activity-agenda-panel" aria-labelledby="activity-agenda-title">
+      <div className="panel-title-row">
+        <div>
+          <h2 className="panel-title" id="activity-agenda-title">
+            My Day Agenda
+          </h2>
+          <p className="form-hint">A quick look at what needs action before using filters below.</p>
+        </div>
+        <Link className="button-secondary button-compact" href="/activities/new">
+          Add activity
+        </Link>
+      </div>
+      <div className="activity-agenda-grid">
+        {sections.map((section) => (
+          <div className="activity-agenda-section" key={section.title}>
+            <div className="panel-title-row">
+              <h3 className="compact-title">{section.title}</h3>
+              <span className="badge">{section.activities.length}</span>
+            </div>
+            {section.activities.length > 0 ? (
+              <ActivityList activities={section.activities} showCompleteAction workspaceId={workspaceId} />
+            ) : (
+              <p className="empty-copy">{section.empty}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function formatPersonName(person: { firstName: string; lastName: string | null }) {

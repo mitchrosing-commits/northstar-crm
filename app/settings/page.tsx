@@ -4,7 +4,8 @@ import type { Route } from "next";
 import { AppShell } from "@/components/app-shell";
 import { formatDate } from "@/components/format";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { getWorkspaceMembershipSummary, listEmailConnectionProviderCards, listEmailTemplates, listPendingWorkspaceInvitations } from "@/lib/services/crm";
+import { resolveAuthMode } from "@/lib/auth/session";
+import { getWorkspaceMembershipSummary, listEmailConnectionProviderCards, listEmailTemplates, listPendingWorkspaceInvitations, listPipelines } from "@/lib/services/crm";
 import type { EmailProviderCard } from "@/lib/services/crm";
 import {
   removeWorkspaceMemberAction,
@@ -13,7 +14,13 @@ import {
   updateWorkspaceMemberRoleAction
 } from "@/app/workspaces/actions";
 import { AccountSettingsForm } from "./account-settings-form";
-import { syncRecentGmailAction, syncRecentMicrosoftAction } from "./actions";
+import {
+  createPipelineStageSettingsAction,
+  syncRecentGmailAction,
+  syncRecentMicrosoftAction,
+  updatePipelineSettingsAction,
+  updatePipelineStageSettingsAction
+} from "./actions";
 import { CreateWorkspaceForm } from "./create-workspace-form";
 import { EmailTemplatesPanel } from "./email-templates-panel";
 import { WorkspaceInviteForm } from "./workspace-invite-form";
@@ -27,10 +34,11 @@ export default async function SettingsPage({
 }) {
   const resolvedSearchParams = await searchParams;
   const { workspace, actor, actorUserId, user } = await getCurrentWorkspaceContext();
-  const [summary, emailTemplates, emailProviderCards] = await Promise.all([
+  const [summary, emailTemplates, emailProviderCards, pipelines] = await Promise.all([
     getWorkspaceMembershipSummary(actor),
     listEmailTemplates(actor),
-    listEmailConnectionProviderCards(actor)
+    listEmailConnectionProviderCards(actor),
+    listPipelines(actor)
   ]);
   const pendingInvitations = summary.currentMembership.canManageWorkspaceSettings ? await listPendingWorkspaceInvitations(actor) : [];
   const adminMemberCount = summary.members.filter((member) => member.canManageWorkspaceSettings).length;
@@ -78,6 +86,8 @@ export default async function SettingsPage({
         />
       </section>
 
+      <AdminReadinessPanel />
+
       <section className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-title-row">
           <h2 className="panel-title">Import / Export</h2>
@@ -109,6 +119,8 @@ export default async function SettingsPage({
         providers={emailProviderCards}
         status={resolvedSearchParams?.emailConnection}
       />
+
+      {summary.currentMembership.canManageWorkspaceSettings ? <PipelineSettingsPanel pipelines={pipelines} /> : null}
 
       <section className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-title-row">
@@ -144,8 +156,9 @@ export default async function SettingsPage({
             <span className="badge">Manual link sharing</span>
           </div>
           <p className="empty-copy" style={{ marginBottom: 16 }}>
-            Invite an existing Northstar user by email. Northstar creates an invitation record and accept link; hosted
-            invitation email delivery is not configured in this MVP, so share the link manually.
+            Invite a teammate by email. If they do not have a Northstar account yet, they can create one from the invite
+            flow and then accept the shared link. Hosted invitation email delivery is not configured in this MVP, so
+            share the link manually.
           </p>
           <WorkspaceInviteForm />
           <div style={{ marginTop: 18, overflowX: "auto" }}>
@@ -274,6 +287,170 @@ export default async function SettingsPage({
       </section>
     </AppShell>
   );
+}
+
+type PipelineRecord = Awaited<ReturnType<typeof listPipelines>>[number];
+
+function PipelineSettingsPanel({ pipelines }: { pipelines: PipelineRecord[] }) {
+  const pipeline = pipelines[0];
+
+  return (
+    <section className="panel" id="pipeline-settings" style={{ marginBottom: 16 }}>
+      <div className="panel-title-row">
+        <h2 className="panel-title">Pipeline / Stage Settings</h2>
+        <span className="badge">Workspace admin</span>
+      </div>
+      <p className="empty-copy" style={{ marginBottom: 16 }}>
+        Keep the default New Business pipeline aligned to your sales process. Rename the pipeline or stages, and add a
+        new stage when your workflow needs one. Stage reordering and deletion are intentionally deferred until there is a
+        safe move path for active deals.
+      </p>
+      {pipeline ? (
+        <div className="pipeline-settings-grid">
+          <form action={updatePipelineSettingsAction} className="inline-form">
+            <input name="pipelineId" type="hidden" value={pipeline.id} />
+            <label className="form-field">
+              <span>Pipeline name</span>
+              <input name="name" required defaultValue={pipeline.name} />
+            </label>
+            <button className="button-secondary button-compact" type="submit">
+              Save pipeline
+            </button>
+          </form>
+
+          <div className="quote-draft-list">
+            {pipeline.stages.map((stage) => (
+              <form action={updatePipelineStageSettingsAction} className="quote-draft-item inline-form" key={stage.id}>
+                <input name="stageId" type="hidden" value={stage.id} />
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Stage name</span>
+                    <input name="name" required defaultValue={stage.name} />
+                  </label>
+                  <label className="form-field">
+                    <span>Probability</span>
+                    <input defaultValue={stage.probability ?? ""} max={100} min={0} name="probability" type="number" />
+                  </label>
+                </div>
+                <div className="filter-actions">
+                  <button className="button-secondary button-compact" type="submit">
+                    Save stage
+                  </button>
+                  <span className="muted">Stage removal deferred</span>
+                </div>
+              </form>
+            ))}
+          </div>
+
+          <form action={createPipelineStageSettingsAction} className="inline-form">
+            <input name="pipelineId" type="hidden" value={pipeline.id} />
+            <div className="form-grid">
+              <label className="form-field">
+                <span>New stage</span>
+                <input name="name" placeholder="Legal review" required />
+              </label>
+              <label className="form-field">
+                <span>Probability</span>
+                <input max={100} min={0} name="probability" placeholder="70" type="number" />
+              </label>
+            </div>
+            <button className="button-primary button-compact" type="submit">
+              Add stage
+            </button>
+          </form>
+        </div>
+      ) : (
+        <p className="empty-copy">No pipeline is available yet. New workspaces normally include a New Business pipeline.</p>
+      )}
+    </section>
+  );
+}
+
+function AdminReadinessPanel() {
+  const statuses = buildAdminReadinessStatuses();
+
+  return (
+    <section className="panel" style={{ marginBottom: 16 }}>
+      <div className="panel-title-row">
+        <h2 className="panel-title">Admin Readiness Checklist</h2>
+        <span className="badge">Hosted setup</span>
+      </div>
+      <p className="empty-copy" style={{ marginBottom: 16 }}>
+        Quick operational checks for a hosted Northstar workspace. Secret values are never shown here.
+      </p>
+      <div className="readiness-grid">
+        {statuses.map((status) => (
+          <div className="readiness-item" key={status.label}>
+            <span className={status.configured ? "badge badge-qualified" : "badge"}>{status.configured ? "Configured" : "Needs setup"}</span>
+            <strong>{status.label}</strong>
+            <p>{status.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildAdminReadinessStatuses() {
+  const authMode = resolveAuthMode();
+  const hasAppBaseUrl = Boolean(process.env.APP_BASE_URL?.trim());
+  const hasEmailEncryption = Boolean(process.env.EMAIL_TOKEN_ENCRYPTION_KEY?.trim());
+  const hasGoogleOauth = Boolean(
+    process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() &&
+      process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim() &&
+      process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim() &&
+      hasEmailEncryption
+  );
+  const hasMicrosoftOauth = Boolean(
+    process.env.MICROSOFT_OAUTH_CLIENT_ID?.trim() &&
+      process.env.MICROSOFT_OAUTH_CLIENT_SECRET?.trim() &&
+      process.env.MICROSOFT_OAUTH_REDIRECT_URI?.trim() &&
+      hasEmailEncryption
+  );
+  const hasPasswordResetDelivery = Boolean(process.env.APP_BASE_URL?.trim() && process.env.AUTH_EMAIL_WEBHOOK_URL?.trim());
+
+  return [
+    {
+      label: "Auth mode",
+      configured: authMode === "local",
+      detail: authMode === "local" ? "Local auth is enabled for hosted users." : "Use local auth for company workspaces."
+    },
+    {
+      label: "App base URL",
+      configured: hasAppBaseUrl,
+      detail: hasAppBaseUrl ? "Public URLs can be generated for callbacks and email links." : "Set APP_BASE_URL in the host."
+    },
+    {
+      label: "Gmail / Google Workspace",
+      configured: hasGoogleOauth,
+      detail: hasGoogleOauth ? "Google OAuth and encrypted token storage are configured." : "Configure Google OAuth env vars and token encryption."
+    },
+    {
+      label: "Microsoft 365 / Outlook",
+      configured: hasMicrosoftOauth,
+      detail: hasMicrosoftOauth ? "Microsoft OAuth and encrypted token storage are configured." : "Configure Microsoft OAuth env vars and token encryption."
+    },
+    {
+      label: "Password reset email",
+      configured: hasPasswordResetDelivery,
+      detail: hasPasswordResetDelivery ? "Webhook delivery can be processed by background jobs." : "Configure APP_BASE_URL and AUTH_EMAIL_WEBHOOK_URL."
+    },
+    {
+      label: "Team invitations",
+      configured: true,
+      detail: "Invite links are available for manual sharing; email delivery is not automatic."
+    },
+    {
+      label: "Import / export",
+      configured: true,
+      detail: "CSV export and preview-first imports are available from Settings."
+    },
+    {
+      label: "Demo data",
+      configured: true,
+      detail: "Seed/demo data is explicit and should not be run in company-use environments."
+    }
+  ];
 }
 
 function EmailConnectionsPanel({

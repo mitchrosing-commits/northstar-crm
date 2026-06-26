@@ -212,22 +212,20 @@ export async function createWorkspaceInvitation(
     select: { id: true, email: true }
   });
 
-  if (!invitedUser) {
-    throw new ApiError("VALIDATION_ERROR", "Invitations can only be created for existing users.", 422);
-  }
+  if (invitedUser) {
+    const existingMembership = await prisma.workspaceMembership.findUnique({
+      where: {
+        workspaceId_userId: {
+          workspaceId: actor.workspaceId,
+          userId: invitedUser.id
+        }
+      },
+      select: { id: true }
+    });
 
-  const existingMembership = await prisma.workspaceMembership.findUnique({
-    where: {
-      workspaceId_userId: {
-        workspaceId: actor.workspaceId,
-        userId: invitedUser.id
-      }
-    },
-    select: { id: true }
-  });
-
-  if (existingMembership) {
-    throw new ApiError("VALIDATION_ERROR", "This user is already a workspace member.", 422);
+    if (existingMembership) {
+      throw new ApiError("VALIDATION_ERROR", "This user is already a workspace member.", 422);
+    }
   }
 
   const existingPendingInvitation = await prisma.workspaceInvitation.findUnique({

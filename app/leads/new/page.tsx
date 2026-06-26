@@ -5,7 +5,12 @@ import { getWorkspace, listOrganizations, listPeople } from "@/lib/services/crm"
 
 export const dynamic = "force-dynamic";
 
-export default async function NewLeadPage() {
+export default async function NewLeadPage({
+  searchParams
+}: {
+  searchParams?: Promise<{ source?: string; title?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
   const [people, organizations, workspaceDetail] = await Promise.all([
@@ -28,6 +33,8 @@ export default async function NewLeadPage() {
       </header>
       <LeadForm
         defaultOwnerId={actorUserId}
+        defaultSource={firstSearchParam(resolvedSearchParams?.source)}
+        defaultTitle={firstSearchParam(resolvedSearchParams?.title)}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         owners={owners}
@@ -40,4 +47,9 @@ export default async function NewLeadPage() {
 
 function formatPersonName(person: { firstName: string; lastName: string | null }) {
   return [person.firstName, person.lastName].filter(Boolean).join(" ");
+}
+
+function firstSearchParam(value: string | string[] | undefined) {
+  const first = Array.isArray(value) ? value[0] : value;
+  return first?.slice(0, 160);
 }

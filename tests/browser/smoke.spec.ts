@@ -82,9 +82,9 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(contractWorkflow.getByText("NDA Status")).toBeVisible();
         await expect(contractWorkflow.getByText("MSA Status")).toBeVisible();
         await expect(contractWorkflow.getByText("SOW Status")).toBeVisible();
-        await expect(contractWorkflow.getByText("Signed")).toBeVisible();
-        await expect(contractWorkflow.getByText("Sent")).toBeVisible();
-        await expect(contractWorkflow.getByText("In Review")).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-status-chip").getByText("Signed", { exact: true })).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-status-chip").getByText("Sent", { exact: true })).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-status-chip").getByText("In Review", { exact: true })).toBeVisible();
       }
       if (path === "/dashboard") {
         await expect(page.getByRole("heading", { name: "Active Deals" })).toBeVisible();
@@ -125,11 +125,19 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Microsoft 365" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Outlook" })).toBeVisible();
         await expect(page.getByText("IMAP/SMTP is planned as a fallback for Yahoo Mail")).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Recent Email Activity" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Synced Emails" })).toBeVisible();
         const overflowingProviderCards = await page.locator(".provider-card").evaluateAll((cards) =>
           cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length
         );
         expect(overflowingProviderCards, "Expected provider card text and controls to stay inside their cards").toBe(0);
+      }
+      if (path === "/products") {
+        await expect(page.getByRole("heading", { name: "Product Catalog" })).toBeVisible();
+        expect(await page.locator(".product-catalog-card").count(), "Expected seeded products to render as cards").toBeGreaterThan(0);
+        const overflowingProductCards = await page.locator(".product-catalog-card").evaluateAll((cards) =>
+          cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length
+        );
+        expect(overflowingProductCards, "Expected product card text and edit controls to stay inside their cards").toBe(0);
       }
       if (path === "/settings") {
         await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();

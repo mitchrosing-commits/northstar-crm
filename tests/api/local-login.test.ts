@@ -30,16 +30,19 @@ describe("local login MVP", () => {
     expect(loginForm).toContain("type=\"password\"");
     expect(loginForm).toContain("href=\"/forgot-password\"");
     expect(loginForm).toContain("Forgot your password?");
-    expect(loginForm).toContain("href={\"/signup\" as Route}");
+    expect(loginForm).toContain("const signupHref = nextPath && nextPath !== \"/dashboard\"");
+    expect(loginForm).toContain("href={signupHref as Route}");
     expect(loginForm).toContain("Create an account");
     expect(loginForm).toContain("Sign in");
   });
 
   it("creates a local signup path that signs in and selects a usable workspace", () => {
     expect(signupPage).toContain("Create account");
-    expect(signupPage).toContain("<SignupForm");
+    expect(signupPage).toContain("sanitizeNextPath(next)");
+    expect(signupPage).toContain("<SignupForm nextPath={nextPath}");
     expect(signupForm).toContain("name=\"email\"");
     expect(signupForm).toContain("name=\"password\"");
+    expect(signupForm).toContain("name=\"next\"");
     expect(signupForm).toContain("name=\"workspaceName\"");
     expect(signupForm).toContain("minLength={8}");
     expect(signupActions).toContain("resolveAuthMode() !== \"local\"");
@@ -47,7 +50,8 @@ describe("local login MVP", () => {
     expect(signupActions).toContain("createWorkspaceFromName(result.user.id, workspaceName)");
     expect(signupActions).toContain("cookieStore.set(localSessionCookieName");
     expect(signupActions).toContain("cookieStore.set(activeWorkspaceCookieName, workspaceId");
-    expect(signupActions).toContain("redirect(\"/dashboard\")");
+    expect(signupActions).toContain("const nextPath = sanitizeNextPath");
+    expect(signupActions).toContain("redirect(nextPath as Route)");
     expect(workspaceService).toContain("ensureDefaultPipelineForWorkspace(workspace.id)");
     expect(localAuth).toContain("signupWithEmailAndPassword");
     expect(localAuth).toContain("An account with this email already exists. Sign in instead.");

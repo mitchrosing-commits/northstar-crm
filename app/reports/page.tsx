@@ -74,9 +74,29 @@ export default async function ReportsPage({ searchParams }: PageProps) {
       <section className="panel">
         <h2 className="panel-title">Pipeline Hygiene</h2>
         <div className="stat-grid">
-          <MetricCard label="Overdue activity" value={report.metrics.dealsWithOverdueActivities} />
-          <MetricCard label="Due today" value={report.metrics.dealsDueToday} />
-          <MetricCard label="No next activity" value={report.metrics.dealsWithNoNextActivity} />
+          <MetricCard href="/dashboard" label="Overdue activity" value={report.metrics.dealsWithOverdueActivities} />
+          <MetricCard href="/activities?due=today" label="Due today" value={report.metrics.dealsDueToday} />
+          <MetricCard href="/deals" label="No next activity" value={report.metrics.dealsWithNoNextActivity} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-title-row">
+          <div>
+            <h2 className="panel-title">Data Hygiene</h2>
+            <p className="empty-copy">Quick cleanup signals that make CRM data easier to trust before a pipeline review.</p>
+          </div>
+          <Link className="inline-link" href="/dashboard">
+            Review Needs Attention
+          </Link>
+        </div>
+        <div className="stat-grid">
+          <MetricCard href="/contacts" label="Contacts missing email" value={report.dataHygiene.contactsMissingEmail} />
+          <MetricCard href="/deals" label="Deals missing contact/org" value={report.dataHygiene.openDealsMissingContactOrOrganization} />
+          <MetricCard href="/deals" label="Deals with no owner" value={report.dataHygiene.openDealsWithoutOwner} />
+          <MetricCard href="/deals" label="Open deals no next activity" value={report.dataHygiene.openDealsWithNoNextActivity} />
+          <MetricCard href="/leads" label="Leads missing source" value={report.dataHygiene.leadsMissingSource} />
+          <MetricCard href="/organizations" label="Organizations with no people" value={report.dataHygiene.organizationsWithoutPeople} />
         </div>
       </section>
 

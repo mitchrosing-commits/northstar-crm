@@ -4,6 +4,7 @@ import { ContractWorkflowSummary } from "@/components/contract-workflow-panel";
 import { formatDate, formatMoney } from "@/components/format";
 import { PipelineStageMoveControl } from "@/components/pipeline-stage-move-control";
 import { StatusBadge } from "@/components/status-badge";
+import { buildDealAttentionBadges } from "@/lib/sales-assistant";
 
 type Pipeline = {
   id: string;
@@ -22,11 +23,27 @@ type Pipeline = {
       owner?: { name: string | null; email: string } | null;
       organization?: { name: string } | null;
       person?: { firstName: string; lastName: string | null } | null;
+      updatedAt?: Date | string | null;
+      expectedCloseAt?: Date | string | null;
       activities?: Array<{
         id: string;
         title: string;
         type: string;
         dueAt: Date | string | null;
+        completedAt?: Date | string | null;
+        createdAt?: Date | string | null;
+      }>;
+      notes?: Array<{
+        createdAt: Date | string | null;
+      }>;
+      emailLogs?: Array<{
+        direction: string;
+        occurredAt: Date | string | null;
+      }>;
+      quotes?: Array<{
+        status: string;
+        createdAt: Date | string | null;
+        updatedAt: Date | string | null;
       }>;
       contractFields?: Array<{
         key: string;
@@ -64,6 +81,7 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
               <div className="deal-stack">
                 {stage.deals.map((deal) => {
                   const isClosed = deal.status !== "OPEN";
+                  const attentionBadges = buildDealAttentionBadges(deal).slice(0, 3);
                   return (
                     <article className={isClosed ? "deal-card deal-card-closed" : "deal-card"} key={deal.id}>
                       <Link aria-label={`Open deal ${deal.title}`} className="deal-card-link" href={`/deals/${deal.id}`}>
@@ -76,6 +94,15 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
                           {deal.organization ? <span>{deal.organization.name}</span> : null}
                           {deal.person ? <span>{formatPersonName(deal.person)}</span> : null}
                         </div>
+                        {attentionBadges.length > 0 ? (
+                          <div className="deal-card-badges" aria-label="Deal needs attention">
+                            {attentionBadges.map((badge) => (
+                              <span className={`deal-attention-badge deal-attention-badge-${badge.kind}`} key={badge.kind}>
+                                {badge.label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                         <ContractWorkflowSummary fields={deal.contractFields ?? []} />
                         <div className="deal-card-detail">
                           <span>Owner</span>

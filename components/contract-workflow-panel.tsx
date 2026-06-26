@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+
 type ContractField = {
   key: string;
   name: string;
@@ -19,20 +21,39 @@ const contractSteps: Array<{ key: string; label: ContractWorkflowItem["label"]; 
   { key: "sow_status", label: "SOW", name: "SOW Status" }
 ];
 
-export function ContractWorkflowPanel({ fields }: { fields: ContractField[] }) {
+export function ContractWorkflowPanel({ dealId, fields }: { dealId?: string; fields: ContractField[] }) {
   const items = buildContractWorkflowItems(fields);
   if (items.length === 0) return null;
+  const needsFollowUp = items.some((item) =>
+    ["Requested", "In Review", "Sent", "Blocked"].includes(item.status)
+  );
 
   return (
     <section className="data-card contract-workflow-panel" id="contract-workflow" style={{ marginTop: 14 }}>
       <div className="panel-title-row">
         <h2 className="panel-title">Contract Workflow</h2>
-        <Link className="inline-link" href="/custom-fields">
-          Manage fields
-        </Link>
+        <div className="filter-actions">
+          {dealId && needsFollowUp ? (
+            <Link
+              className="button-secondary button-compact"
+              href={buildActivityFollowUpHref({
+                description: "Review NDA, MSA, and SOW status and unblock the next contract step.",
+                dueInDays: 1,
+                related: { type: "deal", id: dealId },
+                title: "Contract workflow follow-up",
+                type: "TASK"
+              })}
+            >
+              Add contract follow-up
+            </Link>
+          ) : null}
+          <Link className="inline-link" href="/custom-fields">
+            Manage fields
+          </Link>
+        </div>
       </div>
       <p className="empty-copy">
-        Track the agreement path from NDA through MSA and SOW. Document generation and e-signature can be added later.
+        Track whether NDA, MSA, and SOW are requested, sent, signed, or blocked. Document generation and e-signature can be added later.
       </p>
       <div className="contract-workflow-grid">
         {items.map((item) => (

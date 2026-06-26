@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Route } from "next";
 
 import { AppShell } from "@/components/app-shell";
 import { CustomFieldFilterControls, CustomFieldSummaryCell } from "@/components/custom-field-list-summary";
@@ -66,6 +67,7 @@ export default async function DealsPage({ searchParams }: PageProps) {
       </header>
 
       <DealSavedViewsPanel listState={listState} savedViews={savedViews} />
+      <DealQuickFilters actorUserId={actorUserId} />
 
       <FilterPanel action="/deals" pageSize={listState.pagination.pageSize} resetHref="/deals">
           <label className="form-field">
@@ -228,6 +230,39 @@ function formatPersonName(person: { firstName: string; lastName: string | null }
 
 function DealAttentionBadge({ bucket }: { bucket: DealAttentionBucket }) {
   return <span className={`deal-attention deal-attention-${bucket}`}>{dealAttentionLabel(bucket)}</span>;
+}
+
+function DealQuickFilters({ actorUserId }: { actorUserId: string }) {
+  const links = [
+    { href: `/deals?status=OPEN&ownerId=${actorUserId}`, label: "My open deals" },
+    { href: "/deals?status=OPEN&sortBy=expectedCloseAt&sortDirection=asc", label: "Closing soon" },
+    { href: "/deals?status=OPEN&sortBy=valueCents&sortDirection=desc", label: "High value" },
+    { href: "/dashboard", label: "Needs attention" },
+    { href: "/deals?status=WON", label: "Won" },
+    { href: "/deals?status=LOST", label: "Lost" }
+  ] as const;
+
+  return (
+    <section className="panel saved-views-panel" aria-labelledby="deal-quick-filters-title">
+      <div className="saved-views-header">
+        <div>
+          <h2 className="panel-title" id="deal-quick-filters-title">
+            Quick deal filters
+          </h2>
+          <p className="form-hint">Jump to common deal views using existing filters and sort order.</p>
+        </div>
+      </div>
+      <ul className="saved-view-list" aria-label="Deal quick filters">
+        {links.map((link) => (
+          <li className="saved-view-item" key={link.href}>
+            <Link className="inline-link" href={link.href as Route}>
+              {link.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 function NextActivitySummary({

@@ -867,6 +867,94 @@ textarea {
   font-weight: 700;
 }
 
+.needs-attention-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.needs-attention-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.needs-attention-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.needs-attention-item h3 {
+  margin: 6px 0 4px;
+  font-size: 14px;
+}
+
+.needs-attention-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.attention-kind,
+.deal-attention-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.attention-kind-overdue-activity,
+.deal-attention-badge-overdue,
+.deal-attention-badge-contract-blocked {
+  border-color: #f2b8b5;
+  background: #fff0ef;
+  color: var(--red);
+}
+
+.attention-kind-activity-due-today,
+.attention-kind-quote-waiting,
+.attention-kind-contract-attention,
+.deal-attention-badge-no-next-activity,
+.deal-attention-badge-quote-waiting {
+  border-color: #f6d39b;
+  background: #fff8eb;
+  color: var(--gold);
+}
+
+.attention-kind-stale-deal,
+.attention-kind-lead-no-activity,
+.attention-kind-email-follow-up,
+.deal-attention-badge-stale,
+.deal-attention-badge-email-follow-up {
+  border-color: #d9e4f7;
+  background: #f2f6ff;
+  color: var(--blue);
+}
+
+.attention-kind-deal-no-next-activity,
+.attention-kind-closing-soon,
+.deal-attention-badge-closing-soon {
+  border-color: #b7e4c7;
+  background: #ecfdf3;
+  color: #166534;
+}
+
 .badge-open {
   color: var(--accent-strong);
   border-color: #9ed7cd;
@@ -1027,6 +1115,128 @@ textarea {
   font-size: 12px;
 }
 
+.deal-card-badges,
+.deal-next-step-cues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pipeline-settings-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.automation-template-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.automation-template-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.automation-template-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.automation-template-item p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.readiness-item {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.readiness-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sample-csv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.sample-csv-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.sample-csv-card h3,
+.sample-csv-card p {
+  margin: 0;
+}
+
+.sample-csv-card pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.activity-agenda-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.activity-agenda-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.activity-agenda-section {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.activity-agenda-section .activity-list {
+  gap: 8px;
+}
+
 .contract-workflow-panel {
   display: grid;
   gap: 12px;
@@ -1157,6 +1367,81 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.email-command-list {
+  display: grid;
+  gap: 12px;
+}
+
+.email-command-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.email-command-card-unmatched {
+  border-color: #f4d58d;
+  background: #fffaf0;
+}
+
+.email-command-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.email-command-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.email-command-card p,
+.email-command-card .muted,
+.email-preview {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.email-preview {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.email-draft-panel {
+  min-width: min(100%, 260px);
+  max-width: 100%;
+}
+
+.email-draft-panel summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--surface-muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.email-draft-panel[open] {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 560px);
+}
+
 .provider-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1220,6 +1505,36 @@ textarea {
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: center;
+}
+
+.product-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.product-catalog-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 14px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.product-catalog-card .compact-title,
+.product-catalog-card .empty-copy,
+.product-edit-form {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.product-edit-form .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .deal-card-detail {

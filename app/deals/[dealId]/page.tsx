@@ -18,9 +18,11 @@ import { QuoteDraftsPanel } from "@/components/quote-drafts-panel";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
 import { RecordTimeline } from "@/components/record-timeline";
 import { StatusBadge } from "@/components/status-badge";
+import { createDealAutomationActivityAction } from "@/app/deals/actions";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { classifyDealAttention, dealAttentionLabel, type DealAttentionBucket } from "@/lib/deal-attention";
-import { getDeal, getRecordTimeline, getWorkspace, listDealCustomFields, listEmailTemplates, listProducts, listStages } from "@/lib/services/crm";
+import { buildDealAttentionBadges, type DealAttentionBadge } from "@/lib/sales-assistant";
+import { getDeal, getRecordTimeline, getWorkspace, listDealCustomFields, listEmailLogsForRecord, listEmailTemplates, listProducts, listStages, type AutomationTemplateId } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -36,13 +38,14 @@ export default async function DealDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [stages, workspaceDetail, customFields, timelineItems, products, emailTemplates] = await Promise.all([
+  const [stages, workspaceDetail, customFields, timelineItems, products, emailTemplates, emailLogs] = await Promise.all([
     listStages(actor, deal.pipelineId),
     getWorkspace(actor),
     listDealCustomFields(actor, deal.id),
     getRecordTimeline(actor, { type: "DEAL", id: deal.id }),
     listProducts(actor),
-    listEmailTemplates(actor, { activeOnly: true })
+    listEmailTemplates(actor, { activeOnly: true }),
+    listEmailLogsForRecord(actor, { type: "DEAL", id: deal.id })
   ]);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
@@ -57,6 +60,19 @@ export default async function DealDetailPage({ params }: PageProps) {
     name: field.name,
     value: field.values[0]?.value ?? null
   }));
+  const attentionBadges = buildDealAttentionBadges({
+    ...deal,
+    activities: openActivities,
+    contractFields,
+    emailLogs,
+    notes: deal.notes,
+    quotes: deal.quotes
+  });
+  const automationSuggestions = buildDealAutomationSuggestions({
+    contractFields,
+    deal,
+    hasNextActivity: Boolean(nextActivity)
+  });
 
   return (
     <AppShell workspace={workspace}>
@@ -86,7 +102,7 @@ export default async function DealDetailPage({ params }: PageProps) {
       </header>
 
       <section className="deal-context-grid">
-        <DealNextStepCard activity={nextActivity} attention={attention} />
+        <DealNextStepCard activity={nextActivity} attention={attention} badges={attentionBadges} />
         <div className="data-card">
           <h2 className="panel-title">History Snapshot</h2>
           <div className="deal-context-metrics">
@@ -109,6 +125,8 @@ export default async function DealDetailPage({ params }: PageProps) {
           </div>
         </div>
       </section>
+
+      <DealAutomationTemplatesPanel dealId={deal.id} suggestions={automationSuggestions} />
 
       <section className="detail-grid">
         <DetailFieldGrid
@@ -156,7 +174,7 @@ export default async function DealDetailPage({ params }: PageProps) {
         </div>
       </section>
 
-      <ContractWorkflowPanel fields={contractFields} />
+      <ContractWorkflowPanel dealId={deal.id} fields={contractFields} />
 
       <DealLineItemsPanel
         dealId={deal.id}
@@ -242,9 +260,127 @@ function formatPersonName(person: { firstName: string; lastName: string | null }
   return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }
 
+type DealAutomationSuggestion = {
+  templateId: AutomationTemplateId;
+  title: string;
+  description: string;
+  actionLabel: string;
+};
+
+function DealAutomationTemplatesPanel({
+  dealId,
+  suggestions
+}: {
+  dealId: string;
+  suggestions: DealAutomationSuggestion[];
+}) {
+  if (suggestions.length === 0) return null;
+
+  return (
+    <section className="data-card automation-template-panel" style={{ marginBottom: 14 }}>
+      <div className="panel-title-row">
+        <div>
+          <p className="page-kicker">Suggested Automations</p>
+          <h2 className="panel-title">One-click next actions</h2>
+        </div>
+        <span className="badge">Creates activities</span>
+      </div>
+      <p className="empty-copy">
+        These templates create follow-up activities now. They are not background automations or a rule builder.
+      </p>
+      <div className="automation-template-list">
+        {suggestions.map((suggestion) => (
+          <form action={createDealAutomationActivityAction} className="automation-template-item" key={suggestion.templateId}>
+            <input name="dealId" type="hidden" value={dealId} />
+            <input name="templateId" type="hidden" value={suggestion.templateId} />
+            <div>
+              <strong>{suggestion.title}</strong>
+              <p>{suggestion.description}</p>
+            </div>
+            <button className="button-secondary button-compact" type="submit">
+              {suggestion.actionLabel}
+            </button>
+          </form>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildDealAutomationSuggestions({
+  contractFields,
+  deal,
+  hasNextActivity
+}: {
+  contractFields: Array<{ key: string; name: string; value: unknown }>;
+  deal: {
+    status: string;
+    stage: { name: string };
+    quotes: Array<{ status: string }>;
+  };
+  hasNextActivity: boolean;
+}): DealAutomationSuggestion[] {
+  const suggestions: DealAutomationSuggestion[] = [];
+  const hasContractAttention = contractFields.some((field) =>
+    ["sent", "in review", "blocked"].includes(String(field.value ?? "").trim().toLowerCase())
+  );
+
+  if (deal.status === "OPEN" && !hasNextActivity) {
+    suggestions.push({
+      templateId: "deal-next-activity",
+      title: "Create next activity",
+      description: "Add a next step so this open deal does not go quiet.",
+      actionLabel: "Add follow-up"
+    });
+  }
+  if (deal.status === "OPEN" && deal.stage.name.toLowerCase().includes("proposal")) {
+    suggestions.push({
+      templateId: "deal-proposal-follow-up",
+      title: "Proposal follow-up",
+      description: "Schedule a follow-up three days after a proposal-stage deal.",
+      actionLabel: "Create activity"
+    });
+  }
+  if (deal.status === "OPEN" && deal.quotes.some((quote) => quote.status === "SENT")) {
+    suggestions.push({
+      templateId: "quote-follow-up",
+      title: "Quote follow-up",
+      description: "Create a customer check-in for a sent quote.",
+      actionLabel: "Create activity"
+    });
+  }
+  if (deal.status === "OPEN" && hasContractAttention) {
+    suggestions.push({
+      templateId: "contract-follow-up",
+      title: "Contract follow-up",
+      description: "Create a task to unblock NDA, MSA, or SOW progress.",
+      actionLabel: "Create task"
+    });
+  }
+  if (deal.status === "WON") {
+    suggestions.push({
+      templateId: "post-sale-handoff",
+      title: "Post-sale handoff",
+      description: "Create an onboarding handoff task linked to this won deal.",
+      actionLabel: "Create task"
+    });
+  }
+  if (deal.status === "LOST") {
+    suggestions.push({
+      templateId: "lost-reengagement",
+      title: "Future re-engagement",
+      description: "Create a future reminder to revisit this lost opportunity.",
+      actionLabel: "Create reminder"
+    });
+  }
+
+  return suggestions;
+}
+
 function DealNextStepCard({
   activity,
-  attention
+  attention,
+  badges
 }: {
   activity?: {
     id: string;
@@ -255,7 +391,9 @@ function DealNextStepCard({
     owner?: { name: string | null; email: string } | null;
   };
   attention: DealAttentionBucket;
+  badges: DealAttentionBadge[];
 }) {
+  const supportingBadges = badges.filter((badge) => badge.kind !== "overdue" && badge.kind !== "no-next-activity").slice(0, 4);
   return (
     <div className="data-card deal-next-step-card">
       <div className="deal-context-heading">
@@ -282,6 +420,26 @@ function DealNextStepCard({
           </Link>
         </>
       )}
+      {supportingBadges.length > 0 ? (
+        <div className="deal-next-step-cues">
+          {supportingBadges.map((badge) => (
+            <span className={`deal-attention-badge deal-attention-badge-${badge.kind}`} key={badge.kind}>
+              {badge.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {supportingBadges.some((badge) => badge.kind === "email-follow-up") ? (
+        <p className="empty-copy">A recent inbound email is linked to this deal. Add a follow-up so it does not get buried.</p>
+      ) : null}
+      {supportingBadges.some((badge) => badge.kind === "quote-waiting") ? (
+        <p className="empty-copy">A sent quote is waiting for a response. Review the quote or schedule a follow-up.</p>
+      ) : null}
+      {supportingBadges.some((badge) => badge.kind === "contract-blocked") ? (
+        <Link className="inline-link" href="#contract-workflow">
+          Review contract workflow
+        </Link>
+      ) : null}
     </div>
   );
 }

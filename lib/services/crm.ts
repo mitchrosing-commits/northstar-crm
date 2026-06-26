@@ -1,4 +1,5 @@
 export * from "./activity-service";
+export * from "./automation-template-service";
 export * from "./audit-service";
 export * from "./contact-service";
 export * from "./contact-import-service";
@@ -24,3 +25,4 @@ export * from "./saved-view-service";
 export * from "./search-service";
 export * from "./timeline-service";
 export * from "./workspace-service";
+export * from "../sales-assistant";

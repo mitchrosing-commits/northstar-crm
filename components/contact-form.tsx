@@ -26,6 +26,8 @@ type ContactFormProps = {
   organizations: EntityOption[];
   owners: EntityOption[];
   defaultOwnerId?: string;
+  defaultEmail?: string;
+  defaultName?: string;
   initialContact?: ContactFormInitial;
 };
 
@@ -35,13 +37,15 @@ export function ContactForm({
   organizations,
   owners,
   defaultOwnerId,
+  defaultEmail,
+  defaultName,
   initialContact
 }: ContactFormProps) {
   const router = useRouter();
   const defaultCreateOwnerId =
     mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
-  const [name, setName] = useState(formatNameInput(initialContact));
-  const [email, setEmail] = useState(initialContact?.email ?? "");
+  const [name, setName] = useState(formatNameInput(initialContact) || defaultName || "");
+  const [email, setEmail] = useState(initialContact?.email ?? defaultEmail ?? "");
   const [phone, setPhone] = useState(initialContact?.phone ?? "");
   const [organizationId, setOrganizationId] = useState(initialContact?.organizationId ?? "");
   const [ownerId, setOwnerId] = useState(initialContact?.ownerId ?? defaultCreateOwnerId);

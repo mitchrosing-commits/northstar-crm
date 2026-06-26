@@ -30,6 +30,11 @@ type ActivityFormProps = {
   owners: EntityOption[];
   redirectTo?: Route;
   defaultOwnerId?: string;
+  initialAttachmentValue?: string;
+  initialDescription?: string;
+  initialDueAt?: string;
+  initialTitle?: string;
+  initialType?: ActivityType;
   submitLabel?: string;
 };
 
@@ -40,6 +45,11 @@ export function ActivityForm({
   owners,
   redirectTo,
   defaultOwnerId = "",
+  initialAttachmentValue = "",
+  initialDescription = "",
+  initialDueAt = "",
+  initialTitle = "",
+  initialType = "TASK",
   submitLabel = "Add activity"
 }: ActivityFormProps) {
   const router = useRouter();
@@ -48,13 +58,16 @@ export function ActivityForm({
     : owners.length === 1
       ? owners[0]?.id ?? ""
       : "";
-  const [title, setTitle] = useState("");
-  const [type, setType] = useState<ActivityType>("TASK");
-  const [dueAt, setDueAt] = useState("");
+  const resolvedInitialAttachmentValue = attachmentOptions.some((option) => option.value === initialAttachmentValue)
+    ? initialAttachmentValue
+    : attachmentOptions[0]?.value ?? "";
+  const [title, setTitle] = useState(initialTitle);
+  const [type, setType] = useState<ActivityType>(initialType);
+  const [dueAt, setDueAt] = useState(initialDueAt);
   const [ownerId, setOwnerId] = useState(resolvedDefaultOwnerId);
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(initialDescription);
   const [completed, setCompleted] = useState(false);
-  const [selectedAttachment, setSelectedAttachment] = useState(attachmentOptions[0]?.value ?? "");
+  const [selectedAttachment, setSelectedAttachment] = useState(resolvedInitialAttachmentValue);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 

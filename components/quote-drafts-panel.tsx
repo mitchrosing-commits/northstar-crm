@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { formatDate, formatMoney } from "@/components/format";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 
 type QuoteItem = {
   id: string;
@@ -60,15 +61,25 @@ export function QuoteDraftsPanel({ workspaceId, dealId, quotes, canCreate }: Quo
   return (
     <section className="data-card" style={{ marginTop: 14 }}>
       <div className="panel-title-row">
-        <h2 className="panel-title">Quotes</h2>
+        <div>
+          <h2 className="panel-title">Quotes</h2>
+          <p className="empty-copy">Create, send, accept, or decline internal quote snapshots from this deal.</p>
+        </div>
         <button
           className="button-primary button-compact"
           disabled={isSaving || !canCreate}
           onClick={createDraftQuote}
           type="button"
         >
-          {isSaving ? "Creating..." : "Create draft quote"}
+          {isSaving ? "Creating..." : "Create quote draft"}
         </button>
+      </div>
+      <div className="filter-actions" style={{ marginTop: 12 }}>
+        {quoteLifecycleStatuses.map((status) => (
+          <span className="badge" key={status}>
+            {status}: {quotes.filter((quote) => quote.status === status.toUpperCase()).length}
+          </span>
+        ))}
       </div>
       <p className="empty-copy" style={{ marginBottom: 14 }}>
         Quotes are internal snapshots of current line items. Status changes are internal tracking only; public links, PDFs, and customer acceptance are managed from quote detail without email delivery, signatures, or payment collection.
@@ -92,9 +103,24 @@ export function QuoteDraftsPanel({ workspaceId, dealId, quotes, canCreate }: Quo
                 </div>
                 <span className="badge">{formatMoney(quote.totalCents, quote.currency)}</span>
               </div>
-              <Link className="button-secondary button-compact" href={`/deals/${dealId}/quotes/${quote.id}`}>
-                View quote
-              </Link>
+              <div className="filter-actions">
+                <Link className="button-secondary button-compact" href={`/deals/${dealId}/quotes/${quote.id}`}>
+                  View quote
+                </Link>
+                {quote.status === "SENT" ? (
+                  <Link
+                    className="button-secondary button-compact"
+                    href={buildActivityFollowUpHref({
+                      dueInDays: 3,
+                      related: { type: "deal", id: dealId },
+                      title: `Follow up on ${quote.number}`,
+                      type: "TASK"
+                    })}
+                  >
+                    Add quote follow-up
+                  </Link>
+                ) : null}
+              </div>
               <table className="table">
                 <thead>
                   <tr>
@@ -130,3 +156,5 @@ export function QuoteDraftsPanel({ workspaceId, dealId, quotes, canCreate }: Quo
     </section>
   );
 }
+
+const quoteLifecycleStatuses = ["Draft", "Sent", "Accepted", "Declined"];

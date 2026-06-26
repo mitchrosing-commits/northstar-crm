@@ -40,10 +40,15 @@ describe("lead create and update behavior", () => {
     expect(leadsList).toContain("href=\"/leads/new\"");
     expect(leadDetail).toContain("href={`/leads/${lead.id}/edit`}");
     expect(newLeadPage).toContain("LeadForm");
+    expect(newLeadPage).toContain("searchParams");
+    expect(newLeadPage).toContain("defaultSource={firstSearchParam(resolvedSearchParams?.source)}");
+    expect(newLeadPage).toContain("defaultTitle={firstSearchParam(resolvedSearchParams?.title)}");
     expect(editLeadPage).toContain("Converted leads are locked");
     expect(form).toContain("/api/v1/workspaces/${workspaceId}/leads");
     expect(form).toContain("router.push(`/leads/${lead.id}`)");
     expect(form).toContain("QUALIFIED");
     expect(form).toContain("DISQUALIFIED");
+    expect(form).toContain("defaultSource?: string");
+    expect(form).toContain("defaultTitle?: string");
   });
 });

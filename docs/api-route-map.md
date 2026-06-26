@@ -47,7 +47,7 @@ GET /custom-fields                     Deal, Contact, Organization, and Lead cus
 GET /settings                          Signed-in user's display-name account settings plus workspace member visibility/management, workspace creation, and email template management
 GET /settings/import-export            Workspace CSV export entry point and Deals, Organizations, Contacts, and Leads import preview/import
 GET /settings/developer-api            Developer/API overview for workspace REST resources, repo API docs, and planned disabled API-key/webhook controls
-GET /workspaces/invitations/:invitationId Existing-user workspace invitation acceptance page
+GET /workspaces/invitations/:invitationId Workspace invitation acceptance page for signed-in or newly signed-up invitees
 ```
 
 Notes:
@@ -58,7 +58,7 @@ Notes:
 - `updateAccountDisplayNameAction` is a user-level Settings action for display-name account settings. It updates only the current signed-in user's `User.name`; account email is read-only in this MVP.
 - `switchWorkspaceAction` stores an active workspace id in an httpOnly cookie only after verifying the current user is a workspace member.
 - `createWorkspaceAction` creates a workspace for the signed-in user, grants `OWNER` membership, and selects it through the same active-workspace cookie.
-- `createWorkspaceInvitationAction` creates pending invitations for existing users only, and only for workspace owners/admins.
+- `createWorkspaceInvitationAction` creates pending invitations by email for current or future users, and only for workspace owners/admins.
 - `revokeWorkspaceInvitationAction` revokes pending invitations for workspace owners/admins.
 - `acceptWorkspaceInvitationAction` accepts a matching signed-in user's invitation, creates membership idempotently while the accepted membership still exists, blocks old accepted links after member removal, and selects the invited workspace.
 - `removeWorkspaceMemberAction` removes another active workspace member when allowed by role policy: admins can remove normal members, owners can remove admins or normal members, and current owner removal remains blocked.

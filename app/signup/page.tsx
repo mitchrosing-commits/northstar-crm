@@ -1,12 +1,19 @@
 import { redirect } from "next/navigation";
+import type { Route } from "next";
 
 import { getRequestContext } from "@/lib/auth/request-context";
 import { resolveAuthMode } from "@/lib/auth/session";
 import { SignupForm } from "./signup-form";
 
-export default async function SignupPage() {
+type SignupPageProps = {
+  searchParams?: Promise<{ next?: string }>;
+};
+
+export default async function SignupPage({ searchParams }: SignupPageProps) {
+  const { next = "/dashboard" } = (await searchParams) ?? {};
+  const nextPath = sanitizeNextPath(next);
   const isAuthenticated = await hasCurrentUser();
-  if (isAuthenticated) redirect("/dashboard");
+  if (isAuthenticated) redirect(nextPath as Route);
 
   return (
     <main className="login-page">
@@ -16,7 +23,7 @@ export default async function SignupPage() {
         <p className="empty-copy">
           Start a local workspace account for a demo or self-hosted Northstar CRM setup.
         </p>
-        <SignupForm />
+        <SignupForm nextPath={nextPath} />
       </section>
     </main>
   );
@@ -31,4 +38,10 @@ async function hasCurrentUser() {
   } catch {
     return false;
   }
+}
+
+function sanitizeNextPath(nextPath: string) {
+  if (!nextPath.startsWith("/") || nextPath.startsWith("//")) return "/dashboard";
+  if (nextPath.startsWith("/login") || nextPath.startsWith("/signup")) return "/dashboard";
+  return nextPath;
 }

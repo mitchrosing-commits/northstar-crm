@@ -362,7 +362,9 @@ describe("current auth and workspace context", () => {
     const userC = await fx.prisma.user.create({
       data: { email: `integration-c-${fx.workspaceA.id}@example.test`, name: "Integration C" }
     });
+    const futureUserEmail = `future-invite-${fx.workspaceA.id}@example.test`;
     const createdWorkspaceIds: string[] = [];
+    let futureUserId: string | undefined;
 
     try {
       const invitation = await createWorkspaceInvitation(fx.actorA, {
@@ -383,6 +385,25 @@ describe("current auth and workspace context", () => {
         code: "VALIDATION_ERROR",
         message: "A pending invitation already exists for this email.",
         status: 422
+      });
+
+      const futureUserInvitation = await createWorkspaceInvitation(fx.actorA, {
+        email: futureUserEmail,
+        role: "MEMBER"
+      });
+      const pendingAfterFutureInvite = await listPendingWorkspaceInvitations(fx.actorA);
+      const futureUser = await fx.prisma.user.create({
+        data: { email: futureUserEmail, name: "Future Invitee" }
+      });
+      futureUserId = futureUser.id;
+      const futureAcceptedWorkspace = await acceptWorkspaceInvitation(futureUser.id, futureUserInvitation.id);
+      const futureMembership = await fx.prisma.workspaceMembership.findUniqueOrThrow({
+        where: {
+          workspaceId_userId: {
+            workspaceId: fx.workspaceA.id,
+            userId: futureUser.id
+          }
+        }
       });
 
       const userCInvitation = await createWorkspaceInvitation(fx.actorA, {
@@ -538,6 +559,9 @@ describe("current auth and workspace context", () => {
 
       expect(acceptedWorkspace.id).toBe(fx.workspaceA.id);
       expect(acceptedAgainWorkspace.id).toBe(fx.workspaceA.id);
+      expect(pendingAfterFutureInvite.map((item) => item.id)).toContain(futureUserInvitation.id);
+      expect(futureAcceptedWorkspace.id).toBe(fx.workspaceA.id);
+      expect(futureMembership.role).toBe("MEMBER");
       expect(membership.role).toBe("MEMBER");
       expect(acceptedInvitation.status).toBe("ACCEPTED");
       expect(acceptedMemberships).toHaveLength(1);
@@ -568,8 +592,11 @@ describe("current auth and workspace context", () => {
       await fx.prisma.pipelineStage.deleteMany({ where: { workspaceId: { in: createdWorkspaceIds } } });
       await fx.prisma.pipeline.deleteMany({ where: { workspaceId: { in: createdWorkspaceIds } } });
       await fx.prisma.workspaceMembership.deleteMany({ where: { workspaceId: { in: createdWorkspaceIds } } });
+      await fx.prisma.workspaceMembership.deleteMany({ where: { userId: futureUserId } });
       await fx.prisma.workspace.deleteMany({ where: { id: { in: createdWorkspaceIds } } });
-      await fx.prisma.user.deleteMany({ where: { id: userC.id } });
+      await fx.prisma.user.deleteMany({
+        where: { id: { in: [userC.id, futureUserId].filter((id): id is string => Boolean(id)) } }
+      });
     }
   });
 

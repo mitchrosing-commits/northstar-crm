@@ -8,6 +8,7 @@ const emailPage = readFileSync(join(process.cwd(), "app/email/page.tsx"), "utf8"
 const emailActions = readFileSync(join(process.cwd(), "app/email/actions.ts"), "utf8");
 const emailService = readFileSync(join(process.cwd(), "lib/services/email-service.ts"), "utf8");
 const emailConnectionService = readFileSync(join(process.cwd(), "lib/services/email-connection-service.ts"), "utf8");
+const emailDraftPanel = readFileSync(join(process.cwd(), "components/email-draft-panel.tsx"), "utf8");
 const manualEmailPanel = readFileSync(join(process.cwd(), "components/manual-email-log-panel.tsx"), "utf8");
 const middleware = readFileSync(join(process.cwd(), "middleware.ts"), "utf8");
 const settingsPage = readFileSync(join(process.cwd(), "app/settings/page.tsx"), "utf8");
@@ -87,29 +88,72 @@ describe("Email UX v1 discoverability", () => {
     expect(emailActions).toContain("created=${result.created}");
     expect(emailActions).toContain("duplicates=${result.skippedDuplicates}");
     expect(emailActions).toContain("skipped=${result.skippedUnmatched}");
+    expect(emailActions).toContain("total=${result.totalFetched}");
+    expect(emailActions).toContain("setEmailSyncReviewCookie");
+    expect(emailActions).toContain("unmatchedPreviews: result.unmatchedPreviews");
     expect(emailActions).toContain("/email?emailConnection=gmail-sync-error");
+    expect(emailPage).toContain("Latest Sync Result");
+    expect(emailPage).toContain("Fetched");
+    expect(emailPage).toContain("Logged");
+    expect(emailPage).toContain("Duplicates");
+    expect(emailPage).toContain("Unmatched");
     expect(emailPage).toContain("Recent Gmail sync finished.");
     expect(emailPage).toContain("skipped ${searchParams.skipped");
     expect(emailPage).toContain("duplicate");
   });
 
-  it("renders recent email logs with provider badges and linked CRM records", () => {
-    expect(emailPage).toContain("Recent Email Activity");
+  it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
+    expect(emailPage).toContain("Synced Emails");
+    expect(emailPage).toContain("Suggested Follow-ups");
+    expect(emailPage).toContain("EmailLogCard");
+    expect(emailPage).toContain("emailNeedsAttention");
     expect(emailService).toContain("options: { limit?: number } = {}");
     expect(emailService).toContain("take");
     expect(emailPage).toContain("emailLog.subject");
     expect(emailPage).toContain("formatEmailProvider(emailLog.provider)");
     expect(emailPage).toContain("if (provider === \"GOOGLE_WORKSPACE\") return \"Gmail\"");
     expect(emailPage).toContain("if (provider === \"MICROSOFT_365\") return \"Microsoft\"");
-    expect(emailPage).toContain("emailLog.direction === \"INBOUND\" ? \"Inbound\" : \"Outbound\"");
+    expect(emailPage).toContain("emailLog.direction === \"INBOUND\" ? \"From\" : \"To\"");
     expect(emailPage).toContain("emailLog.fromText");
     expect(emailPage).toContain("emailLog.toText");
     expect(emailPage).toContain("formatDate(emailLog.occurredAt)");
+    expect(emailPage).toContain("formatEmailPreview(emailLog.body)");
+    expect(emailPage).toContain("Follow-up suggested");
+    expect(emailPage).toContain("Needs follow-up");
+    expect(emailPage).toContain("Deal communication");
     expect(emailPage).toContain("/contacts/${emailLog.person.id}");
     expect(emailPage).toContain("/organizations/${emailLog.organization.id}");
     expect(emailPage).toContain("/deals/${emailLog.deal.id}");
     expect(emailPage).toContain("/leads/${emailLog.lead.id}");
     expect(emailPage).toContain("No linked CRM record");
+    expect(emailPage).toContain("Create deal");
+  });
+
+  it("shows temporary unmatched email review with create-contact/create-lead actions", () => {
+    expect(emailPage).toContain("Unmatched Email Review");
+    expect(emailPage).toContain("Northstar is not storing unmatched inbox history.");
+    expect(emailPage).toContain("EmailPreviewCard");
+    expect(emailPage).toContain("Possible new contact");
+    expect(emailPage).toContain("Create contact");
+    expect(emailPage).toContain("Create lead");
+    expect(emailPage).toContain("Ignore for now");
+    expect(emailPage).toContain("buildContactHref");
+    expect(emailPage).toContain("buildLeadHref");
+    expect(emailPage).toContain("No matches yet");
+  });
+
+  it("adds follow-up drafting without send scopes or provider sending", () => {
+    expect(emailPage).toContain("EmailDraftPanel");
+    expect(emailDraftPanel).toContain("Draft only. Northstar does not send this email or request send scopes.");
+    expect(emailDraftPanel).toContain("Copy draft");
+    expect(emailDraftPanel).toContain("Open compose");
+    expect(emailDraftPanel).toContain("mailto:");
+    expect(emailDraftPanel).toContain("fallbackTemplates");
+    expect(emailDraftPanel).toContain("Following up on this");
+    expect(emailDraftPanel).toContain("Checking in");
+    expect(emailDraftPanel).toContain("Quote / proposal follow-up");
+    expect(emailConnectionService).not.toContain("Mail.Send");
+    expect(emailConnectionService).not.toContain("gmail.send");
   });
 
   it("keeps empty email state and record-page email cues clear", () => {

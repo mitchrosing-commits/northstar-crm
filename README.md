@@ -4,7 +4,7 @@ Northstar CRM is a multi-tenant sales CRM MVP built with Next.js App Router, Typ
 
 ## Current Capabilities
 
-- Workspace-scoped CRM data with auth-ready users, memberships, active workspace switching, workspace creation, existing-user invitations, conservative role editing, ownership transfer, and member removal.
+- Workspace-scoped CRM data with auth-ready users, memberships, active workspace switching, workspace creation, email-based workspace invitations, conservative role editing, ownership transfer, and member removal.
 - Source and integration tests pin workspace role boundaries and display-name-only account settings behavior.
 - Pipeline board with stages and deal cards.
 - Deal create/edit, stage movement, won/lost close and reopen flow with persisted close outcome timestamps, deal notes, and deal activities.
@@ -269,7 +269,7 @@ http://localhost:3000/forgot-password
 
 Reset requests always show the same generic response so unknown emails are not revealed. The app stores only hashed reset tokens and accepts each token once before expiry. Development and test environments display a reset link after a successful request for an existing active user and do not require webhook config. Production never displays reset links; it queues password-reset email delivery through the provider-neutral auth email webhook when `APP_BASE_URL` and `AUTH_EMAIL_WEBHOOK_URL` are configured with safe HTTPS URLs. Run `npm run jobs:work` as a separate worker process for continuous processing, or `npm run jobs:run-once` to process one due batch manually. Missing config, queued delivery delay, or delivery failure keeps the same generic response.
 
-Signed-in users can view their account name/email and update only their display name from Settings. Users with more than one workspace membership can switch the active workspace from the app shell. The selection is stored in an httpOnly cookie and revalidated against current memberships; it does not grant access to workspaces where the user is not a member. Signed-in users can also create a workspace from Settings; the creator becomes owner, duplicate display names are allowed, and the new workspace becomes active immediately. Workspace owners/admins can invite existing users and remove non-admin members from Settings, but invitation email delivery is not implemented; accept links are shown for manual sharing. Accepted invitation links are idempotent only while the accepted membership still exists; removed members cannot rejoin with an old accepted link.
+Signed-in users can view their account name/email and update only their display name from Settings. Users with more than one workspace membership can switch the active workspace from the app shell. The selection is stored in an httpOnly cookie and revalidated against current memberships; it does not grant access to workspaces where the user is not a member. Signed-in users can also create a workspace from Settings; the creator becomes owner, duplicate display names are allowed, and the new workspace becomes active immediately. Workspace owners/admins can invite teammates by email and remove non-admin members from Settings. Invitees who do not have an account yet can sign up with the invited email, then accept the same invite link. Invitation email delivery is not implemented; accept links are shown for manual sharing. Accepted invitation links are idempotent only while the accepted membership still exists; removed members cannot rejoin with an old accepted link.
 
 For trusted gateway deployments, use:
 

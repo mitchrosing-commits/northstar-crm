@@ -29,6 +29,8 @@ type LeadFormProps = {
   organizations: EntityOption[];
   owners: EntityOption[];
   defaultOwnerId?: string;
+  defaultSource?: string;
+  defaultTitle?: string;
   initialLead?: LeadFormInitial;
 };
 
@@ -39,13 +41,15 @@ export function LeadForm({
   organizations,
   owners,
   defaultOwnerId,
+  defaultSource,
+  defaultTitle,
   initialLead
 }: LeadFormProps) {
   const router = useRouter();
   const defaultCreateOwnerId =
     mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
-  const [title, setTitle] = useState(initialLead?.title ?? "");
-  const [source, setSource] = useState(initialLead?.source ?? "");
+  const [title, setTitle] = useState(initialLead?.title ?? defaultTitle ?? "");
+  const [source, setSource] = useState(initialLead?.source ?? defaultSource ?? "");
   const [status, setStatus] = useState<LeadStatus>(initialLead?.status ?? "NEW");
   const [ownerId, setOwnerId] = useState(initialLead?.ownerId ?? defaultCreateOwnerId);
   const [personId, setPersonId] = useState(initialLead?.personId ?? "");

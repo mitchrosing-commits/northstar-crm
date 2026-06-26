@@ -12,8 +12,10 @@ import { NotesPanel } from "@/components/notes-panel";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
 import { RecordTimeline } from "@/components/record-timeline";
 import { StatusBadge } from "@/components/status-badge";
+import { createLeadAutomationActivityAction } from "@/app/leads/actions";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { getLead, getRecordTimeline, getWorkspace, listEmailTemplates, listLeadCustomFields, listPipelines } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +53,18 @@ export default async function LeadDetailPage({ params }: PageProps) {
         </div>
         <div className="header-actions">
           <StatusBadge status={lead.status} />
+          {lead.status !== "CONVERTED" ? (
+            <Link
+              className="button-secondary"
+              href={buildActivityFollowUpHref({
+                related: { type: "lead", id: lead.id },
+                title: `Follow up on ${lead.title}`,
+                type: "TASK"
+              })}
+            >
+              Add follow-up
+            </Link>
+          ) : null}
           <Link className="button-secondary" href="/leads">
             Back to leads
           </Link>
@@ -65,6 +79,31 @@ export default async function LeadDetailPage({ params }: PageProps) {
           )}
         </div>
       </header>
+
+      {lead.status !== "CONVERTED" && lead.activities.length === 0 ? (
+        <section className="data-card automation-template-panel" style={{ marginBottom: 14 }}>
+          <div className="panel-title-row">
+            <div>
+              <p className="page-kicker">Suggested Automation</p>
+              <h2 className="panel-title">First outreach</h2>
+            </div>
+            <span className="badge">Creates activity</span>
+          </div>
+          <p className="empty-copy">
+            Create a first outreach activity for this lead. This is a one-click template, not an automatic rule.
+          </p>
+          <form action={createLeadAutomationActivityAction} className="automation-template-item">
+            <input name="leadId" type="hidden" value={lead.id} />
+            <div>
+              <strong>Lead first outreach</strong>
+              <p>Schedule a call for tomorrow so the lead has a clear next step.</p>
+            </div>
+            <button className="button-secondary button-compact" type="submit">
+              Create outreach
+            </button>
+          </form>
+        </section>
+      ) : null}
 
       <section className="detail-grid">
         <DetailFieldGrid
@@ -98,8 +137,14 @@ export default async function LeadDetailPage({ params }: PageProps) {
           <h2 className="panel-title">Convert to Deal</h2>
           <p className="empty-copy">
             Create a deal from this lead in a selected pipeline stage. Linked activities and notes will move to the
-            new deal timeline.
+            new deal timeline, then Northstar opens the converted deal so you can add the next sales step.
           </p>
+          {!lead.person && !lead.organization ? (
+            <p className="empty-copy" style={{ marginTop: 8 }}>
+              This lead has no linked contact or organization yet. You can still convert it now, or add those details first
+              if you want the new deal linked from day one.
+            </p>
+          ) : null}
           <div style={{ marginTop: 14 }}>
             <LeadConversionForm
               leadId={lead.id}

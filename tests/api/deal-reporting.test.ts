@@ -46,6 +46,10 @@ describe("Deal Reporting v1", () => {
     expect(service).toContain("quoteSummary");
     expect(service).toContain("topOpenDeals");
     expect(service).toContain("topOrganizations");
+    expect(service).toContain("dataHygiene");
+    expect(service).toContain("contactsMissingEmail");
+    expect(service).toContain("openDealsMissingContactOrOrganization");
+    expect(service).toContain("organizationsWithoutPeople");
     expect(service).toContain("prisma.activity.groupBy");
     expect(service).toContain("prisma.quote.groupBy");
     expect(service).toContain("organizationKey = `${deal.organization.id}:${organizationCurrency}`");
@@ -177,6 +181,10 @@ describe("Deal Reporting v1", () => {
     expect(reportsPage).toContain("Won value");
     expect(reportsPage).toContain("Lost value");
     expect(reportsPage).toContain("Pipeline Hygiene");
+    expect(reportsPage).toContain("Data Hygiene");
+    expect(reportsPage).toContain("Contacts missing email");
+    expect(reportsPage).toContain("Deals missing contact/org");
+    expect(reportsPage).toContain("Organizations with no people");
     expect(reportsPage).toContain("Overdue activity");
     expect(reportsPage).toContain("Due today");
     expect(reportsPage).toContain("No next activity");

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Route } from "next";
 
 import { AppShell } from "@/components/app-shell";
 import { CustomFieldFilterControls, CustomFieldSummaryCell } from "@/components/custom-field-list-summary";
@@ -57,6 +58,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
         </Link>
       </header>
       <LeadSavedViewsPanel listState={listState} savedViews={savedViews} />
+      <LeadQuickFilters />
 
       <FilterPanel action="/leads" pageSize={listState.pagination.pageSize} resetHref="/leads">
           <label className="form-field">
@@ -171,6 +173,38 @@ export default async function LeadsPage({ searchParams }: PageProps) {
 
 function formatPersonName(person: { firstName: string; lastName: string | null }) {
   return [person.firstName, person.lastName].filter(Boolean).join(" ");
+}
+
+function LeadQuickFilters() {
+  const links = [
+    { href: "/leads?status=NEW", label: "New leads" },
+    { href: "/leads?status=QUALIFIED", label: "Open qualified" },
+    { href: "/dashboard", label: "Needs activity" },
+    { href: "/leads?status=CONVERTED", label: "Converted" },
+    { href: "/leads?sortBy=createdAt&sortDirection=desc", label: "Recently created" }
+  ] as const;
+
+  return (
+    <section className="panel saved-views-panel" aria-labelledby="lead-quick-filters-title">
+      <div className="saved-views-header">
+        <div>
+          <h2 className="panel-title" id="lead-quick-filters-title">
+            Quick lead filters
+          </h2>
+          <p className="form-hint">Use common lead status shortcuts without building a custom saved view first.</p>
+        </div>
+      </div>
+      <ul className="saved-view-list" aria-label="Lead quick filters">
+        {links.map((link) => (
+          <li className="saved-view-item" key={link.href}>
+            <Link className="inline-link" href={link.href as Route}>
+              {link.label}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 function SortControls({ listState }: { listState: ListViewState<LeadListSort> }) {

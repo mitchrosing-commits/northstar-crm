@@ -25,7 +25,9 @@ export default async function SearchPage({ searchParams }: PageProps) {
     results.people.length +
     results.organizations.length +
     results.activities.length +
-    results.notes.length;
+    results.notes.length +
+    results.quotes.length +
+    results.emailLogs.length;
 
   return (
     <AppShell workspace={workspace}>
@@ -57,12 +59,43 @@ export default async function SearchPage({ searchParams }: PageProps) {
       {!hasQuery ? (
         <section className="empty-state">
           <h2>Search your workspace</h2>
-          <p>Enter a name, title, domain, activity, or internal note text to find matching CRM records.</p>
+          <p>Enter a name, title, domain, quote number, email subject, activity, or internal note text to find matching CRM records.</p>
+          <div className="filter-actions">
+            <Link className="button-secondary button-compact" href="/deals/new">
+              Create deal
+            </Link>
+            <Link className="button-secondary button-compact" href="/contacts/new">
+              Add contact
+            </Link>
+            <Link className="button-secondary button-compact" href="/organizations/new">
+              Add organization
+            </Link>
+            <Link className="button-secondary button-compact" href="/leads/new">
+              Add lead
+            </Link>
+          </div>
         </section>
       ) : totalResults === 0 ? (
         <section className="empty-state">
           <h2>No results found</h2>
-          <p>No workspace records matched “{results.query}”. Try a record name, email, domain, activity title, or note text.</p>
+          <p>
+            No workspace records matched “{results.query}”. Try a record name, email, domain, quote number, activity title,
+            email subject, or note text.
+          </p>
+          <div className="filter-actions">
+            <Link className="button-secondary button-compact" href="/deals/new">
+              Create deal
+            </Link>
+            <Link className="button-secondary button-compact" href="/contacts/new">
+              Add contact
+            </Link>
+            <Link className="button-secondary button-compact" href="/organizations/new">
+              Add organization
+            </Link>
+            <Link className="button-secondary button-compact" href="/leads/new">
+              Add lead
+            </Link>
+          </div>
         </section>
       ) : (
         <div className="search-results">
@@ -144,6 +177,41 @@ export default async function SearchPage({ searchParams }: PageProps) {
                 meta={[`Internal note added ${formatDate(note.createdAt)}`, noteAuthorLabel(note), attachedLabel(note)]}
                 title={notePreview(note.body)}
               />
+            ))}
+          </SearchSection>
+
+          <SearchSection title="Quotes" count={results.quotes.length}>
+            {results.quotes.map((quote) => (
+              <ResultRow
+                href={`/deals/${quote.dealId}/quotes/${quote.id}` as Route}
+                key={quote.id}
+                meta={[
+                  `Deal: ${quote.deal.title}`,
+                  quote.deal.organization?.name,
+                  formatPersonName(quote.deal.person),
+                  formatMoney(quote.totalCents, quote.currency)
+                ]}
+                title={quote.number}
+              >
+                <StatusBadge status={quote.status} />
+              </ResultRow>
+            ))}
+          </SearchSection>
+
+          <SearchSection title="Emails" count={results.emailLogs.length}>
+            {results.emailLogs.map((emailLog) => (
+              <ResultRow
+                href={emailLogTarget(emailLog)}
+                key={emailLog.id}
+                meta={[
+                  emailLog.direction === "INBOUND" ? `From: ${emailLog.fromText ?? "Not recorded"}` : `To: ${emailLog.toText ?? "Not recorded"}`,
+                  formatDate(emailLog.occurredAt),
+                  attachedLabel(emailLog)
+                ]}
+                title={`Email: ${emailLog.subject}`}
+              >
+                <StatusBadge status={emailLog.provider ? "SYNCED" : "MANUAL"} />
+              </ResultRow>
             ))}
           </SearchSection>
         </div>
@@ -230,6 +298,15 @@ function noteTarget(note: {
   organizationId: string | null;
 }) {
   return attachmentTarget(note);
+}
+
+function emailLogTarget(emailLog: {
+  dealId: string | null;
+  leadId: string | null;
+  personId: string | null;
+  organizationId: string | null;
+}) {
+  return attachmentTarget(emailLog);
 }
 
 function attachmentTarget(record: {

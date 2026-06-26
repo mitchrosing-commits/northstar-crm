@@ -10,6 +10,7 @@ import { QuotePublicLinkControls } from "@/components/quote-public-link-controls
 import { QuoteStatusActions } from "@/components/quote-status-actions";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { buildPublicQuoteUrl } from "@/lib/public-url";
 import { getQuote } from "@/lib/services/crm";
 
@@ -39,6 +40,19 @@ export default async function QuoteDetailPage({ params }: PageProps) {
         </div>
         <div className="header-actions">
           <span className="badge">{quote.status}</span>
+          {quote.status === "SENT" ? (
+            <Link
+              className="button-secondary"
+              href={buildActivityFollowUpHref({
+                dueInDays: 3,
+                related: { type: "deal", id: quote.dealId },
+                title: `Follow up on ${quote.number}`,
+                type: "TASK"
+              })}
+            >
+              Add follow-up
+            </Link>
+          ) : null}
           <Link className="button-secondary" href={`/deals/${quote.dealId}/quotes/${quote.id}/print`}>
             Print view
           </Link>

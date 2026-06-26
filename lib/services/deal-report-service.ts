@@ -1,4 +1,4 @@
-import { ActivityType, DealStatus, QuoteStatus } from "@prisma/client";
+import { ActivityType, DealStatus, LeadStatus, QuoteStatus } from "@prisma/client";
 
 import { classifyDealAttention } from "@/lib/deal-attention";
 import { prisma } from "@/lib/db/prisma";
@@ -48,6 +48,8 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
     string,
     { organizationId: string; organizationName: string; currency: string; openDealCount: number; openValueCents: number }
   >();
+  let openDealsMissingContactOrOrganization = 0;
+  let openDealsWithoutOwner = 0;
 
   for (const deal of deals) {
     const valueCents = deal.valueCents ?? 0;
@@ -73,6 +75,8 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
         organization.openValueCents += valueCents;
         topOrganizations.set(organizationKey, organization);
       }
+      if (!deal.personId || !deal.organizationId) openDealsMissingContactOrOrganization += 1;
+      if (!deal.ownerId) openDealsWithoutOwner += 1;
 
       const attention = classifyDealAttention(deal);
       if (attention === "overdue") metrics.dealsWithOverdueActivities += 1;
@@ -91,7 +95,16 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
     }
   }
 
-  const [activityTypeGroups, openActivityCount, completedActivityCount, quoteGroups, topOpenDeals] = await Promise.all([
+  const [
+    activityTypeGroups,
+    openActivityCount,
+    completedActivityCount,
+    quoteGroups,
+    topOpenDeals,
+    contactsMissingEmail,
+    leadsMissingSource,
+    organizationsWithoutPeople
+  ] = await Promise.all([
     prisma.activity.groupBy({
       by: ["type"],
       where: { workspaceId: actor.workspaceId, ...activeWhere },
@@ -114,6 +127,20 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
       },
       orderBy: [{ valueCents: "desc" }, { updatedAt: "desc" }],
       take: 5
+    }),
+    prisma.person.count({
+      where: { workspaceId: actor.workspaceId, OR: [{ email: null }, { email: "" }], ...activeWhere }
+    }),
+    prisma.lead.count({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: { not: LeadStatus.CONVERTED },
+        OR: [{ source: null }, { source: "" }],
+        ...activeWhere
+      }
+    }),
+    prisma.organization.count({
+      where: { workspaceId: actor.workspaceId, people: { none: activeWhere }, ...activeWhere }
     })
   ]);
 
@@ -152,6 +179,14 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
       .sort((a, b) => b.openValueCents - a.openValueCents || a.organizationName.localeCompare(b.organizationName))
       .slice(0, 5),
     forecast: calculateDealForecast(deals),
+    dataHygiene: {
+      contactsMissingEmail,
+      openDealsMissingContactOrOrganization,
+      openDealsWithoutOwner,
+      openDealsWithNoNextActivity: metrics.dealsWithNoNextActivity,
+      leadsMissingSource,
+      organizationsWithoutPeople
+    },
     stageBreakdown: stages.map((stage) => {
       const totals = stageTotals.get(stage.id) ?? { openDealCount: 0, openDealValueCents: 0 };
       return {

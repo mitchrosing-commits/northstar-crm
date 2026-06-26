@@ -17,6 +17,7 @@ const initialState: LoginActionState = {
 
 export function LoginForm({ nextPath }: LoginFormProps) {
   const [state, formAction] = useActionState(loginAction, initialState);
+  const signupHref = nextPath && nextPath !== "/dashboard" ? `/signup?next=${encodeURIComponent(nextPath)}` : "/signup";
 
   return (
     <form action={formAction} className="login-form">
@@ -50,7 +51,7 @@ export function LoginForm({ nextPath }: LoginFormProps) {
         <Link href="/forgot-password">Forgot your password?</Link>
       </p>
       <p className="empty-copy">
-        New to Northstar? <Link href={"/signup" as Route}>Create an account</Link>
+        New to Northstar? <Link href={signupHref as Route}>Create an account</Link>
       </p>
     </form>
   );

@@ -178,6 +178,21 @@ describe("query-driven list filtering and sorting", () => {
     expect(dealsPage).toContain("href={`/deals/${deal.id}`}");
   });
 
+  it("surfaces quick filter shortcuts on deal and lead lists using existing query state", () => {
+    expect(dealsPage).toContain("DealQuickFilters");
+    expect(dealsPage).toContain("Quick deal filters");
+    expect(dealsPage).toContain("/deals?status=OPEN&ownerId=");
+    expect(dealsPage).toContain("/deals?status=OPEN&sortBy=expectedCloseAt&sortDirection=asc");
+    expect(dealsPage).toContain("/deals?status=OPEN&sortBy=valueCents&sortDirection=desc");
+    expect(dealsPage).toContain("/deals?status=WON");
+    expect(dealsPage).toContain("/deals?status=LOST");
+    expect(leadsPage).toContain("LeadQuickFilters");
+    expect(leadsPage).toContain("Quick lead filters");
+    expect(leadsPage).toContain("/leads?status=NEW");
+    expect(leadsPage).toContain("/leads?status=QUALIFIED");
+    expect(leadsPage).toContain("/leads?status=CONVERTED");
+  });
+
   it("supports basic sort controls for each list", () => {
     for (const page of [leadsPage, contactsPage, organizationsPage, activitiesPage, dealsPage]) {
       expect(page).toContain("name=\"sortBy\"");

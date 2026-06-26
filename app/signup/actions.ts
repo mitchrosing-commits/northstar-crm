@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { Route } from "next";
 
 import { ApiError } from "@/lib/api/responses";
 import { signupWithEmailAndPassword } from "@/lib/auth/local-auth";
@@ -36,6 +37,7 @@ export async function signupAction(
   const name = String(formData.get("name") ?? "");
   const password = String(formData.get("password") ?? "");
   const workspaceName = String(formData.get("workspaceName") ?? "");
+  const nextPath = sanitizeNextPath(String(formData.get("next") ?? ""));
   let session: Awaited<ReturnType<typeof signupWithEmailAndPassword>>["session"];
   let workspaceId: string;
 
@@ -74,5 +76,11 @@ export async function signupAction(
     expires: session.expiresAt
   });
   cookieStore.set(activeWorkspaceCookieName, workspaceId, activeWorkspaceCookieOptions);
-  redirect("/dashboard");
+  redirect(nextPath as Route);
+}
+
+function sanitizeNextPath(nextPath: string) {
+  if (!nextPath.startsWith("/") || nextPath.startsWith("//")) return "/dashboard";
+  if (nextPath.startsWith("/login") || nextPath.startsWith("/signup")) return "/dashboard";
+  return nextPath;
 }
