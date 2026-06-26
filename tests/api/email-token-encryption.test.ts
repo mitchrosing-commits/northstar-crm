@@ -19,6 +19,9 @@ const migration = readFileSync(
 const service = readFileSync(join(process.cwd(), "lib/services/email-connection-service.ts"), "utf8");
 const connectRoute = readFileSync(join(process.cwd(), "app/api/email-connections/google/connect/route.ts"), "utf8");
 const callbackRoute = readFileSync(join(process.cwd(), "app/api/email-connections/google/callback/route.ts"), "utf8");
+const microsoftConnectRoute = readFileSync(join(process.cwd(), "app/api/email-connections/microsoft/connect/route.ts"), "utf8");
+const microsoftCallbackRoute = readFileSync(join(process.cwd(), "app/api/email-connections/microsoft/callback/route.ts"), "utf8");
+const oauthState = readFileSync(join(process.cwd(), "lib/email/oauth-state.ts"), "utf8");
 
 describe("encrypted email token storage", () => {
   it("encrypts and decrypts email provider tokens with AES-GCM payloads", () => {
@@ -81,5 +84,31 @@ describe("encrypted email token storage", () => {
     expect(callbackRoute).toContain("gmail-connected");
     expect(callbackRoute).not.toContain("emailLog.create");
     expect(callbackRoute).not.toContain("messages.list");
+  });
+
+  it("adds safe Microsoft connect and callback routes without mailbox sync", () => {
+    expect(service).toContain("microsoftOAuthScopes");
+    expect(service).toContain("Mail.Read");
+    expect(service).toContain("offline_access");
+    expect(service).toContain("export function assertMicrosoftOAuthReady");
+    expect(service).toContain("export function buildMicrosoftAuthorizationUrl");
+    expect(service).toContain("export async function exchangeMicrosoftAuthorizationCode");
+    expect(service).toContain("export async function fetchMicrosoftUserProfile");
+    expect(service).toContain("export async function storeMicrosoftOAuthConnection");
+    expect(service).toContain("export async function syncRecentMicrosoftMessages");
+    expect(service).toContain("encryptedAccessToken: encryptEmailToken(tokenResponse.access_token");
+    expect(service).not.toContain("Mail.Send");
+    expect(service).not.toContain("Mail.ReadWrite");
+    expect(microsoftConnectRoute).toContain("assertMicrosoftOAuthReady");
+    expect(microsoftConnectRoute).toContain("createEmailOAuthState");
+    expect(microsoftConnectRoute).toContain("buildMicrosoftAuthorizationUrl");
+    expect(microsoftCallbackRoute).toContain("verifyEmailOAuthState");
+    expect(microsoftCallbackRoute).toContain("exchangeMicrosoftAuthorizationCode");
+    expect(microsoftCallbackRoute).toContain("fetchMicrosoftUserProfile");
+    expect(microsoftCallbackRoute).toContain("storeMicrosoftOAuthConnection");
+    expect(microsoftCallbackRoute).toContain("microsoft-connected");
+    expect(microsoftCallbackRoute).not.toContain("emailLog.create");
+    expect(microsoftCallbackRoute).not.toContain("messages");
+    expect(oauthState).toContain("\"GOOGLE_WORKSPACE\" | \"MICROSOFT_365\"");
   });
 });

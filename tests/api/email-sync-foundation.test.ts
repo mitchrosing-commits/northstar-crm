@@ -46,7 +46,10 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("isTokenEncryptionConfigured");
     expect(emailConnectionService).toContain("Not configured");
     expect(emailConnectionService).toContain("Token encryption required");
-    expect(emailConnectionService).toContain("OAuth route pending");
+    expect(emailConnectionService).toContain("microsoftProviderCard");
+    expect(emailConnectionService).toContain("Connect Microsoft");
+    expect(emailConnectionService).toContain("href: \"/api/email-connections/microsoft/connect\"");
+    expect(emailConnectionService).toContain("Sync recent Microsoft mail");
     expect(emailConnectionService).toContain("Connect Gmail");
     expect(emailConnectionService).toContain("disabled: true");
     expect(settingsPage).toContain("listEmailConnectionProviderCards(actor)");

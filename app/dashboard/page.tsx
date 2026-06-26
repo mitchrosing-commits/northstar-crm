@@ -313,16 +313,10 @@ function formatPersonName(person: { firstName: string; lastName: string | null }
 function FirstRunChecklist() {
   const steps = [
     {
-      title: "Create your first deal",
-      description: "Start the sales workflow in your ready-to-use New Business pipeline.",
-      href: "/deals/new",
-      action: "New deal"
-    },
-    {
-      title: "Add a contact",
-      description: "Capture the buyer or stakeholder you are working with.",
+      title: "Create or import contacts",
+      description: "Add the people you sell to, or import a CSV when you already have a list.",
       href: "/contacts/new",
-      action: "New contact"
+      action: "Add contact"
     },
     {
       title: "Add an organization",
@@ -331,16 +325,28 @@ function FirstRunChecklist() {
       action: "New organization"
     },
     {
-      title: "Add your first follow-up activity",
+      title: "Create your first deal",
+      description: "Start the sales workflow in your ready-to-use New Business pipeline.",
+      href: "/deals/new",
+      action: "New deal"
+    },
+    {
+      title: "Schedule a follow-up activity",
       description: "Plan the next call, email, meeting, or task.",
       href: "/activities/new",
       action: "New activity"
     },
     {
-      title: "Create a quote when ready",
-      description: "Quotes are created from deal line items once there is pricing to review.",
-      href: "/deals",
-      action: "Find deals"
+      title: "Connect Gmail or Google Workspace",
+      description: "Sync recent matched email metadata and snippets from known contacts.",
+      href: "/email",
+      action: "Open email"
+    },
+    {
+      title: "Invite a teammate",
+      description: "Add another Northstar user to the workspace when you are ready to collaborate.",
+      href: "/settings",
+      action: "Open settings"
     }
   ] as const;
 

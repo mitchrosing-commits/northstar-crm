@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -93,6 +95,32 @@ export function LeadForm({
   return (
     <form className="form-card" onSubmit={onSubmit}>
       {error ? <div className="form-error">{error}</div> : null}
+      {mode === "create" ? (
+        <p className="empty-copy" style={{ marginBottom: 14 }}>
+          Capture a possible opportunity before it is qualified. Link a contact or organization now, or add those
+          records later when you know more.
+        </p>
+      ) : null}
+      {mode === "create" && (people.length === 0 || organizations.length === 0) ? (
+        <div className="data-card" style={{ marginBottom: 14 }}>
+          <h2 className="panel-title">Need a related record?</h2>
+          <p className="empty-copy" style={{ marginBottom: 12 }}>
+            Leads can start without a contact or organization. Add one first if you already know the buyer or company.
+          </p>
+          <div className="filter-actions">
+            {people.length === 0 ? (
+              <Link className="button-secondary button-compact" href={"/contacts/new" as Route}>
+                Add a contact
+              </Link>
+            ) : null}
+            {organizations.length === 0 ? (
+              <Link className="button-secondary button-compact" href={"/organizations/new" as Route}>
+                Add an organization
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div className="form-grid">
         <label className="form-field form-field-wide">
           <span>Title</span>
@@ -128,25 +156,27 @@ export function LeadForm({
         <label className="form-field">
           <span>Person</span>
           <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
-            <option value="">None</option>
+            <option value="">{people.length === 0 ? "No contacts yet - save lead without contact" : "None"}</option>
             {people.map((person) => (
               <option key={person.id} value={person.id}>
                 {person.name}
               </option>
             ))}
           </select>
+          {people.length === 0 ? <small className="form-hint">Add a contact later when the lead is clearer.</small> : null}
         </label>
 
         <label className="form-field">
           <span>Organization</span>
           <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-            <option value="">None</option>
+            <option value="">{organizations.length === 0 ? "No organizations yet - save lead without one" : "None"}</option>
             {organizations.map((organization) => (
               <option key={organization.id} value={organization.id}>
                 {organization.name}
               </option>
             ))}
           </select>
+          {organizations.length === 0 ? <small className="form-hint">Add the company later or create it before saving.</small> : null}
         </label>
       </div>
 

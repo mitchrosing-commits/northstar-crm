@@ -59,6 +59,7 @@ test.describe("Northstar CRM browser smoke", () => {
       "/organizations",
       organizationHref,
       "/activities",
+      "/email",
       "/products",
       "/reports",
       "/search?q=orbit",
@@ -117,17 +118,25 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Quick activity links" })).toBeVisible();
         await expect(page.getByRole("link", { name: "My open" })).toBeVisible();
       }
+      if (path === "/email") {
+        await expect(page.getByRole("heading", { name: "Email Providers" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Gmail" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Google Workspace" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Microsoft 365" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Outlook" })).toBeVisible();
+        await expect(page.getByText("IMAP/SMTP is planned as a fallback for Yahoo Mail")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Recent Email Activity" })).toBeVisible();
+      }
       if (path === "/settings") {
         await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
         await expect(page.getByLabel("Display name")).toBeVisible();
         await expect(page.locator("#account-email")).toBeVisible();
         await expect(page.getByRole("heading", { name: "Email Connections" })).toBeVisible();
-        await expect(page.getByText("Gmail / Google Workspace")).toBeVisible();
-        await expect(page.getByText("Microsoft 365 / Outlook")).toBeVisible();
-        await expect(page.getByText("IMAP / SMTP")).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Gmail / Google Workspace" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Microsoft 365 / Outlook" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "IMAP / SMTP" })).toBeVisible();
         await expect(page.getByRole("link", { name: "Open API surface" })).toBeVisible();
         expect(await page.getByText("Not configured").count()).toBeGreaterThanOrEqual(1);
-        expect(await page.getByRole("button", { name: "Configure OAuth" }).count()).toBeGreaterThanOrEqual(1);
         await expect(page.getByRole("button", { name: "Planned" })).toBeDisabled();
       }
       if (path === "/settings/import-export") {

@@ -21,6 +21,7 @@ const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8")
 describe("local login MVP", () => {
   it("renders a narrow login page and server-action form", () => {
     expect(loginPage).toContain("Sign in");
+    expect(loginPage).toContain("Please sign in to continue.");
     expect(loginPage).toContain("SSO and external email delivery are not part of this MVP.");
     expect(loginPage).toContain("resolveAuthMode() !== \"local\"");
     expect(loginPage).toContain("<LoginForm");

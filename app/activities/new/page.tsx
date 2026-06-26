@@ -48,6 +48,29 @@ export default async function NewActivityPage() {
 
       <section className="data-card">
         <h2 className="panel-title">Create Follow-up</h2>
+        {attachmentOptions.length === 0 ? (
+          <div className="empty-state" style={{ marginBottom: 16 }}>
+            <h3>Create something to follow up on</h3>
+            <p>
+              Activities need a related deal, contact, organization, or lead. Add one first, then come back to schedule
+              the follow-up.
+            </p>
+            <div className="filter-actions">
+              <Link className="button-secondary button-compact" href={"/deals/new" as Route}>
+                Add a deal
+              </Link>
+              <Link className="button-secondary button-compact" href={"/contacts/new" as Route}>
+                Add a contact
+              </Link>
+              <Link className="button-secondary button-compact" href={"/organizations/new" as Route}>
+                Add an organization
+              </Link>
+              <Link className="button-secondary button-compact" href={"/leads/new" as Route}>
+                Add a lead
+              </Link>
+            </div>
+          </div>
+        ) : null}
         <ActivityForm
           attachmentOptions={attachmentOptions}
           defaultOwnerId={actorUserId}

@@ -21,12 +21,14 @@ const emailLogInclude = {
   organization: true
 } satisfies Prisma.EmailLogInclude;
 
-export async function listEmailLogs(actor: WorkspaceActor) {
+export async function listEmailLogs(actor: WorkspaceActor, options: { limit?: number } = {}) {
   await ensureWorkspaceAccess(actor);
+  const take = options.limit ? Math.min(Math.max(options.limit, 1), 100) : undefined;
   return prisma.emailLog.findMany({
     where: { workspaceId: actor.workspaceId },
     include: emailLogInclude,
-    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }]
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+    take
   });
 }
 

@@ -11,10 +11,13 @@ const pipelineService = readFileSync(join(process.cwd(), "lib/services/pipeline-
 const dashboardService = readFileSync(join(process.cwd(), "lib/services/dashboard-service.ts"), "utf8");
 const dashboardPage = readFileSync(join(process.cwd(), "app/dashboard/page.tsx"), "utf8");
 const pipelineBoard = readFileSync(join(process.cwd(), "components/pipeline-board.tsx"), "utf8");
+const dealForm = readFileSync(join(process.cwd(), "components/deal-form.tsx"), "utf8");
+const leadForm = readFileSync(join(process.cwd(), "components/lead-form.tsx"), "utf8");
 const dealsPage = readFileSync(join(process.cwd(), "app/deals/page.tsx"), "utf8");
 const contactsPage = readFileSync(join(process.cwd(), "app/contacts/page.tsx"), "utf8");
 const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
 const activitiesPage = readFileSync(join(process.cwd(), "app/activities/page.tsx"), "utf8");
+const newActivitiesPage = readFileSync(join(process.cwd(), "app/activities/new/page.tsx"), "utf8");
 const quoteDraftsPanel = readFileSync(join(process.cwd(), "components/quote-drafts-panel.tsx"), "utf8");
 
 describe("first-run clean workspace experience", () => {
@@ -79,20 +82,31 @@ describe("first-run clean workspace experience", () => {
   it("renders a polished first-run checklist with useful CRM actions", () => {
     expect(dashboardPage).toContain("Set up your sales workspace");
     expect(dashboardPage).toContain("Your workspace is clean and ready.");
-    expect(dashboardPage).toContain("Create your first deal");
-    expect(dashboardPage).toContain("href: \"/deals/new\"");
-    expect(dashboardPage).toContain("Add a contact");
+    expect(dashboardPage).toContain("Create or import contacts");
     expect(dashboardPage).toContain("href: \"/contacts/new\"");
     expect(dashboardPage).toContain("Add an organization");
     expect(dashboardPage).toContain("href: \"/organizations/new\"");
-    expect(dashboardPage).toContain("Add your first follow-up activity");
+    expect(dashboardPage).toContain("Create your first deal");
+    expect(dashboardPage).toContain("href: \"/deals/new\"");
+    expect(dashboardPage).toContain("Schedule a follow-up activity");
     expect(dashboardPage).toContain("href: \"/activities/new\"");
-    expect(dashboardPage).toContain("Create a quote when ready");
-    expect(dashboardPage).toContain("href: \"/deals\"");
+    expect(dashboardPage).toContain("Connect Gmail or Google Workspace");
+    expect(dashboardPage).toContain("href: \"/email\"");
+    expect(dashboardPage).toContain("Invite a teammate");
+    expect(dashboardPage).toContain("href: \"/settings\"");
   });
 
   it("keeps fresh-workspace empty states product-facing and action-oriented", () => {
-    const emptyStateSources = [dashboardPage, pipelineBoard, dealsPage, contactsPage, organizationsPage, activitiesPage, quoteDraftsPanel].join("\n");
+    const emptyStateSources = [
+      dashboardPage,
+      pipelineBoard,
+      dealsPage,
+      contactsPage,
+      organizationsPage,
+      activitiesPage,
+      newActivitiesPage,
+      quoteDraftsPanel
+    ].join("\n");
 
     expect(pipelineBoard).toContain("Your stages are ready.");
     expect(pipelineBoard).toContain("Create your first deal to start moving opportunities through this board.");
@@ -106,5 +120,25 @@ describe("first-run clean workspace experience", () => {
     expect(quoteDraftsPanel).toContain("No internal quote drafts yet. Create one after the deal has line items to review a frozen snapshot.");
     expect(emptyStateSources).not.toContain("run seed script");
     expect(emptyStateSources).not.toContain("Run the seed script");
+  });
+
+  it("removes first-user dead ends when forms have no related records yet", () => {
+    expect(dealForm).toContain("Create a deal now, even if the buyer or company is not in Northstar yet.");
+    expect(dealForm).toContain("Add a contact");
+    expect(dealForm).toContain("Add an organization");
+    expect(dealForm).toContain("Import contacts");
+    expect(dealForm).toContain("No contacts yet - create deal without contact");
+    expect(dealForm).toContain("No organizations yet - create deal without one");
+
+    expect(leadForm).toContain("Capture a possible opportunity before it is qualified.");
+    expect(leadForm).toContain("No contacts yet - save lead without contact");
+    expect(leadForm).toContain("No organizations yet - save lead without one");
+
+    expect(newActivitiesPage).toContain("Create something to follow up on");
+    expect(newActivitiesPage).toContain("Activities need a related deal, contact, organization, or lead.");
+    expect(newActivitiesPage).toContain("href={\"/deals/new\" as Route}");
+    expect(newActivitiesPage).toContain("href={\"/contacts/new\" as Route}");
+    expect(newActivitiesPage).toContain("href={\"/organizations/new\" as Route}");
+    expect(newActivitiesPage).toContain("href={\"/leads/new\" as Route}");
   });
 });

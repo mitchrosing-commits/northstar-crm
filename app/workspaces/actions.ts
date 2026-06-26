@@ -108,7 +108,7 @@ export async function createWorkspaceInvitationAction(
     return {
       email: "",
       role: "MEMBER",
-      message: `Invitation created for ${invitation.email}.`
+      message: `Invitation record created for ${invitation.email}. Share the accept link from the pending invitations table.`
     };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {

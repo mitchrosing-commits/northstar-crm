@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +14,8 @@ import {
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { shouldRedirectToLoginForMissingAppSession } from "@/lib/auth/request-context";
 import { ApiError } from "@/lib/api/responses";
+
+const middlewareSource = readFileSync(join(process.cwd(), "middleware.ts"), "utf8");
 
 describe("auth session abstraction", () => {
   it("resolves a trusted user header without coupling request context to a hardcoded user", () => {
@@ -119,6 +123,10 @@ describe("auth session abstraction", () => {
       kind: "missing",
       mode: "local"
     });
+    expect(resolveSessionIdentity(new Headers(), { AUTH_MODE: "local", DEV_ACTOR_EMAIL: "alex@example.test" })).toEqual({
+      kind: "missing",
+      mode: "local"
+    });
   });
 
   it("defaults to demo outside production and trusted-header in production", () => {
@@ -142,5 +150,35 @@ describe("auth session abstraction", () => {
     expect(shouldRedirectToLoginForMissingAppSession(unauthenticatedError, { AUTH_MODE: "local" })).toBe(true);
     expect(shouldRedirectToLoginForMissingAppSession(unauthenticatedError, { AUTH_MODE: "trusted-header" })).toBe(false);
     expect(shouldRedirectToLoginForMissingAppSession(new ApiError("FORBIDDEN", "Nope.", 403), { AUTH_MODE: "local" })).toBe(false);
+  });
+
+  it("guards protected app pages before local-auth requests fall through to server data loading", () => {
+    expect(middlewareSource).toContain("process.env.AUTH_MODE !== \"local\"");
+    expect(middlewareSource).toContain("localSessionCookieName = \"northstar_session\"");
+    expect(middlewareSource).toContain("NextResponse.redirect(loginUrl)");
+    expect(middlewareSource).toContain("loginUrl.pathname = \"/login\"");
+    expect(middlewareSource).toContain("loginUrl.searchParams.set(\"next\"");
+    expect(middlewareSource).not.toContain("alex@example.test");
+
+    [
+      "/dashboard",
+      "/pipeline",
+      "/deals",
+      "/contacts",
+      "/organizations",
+      "/leads",
+      "/activities",
+      "/email",
+      "/reports",
+      "/settings",
+      "/products",
+      "/custom-fields",
+      "/search"
+    ].forEach((route) => {
+      expect(middlewareSource).toContain(`"${route}"`);
+    });
+
+    expect(middlewareSource).toContain("pathname === route || pathname.startsWith(`${route}/`)");
+    expect(middlewareSource).toContain("matcher: [\"/((?!api|_next/static|_next/image|favicon.ico|q/).*)\"]");
   });
 });

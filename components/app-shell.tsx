@@ -1,4 +1,4 @@
-import { BarChart3, Building2, CalendarCheck, CircleDollarSign, Contact, LayoutDashboard, Package, PanelsTopLeft, Search, Settings, SlidersHorizontal, Sparkles } from "lucide-react";
+import { BarChart3, Building2, CalendarCheck, CircleDollarSign, Contact, Inbox, LayoutDashboard, Package, PanelsTopLeft, Search, Settings, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
@@ -12,12 +12,13 @@ const navItems: Array<{ href: Route; label: string; icon: LucideIcon }> = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/pipeline", label: "Pipeline", icon: PanelsTopLeft },
   { href: "/deals" as Route, label: "Deals", icon: CircleDollarSign },
-  { href: "/reports" as Route, label: "Reports", icon: BarChart3 },
-  { href: "/products" as Route, label: "Products", icon: Package },
-  { href: "/leads", label: "Leads", icon: Contact },
   { href: "/contacts", label: "Contacts", icon: Contact },
   { href: "/organizations", label: "Organizations", icon: Building2 },
+  { href: "/leads", label: "Leads", icon: Contact },
   { href: "/activities", label: "Activities", icon: CalendarCheck },
+  { href: "/email" as Route, label: "Email", icon: Inbox },
+  { href: "/reports" as Route, label: "Reports", icon: BarChart3 },
+  { href: "/products" as Route, label: "Products", icon: Package },
   { href: "/search" as Route, label: "Search", icon: Search },
   { href: "/custom-fields" as Route, label: "Custom Fields", icon: SlidersHorizontal },
   { href: "/settings" as Route, label: "Settings", icon: Settings }

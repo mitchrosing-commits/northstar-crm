@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -98,7 +100,8 @@ export function ManualEmailLogPanel({
       </div>
       <p className="empty-copy" style={{ marginBottom: 14 }}>
         Save a plain-text record of an email that was already sent or received. This does not send email, sync an
-        inbox, or create background jobs.
+        inbox, or create background jobs. Use <Link className="inline-link" href={"/email" as Route}>Email</Link> to
+        connect Gmail or sync recent matched messages from known contacts.
       </p>
       {showForm ? (
         <form className="inline-form" onSubmit={onSubmit}>

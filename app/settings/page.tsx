@@ -13,7 +13,7 @@ import {
   updateWorkspaceMemberRoleAction
 } from "@/app/workspaces/actions";
 import { AccountSettingsForm } from "./account-settings-form";
-import { syncRecentGmailAction } from "./actions";
+import { syncRecentGmailAction, syncRecentMicrosoftAction } from "./actions";
 import { CreateWorkspaceForm } from "./create-workspace-form";
 import { EmailTemplatesPanel } from "./email-templates-panel";
 import { WorkspaceInviteForm } from "./workspace-invite-form";
@@ -112,6 +112,22 @@ export default async function SettingsPage({
 
       <section className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-title-row">
+          <h2 className="panel-title">Hosted Use Notes</h2>
+          <span className="badge">Production-safe</span>
+        </div>
+        <p className="empty-copy" style={{ marginBottom: 12 }}>
+          Use local auth for hosted company workspaces. Demo auth and seed data are for demo-only environments, not
+          company-use databases.
+        </p>
+        <p className="empty-copy">
+          Gmail sync requires Google OAuth env vars and a redirect URI that matches this hosted app. Password reset email
+          delivery requires the auth email webhook env vars and a worker or scheduled job run. Keep secrets in the
+          hosting platform; do not commit local env files.
+        </p>
+      </section>
+
+      <section className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel-title-row">
           <h2 className="panel-title">Create Workspace</h2>
         </div>
         <p className="empty-copy" style={{ marginBottom: 16 }}>
@@ -124,11 +140,12 @@ export default async function SettingsPage({
       {summary.currentMembership.canManageWorkspaceSettings ? (
         <section className="panel" style={{ marginBottom: 16 }}>
           <div className="panel-title-row">
-            <h2 className="panel-title">Workspace Invitations</h2>
+            <h2 className="panel-title">Team / Workspace Invitations</h2>
+            <span className="badge">Manual link sharing</span>
           </div>
           <p className="empty-copy" style={{ marginBottom: 16 }}>
-            Create invitations for existing Northstar users. Email delivery is not implemented yet; share the accept link
-            manually.
+            Invite an existing Northstar user by email. Northstar creates an invitation record and accept link; hosted
+            invitation email delivery is not configured in this MVP, so share the link manually.
           </p>
           <WorkspaceInviteForm />
           <div style={{ marginTop: 18, overflowX: "auto" }}>
@@ -138,7 +155,7 @@ export default async function SettingsPage({
                   <th>Email</th>
                   <th>Role</th>
                   <th>Invited by</th>
-                  <th>Accept link</th>
+                  <th>Invite link</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -153,7 +170,7 @@ export default async function SettingsPage({
                       <td>{invitation.invitedBy?.name ?? invitation.invitedBy?.email ?? "Unknown"}</td>
                       <td>
                         <Link className="inline-link" href={`/workspaces/invitations/${invitation.id}`}>
-                          Open
+                          Open invite link
                         </Link>
                       </td>
                       <td>
@@ -271,16 +288,24 @@ function EmailConnectionsPanel({
   const statusCopy =
     status === "gmail-connected"
       ? "Gmail connection saved. Use Sync recent Gmail to import matched messages from known contacts."
+      : status === "microsoft-connected"
+        ? "Microsoft connection saved. Use Sync recent Microsoft mail to import matched messages from known contacts."
       : status === "gmail-synced"
         ? `Recent Gmail sync finished. Imported ${createdCount ?? "0"} matched message${createdCount === "1" ? "" : "s"}.`
+        : status === "microsoft-synced"
+          ? `Recent Microsoft mail sync finished. Imported ${createdCount ?? "0"} matched message${createdCount === "1" ? "" : "s"}.`
         : status === "gmail-sync-error"
           ? "Recent Gmail sync was not completed. Reconnect Gmail or check provider configuration."
+          : status === "microsoft-sync-error"
+            ? "Recent Microsoft mail sync was not completed. Reconnect Microsoft or check provider configuration."
       : status === "gmail-error"
         ? "Gmail connection was not completed. Check provider configuration and try again."
+        : status === "microsoft-error"
+          ? "Microsoft connection was not completed. Check provider configuration and try again."
         : null;
 
   return (
-    <section className="panel" style={{ marginBottom: 16 }}>
+    <section className="panel" id="email-connections" style={{ marginBottom: 16 }}>
       <div className="panel-title-row">
         <h2 className="panel-title">Email Connections</h2>
         <span className="badge">Manual logging available</span>
@@ -310,9 +335,9 @@ function EmailConnectionsPanel({
                   {provider.actionLabel}
                 </Link>
                 {provider.syncAvailable ? (
-                  <form action={syncRecentGmailAction}>
+                  <form action={provider.provider === "MICROSOFT_365" ? syncRecentMicrosoftAction : syncRecentGmailAction}>
                     <button className="button-secondary button-compact" type="submit">
-                      Sync recent Gmail
+                      {provider.syncLabel ?? "Sync recent Gmail"}
                     </button>
                   </form>
                 ) : null}

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
@@ -128,6 +130,38 @@ export function DealForm({
   return (
     <form className="form-card" onSubmit={onSubmit}>
       {error ? <div className="form-error">{error}</div> : null}
+      {mode === "create" ? (
+        <div className="empty-copy" style={{ marginBottom: 14 }}>
+          Create a deal now, even if the buyer or company is not in Northstar yet. You can link a contact or
+          organization later, or add them first from the shortcuts below.
+        </div>
+      ) : null}
+      {mode === "create" && (people.length === 0 || organizations.length === 0) ? (
+        <div className="data-card" style={{ marginBottom: 14 }}>
+          <div className="panel-title-row">
+            <h2 className="panel-title">Missing related records?</h2>
+          </div>
+          <p className="empty-copy" style={{ marginBottom: 12 }}>
+            Deals can be created without a contact or organization for now. Add related records first if you want the
+            deal linked from day one, or import contacts from a CSV.
+          </p>
+          <div className="filter-actions">
+            {people.length === 0 ? (
+              <Link className="button-secondary button-compact" href={"/contacts/new" as Route}>
+                Add a contact
+              </Link>
+            ) : null}
+            {organizations.length === 0 ? (
+              <Link className="button-secondary button-compact" href={"/organizations/new" as Route}>
+                Add an organization
+              </Link>
+            ) : null}
+            <Link className="button-secondary button-compact" href={"/settings/import-export" as Route}>
+              Import contacts
+            </Link>
+          </div>
+        </div>
+      ) : null}
       <div className="form-grid">
         <label className="form-field form-field-wide">
           <span>Title</span>
@@ -170,25 +204,27 @@ export function DealForm({
         <label className="form-field">
           <span>Person</span>
           <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
-            <option value="">None</option>
+            <option value="">{people.length === 0 ? "No contacts yet - create deal without contact" : "None"}</option>
             {people.map((person) => (
               <option key={person.id} value={person.id}>
                 {person.name}
               </option>
             ))}
           </select>
+          {people.length === 0 ? <small className="form-hint">You can add or import contacts after creating this deal.</small> : null}
         </label>
 
         <label className="form-field">
           <span>Organization</span>
           <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-            <option value="">None</option>
+            <option value="">{organizations.length === 0 ? "No organizations yet - create deal without one" : "None"}</option>
             {organizations.map((organization) => (
               <option key={organization.id} value={organization.id}>
                 {organization.name}
               </option>
             ))}
           </select>
+          {organizations.length === 0 ? <small className="form-hint">You can add an organization after creating this deal.</small> : null}
         </label>
 
         <label className="form-field">

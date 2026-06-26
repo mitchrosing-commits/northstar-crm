@@ -4,11 +4,12 @@ import { ApiError } from "@/lib/api/responses";
 import { canUseEmailTokenEncryptionKey } from "@/lib/email/token-encryption";
 
 type EnvInput = Record<string, string | undefined>;
+type EmailOAuthProvider = "GOOGLE_WORKSPACE" | "MICROSOFT_365";
 
 type EmailOAuthStatePayload = {
   actorUserId: string;
   expiresAt: number;
-  provider: "GOOGLE_WORKSPACE";
+  provider: EmailOAuthProvider;
   workspaceId: string;
 };
 
@@ -49,7 +50,7 @@ export function verifyEmailOAuthState(state: string | null | undefined, env: Env
     throw new ApiError("EMAIL_OAUTH_STATE_INVALID", "Email connection state is invalid.", 400);
   }
 
-  if (payload.provider !== "GOOGLE_WORKSPACE" || !payload.workspaceId || !payload.actorUserId) {
+  if (!isEmailOAuthProvider(payload.provider) || !payload.workspaceId || !payload.actorUserId) {
     throw new ApiError("EMAIL_OAUTH_STATE_INVALID", "Email connection state is invalid.", 400);
   }
 
@@ -58,6 +59,10 @@ export function verifyEmailOAuthState(state: string | null | undefined, env: Env
   }
 
   return payload;
+}
+
+function isEmailOAuthProvider(provider: unknown): provider is EmailOAuthProvider {
+  return provider === "GOOGLE_WORKSPACE" || provider === "MICROSOFT_365";
 }
 
 function signState(encodedPayload: string, env: EnvInput) {
