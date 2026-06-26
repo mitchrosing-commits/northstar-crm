@@ -53,7 +53,7 @@ GET /workspaces/invitations/:invitationId Workspace invitation acceptance page f
 Notes:
 
 - `logoutAction` clears the local session and active-workspace cookies and revokes the server-side session when using local auth.
-- `forgotPasswordAction` creates a hashed, expiring, one-time reset token only for active matching users, but always returns the same generic response. Development/test can display the reset link for manual QA; production never displays reset links and sends password-reset email only through the configured auth email webhook.
+- `forgotPasswordAction` creates a hashed, expiring, one-time reset token only for active matching users, but always returns the same generic response. Development/test can display the reset link for manual QA; production never displays reset links and queues password-reset email for the configured Resend sender or auth email webhook.
 - `resetPasswordAction` accepts a valid reset token once, writes a new `User.passwordHash`, and marks the reset token consumed. Invalid, expired, missing, and consumed tokens fail with the same safe reset-link error.
 - `updateAccountDisplayNameAction` is a user-level Settings action for display-name account settings. It updates only the current signed-in user's `User.name`; account email is read-only in this MVP.
 - `switchWorkspaceAction` stores an active workspace id in an httpOnly cookie only after verifying the current user is a workspace member.

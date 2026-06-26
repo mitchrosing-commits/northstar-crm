@@ -7,7 +7,7 @@ import { hashPassword } from "./password";
 
 export const passwordResetTokenTtlMs = 1000 * 60 * 30;
 export const passwordResetGenericMessage =
-  "If an account exists for that email, the password reset request has been processed.";
+  "If an account exists for that email and password reset is configured, you will receive a reset link.";
 export const invalidPasswordResetTokenMessage = "This password reset link is invalid or expired.";
 export const minimumResetPasswordLength = 8;
 const minimumPasswordResetTokenLength = 32;

@@ -67,6 +67,25 @@ Optional password-reset worker: npm run jobs:work
 
 Railway runs install/build/start automatically from the connected repo and `railway.json`. Run seed only as an intentional one-off.
 
+### Railway Password Reset Email Worker
+
+Password reset requests are created by the web service, but email delivery is processed by the background job worker. Without a worker or scheduled one-off job run, reset email jobs stay queued and no reset email is sent.
+
+To enable hosted password reset email delivery on Railway:
+
+1. Keep the web service running with `AUTH_MODE=local`.
+2. Configure the web service with `APP_BASE_URL` and one password reset delivery backend:
+   - Resend: `RESEND_API_KEY` and `AUTH_EMAIL_FROM`.
+   - Webhook fallback: `AUTH_EMAIL_WEBHOOK_URL`, optional `AUTH_EMAIL_WEBHOOK_TOKEN`, and optional `AUTH_EMAIL_FROM`.
+3. Create a second Railway service from the same repo, for example `northstar-worker`.
+4. Use the same Railway PostgreSQL `DATABASE_URL` reference as the web service.
+5. Give the worker the same runtime secrets needed by the web app, including `AUTH_MODE`, `AUTH_SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables being used.
+6. Set the worker start command to `npm run jobs:work`.
+7. Deploy the web service first so migrations run, then deploy or restart the worker.
+8. Use a Railway one-off command such as `npm run jobs:status` to confirm only aggregate queue counts are printed.
+
+The worker does not need a public domain. If a continuous worker service is not available, run `npm run jobs:run-once` on a schedule instead. Treat queued password reset job payloads as sensitive because they contain one-time reset URLs until the job reaches a terminal state and is cleaned up.
+
 ## Required Environment
 
 Required:
@@ -81,7 +100,8 @@ Optional:
 - `AUTH_SESSION_SECRET`: signing secret for local session cookies. Required when `AUTH_MODE=local`; use at least 32 random characters.
 - `AUTH_EMAIL_WEBHOOK_URL`: optional provider-neutral webhook endpoint for password-reset-only email delivery. If set, `APP_BASE_URL` is required. Production requires `https`.
 - `AUTH_EMAIL_WEBHOOK_TOKEN`: optional bearer token sent to the password reset email webhook.
-- `AUTH_EMAIL_FROM`: optional sender/from label included in the password reset email webhook payload.
+- `AUTH_EMAIL_FROM`: sender/from label used by Resend and optionally included in the password reset email webhook payload. For Resend testing before a verified sending domain, `Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
+- `RESEND_API_KEY`: optional Resend API key for direct password-reset-only email delivery from the background job worker. If set, `AUTH_EMAIL_FROM` and `APP_BASE_URL` are required. Production requires `APP_BASE_URL` to use `https`.
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`: optional Gmail / Google Workspace OAuth configuration. The documented `GOOGLE_OAUTH_*` names take precedence over the shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` when both are present. Gmail Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured.
 - `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT_ID`, `MICROSOFT_OAUTH_REDIRECT_URI`: optional Microsoft 365 / Outlook OAuth configuration. The shorter `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` aliases are also accepted. Microsoft Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured. `MICROSOFT_OAUTH_TENANT_ID` is optional and defaults to `common`.
 - `EMAIL_TOKEN_ENCRYPTION_KEY`: secret used to derive AES-256-GCM keys for email OAuth token encryption. It must decode to at least 32 bytes. Raw 32+ character strings work for local setup; production should use a random secret.
@@ -94,7 +114,7 @@ Do not commit real secrets or production database URLs.
 
 ## Environment Validation
 
-Runtime validation lives in `lib/env.ts`. The app validates `DATABASE_URL` before creating the Prisma client and validates optional deployment/auth/demo variables when present. In production, missing `AUTH_EMAIL_WEBHOOK_URL` is reported as a readiness warning because password reset email delivery is disabled, but forgot-password responses remain generic. Gmail and Microsoft OAuth env groups must be complete if any provider var is set; when OAuth env is configured without `EMAIL_TOKEN_ENCRYPTION_KEY`, Settings keeps provider actions disabled and reports that token encryption is required.
+Runtime validation lives in `lib/env.ts`. The app validates `DATABASE_URL` before creating the Prisma client and validates optional deployment/auth/demo variables when present. In production, password reset email delivery is reported as disabled unless either `RESEND_API_KEY` plus `AUTH_EMAIL_FROM`, or `AUTH_EMAIL_WEBHOOK_URL`, is configured. Forgot-password responses remain generic either way. Gmail and Microsoft OAuth env groups must be complete if any provider var is set; when OAuth env is configured without `EMAIL_TOKEN_ENCRYPTION_KEY`, Settings keeps provider actions disabled and reports that token encryption is required.
 
 Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`. OAuth authorization codes are short-lived and exchanged before token storage, but callback query strings should not be retained in application, proxy, CDN, or platform logs.
 
@@ -121,21 +141,21 @@ For the current local-auth/password-reset deployment path:
 - Set `DATABASE_URL` to the production PostgreSQL database.
 - Set `AUTH_SESSION_SECRET` to at least 32 random characters.
 - Set `APP_BASE_URL` to the public `https` app origin.
-- Set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint for password-reset-only email delivery.
-- Set `AUTH_EMAIL_WEBHOOK_TOKEN` if the webhook requires bearer auth.
-- Set `AUTH_EMAIL_FROM` if the webhook should receive a sender/from label.
+- Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` for direct Resend delivery from the worker, or set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint for password-reset-only email delivery.
+- Set `AUTH_EMAIL_WEBHOOK_TOKEN` if the webhook fallback requires bearer auth.
+- For Resend sandbox testing without a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
 - Run `npm run prisma:deploy` after pulling migrations and before serving traffic.
 - Run `npm run build` for the production bundle.
 - Check `GET /api/health`; a ready deployment returns `{ "status": "ok", "service": "northstar-crm" }` and does not expose env values, database URLs, user data, workspace data, or version metadata.
 
-Password reset email delivery is only the auth reset webhook, delivered through the internal `Job` table and job worker commands. There is no general CRM email sending, inbox sync, sent-email storage, or delivery analytics. Production never displays reset links; missing config or delivery failure keeps the same generic forgot-password response to avoid account enumeration.
+Password reset email delivery is only for auth reset links, delivered through the internal `Job` table and job worker commands using direct Resend delivery or the auth webhook fallback. There is no general CRM email sending, inbox sync, sent-email storage, or delivery analytics. Production never displays reset links; missing config or delivery failure keeps the same generic forgot-password response to avoid account enumeration.
 
 ## Auth Boundary
 
 Northstar includes a narrow local login MVP while preserving the existing auth seam:
 
 - `AUTH_MODE=local` enables `/login`, email/password sign-in for existing users, signed httpOnly cookies, server-side `Session` lookup, expired-session rejection, login-time expired-session cleanup, and logout/session revocation.
-- Password reset for local-login users stores only hashed reset tokens, uses expiring one-time links, and returns a generic request response. Development/test can display reset links for manual QA and does not require webhook config. Production does not display reset links; when `APP_BASE_URL` and `AUTH_EMAIL_WEBHOOK_URL` are configured with safe HTTPS URLs, it queues a password-reset-only email job. Running `npm run jobs:work` processes queued jobs continuously, while `npm run jobs:run-once` processes one due batch and exits. Missing config or delivery failure keeps the same generic response.
+- Password reset for local-login users stores only hashed reset tokens, uses expiring one-time links, and returns a generic request response. Development/test can display reset links for manual QA and does not require delivery config. Production does not display reset links; when `APP_BASE_URL` and either Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or webhook delivery (`AUTH_EMAIL_WEBHOOK_URL`) are configured, it queues a password-reset-only email job. Running `npm run jobs:work` processes queued jobs continuously, while `npm run jobs:run-once` processes one due batch and exits. Missing config or delivery failure keeps the same generic response.
 - `lib/auth/session.ts` resolves a session identity from a trusted user-id header when available.
 - `AUTH_MODE=trusted-header` requires a safe `AUTH_USER_ID_HEADER` and returns a clear missing-session error when no trusted user header is present.
 - `AUTH_MODE=demo` preserves the seeded local/demo actor fallback, ignores trusted user-id headers, and reports a validation warning under `NODE_ENV=production`.
@@ -257,7 +277,7 @@ Production password reset email delivery requires:
 
 - current database migrations, including the `Job` table.
 - `APP_BASE_URL` configured to the canonical HTTPS app URL so reset URLs can be built.
-- `AUTH_EMAIL_WEBHOOK_URL` configured to the password-reset-only HTTPS webhook.
+- either `RESEND_API_KEY` plus `AUTH_EMAIL_FROM`, or `AUTH_EMAIL_WEBHOOK_URL` configured to the password-reset-only HTTPS webhook.
 - a separate worker process running `npm run jobs:work`, or periodic execution of `npm run jobs:run-once`.
 
 The queued password reset email payload includes the reset URL and must be treated as sensitive operational data. The status, run-once, continuous-worker, and cleanup commands print summary counts only and do not print payloads, reset URLs, tokens, recipient emails, or secrets.
@@ -265,7 +285,7 @@ The queued password reset email payload includes the reset URL and must be treat
 ## Known Limitations
 
 - SSO, IMAP OAuth/provider setup, and 2FA are not implemented.
-- Password reset email delivery is password-reset-only through queued `auth.password_reset_email` jobs and the provider-neutral auth email webhook. Gmail / Google Workspace and Microsoft 365 / Outlook OAuth connections can store encrypted tokens when configured and can run manual recent metadata sync for matched known-contact messages, but there is no sent-email storage, delivery analytics, general SMTP sending, IMAP setup, or whole-mailbox/background sync.
+- Password reset email delivery is password-reset-only through queued `auth.password_reset_email` jobs and either direct Resend delivery or the provider-neutral auth email webhook. Gmail / Google Workspace and Microsoft 365 / Outlook OAuth connections can store encrypted tokens when configured and can run manual recent metadata sync for matched known-contact messages, but there is no sent-email storage, delivery analytics, general SMTP sending, IMAP setup, or whole-mailbox/background sync.
 - Production access/proxy logs should redact OAuth callback query strings, especially for `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived authorization codes should not be retained in logs.
 - Background jobs foundation currently includes the `Job` table, internal service, explicit handler registry, harmless `internal.noop` handler, queued password reset email handler, read-only status command, single-run batch command, continuous worker command, stale `RUNNING` recovery in continuous mode, and aggregate-only terminal cleanup command. There is no broader product job handler runtime, event outbox, automation runtime, reminder runtime, or webhook platform.
 - Invitation email delivery, workspace deletion, and billing are not implemented. Workspace switching is limited to current memberships plus newly created or accepted workspaces, while role editing and ownership transfer remain intentionally narrow.

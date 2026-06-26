@@ -283,13 +283,63 @@ describe("single-run job worker", () => {
     expect(reloaded.lastError).toContain("No job handler registered for type: unknown.job_type");
   });
 
+  it("processes queued password reset email jobs through the Resend sender when configured", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: "Northstar <onboarding@resend.dev>",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: "resend-key"
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "email-id" }), { status: 200 }));
+    const now = new Date("2030-03-02T12:45:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:15:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=resend-reset-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-resend", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded.status).toBe(JobStatus.SUCCEEDED);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.resend.com/emails",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("https://crm.example.test/reset-password?token=resend-reset-token")
+        })
+      );
+      const [, requestInit] = fetchMock.mock.calls[0];
+      const body = JSON.parse(String(requestInit?.body));
+      const headers = new Headers(requestInit?.headers);
+      expect(body).toMatchObject({
+        from: "Northstar <onboarding@resend.dev>",
+        subject: "Reset your Northstar CRM password",
+        to: fx.userA.email
+      });
+      expect(headers.get("authorization")).toBe("Bearer resend-key");
+      expect(JSON.stringify(body)).not.toContain("passwordHash");
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("processes queued password reset email jobs through the webhook sender", async () => {
     const fx = currentFixture();
     const restoreEnv = setAuthEmailEnv({
       APP_BASE_URL: "https://crm.example.test",
       AUTH_EMAIL_FROM: "Northstar CRM <no-reply@example.test>",
       AUTH_EMAIL_WEBHOOK_TOKEN: "webhook-token",
-      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
     });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
     const now = new Date("2030-03-02T13:00:00.000Z");
@@ -332,7 +382,8 @@ describe("single-run job worker", () => {
     const fx = currentFixture();
     const restoreEnv = setAuthEmailEnv({
       APP_BASE_URL: "https://crm.example.test",
-      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
     const now = new Date("2030-03-02T13:15:00.000Z");
@@ -377,7 +428,9 @@ describe("single-run job worker", () => {
     const fx = currentFixture();
     const restoreEnv = setAuthEmailEnv({
       APP_BASE_URL: "https://crm.example.test",
-      AUTH_EMAIL_WEBHOOK_URL: undefined
+      AUTH_EMAIL_FROM: undefined,
+      AUTH_EMAIL_WEBHOOK_URL: undefined,
+      RESEND_API_KEY: undefined
     });
     const now = new Date("2030-03-02T14:00:00.000Z");
     const job = await crm.enqueueJob({
@@ -397,7 +450,7 @@ describe("single-run job worker", () => {
 
       expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
       expect(reloaded.status).toBe(JobStatus.DEAD);
-      expect(reloaded.lastError).toBe("Password reset email webhook is not configured.");
+      expect(reloaded.lastError).toBe("Password reset email delivery is not configured.");
       expect(reloaded.lastError).not.toContain("missing-config-token");
     } finally {
       restoreEnv();
@@ -408,7 +461,8 @@ describe("single-run job worker", () => {
     const fx = currentFixture();
     const restoreEnv = setAuthEmailEnv({
       APP_BASE_URL: "https://crm.example.test",
-      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
     const now = new Date("2030-03-02T15:00:00.000Z");

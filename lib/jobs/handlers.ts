@@ -43,7 +43,7 @@ async function handleInternalNoopJob({ payload }: JobHandlerInput) {
 async function handlePasswordResetEmailJob({ payload }: JobHandlerInput) {
   const input = parsePasswordResetEmailJobPayload(payload);
   if (!isPasswordResetEmailConfigured()) {
-    throw new Error("Password reset email webhook is not configured.");
+    throw new Error("Password reset email delivery is not configured.");
   }
   await sendPasswordResetEmail(input);
 }

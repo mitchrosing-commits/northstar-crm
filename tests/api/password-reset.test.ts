@@ -45,10 +45,12 @@ describe("password reset MVP", () => {
     expect(passwordReset).not.toContain("auditLog");
   });
 
-  it("adds a provider-neutral auth email boundary for password reset only", () => {
+  it("adds a narrow auth email boundary for password reset only", () => {
     expect(authEmail).toContain("sendPasswordResetEmail");
+    expect(authEmail).toContain("RESEND_API_KEY");
+    expect(authEmail).toContain("https://api.resend.com/emails");
     expect(authEmail).toContain("AUTH_EMAIL_WEBHOOK_URL");
-    expect(authEmail).toContain("APP_BASE_URL");
+    expect(passwordReset).toContain("APP_BASE_URL");
     expect(authEmail).toContain("type: \"password_reset\"");
     expect(authEmail).toContain("fetchImpl");
     expect(authEmail).not.toContain("EmailLog");
@@ -66,6 +68,7 @@ describe("password reset MVP", () => {
   });
 
   it("wires forgot and reset password pages through server actions", () => {
+    expect(passwordReset).toContain("password reset is configured");
     expect(forgotPage).toContain("Reset password");
     expect(forgotPage).toContain("same whether or not an account exists");
     expect(forgotForm).toContain("name=\"email\"");
@@ -83,6 +86,6 @@ describe("password reset MVP", () => {
     expect(routeMap).toContain("GET /forgot-password");
     expect(routeMap).toContain("GET /reset-password?token=...");
     expect(currentStatus).toContain("Password Reset MVP");
-    expect(currentStatus).toContain("queued password-reset-only webhook email delivery");
+    expect(currentStatus).toContain("queued password-reset-only Resend or webhook email delivery");
   });
 });

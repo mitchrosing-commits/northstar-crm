@@ -10,6 +10,7 @@ export type ValidRuntimeEnv = {
   authEmailFrom?: string;
   authEmailWebhookToken?: string;
   authEmailWebhookUrl?: string;
+  resendApiKey?: string;
   devActorEmail?: string;
   devWorkspaceSlug?: string;
   authMode?: string;
@@ -39,6 +40,7 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
   const authEmailFrom = readNonEmpty(env.AUTH_EMAIL_FROM);
   const authEmailWebhookToken = readNonEmpty(env.AUTH_EMAIL_WEBHOOK_TOKEN);
   const authEmailWebhookUrl = readNonEmpty(env.AUTH_EMAIL_WEBHOOK_URL);
+  const resendApiKey = readNonEmpty(env.RESEND_API_KEY);
   const devActorEmail = readNonEmpty(env.DEV_ACTOR_EMAIL);
   const devWorkspaceSlug = readNonEmpty(env.DEV_WORKSPACE_SLUG);
   const authMode = readNonEmpty(env.AUTH_MODE);
@@ -98,6 +100,25 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
 
     if (env.NODE_ENV === "production" && authEmailWebhookUrlIsParseable && new URL(authEmailWebhookUrl).protocol !== "https:") {
       errors.push("AUTH_EMAIL_WEBHOOK_URL must use https: in production.");
+    }
+  }
+
+  if (resendApiKey) {
+    if (!authEmailFrom) {
+      errors.push("AUTH_EMAIL_FROM is required when RESEND_API_KEY is set.");
+    }
+
+    if (!appBaseUrl) {
+      errors.push("APP_BASE_URL is required when RESEND_API_KEY is set.");
+    }
+
+    if (
+      env.NODE_ENV === "production" &&
+      appBaseUrl &&
+      isParseableUrl(appBaseUrl) &&
+      new URL(appBaseUrl).protocol !== "https:"
+    ) {
+      errors.push("APP_BASE_URL must use https: in production when RESEND_API_KEY is set.");
     }
   }
 
@@ -174,8 +195,9 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
     warnings.push("AUTH_MODE=demo is intended only for local/demo use and should not be used for production traffic.");
   }
 
-  if (env.NODE_ENV === "production" && !authEmailWebhookUrl) {
-    warnings.push("AUTH_EMAIL_WEBHOOK_URL is not set; password reset email delivery is disabled.");
+  const hasPasswordResetDelivery = Boolean(authEmailWebhookUrl || (resendApiKey && authEmailFrom));
+  if (env.NODE_ENV === "production" && !hasPasswordResetDelivery) {
+    warnings.push("Password reset email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL.");
   }
 
   if (errors.length > 0) {
@@ -191,6 +213,7 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
       authEmailFrom,
       authEmailWebhookToken,
       authEmailWebhookUrl,
+      resendApiKey,
       devActorEmail,
       devWorkspaceSlug,
       authMode,

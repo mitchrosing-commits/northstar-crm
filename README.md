@@ -17,7 +17,7 @@ Northstar CRM is a multi-tenant sales CRM MVP built with Next.js App Router, Typ
 - Manual email logging from core record detail pages plus workspace email templates for reusable subject/body text.
 - Deal, Contact, Organization, Lead, Activity, and Quote CSV export plus conservative, preview-first CSV import for Deals, Contacts, Organizations, and Leads.
 - Deal Reporting v1, Forecasting v1, and Goals v1 on Reports, using current deal values, open-deal forecast inputs, and monthly same-currency won-revenue goal progress.
-- Password Reset MVP for existing local-login users, with hashed reset tokens, expiry, one-time use, password-reset-only webhook email delivery when configured, and dev/test-only reset link display.
+- Password Reset MVP for existing local-login users, with hashed reset tokens, expiry, one-time use, password-reset-only Resend or webhook email delivery when configured, and dev/test-only reset link display.
 - Account Settings MVP for signed-in users to view account name/email and update display name only.
 - Basic global workspace search across deals, leads, contacts, organizations, activities, and notes.
 - Deal, Contact, Organization, and Lead custom field admin plus detail value editing for text, number, date, and boolean fields.
@@ -211,6 +211,7 @@ Optional password-reset email variables:
 AUTH_EMAIL_WEBHOOK_URL
 AUTH_EMAIL_WEBHOOK_TOKEN
 AUTH_EMAIL_FROM
+RESEND_API_KEY
 ```
 
 Production password reset email delivery also needs a worker process (`npm run jobs:work`) or scheduled one-off processing (`npm run jobs:run-once`). The core CRM demo and signup path do not require a worker today unless password reset email delivery must be live.
@@ -267,7 +268,7 @@ Password reset is available for existing local-login users at:
 http://localhost:3000/forgot-password
 ```
 
-Reset requests always show the same generic response so unknown emails are not revealed. The app stores only hashed reset tokens and accepts each token once before expiry. Development and test environments display a reset link after a successful request for an existing active user and do not require webhook config. Production never displays reset links; it queues password-reset email delivery through the provider-neutral auth email webhook when `APP_BASE_URL` and `AUTH_EMAIL_WEBHOOK_URL` are configured with safe HTTPS URLs. Run `npm run jobs:work` as a separate worker process for continuous processing, or `npm run jobs:run-once` to process one due batch manually. Missing config, queued delivery delay, or delivery failure keeps the same generic response.
+Reset requests always show the same generic response so unknown emails are not revealed. The app stores only hashed reset tokens and accepts each token once before expiry. Development and test environments display a reset link after a successful request for an existing active user and do not require delivery config. Production never displays reset links; it queues password-reset email delivery when `APP_BASE_URL` and either direct Resend delivery (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or webhook delivery (`AUTH_EMAIL_WEBHOOK_URL`) are configured. Run `npm run jobs:work` as a separate worker process for continuous processing, or `npm run jobs:run-once` to process one due batch manually. Missing config, queued delivery delay, or delivery failure keeps the same generic response.
 
 Signed-in users can view their account name/email and update only their display name from Settings. Users with more than one workspace membership can switch the active workspace from the app shell. The selection is stored in an httpOnly cookie and revalidated against current memberships; it does not grant access to workspaces where the user is not a member. Signed-in users can also create a workspace from Settings; the creator becomes owner, duplicate display names are allowed, and the new workspace becomes active immediately. Workspace owners/admins can invite teammates by email and remove non-admin members from Settings. Invitees who do not have an account yet can sign up with the invited email, then accept the same invite link. Invitation email delivery is not implemented; accept links are shown for manual sharing. Accepted invitation links are idempotent only while the accepted membership still exists; removed members cannot rejoin with an old accepted link.
 
@@ -300,6 +301,7 @@ AUTH_SESSION_SECRET
 AUTH_EMAIL_WEBHOOK_URL
 AUTH_EMAIL_WEBHOOK_TOKEN
 AUTH_EMAIL_FROM
+RESEND_API_KEY
 EMAIL_TOKEN_ENCRYPTION_KEY
 GOOGLE_OAUTH_CLIENT_ID
 GOOGLE_OAUTH_CLIENT_SECRET
@@ -346,7 +348,7 @@ The seed script resets tenant-owned demo data for the sample workspace before re
 
 ## Background Jobs
 
-Background jobs v1 is used for queued password-reset email delivery when `AUTH_EMAIL_WEBHOOK_URL` is configured. It is not a general automation, reminder, integration, or webhook platform.
+Background jobs v1 is used for queued password-reset email delivery when Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or `AUTH_EMAIL_WEBHOOK_URL` is configured. It is not a general automation, reminder, integration, or webhook platform.
 
 Useful commands:
 
@@ -362,7 +364,15 @@ npm run jobs:cleanup
 - `jobs:work` runs a continuous worker and recovers stale running jobs after the configured timeout.
 - `jobs:cleanup` deletes old terminal succeeded/dead rows according to retention settings.
 
-Production password reset email delivery needs `APP_BASE_URL`, `AUTH_EMAIL_WEBHOOK_URL`, and either a continuous `npm run jobs:work` process or scheduled `npm run jobs:run-once`.
+Production password reset email delivery needs `APP_BASE_URL`, either Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or `AUTH_EMAIL_WEBHOOK_URL`, and either a continuous `npm run jobs:work` process or scheduled `npm run jobs:run-once`.
+
+On Railway, use a second service from the same repo for continuous password reset delivery:
+
+```text
+Worker start command: npm run jobs:work
+```
+
+The worker should share the same `DATABASE_URL`, `APP_BASE_URL`, `AUTH_MODE`, `AUTH_SESSION_SECRET`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables as the web service. It does not need a public domain. If the worker is not running, forgot-password remains account-enumeration-safe but reset email jobs stay queued and no email is sent. For Resend testing before a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
 
 ## Quality Checks
 
@@ -413,7 +423,7 @@ TEST_DATABASE_URL="postgresql://crm:crm@localhost:5432/crm_mvp_test?schema=publi
 
 - Docker and Docker Compose are not currently included. The supported downloadable path is local Node.js plus PostgreSQL using the commands above.
 - Local login and signup are available, but SSO, OAuth providers, 2FA, email change, account deletion, and billing are not implemented.
-- Password reset email delivery is queued, webhook-only, and password-reset-only. `npm run jobs:work` can process queued jobs continuously and recover stale `RUNNING` jobs after a timeout, `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored sent-email table, general SMTP sending, or Gmail/Outlook background sync.
+- Password reset email delivery is queued, Resend-or-webhook, and password-reset-only. `npm run jobs:work` can process queued jobs continuously and recover stale `RUNNING` jobs after a timeout, `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored sent-email table, general SMTP sending, or Gmail/Outlook background sync.
 - Gmail / Google Workspace, Microsoft 365 / Outlook, and IMAP / SMTP cards are visible in Email and Settings. Gmail / Google Workspace and Microsoft 365 / Outlook can connect through OAuth when provider env vars and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured, and OAuth tokens are stored only as encrypted payloads. Connected accounts can run manual recent metadata sync that imports only matched known-contact messages as conservative email logs. IMAP / SMTP remains planned/disabled, and there is no whole-mailbox sync.
 - Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived authorization codes should not be retained in application, proxy, CDN, or platform logs.
 - Workspace switching only supports existing memberships plus workspaces the signed-in user creates or accepts by invitation. Invitation email delivery, advanced role policy, workspace deletion, and billing are not implemented.

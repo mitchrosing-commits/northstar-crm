@@ -87,6 +87,9 @@ export async function AppShell({ children, workspace }: AppShellProps) {
             </form>
           ) : null}
           <p className="signed-in-user">{user.name ?? user.email}</p>
+          <Link className="sidebar-action sidebar-settings-link" href={"/settings" as Route}>
+            Settings
+          </Link>
           <form action={logoutAction}>
             <button className="sidebar-action" type="submit">
               Sign out

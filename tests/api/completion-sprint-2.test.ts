@@ -59,6 +59,9 @@ describe("rapid completion sprint 2 surfaces", () => {
     expect(settingsPage).toContain("Admin Readiness Checklist");
     expect(settingsPage).toContain("Secret values are never shown here.");
     expect(settingsPage).toContain("APP_BASE_URL");
+    expect(settingsPage).toContain("passwordResetEmailReadiness(process.env)");
+    expect(settingsPage).toContain("Worker required");
+    expect(settingsPage).toContain("npm run jobs:work");
     expect(settingsPage).toContain("GOOGLE_OAUTH_CLIENT_ID");
     expect(settingsPage).not.toContain("process.env.GOOGLE_OAUTH_CLIENT_SECRET}");
   });

@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { formatDate } from "@/components/format";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { resolveAuthMode } from "@/lib/auth/session";
+import { passwordResetEmailReadiness } from "@/lib/email/auth-email";
 import { getWorkspaceMembershipSummary, listEmailConnectionProviderCards, listEmailTemplates, listPendingWorkspaceInvitations, listPipelines } from "@/lib/services/crm";
 import type { EmailProviderCard } from "@/lib/services/crm";
 import {
@@ -407,7 +408,10 @@ function buildAdminReadinessStatuses() {
       process.env.MICROSOFT_OAUTH_REDIRECT_URI?.trim() &&
       hasEmailEncryption
   );
-  const hasPasswordResetDelivery = Boolean(process.env.APP_BASE_URL?.trim() && process.env.AUTH_EMAIL_WEBHOOK_URL?.trim());
+  const passwordResetReadiness = passwordResetEmailReadiness(process.env);
+  const passwordResetDetail = passwordResetReadiness.configured
+    ? `Configured through ${passwordResetReadiness.deliveryMethod === "resend" ? "Resend" : "webhook"}. Worker required: yes - run npm run jobs:work as a Railway worker service.`
+    : "Not configured. Set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL. Worker required after configuration: yes.";
 
   return [
     {
@@ -432,8 +436,8 @@ function buildAdminReadinessStatuses() {
     },
     {
       label: "Password reset email",
-      configured: hasPasswordResetDelivery,
-      detail: hasPasswordResetDelivery ? "Webhook delivery can be processed by background jobs." : "Configure APP_BASE_URL and AUTH_EMAIL_WEBHOOK_URL."
+      configured: passwordResetReadiness.configured,
+      detail: passwordResetDetail
     },
     {
       label: "Team invitations",

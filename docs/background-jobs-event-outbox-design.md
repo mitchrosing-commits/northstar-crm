@@ -446,7 +446,7 @@ Slice C: Move password reset email delivery to queued jobs. Implemented.
 - Dev/test reset-link display remains available outside production for manual QA.
 - Unknown emails do not enqueue jobs.
 - The job handler validates payload shape and calls the existing `sendPasswordResetEmail` provider-neutral webhook boundary.
-- Missing webhook config fails the job through retry/dead-letter semantics without changing the generic request response.
+- Missing password reset email delivery config fails the job through retry/dead-letter semantics without changing the generic request response.
 - Password reset email jobs are not deduped in this slice. Re-requesting a reset can enqueue a second email job, while the service consumes the prior active reset token so older queued links cannot reset the password.
 
 Implementation note: the queued password reset email payload contains the reset URL, which includes the raw reset token. Treat the `Job.payload` table as sensitive operational data. The worker and CLI must not print payloads, reset URLs, or tokens, and these jobs must never be surfaced through CRM audit history or user-facing job UI.

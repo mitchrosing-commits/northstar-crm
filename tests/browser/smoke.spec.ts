@@ -94,6 +94,11 @@ test.describe("Northstar CRM browser smoke", () => {
         expect(dashboardDealHref, "Expected dashboard to include a deal detail link").toBeTruthy();
         const dashboardQuoteHref = await firstQuoteHref(page);
         expect(dashboardQuoteHref, "Expected dashboard to include a quote detail link").toBeTruthy();
+        const settingsShortcut = page.locator('a.sidebar-settings-link[href="/settings"]');
+        expect(await settingsShortcut.count(), "Expected one persistent Settings shortcut in the app shell").toBe(1);
+        await expect(settingsShortcut, "Expected Settings shortcut to be visible in the app shell").toBeVisible();
+        await settingsShortcut.click();
+        await expect(page.getByRole("heading", { exact: true, name: "Settings" })).toBeVisible();
       }
       if (path === "/pipeline") {
         const contractSummaries = page.locator(".contract-status-summary");

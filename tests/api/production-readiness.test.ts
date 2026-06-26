@@ -59,7 +59,7 @@ describe("production readiness foundation", () => {
       ok: true,
       warnings: [
         "AUTH_MODE is not set; production runtime defaults to trusted-header and should set AUTH_USER_ID_HEADER explicitly.",
-        "AUTH_EMAIL_WEBHOOK_URL is not set; password reset email delivery is disabled."
+        "Password reset email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL."
       ],
       env: {
         databaseUrl: "postgresql://crm:crm@localhost:5432/crm_mvp",
@@ -67,6 +67,7 @@ describe("production readiness foundation", () => {
         authEmailFrom: undefined,
         authEmailWebhookToken: undefined,
         authEmailWebhookUrl: undefined,
+        resendApiKey: undefined,
         devActorEmail: undefined,
         devWorkspaceSlug: undefined,
         authMode: undefined,
@@ -190,6 +191,7 @@ describe("production readiness foundation", () => {
         authEmailFrom: undefined,
         authEmailWebhookToken: undefined,
         authEmailWebhookUrl: "https://mail.example.test/auth-email",
+        resendApiKey: undefined,
         devActorEmail: undefined,
         devWorkspaceSlug: undefined,
         emailTokenEncryptionKey: undefined,
@@ -230,6 +232,7 @@ describe("production readiness foundation", () => {
     expect(envExample).toContain("AUTH_EMAIL_WEBHOOK_URL=");
     expect(envExample).toContain("AUTH_EMAIL_WEBHOOK_TOKEN=");
     expect(envExample).toContain("AUTH_EMAIL_FROM=");
+    expect(envExample).toContain("RESEND_API_KEY=");
     expect(envExample).toContain("GOOGLE_OAUTH_CLIENT_ID=");
     expect(envExample).toContain("MICROSOFT_OAUTH_CLIENT_ID=");
     expect(envExample).toContain("EMAIL_TOKEN_ENCRYPTION_KEY=");
@@ -237,7 +240,11 @@ describe("production readiness foundation", () => {
     expect(readinessDoc).toContain("Production Local-Auth Checklist");
     expect(readinessDoc).toContain("Set `NODE_ENV=production`.");
     expect(readinessDoc).toContain("Set `AUTH_MODE=local`.");
-    expect(readinessDoc).toContain("Set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint");
+    expect(readinessDoc).toContain("Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` for direct Resend delivery");
+    expect(readinessDoc).toContain("or set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint");
+    expect(readinessDoc).toContain("Railway Password Reset Email Worker");
+    expect(readinessDoc).toContain("Set the worker start command to `npm run jobs:work`.");
+    expect(readinessDoc).toContain("Without a worker or scheduled one-off job run, reset email jobs stay queued");
     expect(readinessDoc).toContain("queues a password-reset-only email job");
     expect(readinessDoc).toContain("npm run jobs:run-once");
     expect(readinessDoc).toContain("npm run prisma:deploy");
