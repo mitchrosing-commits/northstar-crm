@@ -179,6 +179,7 @@ export function DealForm({
             min="0"
             onChange={(event) => setValue(event.target.value)}
             placeholder="0"
+            step="0.01"
             type="number"
             value={value}
           />

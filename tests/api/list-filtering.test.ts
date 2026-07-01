@@ -17,7 +17,7 @@ import {
 const queryHelper = readFileSync(join(process.cwd(), "lib/list-page-query.ts"), "utf8");
 const paginationControls = readFileSync(join(process.cwd(), "components/pagination-controls.tsx"), "utf8");
 const filterPanel = readFileSync(join(process.cwd(), "components/filter-panel.tsx"), "utf8");
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const leadsPage = readFileSync(join(process.cwd(), "app/leads/page.tsx"), "utf8");
 const contactsPage = readFileSync(join(process.cwd(), "app/contacts/page.tsx"), "utf8");
 const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
@@ -168,7 +168,7 @@ describe("query-driven list filtering and sorting", () => {
   });
 
   it("adds a simple deal list page without changing pipeline behavior", () => {
-    expect(appShell).toContain("href: \"/deals\"");
+    expect(primaryNav).toContain("href: \"/deals\"");
     expect(dealsPage).toContain("export default async function DealsPage");
     expect(dealsPage).toContain("listDealsPage(actor");
     expect(dealsPage).toContain("name=\"q\"");

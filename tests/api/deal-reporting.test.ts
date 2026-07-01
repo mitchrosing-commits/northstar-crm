@@ -11,7 +11,7 @@ const service = readFileSync(join(process.cwd(), "lib/services/deal-report-servi
 const crmBarrel = readFileSync(join(process.cwd(), "lib/services/crm.ts"), "utf8");
 const reportsPage = readFileSync(join(process.cwd(), "app/reports/page.tsx"), "utf8");
 const dealsPage = readFileSync(join(process.cwd(), "app/deals/page.tsx"), "utf8");
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
 const dealAttention = readFileSync(join(process.cwd(), "lib/deal-attention.ts"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
@@ -172,7 +172,7 @@ describe("Deal Reporting v1", () => {
   });
 
   it("adds a simple server-rendered reports page without charts or builders", () => {
-    expect(appShell).toContain("href: \"/reports\"");
+    expect(primaryNav).toContain("href: \"/reports\"");
     expect(reportsPage).toContain("getDealReport(actor");
     expect(reportsPage).toContain("parseListViewState(params");
     expect(reportsPage).toContain("customFieldId: listState.filters.customFieldId");

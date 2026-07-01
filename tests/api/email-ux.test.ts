@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const emailPage = readFileSync(join(process.cwd(), "app/email/page.tsx"), "utf8");
 const emailActions = readFileSync(join(process.cwd(), "app/email/actions.ts"), "utf8");
 const emailService = readFileSync(join(process.cwd(), "lib/services/email-service.ts"), "utf8");
@@ -16,9 +16,9 @@ const globalCss = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 
 describe("Email UX v1 discoverability", () => {
   it("adds Email to the authenticated app navigation and protected-route guard", () => {
-    expect(appShell).toContain("Inbox");
-    expect(appShell).toContain("href: \"/email\"");
-    expect(appShell).toContain("label: \"Email\"");
+    expect(primaryNav).toContain("Inbox");
+    expect(primaryNav).toContain("href: \"/email\"");
+    expect(primaryNav).toContain("label: \"Email\"");
     expect(middleware).toContain("\"/email\"");
     expect(middleware).toContain("loginUrl.pathname = \"/login\"");
     expect(middleware).toContain("loginUrl.searchParams.set(\"next\"");

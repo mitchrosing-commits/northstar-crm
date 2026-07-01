@@ -1,28 +1,28 @@
-import { BarChart3, Building2, CalendarCheck, CircleDollarSign, Contact, Inbox, LayoutDashboard, Package, PanelsTopLeft, Search, Settings, SlidersHorizontal, Sparkles } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 
 import { logoutAction } from "@/app/logout/actions";
+import { PrimaryNav } from "@/components/primary-nav";
 import { switchWorkspaceAction } from "@/app/workspaces/actions";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { listWorkspaceMembershipOptions } from "@/lib/services/crm";
 
-const navItems: Array<{ href: Route; label: string; icon: LucideIcon }> = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/pipeline", label: "Pipeline", icon: PanelsTopLeft },
-  { href: "/deals" as Route, label: "Deals", icon: CircleDollarSign },
-  { href: "/contacts", label: "Contacts", icon: Contact },
-  { href: "/organizations", label: "Organizations", icon: Building2 },
-  { href: "/leads", label: "Leads", icon: Contact },
-  { href: "/activities", label: "Activities", icon: CalendarCheck },
-  { href: "/email" as Route, label: "Email", icon: Inbox },
-  { href: "/reports" as Route, label: "Reports", icon: BarChart3 },
-  { href: "/products" as Route, label: "Products", icon: Package },
-  { href: "/search" as Route, label: "Search", icon: Search },
-  { href: "/custom-fields" as Route, label: "Custom Fields", icon: SlidersHorizontal },
-  { href: "/settings" as Route, label: "Settings", icon: Settings }
-];
+export const appShellNavigationManifest = [
+  { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" },
+  { href: "/pipeline", label: "Pipeline", icon: "PanelsTopLeft" },
+  { href: "/deals", label: "Deals", icon: "CircleDollarSign" },
+  { href: "/contacts", label: "Contacts", icon: "Contact" },
+  { href: "/organizations", label: "Organizations", icon: "Building2" },
+  { href: "/leads", label: "Leads", icon: "Contact" },
+  { href: "/activities", label: "Activities", icon: "CalendarCheck" },
+  { href: "/email", label: "Email", icon: "Inbox" },
+  { href: "/reports", label: "Reports", icon: "BarChart3" },
+  { href: "/products", label: "Products", icon: "Package" },
+  { href: "/search", label: "Search", icon: "Search" },
+  { href: "/custom-fields", label: "Custom Fields", icon: "SlidersHorizontal" },
+  { href: "/settings", label: "Settings", icon: "Settings" }
+] as const;
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -50,21 +50,7 @@ export async function AppShell({ children, workspace }: AppShellProps) {
           </span>
           <span>Northstar CRM</span>
         </div>
-        <nav aria-label="Primary">
-          <ul className="nav-list">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <li key={item.label}>
-                  <Link className="nav-item" href={item.href}>
-                    <Icon size={17} aria-hidden="true" />
-                    <span>{item.label}</span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+        <PrimaryNav />
         <div className="workspace-card">
           <p className="workspace-name">{workspace.name}</p>
           <p className="workspace-slug">{workspace.slug}</p>

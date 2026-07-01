@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 const smokeSpec = readFileSync(join(process.cwd(), "tests/browser/smoke.spec.ts"), "utf8");
 
 describe("main navigation visibility", () => {
   it("keeps Settings in the primary navigation and workspace shortcut area", () => {
-    expect(appShell).toContain("href: \"/settings\"");
-    expect(appShell).toContain("label: \"Settings\"");
+    expect(primaryNav).toContain("href: \"/settings\"");
+    expect(primaryNav).toContain("label: \"Settings\"");
     expect(appShell).toContain("sidebar-settings-link");
     expect(appShell).toContain("Settings");
   });

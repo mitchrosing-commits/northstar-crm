@@ -11,7 +11,7 @@ const workspaceRoute = readFileSync(
   "utf8"
 );
 const validators = readFileSync(join(process.cwd(), "lib/validators/crm.ts"), "utf8");
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const productsPage = readFileSync(join(process.cwd(), "app/products/page.tsx"), "utf8");
 const productForm = readFileSync(join(process.cwd(), "components/product-create-form.tsx"), "utf8");
 const productStatusButton = readFileSync(join(process.cwd(), "components/product-status-button.tsx"), "utf8");
@@ -69,8 +69,8 @@ describe("product catalog and deal line items MVP", () => {
   });
 
   it("adds simple product and deal-detail line-item UI without syncing deal value", () => {
-    expect(appShell).toContain("label: \"Products\"");
-    expect(appShell).toContain("href: \"/products\"");
+    expect(primaryNav).toContain("label: \"Products\"");
+    expect(primaryNav).toContain("href: \"/products\"");
     expect(productsPage).toContain("<ProductCreateForm");
     expect(productsPage).toContain("<ProductStatusButton");
     expect(productsPage).toContain("Product Catalog");

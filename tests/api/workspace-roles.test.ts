@@ -15,7 +15,7 @@ import {
 } from "@/lib/workspace-roles";
 
 const workspaceService = readFileSync(join(process.cwd(), "lib/services/workspace-service.ts"), "utf8");
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const settingsPage = readFileSync(join(process.cwd(), "app/settings/page.tsx"), "utf8");
 const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
 
@@ -61,8 +61,8 @@ describe("workspace roles and membership visibility", () => {
   });
 
   it("renders conservative workspace settings member management controls", () => {
-    expect(appShell).toContain("href: \"/settings\"");
-    expect(appShell).toContain("label: \"Settings\"");
+    expect(primaryNav).toContain("href: \"/settings\"");
+    expect(primaryNav).toContain("label: \"Settings\"");
     expect(settingsPage).toContain("getWorkspaceMembershipSummary(actor)");
     expect(settingsPage).toContain("Workspace Members");
     expect(settingsPage).toContain("Your role");

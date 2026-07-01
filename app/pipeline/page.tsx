@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/app-shell";
+import { formatMoney } from "@/components/format";
 import { PipelineBoard } from "@/components/pipeline-board";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { listCustomFieldSummaries, listPipelines } from "@/lib/services/crm";
@@ -43,7 +44,10 @@ export default async function PipelinePage() {
         ) : null}
       </header>
       {pipeline ? (
-        <PipelineBoard pipeline={pipeline} workspaceId={workspace.id} />
+        <>
+          <PipelineSummary pipeline={pipeline} />
+          <PipelineBoard pipeline={pipeline} workspaceId={workspace.id} />
+        </>
       ) : (
         <div className="empty-state">
           <h2>No pipeline yet</h2>
@@ -51,5 +55,42 @@ export default async function PipelinePage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+function PipelineSummary({
+  pipeline
+}: {
+  pipeline: {
+    stages: Array<{
+      deals: Array<{ owner?: unknown | null; status: string; valueCents: number | null }>;
+    }>;
+  };
+}) {
+  const openDeals = pipeline.stages.flatMap((stage) => stage.deals).filter((deal) => deal.status === "OPEN");
+  const pipelineValue = openDeals.reduce((sum, deal) => sum + (deal.valueCents ?? 0), 0);
+  const staffedDeals = openDeals.filter((deal) => deal.owner).length;
+
+  return (
+    <section className="pipeline-summary" aria-label="Pipeline summary">
+      <div>
+        <span>Open value</span>
+        <strong>{formatMoney(pipelineValue)}</strong>
+      </div>
+      <div>
+        <span>Open deals</span>
+        <strong>{openDeals.length}</strong>
+      </div>
+      <div>
+        <span>Stages</span>
+        <strong>{pipeline.stages.length}</strong>
+      </div>
+      <div>
+        <span>Owned deals</span>
+        <strong>
+          {staffedDeals}/{openDeals.length}
+        </strong>
+      </div>
+    </section>
   );
 }

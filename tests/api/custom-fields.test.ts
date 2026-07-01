@@ -16,7 +16,7 @@ const route = readFileSync(
 );
 const validators = readFileSync(join(process.cwd(), "lib/validators/crm.ts"), "utf8");
 const service = readFileSync(join(process.cwd(), "lib/services/custom-field-service.ts"), "utf8");
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const adminPage = readFileSync(join(process.cwd(), "app/custom-fields/page.tsx"), "utf8");
 const definitionForm = readFileSync(join(process.cwd(), "components/custom-field-definition-form.tsx"), "utf8");
 const dealDetail = readFileSync(join(process.cwd(), "app/deals/[dealId]/page.tsx"), "utf8");
@@ -76,7 +76,7 @@ describe("custom fields UI and API behavior", () => {
   });
 
   it("adds a custom fields admin page for Deal, Contact, Organization, and Lead fields", () => {
-    expect(appShell).toContain("href: \"/custom-fields\"");
+    expect(primaryNav).toContain("href: \"/custom-fields\"");
     expect(adminPage).toContain("CustomFieldDefinitionForm");
     expect(adminPage).toContain("listCustomFields");
     expect(adminPage).toContain("Deal Fields");

@@ -11,6 +11,7 @@ const smokeIds = {
   quoteId: "",
   quoteItemId: ""
 };
+let browserFlowSuffix = "";
 
 let smokeQuote: { dealId: string; quoteId: string; token: string };
 let communicationDealPath: string;
@@ -25,6 +26,7 @@ test.describe("Northstar CRM browser smoke", () => {
 
   test.afterAll(async () => {
     await cleanupSmokeQuote();
+    await cleanupBrowserFlowRecords();
     await prisma.$disconnect();
   });
 
@@ -218,6 +220,82 @@ test.describe("Northstar CRM browser smoke", () => {
     }
   });
 
+  test("creates linked CRM records and completes a follow-up from the UI", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    browserFlowSuffix = Date.now().toString(36);
+    const organizationName = `Browser Flow Organization ${browserFlowSuffix}`;
+    const contactName = `Browser Flow Contact ${browserFlowSuffix}`;
+    const dealTitle = `Browser Flow Deal ${browserFlowSuffix}`;
+    const activityTitle = `Browser Flow Follow-up ${browserFlowSuffix}`;
+
+    await expectPageReady(page, "/organizations/new");
+    await page.waitForLoadState("networkidle");
+    await page.getByLabel("Name").fill(organizationName);
+    await page.getByLabel("Domain").fill(`browser-flow-${browserFlowSuffix}.example`);
+    const organizationResponse = waitForWorkspaceApiResponse(page, "POST", "/organizations");
+    await page.getByRole("button", { name: "Create organization" }).click();
+    await expectApiOk(organizationResponse, "Expected organization create API to succeed");
+    const organizationPath = await waitForDetailPath(page, "/organizations/");
+    await expect(page.getByRole("heading", { name: organizationName })).toBeVisible();
+
+    await expectPageReady(page, "/contacts/new");
+    await page.waitForLoadState("networkidle");
+    await page.getByLabel("Name").fill(contactName);
+    await page.getByLabel("Email").fill(`browser-flow-${browserFlowSuffix}@example.test`);
+    await page.getByLabel("Phone").fill("555-0101");
+    await page.getByLabel("Organization").selectOption({ label: organizationName });
+    const contactResponse = waitForWorkspaceApiResponse(page, "POST", "/people");
+    await page.getByRole("button", { name: "Create contact" }).click();
+    await expectApiOk(contactResponse, "Expected contact create API to succeed");
+    const contactPath = await waitForDetailPath(page, "/contacts/");
+    await expect(page.getByRole("heading", { name: contactName })).toBeVisible();
+    await expect(page.getByRole("link", { name: organizationName })).toHaveAttribute("href", organizationPath);
+
+    await expectPageReady(page, "/deals/new");
+    await page.waitForLoadState("networkidle");
+    await page.getByLabel("Title").fill(dealTitle);
+    await page.getByLabel("Value").fill("12345.67");
+    await page.getByLabel("Currency").fill("USD");
+    await page.getByLabel("Person").selectOption({ label: contactName });
+    await page.getByLabel("Organization").selectOption({ label: organizationName });
+    await expect(page.getByRole("button", { name: "Create deal" })).toBeEnabled();
+    const dealResponse = waitForWorkspaceApiResponse(page, "POST", "/deals");
+    await page.getByRole("button", { name: "Create deal" }).click();
+    await expectApiOk(dealResponse, "Expected deal create API to succeed");
+    const dealPath = await waitForDetailPath(page, "/deals/");
+    await expect(page.getByRole("heading", { name: dealTitle })).toBeVisible();
+    await expect(page.getByRole("link", { name: contactName })).toHaveAttribute("href", contactPath);
+    await expect(page.getByRole("link", { name: organizationName })).toHaveAttribute("href", organizationPath);
+
+    const addActivity = page.locator("#add-activity");
+    await addActivity.getByLabel("Title").fill(activityTitle);
+    await addActivity.getByLabel("Type").selectOption("CALL");
+    await addActivity.getByLabel("Due date").fill("2026-07-15");
+    await addActivity.getByLabel("Description").fill("Created by the browser regression workflow.");
+    const activityResponse = waitForWorkspaceApiResponse(page, "POST", "/activities");
+    await addActivity.getByRole("button", { name: "Add activity" }).click();
+    await expectApiOk(activityResponse, "Expected activity create API to succeed");
+
+    const openNextSteps = page.locator(".data-card").filter({
+      has: page.getByRole("heading", { name: "Open Next Steps" })
+    });
+    await expect(openNextSteps.getByText(activityTitle)).toBeVisible();
+    const completeResponse = waitForWorkspaceApiResponse(page, "PATCH", "/activities/");
+    await openNextSteps.getByRole("button", { name: "Mark complete" }).click();
+    await expectApiOk(completeResponse, "Expected activity completion API to succeed");
+
+    const completedHistory = page.locator(".data-card").filter({
+      has: page.getByRole("heading", { name: "Completed Activity History" })
+    });
+    await expect(completedHistory.getByText(activityTitle)).toBeVisible();
+
+    await expectPageReady(page, contactPath);
+    await expect(page.getByRole("link", { name: dealTitle })).toHaveAttribute("href", dealPath);
+    await expectPageReady(page, organizationPath);
+    await expect(page.getByRole("link", { name: contactName })).toHaveAttribute("href", contactPath);
+    await expect(page.getByRole("link", { name: dealTitle })).toHaveAttribute("href", dealPath);
+  });
+
   test("renders a small mobile viewport subset", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const dealHref = await firstDetailHref(page, "/deals", "/deals/");
@@ -265,6 +343,30 @@ async function firstDetailHref(page: Page, listPath: string, hrefPrefix: string)
   const href = await firstHref(page, hrefPrefix);
   expect(href, `Expected ${listPath} to include a seeded detail link`).toBeTruthy();
   return href;
+}
+
+async function waitForDetailPath(page: Page, prefix: string) {
+  await page.waitForURL((url) => {
+    const path = url.pathname;
+    return path.startsWith(prefix) && !path.endsWith("/new") && !path.endsWith("/edit");
+  });
+  return new URL(page.url()).pathname;
+}
+
+async function waitForWorkspaceApiResponse(page: Page, method: string, pathSuffix: string) {
+  return page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname.startsWith("/api/v1/workspaces/") &&
+      url.pathname.includes(pathSuffix) &&
+      response.request().method() === method
+    );
+  });
+}
+
+async function expectApiOk(responsePromise: Promise<Awaited<ReturnType<Page["waitForResponse"]>>>, message: string) {
+  const response = await responsePromise;
+  expect(response.ok(), message).toBeTruthy();
 }
 
 async function closedDealHrefFromList(page: Page) {
@@ -436,4 +538,52 @@ async function cleanupSmokeQuote() {
   if (smokeIds.quoteId) await prisma.quote.deleteMany({ where: { id: smokeIds.quoteId } });
   if (smokeIds.dealLineItemId) await prisma.dealLineItem.deleteMany({ where: { id: smokeIds.dealLineItemId } });
   if (smokeIds.productId) await prisma.product.deleteMany({ where: { id: smokeIds.productId } });
+}
+
+async function cleanupBrowserFlowRecords() {
+  if (!browserFlowSuffix) return;
+
+  const workspace = await prisma.workspace.findUniqueOrThrow({
+    where: { slug: "northstar-revenue" },
+    select: { id: true }
+  });
+  const [deals, people, organizations] = await Promise.all([
+    prisma.deal.findMany({
+      where: { workspaceId: workspace.id, title: { contains: browserFlowSuffix } },
+      select: { id: true }
+    }),
+    prisma.person.findMany({
+      where: { workspaceId: workspace.id, email: `browser-flow-${browserFlowSuffix}@example.test` },
+      select: { id: true }
+    }),
+    prisma.organization.findMany({
+      where: { workspaceId: workspace.id, name: { contains: browserFlowSuffix } },
+      select: { id: true }
+    })
+  ]);
+  const dealIds = deals.map((deal) => deal.id);
+  const personIds = people.map((person) => person.id);
+  const organizationIds = organizations.map((organization) => organization.id);
+  const activities = await prisma.activity.findMany({
+    where: {
+      workspaceId: workspace.id,
+      OR: [
+        { title: { contains: browserFlowSuffix } },
+        { dealId: { in: dealIds } },
+        { personId: { in: personIds } },
+        { organizationId: { in: organizationIds } }
+      ]
+    },
+    select: { id: true }
+  });
+  const activityIds = activities.map((activity) => activity.id);
+  const entityIds = [...activityIds, ...dealIds, ...personIds, ...organizationIds];
+
+  if (entityIds.length > 0) {
+    await prisma.auditLog.deleteMany({ where: { workspaceId: workspace.id, entityId: { in: entityIds } } });
+  }
+  if (activityIds.length > 0) await prisma.activity.deleteMany({ where: { id: { in: activityIds } } });
+  if (dealIds.length > 0) await prisma.deal.deleteMany({ where: { id: { in: dealIds } } });
+  if (personIds.length > 0) await prisma.person.deleteMany({ where: { id: { in: personIds } } });
+  if (organizationIds.length > 0) await prisma.organization.deleteMany({ where: { id: { in: organizationIds } } });
 }

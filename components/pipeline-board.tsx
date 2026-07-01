@@ -75,7 +75,13 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
           return (
             <section className="stage-column" key={stage.id}>
               <div className="stage-header">
-                <h2 className="stage-title">{stage.name}</h2>
+                <div>
+                  <h2 className="stage-title">{stage.name}</h2>
+                  <p className="stage-meta">
+                    {stage.deals.length} {stage.deals.length === 1 ? "deal" : "deals"}
+                    {stage.probability == null ? "" : ` · ${stage.probability}% probability`}
+                  </p>
+                </div>
                 <span className="stage-total">{formatMoney(stageTotal)}</span>
               </div>
               <div className="deal-stack">

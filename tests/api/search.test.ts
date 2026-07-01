@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const service = readFileSync(join(process.cwd(), "lib/services/search-service.ts"), "utf8");
-const appShell = readFileSync(join(process.cwd(), "components/app-shell.tsx"), "utf8");
+const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const searchPage = readFileSync(join(process.cwd(), "app/search/page.tsx"), "utf8");
 
 describe("global workspace search", () => {
   it("adds a search entry point in the app shell", () => {
-    expect(appShell).toContain("href: \"/search\"");
-    expect(appShell).toContain("label: \"Search\"");
-    expect(appShell).toContain("Search");
+    expect(primaryNav).toContain("href: \"/search\"");
+    expect(primaryNav).toContain("label: \"Search\"");
+    expect(primaryNav).toContain("Search");
   });
 
   it("searches workspace-scoped CRM records with limited contains queries", () => {

@@ -80,6 +80,11 @@ export default async function DealDetailPage({ params }: PageProps) {
         <div>
           <p className="page-kicker">Deal</p>
           <h1 className="page-title">{deal.title}</h1>
+          <p className="page-subtitle">
+            {[deal.stage.name, formatMoney(deal.valueCents, deal.currency), deal.organization?.name ?? formatPersonNameOrNull(deal.person)]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
         </div>
         <div className="header-actions">
           <ContractWorkflowQuickLink fields={contractFields} />
@@ -258,6 +263,10 @@ export default async function DealDetailPage({ params }: PageProps) {
 
 function formatPersonName(person: { firstName: string; lastName: string | null }) {
   return [person.firstName, person.lastName].filter(Boolean).join(" ");
+}
+
+function formatPersonNameOrNull(person?: { firstName: string; lastName: string | null } | null) {
+  return person ? formatPersonName(person) : null;
 }
 
 type DealAutomationSuggestion = {

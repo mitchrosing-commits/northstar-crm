@@ -21,8 +21,24 @@ export default async function DashboardPage() {
         <div>
           <p className="page-kicker">Workspace</p>
           <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">A command center for pipeline health, urgent follow-ups, and recent customer work.</p>
+        </div>
+        <div className="header-actions">
+          <Link className="button-secondary" href="/pipeline">
+            View pipeline
+          </Link>
+          <Link className="button-primary" href="/deals/new">
+            New deal
+          </Link>
         </div>
       </header>
+
+      <DashboardFocusStrip
+        dueToday={summary.metrics.dueTodayActivitiesCount}
+        needsAttentionCount={needsAttention.length}
+        openPipelineValue={formatMoney(summary.metrics.openPipelineValueCents)}
+        overdue={summary.metrics.overdueActivitiesCount}
+      />
 
       {summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null}
 
@@ -280,6 +296,40 @@ function SnapshotItem({ label, value }: { label: string; value: number }) {
       <p className="field-label">{label}</p>
       <p className="field-value">{value}</p>
     </div>
+  );
+}
+
+function DashboardFocusStrip({
+  dueToday,
+  needsAttentionCount,
+  openPipelineValue,
+  overdue
+}: {
+  dueToday: number;
+  needsAttentionCount: number;
+  openPipelineValue: string;
+  overdue: number;
+}) {
+  return (
+    <section className="command-strip" aria-label="Dashboard focus">
+      <Link className="command-card command-card-critical" href="/dashboard#needs-attention-title">
+        <span>Needs attention</span>
+        <strong>{needsAttentionCount}</strong>
+        <small>{needsAttentionCount === 1 ? "next action" : "next actions"}</small>
+      </Link>
+      <Link className="command-card" href="/deals?status=OPEN">
+        <span>Open pipeline</span>
+        <strong>{openPipelineValue}</strong>
+        <small>active opportunity value</small>
+      </Link>
+      <Link className="command-card" href="/activities?status=open">
+        <span>Today&apos;s work queue</span>
+        <strong>{dueToday + overdue}</strong>
+        <small>
+          {overdue} overdue, {dueToday} due today
+        </small>
+      </Link>
+    </section>
   );
 }
 
