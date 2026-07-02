@@ -61,6 +61,10 @@ export function MeetingIntelligenceReview({
     const payload = {
       meetingActivity: draft.meetingActivity
         ? {
+            associatedTargets: draft.meetingActivity.associatedTargets?.map((_target, index) => ({
+              include: formData.has(`meeting.association.${index}.include`),
+              target: parseTarget(String(formData.get(`meeting.association.${index}.target`) ?? ""))
+            })),
             completedAt: String(formData.get("meeting.completedAt") ?? ""),
             description: String(formData.get("meeting.description") ?? ""),
             include: formData.has("meeting.include"),
@@ -137,6 +141,25 @@ export function MeetingIntelligenceReview({
                 <textarea name="meeting.description" rows={8} defaultValue={draft.meetingActivity.description} />
               </label>
             </div>
+            {draft.meetingActivity.associatedTargets && draft.meetingActivity.associatedTargets.length > 0 ? (
+              <div className="meeting-review-group">
+                <CompactTitleRow title="Structured Associations" />
+                <div className="form-grid">
+                  {draft.meetingActivity.associatedTargets.map((target, index) => (
+                    <div className="data-card meeting-association-item" key={`${target.type}-${target.id}-${index}`}>
+                      <label className="form-field checkbox-field">
+                        <input defaultChecked name={`meeting.association.${index}.include`} type="checkbox" />
+                        <span>Associate meeting</span>
+                      </label>
+                      <label className="form-field">
+                        <FormFieldLabel>Record</FormFieldLabel>
+                        <TargetSelect defaultTarget={target} name={`meeting.association.${index}.target`} options={targetOptions} />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <ProposalEvidence
               confidence={draft.meetingActivity.confidence}
               evidence={draft.meetingActivity.evidence}

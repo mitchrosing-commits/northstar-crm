@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -207,7 +208,7 @@ export default async function DeveloperApiPage() {
 
       <section className="panel section-separated">
         <PanelTitleRow
-          actions={<span className="badge">Workspace scoped</span>}
+          actions={<Badge>Workspace scoped</Badge>}
           description="Northstar exposes a growing REST surface for core CRM records. Current API access uses the signed-in browser session in local auth or a trusted upstream user header in trusted-header mode; public API keys are not live yet."
           title="API v1"
         />
@@ -241,7 +242,7 @@ export default async function DeveloperApiPage() {
           {resourceAreas.map((resource) => (
             <article className="api-resource-card" key={resource.title}>
               <CompactTitleRow
-                actions={<span className="badge">{resource.status}</span>}
+                actions={<Badge>{resource.status}</Badge>}
                 description={resource.description}
                 title={resource.title}
               />
@@ -259,7 +260,7 @@ export default async function DeveloperApiPage() {
 
       <section className="panel section-separated">
         <PanelTitleRow
-          actions={<span className="badge">Repo docs</span>}
+          actions={<Badge>Repo docs</Badge>}
           description="The API reference is hand-maintained for this preview. Treat workspace IDs as tenant boundaries and keep all imports, exports, and record writes scoped to the active workspace."
           title="Reference Docs"
         />
@@ -282,7 +283,7 @@ export default async function DeveloperApiPage() {
       </section>
 
       <section className="panel">
-        <PanelTitleRow actions={<span className="badge">Preview</span>} title="Platform Controls" />
+        <PanelTitleRow actions={<Badge>Preview</Badge>} title="Platform Controls" />
         <p className="empty-copy section-separated">
           These controls are visible so evaluators can see the intended platform direction. They are disabled until the
           underlying API-key, webhook, and app authorization systems exist.
@@ -293,7 +294,7 @@ export default async function DeveloperApiPage() {
 
             return (
               <div className="provider-card" key={surface.title}>
-                <CompactTitleRow actions={<span className="badge">{surface.status}</span>} title={surface.title} />
+                <CompactTitleRow actions={<Badge>{surface.status}</Badge>} title={surface.title} />
                 <p>{surface.description}</p>
                 <button
                   aria-label={plannedSurfaceActionLabel}

@@ -19,6 +19,7 @@ describe("Developer/API settings surface", () => {
     expect(settingsPage).toContain("href={\"/settings/developer-api\" as Route}");
     expect(developerPage).toContain("Review workspace-scoped REST coverage, export endpoints, and integration guardrails.");
     expect(developerPage).toContain("PageHeader");
+    expect(developerPage).toContain('import { Badge } from "@/components/badge"');
     expect(developerPage).toContain("const backToSettingsLabel = \"Back to settings from developer API\"");
     expect(developerPage).toContain("aria-label={backToSettingsLabel}");
     expect(developerPage).toContain("title={backToSettingsLabel}");
@@ -40,6 +41,12 @@ describe("Developer/API settings surface", () => {
     expect(developerPage).toContain("aria-label={importExportActionLabel}");
     expect(developerPage).toContain("title={importExportActionLabel}");
     expect(developerPage).toContain("title=\"Platform Controls\"");
+    expect(developerPage).toContain("actions={<Badge>Workspace scoped</Badge>}");
+    expect(developerPage).toContain("actions={<Badge>{resource.status}</Badge>}");
+    expect(developerPage).toContain("actions={<Badge>Repo docs</Badge>}");
+    expect(developerPage).toContain("actions={<Badge>Preview</Badge>}");
+    expect(developerPage).toContain("actions={<Badge>{surface.status}</Badge>}");
+    expect(developerPage).not.toContain('className="badge"');
     expect(developerPage).toContain("description=\"Northstar exposes a growing REST surface for core CRM records.");
     expect(developerPage).toContain("description=\"The API reference is hand-maintained for this preview.");
     expect(developerPage).not.toContain("panel-intro-copy");

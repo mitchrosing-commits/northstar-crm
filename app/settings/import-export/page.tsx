@@ -149,6 +149,7 @@ export default async function ImportExportPage() {
 
       <section className="panel">
         <PanelTitleRow
+          actions={<Badge label="Sample CSV templates are copy references only">Reference only</Badge>}
           description="Use these small samples as starting points. Imports remain preview-first: paste a CSV, review validation, then import valid rows."
           title="Sample CSV Templates"
         />
@@ -251,9 +252,15 @@ function ImportPreviewSection({
   id: string;
   title: string;
 }) {
+  const importPreviewBadgeLabel = `${title}: preview required before import`;
+
   return (
     <section className="panel" id={id}>
-      <PanelTitleRow description={description} title={title} />
+      <PanelTitleRow
+        actions={<Badge label={importPreviewBadgeLabel}>Preview first</Badge>}
+        description={description}
+        title={title}
+      />
       {children}
     </section>
   );

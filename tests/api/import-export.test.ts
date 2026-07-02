@@ -590,6 +590,9 @@ describe("Import/export MVP", () => {
     expect(importExportPage).toContain("rowCount={overview.rowCount}");
     expect(importExportPage).toContain('className="sample-csv-card"');
     expect(importExportPage).toContain("title={sample.title}");
+    expect(importExportPage).toContain(
+      'actions={<Badge label="Sample CSV templates are copy references only">Reference only</Badge>}',
+    );
     expect(importExportPage).not.toContain("<h3>{label.title}</h3>");
     expect(importExportPage).not.toContain("<h3>{sample.title}</h3>");
     expect(compactTitleRow).toContain("export function CompactTitleRow");
@@ -691,7 +694,10 @@ describe("Import/export MVP", () => {
     expect(importExportPage).toContain("function ImportPreviewSection");
     expect(importExportPage).toContain("importPreviewPanels.map");
     expect(importExportPage).toContain(
-      "<PanelTitleRow description={description} title={title} />",
+      "const importPreviewBadgeLabel = `${title}: preview required before import`",
+    );
+    expect(importExportPage).toContain(
+      'actions={<Badge label={importPreviewBadgeLabel}>Preview first</Badge>}',
     );
     expect(importExportPage).toContain("Import Safety Rules");
     expect(importExportPage).toContain(

@@ -95,7 +95,7 @@ describe("manual email logging and templates foundation", () => {
     expect(schema).toContain("INBOUND");
     expect(schema).toContain("OUTBOUND");
     expect(schema).toContain("createdBy      User?");
-    expect(schema).toContain("emailLogs       EmailLog[]");
+    expect(schema).toMatch(/emailLogs\s+EmailLog\[\]/);
     expect(schema).toMatch(/emailTemplates\s+EmailTemplate\[\]/);
     expect(schema).not.toMatch(/\n\s+accessToken\s+String/);
     expect(schema).not.toMatch(/\n\s+refreshToken\s+String/);

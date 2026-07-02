@@ -92,7 +92,8 @@ function RecordTimelineItem({ item }: { item: RecordTimelineItem }) {
             formatActivityType(item.activityType),
             formatActivityStatus(item),
             formatDate(item.timestamp),
-            item.ownerName
+            item.ownerName,
+            item.associationLabels.length > 0 ? `Associated with ${item.associationLabels.join("; ")}` : null
           ]}
         />
         {item.description ? <TimelineBodyText>{item.description}</TimelineBodyText> : null}

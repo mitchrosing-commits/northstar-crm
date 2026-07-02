@@ -4,6 +4,7 @@ import {
   applyMeetingIntake,
   createMeetingIntake
 } from "@/lib/services/meeting-intelligence-service";
+import { getRecordTimeline } from "@/lib/services/timeline-service";
 import type { MeetingIntelligenceDraft } from "@/lib/meeting-intelligence/types";
 import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
 
@@ -18,6 +19,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  await fixture?.prisma.meetingActivityAssociation.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.meetingIntake.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceA.id, entityType: "MeetingIntake" } });
   await fixture?.prisma.note.deleteMany({
@@ -49,6 +51,7 @@ describe("meeting intelligence service", () => {
     const fx = currentFixture();
     const noteCountBefore = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } });
     const activityCountBefore = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } });
+    const associationCountBefore = await fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } });
 
     const intake = await createMeetingIntake(fx.actorA, {
       contextText: "Meeting date: 2030-04-01\nAttendees: Alpha Contact",
@@ -67,6 +70,9 @@ describe("meeting intelligence service", () => {
     expect(JSON.stringify(draft.matchedObjects)).toContain(fx.recordsA.deal.id);
     await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(noteCountBefore);
     await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(activityCountBefore);
+    await expect(fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(
+      associationCountBefore
+    );
 
     const applyInput = {
       meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: true } : null,
@@ -88,6 +94,7 @@ describe("meeting intelligence service", () => {
     ).resolves.toBeTruthy();
     const afterFirstApplyCounts = {
       activities: await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } }),
+      associations: await fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } }),
       notes: await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })
     };
     const secondResult = await applyMeetingIntake(fx.actorA, intake.id, applyInput);
@@ -95,6 +102,9 @@ describe("meeting intelligence service", () => {
     expect(secondResult).toEqual(result);
     await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstApplyCounts.notes);
     await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstApplyCounts.activities);
+    await expect(fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(
+      afterFirstApplyCounts.associations
+    );
   });
 
   it("creates object-specific notes, a completed meeting log, and follow-up activities after approval", async () => {
@@ -156,6 +166,27 @@ describe("meeting intelligence service", () => {
     expect(meeting.completedAt?.toISOString()).toBe("2030-04-10T00:00:00.000Z");
     expect(meeting.description).toContain("Associated CRM records:");
     expect(meeting.description).toContain(`Contact: ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`);
+    const meetingAssociations = await fx.prisma.meetingActivityAssociation.findMany({
+      where: { activityId: meeting.id, workspaceId: fx.workspaceA.id },
+      orderBy: { createdAt: "asc" }
+    });
+    expect(meetingAssociations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ dealId: fx.recordsA.deal.id }),
+        expect.objectContaining({ organizationId: fx.recordsA.organization.id }),
+        expect.objectContaining({ personId: fx.recordsA.person.id })
+      ])
+    );
+    const organizationTimeline = await getRecordTimeline(fx.actorA, { type: "ORGANIZATION", id: fx.recordsA.organization.id });
+    const associatedMeetingTimelineItem = organizationTimeline.find((item) => item.type === "activity" && item.activityId === meeting.id);
+    expect(associatedMeetingTimelineItem).toMatchObject({
+      associationLabels: expect.arrayContaining([
+        `Deal: ${fx.recordsA.deal.title}`,
+        `Organization: ${fx.recordsA.organization.name}`,
+        `Contact: ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`
+      ]),
+      type: "activity"
+    });
     const followUp = await fx.prisma.activity.findFirstOrThrow({
       where: { dealId: fx.recordsA.deal.id, title: { contains: "send SOW" }, type: "TASK", workspaceId: fx.workspaceA.id }
     });
@@ -315,6 +346,67 @@ describe("meeting intelligence service", () => {
     expect(result.skipped.every((item) => item.reason === "No target record was selected.")).toBe(true);
     await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(noteCountBefore);
     await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(activityCountBefore);
+  });
+
+  it("stores reviewed meeting associations and skips unavailable association targets without dropping the meeting log", async () => {
+    const fx = currentFixture();
+    const foreignDealTarget = { id: fx.recordsB.deal.id, label: fx.recordsB.deal.title, type: "deal" as const };
+    const convertedLeadTarget = { id: fx.recordsA.lead.id, label: fx.recordsA.lead.title, type: "lead" as const };
+    const organizationTarget = {
+      id: fx.recordsA.organization.id,
+      label: fx.recordsA.organization.name,
+      type: "organization" as const
+    };
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-12",
+      hints: { dealId: fx.recordsA.deal.id, organizationId: fx.recordsA.organization.id },
+      text: [
+        `${fx.recordsA.deal.title} and ${fx.recordsA.organization.name} reviewed budget and implementation risk.`,
+        "Action: send recap by 2030-04-16."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    try {
+      await fx.prisma.lead.update({ where: { id: fx.recordsA.lead.id }, data: { status: "CONVERTED" } });
+      const result = await applyMeetingIntake(fx.actorA, intake.id, {
+        meetingActivity: draft.meetingActivity
+          ? {
+              ...draft.meetingActivity,
+              associatedTargets: [organizationTarget, convertedLeadTarget, foreignDealTarget],
+              include: true,
+              target: { id: fx.recordsA.deal.id, label: fx.recordsA.deal.title, type: "deal" as const }
+            }
+          : null,
+        notes: draft.notes.map((note) => ({ ...note, include: false })),
+        nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: false }))
+      });
+
+      const meeting = await fx.prisma.activity.findFirstOrThrow({
+        where: { dealId: fx.recordsA.deal.id, title: { contains: "Meeting:" }, type: "MEETING", workspaceId: fx.workspaceA.id }
+      });
+      const associations = await fx.prisma.meetingActivityAssociation.findMany({
+        where: { activityId: meeting.id, workspaceId: fx.workspaceA.id }
+      });
+
+      expect(result.created.filter((item) => item.id === meeting.id && item.type === "activity")).toHaveLength(1);
+      expect(result.skipped).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ reason: "Converted leads are locked. Add new context on the converted deal." }),
+          expect.objectContaining({ reason: "Selected target is not available in this workspace." })
+        ])
+      );
+      expect(associations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ dealId: fx.recordsA.deal.id }),
+          expect.objectContaining({ organizationId: fx.recordsA.organization.id })
+        ])
+      );
+      expect(associations.some((association) => association.leadId === fx.recordsA.lead.id)).toBe(false);
+      expect(associations.some((association) => association.dealId === fx.recordsB.deal.id)).toBe(false);
+    } finally {
+      await fx.prisma.lead.update({ where: { id: fx.recordsA.lead.id }, data: { status: "NEW" } });
+    }
   });
 
   it("skips converted lead targets reintroduced during review", async () => {

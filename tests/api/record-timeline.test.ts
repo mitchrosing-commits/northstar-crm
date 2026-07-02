@@ -157,6 +157,40 @@ describe("unified record timeline", () => {
     ]);
   });
 
+  it("keeps structured meeting association labels on activity timeline items", () => {
+    const timeline = buildRecordTimeline({
+      notes: [],
+      activities: [
+        {
+          id: "meeting-activity-1",
+          title: "Meeting: Alpha Needle Deal",
+          type: "MEETING",
+          description: "Summary: Reviewed implementation risk.",
+          dueAt: null,
+          completedAt: "2030-01-03T11:00:00.000Z",
+          createdAt: "2030-01-02T10:00:00.000Z",
+          owner: { name: "Riley", email: "riley@example.test" },
+          meetingAssociations: [
+            { deal: { title: "Alpha Needle Deal" }, lead: null, organization: null, person: null },
+            { deal: null, lead: null, organization: { name: "Alpha Orbit Organization" }, person: null },
+            {
+              deal: null,
+              lead: null,
+              organization: null,
+              person: { email: "alpha@example.test", firstName: "Alpha", lastName: "Contact" }
+            }
+          ]
+        }
+      ],
+      auditLogs: []
+    });
+
+    expect(timeline[0]).toMatchObject({
+      associationLabels: ["Deal: Alpha Needle Deal", "Organization: Alpha Orbit Organization", "Contact: Alpha Contact"],
+      type: "activity"
+    });
+  });
+
   it("renders compact email timeline entries with safe participant fallbacks", () => {
     expect(recordTimeline).toContain("TimelineMetaRow");
     expect(recordTimeline).toContain("className=\"email-meta\"");
@@ -194,6 +228,7 @@ describe("unified record timeline", () => {
     expect(recordTimeline).toContain("ariaLabel={`${event.label} audit timeline metadata`}");
     expect(recordTimeline).toContain("formatActivityStatus(item)");
     expect(recordTimeline).toContain("<ActivityDueBadge activity={item} />");
+    expect(recordTimeline).toContain("item.associationLabels.length > 0 ? `Associated with ${item.associationLabels.join(\"; \")}` : null");
     expect(recordTimeline).toContain("TimelineMetaRow items={[event.actorLabel, formatDate(item.timestamp)]}");
     expect(globalStyles).toContain(".timeline-meta-chip");
     expect(globalStyles).toContain(".activity-context-line");

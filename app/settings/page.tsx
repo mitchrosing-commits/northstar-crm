@@ -205,7 +205,7 @@ export default async function SettingsPage({
       {summary.currentMembership.canManageWorkspaceSettings ? (
         <section className="panel section-separated">
           <PanelTitleRow
-            actions={<span className="badge">Manual link sharing</span>}
+            actions={<Badge>Manual link sharing</Badge>}
             title="Team / Workspace Invitations"
           />
           <p className="empty-copy section-separated">
@@ -234,6 +234,7 @@ export default async function SettingsPage({
                   pendingInvitations.map((invitation) => {
                     const openInvitationLabel = `Open invitation link for ${invitation.email}`;
                     const revokeInvitationLabel = `Revoke invitation for ${invitation.email}`;
+                    const invitationActionsLabel = `${invitation.email} invitation actions`;
 
                     return (
                       <tr key={invitation.id}>
@@ -243,7 +244,9 @@ export default async function SettingsPage({
                           </span>
                         </td>
                         <td data-label="Role">
-                          <span className="badge">{invitation.roleLabel}</span>
+                          <Badge label={`${invitation.email} invited role: ${invitation.roleLabel}`}>
+                            {invitation.roleLabel}
+                          </Badge>
                         </td>
                         <td data-label="Invited by">
                           {invitation.invitedBy?.name ?? invitation.invitedBy?.email ?? (
@@ -261,21 +264,23 @@ export default async function SettingsPage({
                           </Link>
                         </td>
                         <td className="table-actions-cell" data-label="Action">
-                          <form action={revokeWorkspaceInvitationAction}>
-                            <input
-                              name="invitationId"
-                              type="hidden"
-                              value={invitation.id}
-                            />
-                            <button
-                              aria-label={revokeInvitationLabel}
-                              className="button-secondary button-compact"
-                              title={revokeInvitationLabel}
-                              type="submit"
-                            >
-                              Revoke
-                            </button>
-                          </form>
+                          <ActionGroup className="table-row-actions" label={invitationActionsLabel}>
+                            <form action={revokeWorkspaceInvitationAction}>
+                              <input
+                                name="invitationId"
+                                type="hidden"
+                                value={invitation.id}
+                              />
+                              <button
+                                aria-label={revokeInvitationLabel}
+                                className="button-secondary button-compact"
+                                title={revokeInvitationLabel}
+                                type="submit"
+                              >
+                                Revoke
+                              </button>
+                            </form>
+                          </ActionGroup>
                         </td>
                       </tr>
                     );
@@ -328,7 +333,9 @@ export default async function SettingsPage({
                       </div>
                     </td>
                     <td data-label="Role">
-                      <span className="badge">{member.roleLabel}</span>
+                      <Badge label={`${member.email} workspace role: ${member.roleLabel}`}>
+                        {member.roleLabel}
+                      </Badge>
                     </td>
                     <td data-label="Access">
                       {member.canManageWorkspaceSettings
@@ -445,9 +452,9 @@ function WorkspaceMemberActions({
 
 function MemberActionStatus({ label }: { label: string }) {
   return (
-    <span className="muted settings-member-action-status" title={label}>
+    <Badge className="badge settings-member-action-status" label={label}>
       {label}
-    </span>
+    </Badge>
   );
 }
 
@@ -571,11 +578,12 @@ function AdminReadinessPanel() {
       <div className="readiness-grid">
         {statuses.map((status) => (
           <div className="readiness-item" key={status.label}>
-            <span
+            <Badge
               className={status.configured ? "badge badge-qualified" : "badge"}
+              label={`${status.label}: ${status.configured ? "Configured" : "Needs setup"}`}
             >
               {status.configured ? "Configured" : "Needs setup"}
-            </span>
+            </Badge>
             <strong>{status.label}</strong>
             <p>{status.detail}</p>
           </div>

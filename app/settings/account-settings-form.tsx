@@ -6,6 +6,7 @@ import {
   updateAccountDisplayNameAction,
   type AccountSettingsActionState
 } from "@/app/settings/account-actions";
+import { Badge } from "@/components/badge";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
@@ -51,7 +52,9 @@ export function AccountSettingsForm({ currentName, email, workspaceName, roleLab
         </div>
         <div>
           <dt className="field-label">Workspace role</dt>
-          <dd className="field-value">{roleLabel}</dd>
+          <dd className="field-value">
+            <Badge label={`Workspace role: ${roleLabel}`}>{roleLabel}</Badge>
+          </dd>
         </div>
       </dl>
       {state.error ? (

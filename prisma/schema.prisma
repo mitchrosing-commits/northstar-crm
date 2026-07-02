@@ -63,39 +63,40 @@ model PasswordResetToken {
 }
 
 model Workspace {
-  id                     String                  @id @default(cuid())
-  name                   String
-  slug                   String                  @unique
-  memberships            WorkspaceMembership[]
-  invitations            WorkspaceInvitation[]
-  pipelines              Pipeline[]
-  stages                 PipelineStage[]
-  deals                  Deal[]
-  leads                  Lead[]
-  people                 Person[]
-  organizations          Organization[]
-  products               Product[]
-  dealLineItems          DealLineItem[]
-  contractSteps          DealContractStep[]
-  quotes                 Quote[]
-  quoteItems             QuoteItem[]
-  quotePublicLinks       QuotePublicLink[]
-  activities             Activity[]
-  notes                  Note[]
-  emailLogs              EmailLog[]
-  emailTemplates         EmailTemplate[]
-  emailConnections       EmailConnection[]
-  emailConnectionSecrets EmailConnectionSecret[]
-  customFields           CustomFieldDefinition[]
-  customValues           CustomFieldValue[]
-  savedViews             SavedView[]
-  goals                  Goal[]
-  jobs                   Job[]
-  meetingIntakes         MeetingIntake[]
-  auditLogs              AuditLog[]
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  deletedAt              DateTime?
+  id                          String                       @id @default(cuid())
+  name                        String
+  slug                        String                       @unique
+  memberships                 WorkspaceMembership[]
+  invitations                 WorkspaceInvitation[]
+  pipelines                   Pipeline[]
+  stages                      PipelineStage[]
+  deals                       Deal[]
+  leads                       Lead[]
+  people                      Person[]
+  organizations               Organization[]
+  products                    Product[]
+  dealLineItems               DealLineItem[]
+  contractSteps               DealContractStep[]
+  quotes                      Quote[]
+  quoteItems                  QuoteItem[]
+  quotePublicLinks            QuotePublicLink[]
+  activities                  Activity[]
+  notes                       Note[]
+  emailLogs                   EmailLog[]
+  emailTemplates              EmailTemplate[]
+  emailConnections            EmailConnection[]
+  emailConnectionSecrets      EmailConnectionSecret[]
+  customFields                CustomFieldDefinition[]
+  customValues                CustomFieldValue[]
+  savedViews                  SavedView[]
+  goals                       Goal[]
+  jobs                        Job[]
+  meetingIntakes              MeetingIntake[]
+  meetingActivityAssociations MeetingActivityAssociation[]
+  auditLogs                   AuditLog[]
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  deletedAt                   DateTime?
 }
 
 model WorkspaceMembership {
@@ -164,35 +165,36 @@ model PipelineStage {
 }
 
 model Deal {
-  id              String         @id @default(cuid())
-  workspaceId     String
-  pipelineId      String
-  stageId         String
-  ownerId         String?
-  personId        String?
-  organizationId  String?
-  title           String
-  valueCents      Int?
-  currency        String         @default("USD")
-  status          DealStatus     @default(OPEN)
-  expectedCloseAt DateTime?
-  wonAt           DateTime?
-  lostAt          DateTime?
-  workspace       Workspace      @relation(fields: [workspaceId], references: [id])
-  pipeline        Pipeline       @relation(fields: [pipelineId], references: [id])
-  stage           PipelineStage  @relation(fields: [stageId], references: [id])
-  owner           User?          @relation("DealOwner", fields: [ownerId], references: [id])
-  person          Person?        @relation(fields: [personId], references: [id])
-  organization    Organization?  @relation(fields: [organizationId], references: [id])
-  lineItems       DealLineItem[]
-  contractSteps   DealContractStep[]
-  quotes          Quote[]
-  activities      Activity[]
-  notes           Note[]
-  emailLogs       EmailLog[]
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  deletedAt       DateTime?
+  id                          String                       @id @default(cuid())
+  workspaceId                 String
+  pipelineId                  String
+  stageId                     String
+  ownerId                     String?
+  personId                    String?
+  organizationId              String?
+  title                       String
+  valueCents                  Int?
+  currency                    String                       @default("USD")
+  status                      DealStatus                   @default(OPEN)
+  expectedCloseAt             DateTime?
+  wonAt                       DateTime?
+  lostAt                      DateTime?
+  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id])
+  pipeline                    Pipeline                     @relation(fields: [pipelineId], references: [id])
+  stage                       PipelineStage                @relation(fields: [stageId], references: [id])
+  owner                       User?                        @relation("DealOwner", fields: [ownerId], references: [id])
+  person                      Person?                      @relation(fields: [personId], references: [id])
+  organization                Organization?                @relation(fields: [organizationId], references: [id])
+  lineItems                   DealLineItem[]
+  contractSteps               DealContractStep[]
+  quotes                      Quote[]
+  activities                  Activity[]
+  meetingActivityAssociations MeetingActivityAssociation[]
+  notes                       Note[]
+  emailLogs                   EmailLog[]
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  deletedAt                   DateTime?
 
   @@index([workspaceId, pipelineId, stageId])
   @@index([workspaceId, ownerId])
@@ -335,24 +337,25 @@ model QuotePublicLink {
 }
 
 model Lead {
-  id             String        @id @default(cuid())
-  workspaceId    String
-  ownerId        String?
-  personId       String?
-  organizationId String?
-  title          String
-  source         String?
-  status         LeadStatus    @default(NEW)
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id])
-  owner          User?         @relation("LeadOwner", fields: [ownerId], references: [id])
-  person         Person?       @relation(fields: [personId], references: [id])
-  organization   Organization? @relation(fields: [organizationId], references: [id])
-  activities     Activity[]
-  notes          Note[]
-  emailLogs      EmailLog[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
+  id                          String                       @id @default(cuid())
+  workspaceId                 String
+  ownerId                     String?
+  personId                    String?
+  organizationId              String?
+  title                       String
+  source                      String?
+  status                      LeadStatus                   @default(NEW)
+  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id])
+  owner                       User?                        @relation("LeadOwner", fields: [ownerId], references: [id])
+  person                      Person?                      @relation(fields: [personId], references: [id])
+  organization                Organization?                @relation(fields: [organizationId], references: [id])
+  activities                  Activity[]
+  meetingActivityAssociations MeetingActivityAssociation[]
+  notes                       Note[]
+  emailLogs                   EmailLog[]
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  deletedAt                   DateTime?
 
   @@index([workspaceId, ownerId])
   @@index([workspaceId, personId])
@@ -360,25 +363,26 @@ model Lead {
 }
 
 model Person {
-  id             String        @id @default(cuid())
-  workspaceId    String
-  ownerId        String?
-  organizationId String?
-  firstName      String
-  lastName       String?
-  email          String?
-  phone          String?
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id])
-  owner          User?         @relation("PersonOwner", fields: [ownerId], references: [id])
-  organization   Organization? @relation(fields: [organizationId], references: [id])
-  deals          Deal[]
-  leads          Lead[]
-  activities     Activity[]
-  notes          Note[]
-  emailLogs      EmailLog[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
+  id                          String                       @id @default(cuid())
+  workspaceId                 String
+  ownerId                     String?
+  organizationId              String?
+  firstName                   String
+  lastName                    String?
+  email                       String?
+  phone                       String?
+  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id])
+  owner                       User?                        @relation("PersonOwner", fields: [ownerId], references: [id])
+  organization                Organization?                @relation(fields: [organizationId], references: [id])
+  deals                       Deal[]
+  leads                       Lead[]
+  activities                  Activity[]
+  meetingActivityAssociations MeetingActivityAssociation[]
+  notes                       Note[]
+  emailLogs                   EmailLog[]
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  deletedAt                   DateTime?
 
   @@index([workspaceId])
   @@index([workspaceId, email])
@@ -386,49 +390,51 @@ model Person {
 }
 
 model Organization {
-  id          String     @id @default(cuid())
-  workspaceId String
-  ownerId     String?
-  name        String
-  domain      String?
-  workspace   Workspace  @relation(fields: [workspaceId], references: [id])
-  owner       User?      @relation("OrganizationOwner", fields: [ownerId], references: [id])
-  people      Person[]
-  deals       Deal[]
-  leads       Lead[]
-  activities  Activity[]
-  notes       Note[]
-  emailLogs   EmailLog[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  deletedAt   DateTime?
+  id                          String                       @id @default(cuid())
+  workspaceId                 String
+  ownerId                     String?
+  name                        String
+  domain                      String?
+  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id])
+  owner                       User?                        @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  people                      Person[]
+  deals                       Deal[]
+  leads                       Lead[]
+  activities                  Activity[]
+  meetingActivityAssociations MeetingActivityAssociation[]
+  notes                       Note[]
+  emailLogs                   EmailLog[]
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  deletedAt                   DateTime?
 
   @@index([workspaceId])
   @@index([workspaceId, ownerId])
 }
 
 model Activity {
-  id             String        @id @default(cuid())
-  workspaceId    String
-  ownerId        String?
-  dealId         String?
-  leadId         String?
-  personId       String?
-  organizationId String?
-  type           ActivityType
-  title          String
-  description    String?
-  dueAt          DateTime?
-  completedAt    DateTime?
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id])
-  owner          User?         @relation("ActivityOwner", fields: [ownerId], references: [id])
-  deal           Deal?         @relation(fields: [dealId], references: [id])
-  lead           Lead?         @relation(fields: [leadId], references: [id])
-  person         Person?       @relation(fields: [personId], references: [id])
-  organization   Organization? @relation(fields: [organizationId], references: [id])
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
+  id                  String                       @id @default(cuid())
+  workspaceId         String
+  ownerId             String?
+  dealId              String?
+  leadId              String?
+  personId            String?
+  organizationId      String?
+  type                ActivityType
+  title               String
+  description         String?
+  dueAt               DateTime?
+  completedAt         DateTime?
+  workspace           Workspace                    @relation(fields: [workspaceId], references: [id])
+  owner               User?                        @relation("ActivityOwner", fields: [ownerId], references: [id])
+  deal                Deal?                        @relation(fields: [dealId], references: [id])
+  lead                Lead?                        @relation(fields: [leadId], references: [id])
+  person              Person?                      @relation(fields: [personId], references: [id])
+  organization        Organization?                @relation(fields: [organizationId], references: [id])
+  meetingAssociations MeetingActivityAssociation[]
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+  deletedAt           DateTime?
 
   @@index([workspaceId, dueAt])
   @@index([workspaceId, ownerId])
@@ -646,29 +652,56 @@ model Job {
 }
 
 model MeetingIntake {
-  id               String                  @id @default(cuid())
-  workspaceId      String
-  createdById      String?
-  sourceType       MeetingIntakeSourceType
-  originalFilename String?
-  originalMimeType String?
-  contextText      String?
-  rawText          String?
-  markdownText     String?
-  status           MeetingIntakeStatus     @default(DRAFT)
-  analysisJson     Json?
-  proposedChangesJson Json?
-  applyResultJson  Json?
-  errorMessage     String?
-  appliedAt        DateTime?
-  workspace        Workspace               @relation(fields: [workspaceId], references: [id])
-  createdBy        User?                   @relation("MeetingIntakeCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  id                          String                       @id @default(cuid())
+  workspaceId                 String
+  createdById                 String?
+  sourceType                  MeetingIntakeSourceType
+  originalFilename            String?
+  originalMimeType            String?
+  contextText                 String?
+  rawText                     String?
+  markdownText                String?
+  status                      MeetingIntakeStatus          @default(DRAFT)
+  analysisJson                Json?
+  proposedChangesJson         Json?
+  applyResultJson             Json?
+  errorMessage                String?
+  appliedAt                   DateTime?
+  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id])
+  createdBy                   User?                        @relation("MeetingIntakeCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  meetingActivityAssociations MeetingActivityAssociation[]
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
 
   @@index([workspaceId, status])
   @@index([workspaceId, createdAt])
   @@index([createdById])
+}
+
+model MeetingActivityAssociation {
+  id              String         @id @default(cuid())
+  workspaceId     String
+  activityId      String
+  meetingIntakeId String?
+  dealId          String?
+  leadId          String?
+  personId        String?
+  organizationId  String?
+  workspace       Workspace      @relation(fields: [workspaceId], references: [id])
+  activity        Activity       @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  meetingIntake   MeetingIntake? @relation(fields: [meetingIntakeId], references: [id], onDelete: SetNull)
+  deal            Deal?          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  lead            Lead?          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  person          Person?        @relation(fields: [personId], references: [id], onDelete: Cascade)
+  organization    Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt       DateTime       @default(now())
+
+  @@index([workspaceId, activityId])
+  @@index([workspaceId, meetingIntakeId])
+  @@index([workspaceId, dealId])
+  @@index([workspaceId, leadId])
+  @@index([workspaceId, personId])
+  @@index([workspaceId, organizationId])
 }
 
 model AuditLog {

@@ -32,6 +32,7 @@ export type RecordTimelineItem =
       description: string | null;
       dueAt: Date | string | null;
       ownerName: string;
+      associationLabels: string[];
       title: string;
     }
   | {
@@ -69,6 +70,14 @@ type TimelineActivity = {
   completedAt: Date | string | null;
   createdAt: Date | string;
   owner?: { name: string | null; email: string } | null;
+  meetingAssociations?: TimelineMeetingAssociation[];
+};
+
+type TimelineMeetingAssociation = {
+  deal?: { title: string } | null;
+  lead?: { title: string } | null;
+  person?: { email: string | null; firstName: string; lastName: string | null } | null;
+  organization?: { name: string } | null;
 };
 
 type TimelineEmailLog = {
@@ -115,7 +124,18 @@ export async function getRecordTimeline(
     }),
     prisma.activity.findMany({
       where: activityWhere,
-      include: { owner: { select: userDisplaySelect } },
+      include: {
+        owner: { select: userDisplaySelect },
+        meetingAssociations: {
+          where: { workspaceId: actor.workspaceId },
+          include: {
+            deal: { select: { title: true } },
+            lead: { select: { title: true } },
+            person: { select: { email: true, firstName: true, lastName: true } },
+            organization: { select: { name: true } }
+          }
+        }
+      },
       orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }]
     }),
     prisma.emailLog.findMany({
@@ -153,6 +173,7 @@ export function buildRecordTimeline({ notes, activities, emailLogs, auditLogs }:
       description: activity.description,
       dueAt: activity.dueAt,
       ownerName: activity.owner?.name ?? activity.owner?.email ?? "Unassigned",
+      associationLabels: activityAssociationLabels(activity.meetingAssociations ?? []),
       title: activity.title
     })),
     ...(emailLogs ?? []).map((emailLog) => ({
@@ -200,7 +221,17 @@ function timelineActivityWhere(type: TimelineRecordType, workspaceId: string, id
     workspaceId,
     ...activeWhere,
     ...activityAttachmentRelationsWhere(workspaceId),
-    [attachmentField(type)]: id
+    OR: [
+      { [attachmentField(type)]: id },
+      {
+        meetingAssociations: {
+          some: {
+            workspaceId,
+            [attachmentField(type)]: id
+          }
+        }
+      }
+    ]
   };
 }
 
@@ -248,4 +279,21 @@ function timelineTieRank(type: RecordTimelineItem["type"]) {
   if (type === "activity") return 1;
   if (type === "email") return 2;
   return 3;
+}
+
+function activityAssociationLabels(associations: TimelineMeetingAssociation[]) {
+  return associations
+    .map((association) => {
+      if (association.deal) return `Deal: ${association.deal.title}`;
+      if (association.lead) return `Lead: ${association.lead.title}`;
+      if (association.person) return `Contact: ${formatPersonName(association.person) ?? association.person.email ?? "Unnamed contact"}`;
+      if (association.organization) return `Organization: ${association.organization.name}`;
+      return null;
+    })
+    .filter((label): label is string => Boolean(label));
+}
+
+function formatPersonName(person: { firstName: string | null; lastName: string | null }) {
+  const name = [person.firstName, person.lastName].filter(Boolean).join(" ").trim();
+  return name || undefined;
 }

@@ -203,7 +203,7 @@ export async function applyMeetingIntake(actor: WorkspaceActor, intakeId: string
   };
 
   if (approved.meetingActivity?.include) {
-    await createApprovedActivity(actor, approved.meetingActivity, result, "meeting activity");
+    await createApprovedMeetingActivity(actor, intakeId, approved.meetingActivity, result);
   }
   for (const note of approved.notes ?? []) {
     if (!note.include) {
@@ -269,6 +269,17 @@ async function createApprovedNote(
   }
 }
 
+async function createApprovedMeetingActivity(
+  actor: WorkspaceActor,
+  intakeId: string,
+  activity: NonNullable<ApplyMeetingIntelligenceInput["meetingActivity"]>,
+  result: ApplyMeetingIntelligenceResult
+) {
+  const created = await createApprovedActivity(actor, activity, result, "meeting activity");
+  if (!created) return;
+  await createApprovedMeetingAssociations(actor, intakeId, created.id, activity, result);
+}
+
 async function createApprovedActivity(
   actor: WorkspaceActor,
   activity: NonNullable<ApplyMeetingIntelligenceInput["meetingActivity"]> | NonNullable<ApplyMeetingIntelligenceInput["nextStepActivities"]>[number],
@@ -282,7 +293,7 @@ async function createApprovedActivity(
       reason: targetValidation.reason ?? "No target record was selected.",
       type: "activity"
     });
-    return;
+    return null;
   }
   try {
     const created = await createActivity(actor, {
@@ -300,13 +311,53 @@ async function createApprovedActivity(
       label: created.title,
       type: "activity"
     });
+    return created;
   } catch (error) {
     result.skipped.push({
       label: activity.title,
       reason: formatMeetingIntakeFailureMessage(error, "Could not create activity."),
       type: "activity"
     });
+    return null;
   }
+}
+
+async function createApprovedMeetingAssociations(
+  actor: WorkspaceActor,
+  intakeId: string,
+  activityId: string,
+  activity: NonNullable<ApplyMeetingIntelligenceInput["meetingActivity"]>,
+  result: ApplyMeetingIntelligenceResult
+) {
+  const requestedTargets = uniqueTargets([activity.target, ...(activity.associatedTargets ?? [])]);
+  const validTargets: CrmTarget[] = [];
+
+  for (const target of requestedTargets) {
+    const targetValidation = await validateApplyTarget(actor, target);
+    if (!targetValidation.target) {
+      result.skipped.push({
+        label: targetLabel(target, "meeting association"),
+        reason: targetValidation.reason ?? "No target record was selected.",
+        type: "activity"
+      });
+      continue;
+    }
+    validTargets.push(targetValidation.target);
+  }
+
+  if (validTargets.length === 0) return;
+  const rows = uniqueTargets(validTargets).map((target) => ({
+    ...targetAssociation(target),
+    activityId,
+    meetingIntakeId: intakeId,
+    workspaceId: actor.workspaceId
+  }));
+
+  await prisma.meetingActivityAssociation.createMany({ data: rows, skipDuplicates: true });
+  await writeAuditLog(actor, "meeting_activity.associations.created", "Activity", activityId, {
+    associationCount: rows.length,
+    meetingIntakeId: intakeId
+  });
 }
 
 async function validateApplyTarget(actor: WorkspaceActor, target: CrmTarget | null | undefined) {
@@ -396,12 +447,26 @@ function normalizeMeetingActivity(value: unknown, fallback: MeetingIntelligenceD
   const input = objectInput(value);
   return {
     ...fallback,
+    associatedTargets: normalizeAssociatedTargets(input.associatedTargets, fallback.associatedTargets, fallback.target),
     completedAt: normalizeOptionalText(input.completedAt, 80) ?? fallback.completedAt,
     description: normalizeRequiredText(input.description, "Meeting activity description is required.", 40_000) ?? fallback.description,
     include: normalizeBoolean(input.include, fallback.include),
     target: normalizeTarget(input.target, fallback.target),
     title: normalizeRequiredText(input.title, "Meeting activity title is required.", 180) ?? fallback.title
   };
+}
+
+function normalizeAssociatedTargets(value: unknown, fallback: CrmTarget[] | undefined, primaryTarget: CrmTarget | null) {
+  if (value === undefined) return uniqueTargets([primaryTarget, ...(fallback ?? [])]);
+  if (!Array.isArray(value)) return uniqueTargets([primaryTarget]);
+  return uniqueTargets([
+    primaryTarget,
+    ...value.flatMap((item) => {
+      const input = objectInput(item);
+      if (input.include === false) return [];
+      return normalizeTarget(input.target, null) ?? normalizeTarget(input, null) ?? [];
+    })
+  ]);
 }
 
 function normalizeNotes(value: unknown, fallback: MeetingIntelligenceDraft["notes"]) {
@@ -483,6 +548,26 @@ function targetAttachment(target: CrmTarget) {
   if (target.type === "lead") return { leadId: target.id };
   if (target.type === "person") return { personId: target.id };
   return { organizationId: target.id };
+}
+
+function targetAssociation(target: CrmTarget) {
+  if (target.type === "deal") return { dealId: target.id };
+  if (target.type === "lead") return { leadId: target.id };
+  if (target.type === "person") return { personId: target.id };
+  return { organizationId: target.id };
+}
+
+function uniqueTargets(targets: Array<CrmTarget | null | undefined>) {
+  const seen = new Set<string>();
+  const result: CrmTarget[] = [];
+  for (const target of targets) {
+    if (!target) continue;
+    const key = `${target.type}:${target.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(target);
+  }
+  return result;
 }
 
 function targetHref(target: CrmTarget) {

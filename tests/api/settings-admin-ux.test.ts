@@ -41,8 +41,12 @@ describe("settings admin UX patterns", () => {
     expect(settingsSection).toContain("export function SettingsSection");
     expect(settingsSection).toContain('className = "panel section-separated"');
     expect(settingsSection).toContain("PanelTitleRow");
+    expect(settingsSection).toContain('import { Badge } from "@/components/badge"');
     expect(settingsSection).toContain(
-      'actions={action ?? (badge ? <span className="badge">{badge}</span> : null)}',
+      "const badgeLabel = badge ? `${title}: ${badge}` : undefined",
+    );
+    expect(settingsSection).toContain(
+      "actions={action ?? (badge ? <Badge label={badgeLabel}>{badge}</Badge> : null)}",
     );
     expect(settingsSection).toContain(
       'introClassName = "empty-copy section-separated"',
@@ -114,6 +118,18 @@ describe("settings admin UX patterns", () => {
     expect(settingsPage).toContain("<InlineEmptyStateText>No pending invitations.</InlineEmptyStateText>");
     expect(settingsPage).not.toContain("No pending invitations.\n                    </td>");
     expect(inlineEmptyStateText).toContain("inline-empty-state-text");
+    expect(settingsPage).toContain('import { Badge } from "@/components/badge"');
+    expect(settingsPage).toContain("actions={<Badge>Manual link sharing</Badge>}");
+    expect(settingsPage).toContain(
+      '<Badge label={`${invitation.email} invited role: ${invitation.roleLabel}`}>',
+    );
+    expect(settingsPage).toContain("const invitationActionsLabel = `${invitation.email} invitation actions`");
+    expect(settingsPage).toContain("label={invitationActionsLabel}");
+    expect(settingsPage).toContain(
+      '<Badge label={`${member.email} workspace role: ${member.roleLabel}`}>',
+    );
+    expect(settingsPage).not.toContain('<span className="badge">{invitation.roleLabel}</span>');
+    expect(settingsPage).not.toContain('<span className="badge">{member.roleLabel}</span>');
     expect(settingsPage).toContain(
       "const membershipActionsLabel = `${member.email} membership actions`",
     );
@@ -148,8 +164,8 @@ describe("settings admin UX patterns", () => {
     expect(settingsPage).toContain("aria-label={removeMemberLabel}");
     expect(settingsPage).toContain("title={removeMemberLabel}");
     expect(settingsPage).toContain("function MemberActionStatus");
-    expect(settingsPage).toContain('className="muted settings-member-action-status"');
-    expect(settingsPage).toContain("title={label}");
+    expect(settingsPage).toContain('className="badge settings-member-action-status"');
+    expect(settingsPage).toContain("label={label}");
     expect(settingsPage).toContain('<MemberActionStatus label="Current user" />');
     expect(settingsPage).toContain('<MemberActionStatus label="Owner removal blocked" />');
     expect(settingsPage).toContain('<MemberActionStatus label="Last admin" />');
@@ -158,6 +174,8 @@ describe("settings admin UX patterns", () => {
     expect(settingsPage).not.toContain('<span className="muted">Owner removal blocked</span>');
     expect(settingsPage).not.toContain('<span className="muted">Last admin</span>');
     expect(globalStyles).toContain(".settings-member-action-status");
+    expect(settingsPage).toContain("label={`${status.label}: ${status.configured ? \"Configured\" : \"Needs setup\"}`}");
+    expect(settingsPage).not.toContain('<span\n              className={status.configured ? "badge badge-qualified" : "badge"}');
     expect(settingsPage).toContain(
       "const stageActionsLabel = `${stage.name} stage actions`",
     );

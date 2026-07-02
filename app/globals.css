@@ -3535,6 +3535,13 @@ textarea {
   margin: 0;
 }
 
+.meeting-association-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  box-shadow: none;
+}
+
 .meeting-markdown-preview {
   max-height: 420px;
   overflow: auto;

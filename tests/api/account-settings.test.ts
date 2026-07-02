@@ -30,7 +30,8 @@ describe("account settings MVP", () => {
     expect(accountForm).toContain("<dt className=\"field-label\">Current workspace</dt>");
     expect(accountForm).toContain("<dd className=\"field-value\">{workspaceName}</dd>");
     expect(accountForm).toContain("<dt className=\"field-label\">Workspace role</dt>");
-    expect(accountForm).toContain("<dd className=\"field-value\">{roleLabel}</dd>");
+    expect(accountForm).toContain('import { Badge } from "@/components/badge"');
+    expect(accountForm).toContain("<Badge label={`Workspace role: ${roleLabel}`}>{roleLabel}</Badge>");
     expect(globalStyles).toContain(".section-separated");
     expect(globalStyles).toContain(".account-context-grid");
     expect(accountForm).toContain("{state.message ? <FormSuccessMessage>{state.message}</FormSuccessMessage> : null}");
