@@ -201,8 +201,9 @@ describe("manual email logging and templates foundation", () => {
     expect(manualEmailPanel).toContain("Log Manual Email");
     expect(manualEmailPanel).toContain("PanelTitleRow");
     expect(manualEmailPanel).toContain(
-      'actions={<span className="badge">Manual</span>}',
+      "actions={<Badge>Manual</Badge>}",
     );
+    expect(manualEmailPanel).toContain('import { Badge } from "@/components/badge"');
     expect(manualEmailPanel).toContain("description={");
     expect(manualEmailPanel).toContain('title="Log Manual Email"');
     expect(manualEmailPanel).not.toContain("panel-intro-copy");

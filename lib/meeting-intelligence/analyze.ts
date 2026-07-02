@@ -24,11 +24,21 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
   const warnings = buildWarnings(input.matchedObjects, input.unmatchedEntities, sections.actionItems);
   const primaryTarget = pickPrimaryTarget(input.matchedObjects);
   const primaryMatch = primaryTarget ? input.matchedObjects.find((match) => match.id === primaryTarget.id && match.objectType === primaryTarget.type) : undefined;
+  const associatedTargets = buildAssociatedTargets(input.matchedObjects);
   const meetingActivity = primaryTarget
     ? {
+        associatedTargets,
         confidence: primaryMatch?.confidence,
         completedAt: parseMeetingDate(input.contextText ?? text)?.toISOString() ?? new Date().toISOString(),
-        description: [`Summary: ${summary}`, "", "Source meeting markdown:", text].join("\n"),
+        description: [
+          `Summary: ${summary}`,
+          "",
+          "Associated CRM records:",
+          ...associatedTargets.map((target) => `- ${targetTypeLabel(target.type)}: ${target.label ?? target.id}`),
+          "",
+          "Source meeting markdown:",
+          text
+        ].join("\n"),
         evidence: lines.slice(0, 3),
         include: true,
         matchedReason: primaryMatch?.matchedReason,
@@ -42,7 +52,7 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     markdown: text,
     matchedObjects: input.matchedObjects,
     meetingActivity,
-    notes: buildNotes(input.matchedObjects, summary, lines),
+    notes: buildNotes(input.matchedObjects, primaryTarget, summary, lines),
     nextStepActivities: buildNextSteps(input.matchedObjects, sections.actionItems),
     sourceMetadata: input.sourceMetadata,
     summary,
@@ -51,20 +61,35 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
   };
 }
 
-function buildNotes(matches: MatchedCrmObject[], summary: string, lines: string[]) {
+function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeof pickPrimaryTarget>, summary: string, lines: string[]) {
   const notes = [];
   const usableMatches = matches.filter((match) => match.confidence !== "ambiguous");
   for (const match of usableMatches.slice(0, 8)) {
     const target = targetFromMatch(match);
     const factLines = relevantFactLines(match.objectType, lines);
-    const body = [`Meeting intelligence summary`, "", summary, ...factLines.map((line) => `- ${line}`)].join("\n").trim();
+    if (factLines.length === 0 && !sameTarget(target, primaryTarget)) continue;
+    const kind = noteKind(match.objectType, factLines);
+    const body = [
+      noteTitle(kind, target.label ?? match.displayName),
+      "",
+      `Target: ${targetTypeLabel(target.type)} - ${target.label ?? target.id}`,
+      "",
+      "Summary:",
+      summary,
+      factLines.length > 0 ? "" : null,
+      factLines.length > 0 ? "Facts to save:" : null,
+      ...factLines.map((line) => `- ${line}`)
+    ]
+      .filter((line): line is string => line !== null)
+      .join("\n")
+      .trim();
     notes.push({
       body,
       confidence: match.confidence,
       evidence: [match.evidenceExcerpt, ...factLines].filter(Boolean).slice(0, 4),
       id: `note-${match.objectType}-${match.id}`,
       include: true,
-      kind: noteKind(match.objectType, factLines),
+      kind,
       matchedReason: match.matchedReason,
       targetWarning: match.warning,
       target
@@ -77,12 +102,21 @@ function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[]) {
   const target = pickPrimaryTarget(matches);
   if (!target) return [];
   const match = matches.find((candidate) => candidate.id === target.id && candidate.objectType === target.type);
+  const associatedTargets = buildAssociatedTargets(matches);
   return actionItems.slice(0, 6).map((item, index) => {
     const dueAt = parseDueDate(item);
     const ownerHint = parseOwnerHint(item);
     return {
       confidence: match?.confidence,
-      description: [`Source: ${item}`, ownerHint ? `Owner hint: ${ownerHint}` : ""].filter(Boolean).join("\n"),
+      description: [
+        `Source: ${item}`,
+        ownerHint ? `Owner hint: ${ownerHint}` : "",
+        associatedTargets.length > 1
+          ? `Related records: ${associatedTargets.map((related) => `${targetTypeLabel(related.type)}: ${related.label ?? related.id}`).join("; ")}`
+          : ""
+      ]
+        .filter(Boolean)
+        .join("\n"),
       dueAt: dueAt?.toISOString(),
       evidence: [item],
       id: `next-step-${index + 1}`,
@@ -123,6 +157,23 @@ function pickPrimaryTarget(matches: MatchedCrmObject[]) {
   return ranked ? targetFromMatch(ranked) : null;
 }
 
+function buildAssociatedTargets(matches: MatchedCrmObject[]) {
+  const seen = new Set<string>();
+  const targets = [];
+  for (const match of matches.filter((candidate) => candidate.confidence !== "ambiguous")) {
+    const target = targetFromMatch(match);
+    const key = `${target.type}:${target.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(target);
+  }
+  return targets;
+}
+
+function sameTarget(left: ReturnType<typeof targetFromMatch> | null, right: ReturnType<typeof pickPrimaryTarget>) {
+  return Boolean(left && right && left.id === right.id && left.type === right.type);
+}
+
 function relevantFactLines(objectType: MatchedCrmObject["objectType"], lines: string[]) {
   const pattern =
     objectType === "person"
@@ -138,6 +189,25 @@ function noteKind(objectType: MatchedCrmObject["objectType"], factLines: string[
   if (objectType === "organization" && factLines.some((line) => companyFactPattern.test(line))) return "company_fact" as const;
   if ((objectType === "deal" || objectType === "lead") && factLines.some((line) => dealFactPattern.test(line))) return "deal_fact" as const;
   return "meeting_summary" as const;
+}
+
+function noteTitle(kind: ReturnType<typeof noteKind>, targetLabel: string) {
+  const label =
+    kind === "personal_fact"
+      ? "Meeting intelligence personal facts"
+      : kind === "company_fact"
+        ? "Meeting intelligence company facts"
+        : kind === "deal_fact"
+          ? "Meeting intelligence deal facts"
+          : "Meeting intelligence summary";
+  return `${label} for ${targetLabel}`;
+}
+
+function targetTypeLabel(type: MatchedCrmObject["objectType"]) {
+  if (type === "deal") return "Deal";
+  if (type === "lead") return "Lead";
+  if (type === "person") return "Contact";
+  return "Organization";
 }
 
 function buildSummary(lines: string[]) {

@@ -97,6 +97,7 @@ export type CrmTarget = {
 };
 
 export type ProposedMeetingActivity = {
+  associatedTargets?: CrmTarget[];
   confidence?: MatchConfidence;
   completedAt?: string;
   description: string;

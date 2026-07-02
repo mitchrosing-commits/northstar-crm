@@ -17,7 +17,9 @@ import type {
   ApplyMeetingIntelligenceResult,
   CrmTarget,
   MatchedCrmObject,
-  MeetingIntelligenceDraft
+  MeetingIntelligenceDraft,
+  ProposedNextStepActivity,
+  ProposedNote
 } from "@/lib/meeting-intelligence/types";
 
 type Option = { id: string; label: string };
@@ -109,6 +111,10 @@ export function MeetingIntelligenceReview({
         <PanelTitleRow title="Meeting Log" titleId="meeting-proposal-heading" />
         {draft.meetingActivity ? (
           <div className="inline-form">
+            <MeetingSummaryBlock
+              associatedTargets={draft.meetingActivity.associatedTargets ?? []}
+              summary={draft.summary}
+            />
             <div className="form-grid">
               <label className="form-field checkbox-field form-field-wide">
                 <input defaultChecked={draft.meetingActivity.include} name="meeting.include" type="checkbox" />
@@ -209,28 +215,38 @@ export function MeetingIntelligenceReview({
         <PanelTitleRow title="Proposed Notes" titleId="notes-heading" />
         <div className="inline-form">
           {draft.notes.length > 0 ? (
-            draft.notes.map((note, index) => (
-              <div className="data-card meeting-review-item" key={note.id}>
-                <label className="form-field checkbox-field">
-                  <input defaultChecked={note.include} name={`note.${index}.include`} type="checkbox" />
-                  <span>Apply note</span>
-                </label>
-                <div className="form-grid">
-                  <label className="form-field">
-                    <FormFieldLabel>Target</FormFieldLabel>
-                    <TargetSelect defaultTarget={note.target} name={`note.${index}.target`} options={targetOptions} />
-                  </label>
-                  <label className="form-field form-field-wide">
-                    <FormFieldLabel required>Body</FormFieldLabel>
-                    <textarea name={`note.${index}.body`} rows={6} defaultValue={note.body} required />
-                  </label>
+            noteGroups(draft.notes).map((group) => (
+              <div className="meeting-review-group" key={group.key}>
+                <CompactTitleRow actions={<span className="badge">{group.items.length} notes</span>} title={group.label} />
+                <div className="inline-form">
+                  {group.items.map(({ index, note }) => (
+                    <div className="data-card meeting-review-item" key={note.id}>
+                      <div className="meeting-review-item-header">
+                        <label className="form-field checkbox-field">
+                          <input defaultChecked={note.include} name={`note.${index}.include`} type="checkbox" />
+                          <span>Apply note</span>
+                        </label>
+                        <span className="badge">{noteKindLabel(note.kind)}</span>
+                      </div>
+                      <div className="form-grid">
+                        <label className="form-field">
+                          <FormFieldLabel>Target</FormFieldLabel>
+                          <TargetSelect defaultTarget={note.target} name={`note.${index}.target`} options={targetOptions} />
+                        </label>
+                        <label className="form-field form-field-wide">
+                          <FormFieldLabel required>Body</FormFieldLabel>
+                          <textarea name={`note.${index}.body`} rows={6} defaultValue={note.body} required />
+                        </label>
+                      </div>
+                      <ProposalEvidence
+                        confidence={note.confidence}
+                        evidence={note.evidence}
+                        matchedReason={note.matchedReason}
+                        targetWarning={note.targetWarning}
+                      />
+                    </div>
+                  ))}
                 </div>
-                <ProposalEvidence
-                  confidence={note.confidence}
-                  evidence={note.evidence}
-                  matchedReason={note.matchedReason}
-                  targetWarning={note.targetWarning}
-                />
               </div>
             ))
           ) : (
@@ -249,10 +265,13 @@ export function MeetingIntelligenceReview({
           {draft.nextStepActivities.length > 0 ? (
             draft.nextStepActivities.map((activity, index) => (
               <div className="data-card meeting-review-item" key={activity.id}>
-                <label className="form-field checkbox-field">
-                  <input defaultChecked={activity.include} name={`next.${index}.include`} type="checkbox" />
-                  <span>Create follow-up</span>
-                </label>
+                <div className="meeting-review-item-header">
+                  <label className="form-field checkbox-field">
+                    <input defaultChecked={activity.include} name={`next.${index}.include`} type="checkbox" />
+                    <span>Create follow-up</span>
+                  </label>
+                  <span className="meeting-review-badges">{activityBadges(activity).map((badge) => <span className="badge" key={badge}>{badge}</span>)}</span>
+                </div>
                 <div className="form-grid">
                   <label className="form-field form-field-wide">
                     <FormFieldLabel required>Title</FormFieldLabel>
@@ -340,6 +359,31 @@ export function MeetingIntelligenceReview({
   );
 }
 
+function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets: CrmTarget[]; summary: string }) {
+  return (
+    <CompactList>
+      <CompactListItem>
+        <strong>Meeting summary</strong>
+        <span className="muted">{summary}</span>
+      </CompactListItem>
+      <CompactListItem>
+        <strong>Associated records</strong>
+        {associatedTargets.length > 0 ? (
+          <span className="meeting-review-badges">
+            {associatedTargets.map((target) => (
+              <span className="badge" key={`${target.type}-${target.id}`}>
+                {targetDisplayLabel(target)}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span className="muted">No associated CRM records were confidently matched.</span>
+        )}
+      </CompactListItem>
+    </CompactList>
+  );
+}
+
 function TargetSelect({ defaultTarget, name, options }: { defaultTarget: CrmTarget | null; name: string; options: TargetOption[] }) {
   return (
     <select name={name} defaultValue={defaultTarget ? targetValue(defaultTarget) : ""}>
@@ -375,6 +419,12 @@ function targetValue(target: CrmTarget) {
   return `${target.type}:${target.id}`;
 }
 
+function targetDisplayLabel(target: CrmTarget | null) {
+  if (!target) return "No target";
+  const type = target.type === "person" ? "Contact" : target.type[0]?.toUpperCase() + target.type.slice(1);
+  return `${type}: ${target.label ?? target.id}`;
+}
+
 function isoToDateValue(value: string | undefined) {
   return value ? value.slice(0, 10) : "";
 }
@@ -392,6 +442,29 @@ function matchGroups(matches: MatchedCrmObject[]) {
     { label: "Ambiguous matches", matches: matches.filter((match) => match.confidence === "ambiguous") }
   ];
   return groups.filter((group) => group.matches.length > 0);
+}
+
+function noteGroups(notes: ProposedNote[]) {
+  const groups = new Map<string, { items: Array<{ index: number; note: ProposedNote }>; key: string; label: string }>();
+  notes.forEach((note, index) => {
+    const key = note.target ? `${note.target.type}:${note.target.id}` : "no-target";
+    const existing = groups.get(key);
+    const group = existing ?? { items: [], key, label: targetDisplayLabel(note.target) };
+    group.items.push({ index, note });
+    groups.set(key, group);
+  });
+  return Array.from(groups.values());
+}
+
+function noteKindLabel(kind: ProposedNote["kind"]) {
+  if (kind === "personal_fact") return "Personal facts";
+  if (kind === "company_fact") return "Company facts";
+  if (kind === "deal_fact") return "Deal facts";
+  return "Meeting summary";
+}
+
+function activityBadges(activity: ProposedNextStepActivity) {
+  return [activity.type, activity.dueAt ? `Due ${isoToDateValue(activity.dueAt)}` : "No due date", targetDisplayLabel(activity.target)];
 }
 
 function ProposalEvidence({

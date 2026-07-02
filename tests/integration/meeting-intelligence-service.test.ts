@@ -24,7 +24,7 @@ afterEach(async () => {
     where: {
       workspaceId: fixture.workspaceA.id,
       OR: [
-        { body: { contains: "Meeting intelligence summary" } },
+        { body: { contains: "Meeting intelligence" } },
         { body: "Edited meeting intelligence note body" },
         { body: "Manual reassigned meeting note body" }
       ]
@@ -95,6 +95,72 @@ describe("meeting intelligence service", () => {
     expect(secondResult).toEqual(result);
     await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstApplyCounts.notes);
     await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstApplyCounts.activities);
+  });
+
+  it("creates object-specific notes, a completed meeting log, and follow-up activities after approval", async () => {
+    const fx = currentFixture();
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-10\nAttendees: Alpha Contact",
+      hints: {
+        dealId: fx.recordsA.deal.id,
+        organizationId: fx.recordsA.organization.id,
+        personIds: [fx.recordsA.person.id]
+      },
+      text: [
+        `Met with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} at ${fx.recordsA.organization.name} about ${fx.recordsA.deal.title}.`,
+        `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} prefers email and mentioned a birthday on 2030-05-01.`,
+        `${fx.recordsA.organization.name} has WMS inventory pain and a data migration blocker.`,
+        `${fx.recordsA.deal.title} has approved budget, SOW risk, and legal approval timing pressure.`,
+        "Action: send SOW by 2030-04-15."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    expect(draft.meetingActivity?.associatedTargets?.map((target) => target.type)).toEqual(
+      expect.arrayContaining(["deal", "organization", "person"])
+    );
+    expect(draft.notes.some((note) => note.target?.type === "person" && note.kind === "personal_fact")).toBe(true);
+    expect(draft.notes.some((note) => note.target?.type === "organization" && note.kind === "company_fact")).toBe(true);
+    expect(draft.notes.some((note) => note.target?.type === "deal" && note.kind === "deal_fact")).toBe(true);
+
+    const result = await applyMeetingIntake(fx.actorA, intake.id, {
+      meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: true } : null,
+      notes: draft.notes.map((note) => ({ ...note, include: true })),
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true }))
+    });
+
+    expect(result.created.filter((item) => item.type === "note").length).toBeGreaterThanOrEqual(3);
+    expect(result.created.filter((item) => item.type === "activity")).toHaveLength(2);
+    await expect(
+      fx.prisma.note.findFirst({
+        where: { body: { contains: "Meeting intelligence personal facts" }, personId: fx.recordsA.person.id, workspaceId: fx.workspaceA.id }
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      fx.prisma.note.findFirst({
+        where: {
+          body: { contains: "Meeting intelligence company facts" },
+          organizationId: fx.recordsA.organization.id,
+          workspaceId: fx.workspaceA.id
+        }
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      fx.prisma.note.findFirst({
+        where: { body: { contains: "Meeting intelligence deal facts" }, dealId: fx.recordsA.deal.id, workspaceId: fx.workspaceA.id }
+      })
+    ).resolves.toBeTruthy();
+    const meeting = await fx.prisma.activity.findFirstOrThrow({
+      where: { dealId: fx.recordsA.deal.id, title: { contains: "Meeting:" }, type: "MEETING", workspaceId: fx.workspaceA.id }
+    });
+    expect(meeting.completedAt?.toISOString()).toBe("2030-04-10T00:00:00.000Z");
+    expect(meeting.description).toContain("Associated CRM records:");
+    expect(meeting.description).toContain(`Contact: ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`);
+    const followUp = await fx.prisma.activity.findFirstOrThrow({
+      where: { dealId: fx.recordsA.deal.id, title: { contains: "send SOW" }, type: "TASK", workspaceId: fx.workspaceA.id }
+    });
+    expect(followUp.dueAt?.toISOString()).toBe("2030-04-15T00:00:00.000Z");
+    expect(followUp.description).toContain("Source: Action: send SOW by 2030-04-15.");
   });
 
   it("preserves closed-deal locks when applying an approved draft after review", async () => {
@@ -222,6 +288,62 @@ describe("meeting intelligence service", () => {
     expect(result.created).toEqual([]);
     expect(result.skipped.length).toBeGreaterThan(0);
     expect(result.skipped.every((item) => item.reason === "Selected target is not available in this workspace.")).toBe(true);
+  });
+
+  it("skips approved updates when review removes the target", async () => {
+    const fx = currentFixture();
+    const noteCountBefore = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } });
+    const activityCountBefore = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } });
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-06",
+      hints: { dealId: fx.recordsA.deal.id },
+      text: [
+        `${fx.recordsA.deal.title} needs a recap and SOW review.`,
+        "Action: send recap by 2030-04-10."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    const result = await applyMeetingIntake(fx.actorA, intake.id, {
+      meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: true, target: null } : null,
+      notes: draft.notes.map((note) => ({ ...note, include: true, target: null })),
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true, target: null }))
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.skipped.length).toBeGreaterThan(0);
+    expect(result.skipped.every((item) => item.reason === "No target record was selected.")).toBe(true);
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(noteCountBefore);
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(activityCountBefore);
+  });
+
+  it("skips converted lead targets reintroduced during review", async () => {
+    const fx = currentFixture();
+    const convertedLeadTarget = { id: fx.recordsA.lead.id, label: fx.recordsA.lead.title, type: "lead" as const };
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-07",
+      hints: { dealId: fx.recordsA.deal.id },
+      text: [
+        `${fx.recordsA.deal.title} needs follow-up before legal approval.`,
+        "Action: send legal checklist by 2030-04-11."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    try {
+      await fx.prisma.lead.update({ where: { id: fx.recordsA.lead.id }, data: { status: "CONVERTED" } });
+      const result = await applyMeetingIntake(fx.actorA, intake.id, {
+        meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: true, target: convertedLeadTarget } : null,
+        notes: draft.notes.map((note) => ({ ...note, include: true, target: convertedLeadTarget })),
+        nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true, target: convertedLeadTarget }))
+      });
+
+      expect(result.created).toEqual([]);
+      expect(result.skipped.length).toBeGreaterThan(0);
+      expect(result.skipped.every((item) => item.reason.includes("Converted leads are locked"))).toBe(true);
+    } finally {
+      await fx.prisma.lead.update({ where: { id: fx.recordsA.lead.id }, data: { status: "NEW" } });
+    }
   });
 
   it("does not leak cross-workspace matches into proposals", async () => {

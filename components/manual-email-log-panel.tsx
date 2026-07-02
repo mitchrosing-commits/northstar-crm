@@ -5,6 +5,7 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { Badge } from "@/components/badge";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
@@ -104,7 +105,7 @@ export function ManualEmailLogPanel({
   return (
     <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
-        actions={<span className="badge">Manual</span>}
+        actions={<Badge>Manual</Badge>}
         description={
           <>
             Save a plain-text record of an email that was already sent or received. This does not send email, sync an

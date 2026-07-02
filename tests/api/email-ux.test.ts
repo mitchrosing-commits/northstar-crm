@@ -198,8 +198,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("majorProviderCards.map");
     expect(emailPage).toContain("provider.name");
     expect(emailPage).toContain(
-      'actions={<span className="badge">{provider.status}</span>}',
+      "actions={<Badge>{provider.status}</Badge>}",
     );
+    expect(emailPage).toContain('import { Badge } from "@/components/badge"');
     expect(emailPage).toContain("title={provider.name}");
     expect(emailPage).not.toContain("<h3>{provider.name}</h3>");
     expect(emailService).toContain("workspaceId: actor.workspaceId");
@@ -552,7 +553,12 @@ describe("Email UX v1 discoverability", () => {
     );
     expect(emailTemplatesPanel).toContain("CompactTitleRow");
     expect(emailTemplatesPanel).toContain("actions={");
-    expect(emailTemplatesPanel).toContain('className="badge"');
+    expect(emailTemplatesPanel).toContain(
+      'import { Badge } from "@/components/badge"',
+    );
+    expect(emailTemplatesPanel).toContain(
+      'actions={<Badge>{template.active ? "Active" : "Inactive"}</Badge>}',
+    );
     expect(emailTemplatesPanel).toContain(
       'template.active ? "Active" : "Inactive"',
     );
@@ -579,8 +585,9 @@ describe("Email UX v1 discoverability", () => {
     expect(settingsPage).toContain("Email Connections");
     expect(settingsPage).toContain("CompactTitleRow");
     expect(settingsPage).toContain(
-      'actions={<span className="badge">{provider.status}</span>}',
+      "actions={<Badge>{provider.status}</Badge>}",
     );
+    expect(settingsPage).toContain('import { Badge } from "@/components/badge"');
     expect(settingsPage).toContain(
       "const providerPrimaryActionLabel = `${provider.actionLabel}: ${provider.name} provider setup`",
     );

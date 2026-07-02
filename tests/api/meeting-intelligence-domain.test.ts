@@ -118,7 +118,10 @@ describe("meeting intelligence markdown and proposals", () => {
     });
 
     expect(draft.meetingActivity).toMatchObject({ include: true, target: { id: "deal-1", type: "deal" } });
+    expect(draft.meetingActivity?.associatedTargets).toEqual([{ id: "deal-1", label: "Alpha Needle Deal", type: "deal" }]);
+    expect(draft.meetingActivity?.description).toContain("Associated CRM records:");
     expect(draft.notes[0]).toMatchObject({ include: true, target: { id: "deal-1", type: "deal" } });
+    expect(draft.notes[0].body).toContain("Target: Deal - Alpha Needle Deal");
     expect(draft.nextStepActivities[0]).toMatchObject({
       dueAt: "2030-04-05T00:00:00.000Z",
       include: true,

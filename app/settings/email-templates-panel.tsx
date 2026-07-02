@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { ActionGroup } from "@/components/action-group";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { EmptyState } from "@/components/empty-state";
 import { FormActionBar } from "@/components/form-action-bar";
@@ -32,7 +33,7 @@ export function EmailTemplatesPanel({
   return (
     <section className="panel section-separated">
       <PanelTitleRow
-        actions={<span className="badge">Manual logging</span>}
+        actions={<Badge>Manual logging</Badge>}
         title="Email Templates"
       />
       <p className="empty-copy section-separated">
@@ -220,11 +221,7 @@ function EmailTemplateEditForm({
   return (
     <article className="quote-draft-item">
       <CompactTitleRow
-        actions={
-          <span className="badge">
-            {template.active ? "Active" : "Inactive"}
-          </span>
-        }
+        actions={<Badge>{template.active ? "Active" : "Inactive"}</Badge>}
         title={template.name}
       />
       <form className="inline-form" onSubmit={saveTemplate}>

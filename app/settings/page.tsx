@@ -3,6 +3,7 @@ import type { Route } from "next";
 
 import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { EmptyState } from "@/components/empty-state";
 import { FormActionBar } from "@/components/form-action-bar";
@@ -746,7 +747,7 @@ function EmailConnectionsPanel({
   return (
     <section className="panel section-separated" id="email-connections">
       <PanelTitleRow
-        actions={<span className="badge">Manual logging available</span>}
+        actions={<Badge>Manual logging available</Badge>}
         title="Email Connections"
       />
       <p className="empty-copy section-separated">
@@ -775,7 +776,7 @@ function EmailConnectionsPanel({
           return (
             <div className="provider-card" key={provider.name}>
               <CompactTitleRow
-                actions={<span className="badge">{provider.status}</span>}
+                actions={<Badge>{provider.status}</Badge>}
                 title={provider.name}
               />
               <p>{provider.detail}</p>

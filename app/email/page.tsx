@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 
 import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { EmptyState } from "@/components/empty-state";
 import { EmailDraftPanel } from "@/components/email-draft-panel";
@@ -80,7 +81,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
       />
 
       <section className="panel section-separated">
-        <PanelTitleRow actions={<span className="badge">{gmailProvider?.status ?? "Not configured"}</span>} title="Email Providers" />
+        <PanelTitleRow actions={<Badge>{gmailProvider?.status ?? "Not configured"}</Badge>} title="Email Providers" />
         <EmailScopeCallout title="Sync boundaries">
           Northstar syncs recent email metadata/snippets from connected providers and logs matched emails to known
           contacts. It does not import full inboxes, attachments, full message bodies, or send email yet. Unmatched
@@ -106,7 +107,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             const providerSyncActionLabel = `${providerSyncLabel}: import recent matched ${provider.name} messages`;
             return (
               <div className="provider-card" key={provider.name}>
-                <CompactTitleRow actions={<span className="badge">{provider.status}</span>} title={provider.name} />
+                <CompactTitleRow actions={<Badge>{provider.status}</Badge>} title={provider.name} />
                 <p>{provider.detail}</p>
                 {provider.accountEmail ? <p>Connected account: {provider.accountEmail}</p> : null}
                 {provider.lastSyncAt ? <p>Last sync: {formatDate(provider.lastSyncAt)}</p> : null}
@@ -166,7 +167,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
 
       {syncSummary ? (
         <section className="data-card section-separated">
-          <PanelTitleRow actions={<span className="badge">{syncSummary.provider}</span>} title="Latest Sync Result" />
+          <PanelTitleRow actions={<Badge>{syncSummary.provider}</Badge>} title="Latest Sync Result" />
           <div className="stat-grid stat-grid-compact email-sync-metrics">
             <StatCard label="Fetched" value={syncSummary.totalFetched} />
             <StatCard label="Logged" value={syncSummary.created} />
@@ -188,7 +189,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
 
       {latestSyncReview?.unmatchedPreviews.length ? (
         <section className="data-card section-separated">
-          <PanelTitleRow actions={<span className="badge">Temporary</span>} title="Unmatched Email Review" />
+          <PanelTitleRow actions={<Badge>Temporary</Badge>} title="Unmatched Email Review" />
           <EmailScopeCallout title="Review scope">
             These recent messages did not match existing contacts. Create a contact or lead, or ignore them for now.
             Northstar is not storing unmatched inbox history.
@@ -207,7 +208,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
 
       {attentionLogs.length > 0 ? (
         <section className="data-card section-separated">
-          <PanelTitleRow actions={<span className="badge">{attentionLogs.length} need attention</span>} title="Suggested Follow-ups" />
+          <PanelTitleRow actions={<Badge>{attentionLogs.length} need attention</Badge>} title="Suggested Follow-ups" />
           <div className="email-command-list">
             {attentionLogs.map((emailLog) => (
               <EmailLogCard draftTemplates={draftTemplates} emailLog={emailLog} key={emailLog.id} />
@@ -217,7 +218,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
       ) : null}
 
       <section className="data-card">
-        <PanelTitleRow actions={<span className="badge">{recentEmailLogs.length} shown</span>} title="Synced Emails" />
+        <PanelTitleRow actions={<Badge>{recentEmailLogs.length} shown</Badge>} title="Synced Emails" />
         {recentEmailLogs.length > 0 ? (
           <div className="email-command-list">
             {recentEmailLogs.map((emailLog) => (
@@ -384,7 +385,7 @@ function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTempl
   return (
     <article className="email-command-card">
       <CompactTitleRow
-        actions={<span className="badge">{formatEmailProvider(emailLog.provider)}</span>}
+        actions={<Badge>{formatEmailProvider(emailLog.provider)}</Badge>}
         description={
           <>
             {emailLog.direction === "INBOUND" ? "From" : "To"}{" "}
@@ -396,9 +397,9 @@ function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTempl
       />
       <ActionGroup className="filter-actions" label={emailStatusLabel}>
         {emailStatusBadges(emailLog).map((badge) => (
-          <span className="badge" key={badge}>
+          <Badge key={badge}>
             {badge}
-          </span>
+          </Badge>
         ))}
       </ActionGroup>
       <p className="email-preview">{formatEmailPreview(emailLog.body)}</p>
@@ -450,7 +451,7 @@ function EmailPreviewCard({ draftTemplates, preview }: { draftTemplates: DraftTe
   return (
     <article className="email-command-card email-command-card-unmatched">
       <CompactTitleRow
-        actions={<span className="badge">{formatEmailProvider(preview.provider)}</span>}
+        actions={<Badge>{formatEmailProvider(preview.provider)}</Badge>}
         description={
           <>
             {preview.direction === "INBOUND" ? "From" : "To"}{" "}
@@ -461,9 +462,9 @@ function EmailPreviewCard({ draftTemplates, preview }: { draftTemplates: DraftTe
         title={preview.subject}
       />
       <ActionGroup className="filter-actions" label={previewStatusLabel}>
-        <span className="badge">Unmatched</span>
-        <span className="badge">Possible new contact</span>
-        {preview.direction === "INBOUND" ? <span className="badge">Follow-up suggested</span> : null}
+        <Badge>Unmatched</Badge>
+        <Badge>Possible new contact</Badge>
+        {preview.direction === "INBOUND" ? <Badge>Follow-up suggested</Badge> : null}
       </ActionGroup>
       {preview.snippet ? <p className="email-preview">{preview.snippet}</p> : null}
       <ActionGroup className="filter-actions" label={previewActionsLabel}>
