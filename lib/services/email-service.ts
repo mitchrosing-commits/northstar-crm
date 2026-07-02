@@ -1,17 +1,12 @@
-import { Prisma, type EmailDirection } from "@prisma/client";
+import { Prisma, type EmailConnectionProvider, type EmailDirection } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
-import { assertEmailLogLinks, assertRecordInWorkspace } from "./record-guards";
+import { assertEmailLogLinks, assertRecordInWorkspace, emailLogAttachmentRelationsWhere } from "./record-guards";
 import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 import { userDisplaySelect } from "./user-select";
 
 export type EmailLogRecordType = "DEAL" | "LEAD" | "PERSON" | "ORGANIZATION";
-
-type CreateEmailLogInput = Omit<Prisma.EmailLogUncheckedCreateInput, "workspaceId" | "createdById">;
-type CreateEmailTemplateInput = Omit<Prisma.EmailTemplateUncheckedCreateInput, "workspaceId" | "active"> & {
-  active?: boolean;
-};
 
 const emailLogInclude = {
   createdBy: { select: userDisplaySelect },
@@ -21,11 +16,14 @@ const emailLogInclude = {
   organization: true
 } satisfies Prisma.EmailLogInclude;
 
+const defaultEmailLogListLimit = 25;
+const maxEmailLogListLimit = 100;
+
 export async function listEmailLogs(actor: WorkspaceActor, options: { limit?: number } = {}) {
   await ensureWorkspaceAccess(actor);
-  const take = options.limit ? Math.min(Math.max(options.limit, 1), 100) : undefined;
+  const take = normalizeEmailLogListLimit(options.limit ?? defaultEmailLogListLimit);
   return prisma.emailLog.findMany({
-    where: { workspaceId: actor.workspaceId },
+    where: { workspaceId: actor.workspaceId, ...emailLogAttachmentRelationsWhere(actor.workspaceId) },
     include: emailLogInclude,
     orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
     take
@@ -37,19 +35,21 @@ export async function listEmailLogsForRecord(
   record: { type: EmailLogRecordType; id: string }
 ) {
   await ensureWorkspaceAccess(actor);
-  await assertRecordInWorkspace(recordModel(record.type), actor.workspaceId, record.id);
+  const recordType = normalizeEmailLogRecordType(record.type);
+  await assertRecordInWorkspace(recordModel(recordType), actor.workspaceId, record.id);
 
   return prisma.emailLog.findMany({
     where: {
       workspaceId: actor.workspaceId,
-      [attachmentField(record.type)]: record.id
+      ...emailLogAttachmentRelationsWhere(actor.workspaceId),
+      [attachmentField(recordType)]: record.id
     },
     include: emailLogInclude,
     orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }]
   });
 }
 
-export async function createEmailLog(actor: WorkspaceActor, data: CreateEmailLogInput) {
+export async function createEmailLog(actor: WorkspaceActor, data: unknown) {
   await ensureWorkspaceAccess(actor);
   const normalized = normalizeEmailLogInput(data);
   await assertEmailLogLinks(actor.workspaceId, normalized);
@@ -74,18 +74,19 @@ export async function createEmailLog(actor: WorkspaceActor, data: CreateEmailLog
 
 export async function listEmailTemplates(actor: WorkspaceActor, options: { activeOnly?: boolean } = {}) {
   await ensureWorkspaceAccess(actor);
+  const activeOnly = normalizeEmailTemplateActiveOnlyFilter(options.activeOnly);
   return prisma.emailTemplate.findMany({
     where: {
       workspaceId: actor.workspaceId,
-      ...(options.activeOnly ? { active: true } : {})
+      ...(activeOnly ? { active: true } : {})
     },
     orderBy: [{ active: "desc" }, { name: "asc" }]
   });
 }
 
-export async function createEmailTemplate(actor: WorkspaceActor, data: CreateEmailTemplateInput) {
+export async function createEmailTemplate(actor: WorkspaceActor, data: unknown) {
   await ensureWorkspaceAccess(actor);
-  const normalized = normalizeEmailTemplateInput(data, { defaultActive: true });
+  const normalized = normalizeEmailTemplateCreateInput(data, { defaultActive: true });
   const template = await prisma.emailTemplate.create({
     data: { ...normalized, workspaceId: actor.workspaceId }
   });
@@ -94,11 +95,18 @@ export async function createEmailTemplate(actor: WorkspaceActor, data: CreateEma
   return template;
 }
 
-export async function updateEmailTemplate(actor: WorkspaceActor, templateId: string, data: CreateEmailTemplateInput) {
+export async function updateEmailTemplate(actor: WorkspaceActor, templateId: string, data: unknown) {
   await ensureWorkspaceAccess(actor);
   await assertRecordInWorkspace("emailTemplate", actor.workspaceId, templateId);
 
-  const normalized = normalizeEmailTemplateInput(data);
+  const normalized = normalizeEmailTemplateUpdateInput(data);
+  const existing = await prisma.emailTemplate.findFirstOrThrow({
+    where: { id: templateId, workspaceId: actor.workspaceId }
+  });
+  if (Object.keys(normalized).length === 0 || !emailTemplateUpdateChanges(normalized, existing)) {
+    return existing;
+  }
+
   const template = await prisma.emailTemplate.update({
     where: { id: templateId },
     data: normalized
@@ -111,64 +119,186 @@ export async function updateEmailTemplate(actor: WorkspaceActor, templateId: str
 export async function setEmailTemplateActive(actor: WorkspaceActor, templateId: string, active: boolean) {
   await ensureWorkspaceAccess(actor);
   await assertRecordInWorkspace("emailTemplate", actor.workspaceId, templateId);
+  const activeFlag = normalizeEmailTemplateActiveFlag(active);
+  const existing = await prisma.emailTemplate.findFirstOrThrow({
+    where: { id: templateId, workspaceId: actor.workspaceId }
+  });
+  if (existing.active === activeFlag) return existing;
 
   const template = await prisma.emailTemplate.update({
     where: { id: templateId },
-    data: { active }
+    data: { active: activeFlag }
   });
 
-  await writeAuditLog(actor, active ? "email_template.reactivated" : "email_template.deactivated", "EmailTemplate", template.id, {
+  await writeAuditLog(actor, activeFlag ? "email_template.reactivated" : "email_template.deactivated", "EmailTemplate", template.id, {
     name: template.name
   });
   return template;
 }
 
-function normalizeEmailLogInput(data: CreateEmailLogInput) {
-  const subject = data.subject.trim();
-  const body = data.body.trim();
-  const occurredAt = data.occurredAt instanceof Date ? data.occurredAt : new Date(data.occurredAt);
+function normalizeEmailLogInput(data: unknown) {
+  const input = objectInput(data);
+  const subject = normalizeRequiredEmailText(input.subject, "Email subject is required.");
+  const body = normalizeRequiredEmailText(input.body, "Email body is required.");
+  const occurredAt = normalizeEmailOccurredAt(input.occurredAt);
 
-  if (!subject) throw new ApiError("VALIDATION_ERROR", "Email subject is required.", 422);
-  if (!body) throw new ApiError("VALIDATION_ERROR", "Email body is required.", 422);
-  if (!["INBOUND", "OUTBOUND"].includes(data.direction)) {
+  if (input.direction !== "INBOUND" && input.direction !== "OUTBOUND") {
     throw new ApiError("VALIDATION_ERROR", "Email direction must be INBOUND or OUTBOUND.", 422);
-  }
-  if (Number.isNaN(occurredAt.getTime())) {
-    throw new ApiError("VALIDATION_ERROR", "Email occurred date is required.", 422);
   }
 
   return {
-    ...data,
+    dealId: normalizeEmailAttachmentId(input.dealId),
+    leadId: normalizeEmailAttachmentId(input.leadId),
+    personId: normalizeEmailAttachmentId(input.personId),
+    organizationId: normalizeEmailAttachmentId(input.organizationId),
     subject,
     body,
-    direction: data.direction as EmailDirection,
+    direction: input.direction as EmailDirection,
     occurredAt,
-    fromText: optionalText(data.fromText),
-    toText: optionalText(data.toText),
-    ccText: optionalText(data.ccText)
+    fromText: normalizeOptionalEmailParticipantText(input.fromText),
+    toText: normalizeOptionalEmailParticipantText(input.toText),
+    ccText: normalizeOptionalEmailParticipantText(input.ccText),
+    provider: normalizeEmailProvider(input.provider),
+    providerMessageId: optionalProviderText(input.providerMessageId, "Email provider message id must be text."),
+    providerThreadId: optionalProviderText(input.providerThreadId, "Email provider thread id must be text.")
   };
 }
 
-function normalizeEmailTemplateInput(data: CreateEmailTemplateInput, options: { defaultActive?: boolean } = {}) {
-  const name = data.name.trim();
-  const subject = data.subject.trim();
-  const body = data.body.trim();
-
-  if (!name) throw new ApiError("VALIDATION_ERROR", "Template name is required.", 422);
-  if (!subject) throw new ApiError("VALIDATION_ERROR", "Template subject is required.", 422);
-  if (!body) throw new ApiError("VALIDATION_ERROR", "Template body is required.", 422);
+function normalizeEmailTemplateCreateInput(data: unknown, options: { defaultActive?: boolean } = {}) {
+  const input = objectInput(data);
+  const name = normalizeRequiredEmailText(input.name, "Template name is required.");
+  const subject = normalizeRequiredEmailText(input.subject, "Template subject is required.");
+  const body = normalizeRequiredEmailText(input.body, "Template body is required.");
+  const active = input.active === undefined ? undefined : normalizeEmailTemplateActiveFlag(input.active);
 
   return {
     name,
     subject,
     body,
-    ...(data.active !== undefined ? { active: data.active } : {}),
-    ...(data.active === undefined && options.defaultActive !== undefined ? { active: options.defaultActive } : {})
+    ...(active !== undefined ? { active } : {}),
+    ...(active === undefined && options.defaultActive !== undefined ? { active: options.defaultActive } : {})
   };
 }
 
-function optionalText(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function normalizeEmailTemplateUpdateInput(data: unknown) {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new ApiError("VALIDATION_ERROR", "Email template update must be an object.", 422);
+  }
+  const input = objectInput(data);
+  return omitUndefined({
+    name: hasInputKey(input, "name") ? normalizeRequiredEmailText(input.name, "Template name is required.") : undefined,
+    subject: hasInputKey(input, "subject")
+      ? normalizeRequiredEmailText(input.subject, "Template subject is required.")
+      : undefined,
+    body: hasInputKey(input, "body") ? normalizeRequiredEmailText(input.body, "Template body is required.") : undefined,
+    active: hasInputKey(input, "active") ? normalizeEmailTemplateActiveFlag(input.active) : undefined
+  });
+}
+
+function emailTemplateUpdateChanges(
+  input: ReturnType<typeof normalizeEmailTemplateUpdateInput>,
+  existing: { name: string; subject: string; body: string; active: boolean }
+) {
+  if (input.name !== undefined && input.name !== existing.name) return true;
+  if (input.subject !== undefined && input.subject !== existing.subject) return true;
+  if (input.body !== undefined && input.body !== existing.body) return true;
+  if (input.active !== undefined && input.active !== existing.active) return true;
+  return false;
+}
+
+function normalizeRequiredEmailText(value: unknown, message: string) {
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", message, 422);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) throw new ApiError("VALIDATION_ERROR", message, 422);
+  return trimmed;
+}
+
+function normalizeEmailOccurredAt(value: unknown) {
+  if (value === null || value === undefined) {
+    throw new ApiError("VALIDATION_ERROR", "Email occurred date is required.", 422);
+  }
+
+  const occurredAt = value instanceof Date || typeof value === "string" || typeof value === "number" ? new Date(value) : null;
+  if (!occurredAt || Number.isNaN(occurredAt.getTime())) {
+    throw new ApiError("VALIDATION_ERROR", "Email occurred date is required.", 422);
+  }
+
+  return occurredAt;
+}
+
+function normalizeEmailAttachmentId(value: unknown) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Email log attachment ids must be text.", 422);
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeEmailProvider(value: unknown): EmailConnectionProvider | null {
+  if (value === undefined || value === null) return null;
+  if (value === "GOOGLE_WORKSPACE" || value === "MICROSOFT_365" || value === "IMAP_SMTP") return value;
+  throw new ApiError("VALIDATION_ERROR", "Email provider must be Google Workspace, Microsoft 365, or IMAP/SMTP.", 422);
+}
+
+function optionalProviderText(value: unknown, message: string) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", message, 422);
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeEmailTemplateActiveFlag(value: unknown) {
+  if (typeof value === "boolean") return value;
+  throw new ApiError("VALIDATION_ERROR", "Email template active flag must be true or false.", 422);
+}
+
+function normalizeEmailTemplateActiveOnlyFilter(value: unknown) {
+  if (value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  throw new ApiError("VALIDATION_ERROR", "Email template active-only filter must be true or false.", 422);
+}
+
+function normalizeEmailLogListLimit(limit: number) {
+  if (!Number.isFinite(limit)) return defaultEmailLogListLimit;
+  const normalized = Math.trunc(limit);
+  if (normalized < 1) return 1;
+  if (normalized > maxEmailLogListLimit) return maxEmailLogListLimit;
+  return normalized;
+}
+
+function normalizeOptionalEmailParticipantText(value: unknown) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Email participant fields must be text.", 422);
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeEmailLogRecordType(value: unknown): EmailLogRecordType {
+  if (value === "DEAL" || value === "LEAD" || value === "PERSON" || value === "ORGANIZATION") return value;
+  throw new ApiError("VALIDATION_ERROR", "Email log record type must be DEAL, LEAD, PERSON, or ORGANIZATION.", 422);
+}
+
+function objectInput(input: unknown): Record<string, unknown> {
+  if (typeof input === "object" && input !== null) return input as Record<string, unknown>;
+  return {};
+}
+
+function hasInputKey(input: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function omitUndefined<T extends Record<string, unknown>>(input: T) {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as {
+    [K in keyof T as T[K] extends undefined ? never : K]: Exclude<T[K], undefined>;
+  };
 }
 
 function attachmentField(type: EmailLogRecordType) {

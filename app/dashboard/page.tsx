@@ -1,37 +1,97 @@
 import Link from "next/link";
 import type { Route } from "next";
+import type { ReactNode } from "react";
 
+import { ActivityCompleteButton } from "@/components/activity-complete-button";
 import { ActivityDueBadge } from "@/components/activity-due-badge";
+import { ActionGroup } from "@/components/action-group";
 import { AuditEventList } from "@/components/audit-event-list";
 import { AppShell } from "@/components/app-shell";
-import { formatActivityType, formatDate, formatMoney } from "@/components/format";
+import { CompactTitleRow } from "@/components/compact-title-row";
+import { EmptyState } from "@/components/empty-state";
+import {
+  FieldMetric as DashboardHealthItem,
+  FieldMetric as SnapshotItem,
+} from "@/components/field-metric";
+import {
+  formatActivityType,
+  formatDate,
+  formatMoney,
+} from "@/components/format";
+import { ListRowActions } from "@/components/list-row-actions";
+import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { StatusBadge } from "@/components/status-badge";
+import { StatCard as MetricCard } from "@/components/stat-card";
+import { TableScroll } from "@/components/table-scroll";
+import { TimelineMetaRow } from "@/components/timeline-meta-row";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { getDashboardSummary, getNeedsAttentionSummary, type NeedsAttentionItem } from "@/lib/services/crm";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import { formatPersonName } from "@/lib/person-name";
+import { recordOwnerLabel } from "@/lib/record-owner-label";
+import {
+  getDashboardSummary,
+  getNeedsAttentionSummary,
+  type NeedsAttentionItem,
+} from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
+
+type DashboardPipelineHealth = {
+  dueTodayActivities: number;
+  activeLeadsWithoutNextActivity: number;
+  openDeals: number;
+  openDealsWithoutNextActivity: number;
+  openValueCents: number;
+  overdueActivities: number;
+};
 
 export default async function DashboardPage() {
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
-  const [summary, needsAttention] = await Promise.all([getDashboardSummary(actor), getNeedsAttentionSummary(actor)]);
+  const [summary, needsAttention] = await Promise.all([
+    getDashboardSummary(actor),
+    getNeedsAttentionSummary(actor),
+  ]);
+  const viewPipelineLabel = "View pipeline board";
+  const newDealLabel = "Create a new deal from dashboard";
+  const viewActiveDealsLabel = "View all open deals";
+  const createOpenDealLabel = "Create a deal from dashboard";
+  const viewPriorityActivitiesLabel = "View priority activity queue";
+  const createActivityLabel = "Create an activity from dashboard";
+  const viewQuotedDealsLabel = "View deals with quotes";
+  const viewActivitySnapshotLabel = "View activity queue";
+  const viewPipelineStagesLabel = "View open deals by stage";
+  const viewLeadStatusLabel = "View leads list";
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Workspace</p>
-          <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">A command center for pipeline health, urgent follow-ups, and recent customer work.</p>
-        </div>
-        <div className="header-actions">
-          <Link className="button-secondary" href="/pipeline">
-            View pipeline
-          </Link>
-          <Link className="button-primary" href="/deals/new">
-            New deal
-          </Link>
-        </div>
-      </header>
+      <PageHeader
+        actions={
+          <>
+            <Link
+              aria-label={viewPipelineLabel}
+              className="button-secondary"
+              href="/pipeline"
+              title={viewPipelineLabel}
+            >
+              View pipeline
+            </Link>
+            <Link
+              aria-label={newDealLabel}
+              className="button-primary"
+              href="/deals/new"
+              title={newDealLabel}
+            >
+              New deal
+            </Link>
+          </>
+        }
+        eyebrow="Workspace"
+        subtitle="A command center for pipeline health, urgent follow-ups, and recent customer work."
+        title="Dashboard"
+      />
 
       <DashboardFocusStrip
         dueToday={summary.metrics.dueTodayActivitiesCount}
@@ -42,230 +102,571 @@ export default async function DashboardPage() {
 
       {summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null}
 
-      <NeedsAttentionPanel items={needsAttention} isCleanWorkspace={summary.onboarding.isCleanWorkspace} />
+      <NeedsAttentionPanel
+        items={needsAttention}
+        isCleanWorkspace={summary.onboarding.isCleanWorkspace}
+      />
 
       <section className="stat-grid">
-        <MetricCard href="/deals?status=OPEN" label="Open pipeline value" value={formatMoney(summary.metrics.openPipelineValueCents)} />
-        <MetricCard href="/deals?status=OPEN" label="Open deals" value={summary.metrics.openDealsCount} />
-        <MetricCard href="/deals?status=WON" label="Won deals" value={summary.metrics.wonDealsCount} />
-        <MetricCard href="/deals?status=LOST" label="Lost deals" value={summary.metrics.lostDealsCount} />
-        <MetricCard href="/leads?status=QUALIFIED" label="Active leads" value={summary.metrics.activeLeadsCount} />
-        <MetricCard href="/activities?status=open&due=overdue" label="Open overdue activities" value={summary.metrics.overdueActivitiesCount} />
-        <MetricCard href="/activities?status=open&due=today" label="Open due today" value={summary.metrics.dueTodayActivitiesCount} />
+        <MetricCard
+          href="/deals?status=OPEN"
+          label="Open pipeline value"
+          value={formatMoney(summary.metrics.openPipelineValueCents)}
+        />
+        <MetricCard
+          href="/deals?commercial=hasQuote"
+          label="Open quoted value"
+          value={formatMoney(
+            summary.commercialSnapshot.openQuotedDealValueCents,
+          )}
+        />
+        <MetricCard
+          href="/deals?commercial=noQuote"
+          label="Open unquoted value"
+          value={formatMoney(
+            summary.commercialSnapshot.openUnquotedDealValueCents,
+          )}
+        />
+        <MetricCard
+          href="/deals?status=WON"
+          label="Won deal value"
+          value={formatMoney(summary.metrics.wonDealsValueCents)}
+        />
+        <MetricCard
+          href="/deals?status=LOST"
+          label="Lost deal value"
+          value={formatMoney(summary.metrics.lostDealsValueCents)}
+        />
+        <MetricCard
+          href="/deals?status=OPEN"
+          label="Open deals"
+          value={summary.metrics.openDealsCount}
+        />
+        <MetricCard
+          href="/deals?status=WON"
+          label="Won deals"
+          value={summary.metrics.wonDealsCount}
+        />
+        <MetricCard
+          href="/deals?status=LOST"
+          label="Lost deals"
+          value={summary.metrics.lostDealsCount}
+        />
+        <MetricCard
+          href="/leads?status=QUALIFIED"
+          label="Active leads"
+          value={summary.metrics.activeLeadsCount}
+        />
+        <MetricCard
+          href="/leads?followUp=missing"
+          label="Active leads no next activity"
+          value={summary.metrics.activeLeadsMissingNextActivity}
+        />
+        <MetricCard
+          href="/activities?status=open&due=overdue"
+          label="Open overdue activities"
+          value={summary.metrics.overdueActivitiesCount}
+        />
+        <MetricCard
+          href="/activities?status=open&due=today"
+          label="Open due today"
+          value={summary.metrics.dueTodayActivitiesCount}
+        />
+      </section>
+
+      <section className="content-grid">
+        <PipelineHealthPanel health={summary.pipelineHealth} />
+        <CommercialSnapshotPanel snapshot={summary.commercialSnapshot} />
+      </section>
+
+      <section className="content-grid">
+        <RecentClosedDealsPanel deals={summary.recentClosedDeals} />
       </section>
 
       <section className="content-grid">
         <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Active Deals</h2>
-            <Link className="inline-link" href="/deals">
-              View all
-            </Link>
-          </div>
+          <PanelTitleRow
+            actions={
+              <Link
+                aria-label={viewActiveDealsLabel}
+                className="inline-link"
+                href="/deals?status=OPEN"
+                title={viewActiveDealsLabel}
+              >
+                View all
+              </Link>
+            }
+            title="Active Deals"
+          />
           {summary.recentOpenDeals.length > 0 ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Deal</th>
-                  <th>Value</th>
-                  <th>Stage</th>
-                  <th>Related</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.recentOpenDeals.map((deal) => (
-                  <tr key={deal.id}>
-                    <td>
-                      <Link className="inline-link" href={`/deals/${deal.id}`}>
-                        {deal.title}
-                      </Link>
-                    </td>
-                    <td>{formatMoney(deal.valueCents, deal.currency)}</td>
-                    <td>{deal.stage.name}</td>
-                    <td>
-                      <RelatedLinks organization={deal.organization} person={deal.person} />
-                    </td>
+            <TableScroll aria-label="Dashboard active deals table">
+              <table className="table crm-list-table">
+                <thead>
+                  <tr>
+                    <th>Deal</th>
+                    <th>Value</th>
+                    <th>Stage</th>
+                    <th>Related</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {summary.recentOpenDeals.map((deal) => (
+                    <tr key={deal.id}>
+                      <td data-label="Deal">
+                        <span className="table-primary-cell">
+                          <Link
+                            className="inline-link"
+                            href={`/deals/${deal.id}`}
+                          >
+                            <strong>{deal.title}</strong>
+                          </Link>
+                          <span className="table-secondary-text">
+                            {deal.owner?.name ??
+                              deal.owner?.email ??
+                              "Unassigned"}
+                          </span>
+                        </span>
+                      </td>
+                      <td data-label="Value">
+                        {formatMoney(deal.valueCents, deal.currency)}
+                      </td>
+                      <td data-label="Stage">{deal.stage.name}</td>
+                      <td data-label="Related">
+                        <RelatedLinks
+                          ariaLabel={`${deal.title} related records`}
+                          organization={deal.organization}
+                          person={deal.person}
+                        />
+                      </td>
+                      <td className="table-actions-cell" data-label="Actions">
+                        <ListRowActions
+                          aria-label={`${deal.title} active deal actions`}
+                          actions={[
+                            {
+                              href: `/deals/${deal.id}`,
+                              label: "Open deal",
+                              ariaLabel: `Open deal ${deal.title}`,
+                            },
+                            {
+                              href: buildActivityFollowUpHref({
+                                related: { type: "deal", id: deal.id },
+                                returnTo: "/dashboard",
+                                title: `Follow up: ${deal.title}`,
+                              }),
+                              label: "Add activity",
+                              ariaLabel: `Add activity for deal ${deal.title}`,
+                            },
+                          ]}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">
-              No open deals yet. <Link href="/deals/new">Create a deal</Link> or convert a qualified lead.
-            </p>
+            <EmptyState
+              actions={
+                <Link
+                  aria-label={createOpenDealLabel}
+                  className="button-secondary button-compact"
+                  href="/deals/new"
+                  title={createOpenDealLabel}
+                >
+                  Create deal
+                </Link>
+              }
+              className="empty-state-compact empty-state-panel"
+              description="Create a deal or convert a qualified lead to start tracking active pipeline."
+              title="No open deals yet"
+            />
           )}
         </div>
 
         <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Priority Activities</h2>
-            <Link className="inline-link" href="/activities">
-              View queue
-            </Link>
-          </div>
+          <PanelTitleRow
+            actions={
+              <Link
+                aria-label={viewPriorityActivitiesLabel}
+                className="inline-link"
+                href="/activities"
+                title={viewPriorityActivitiesLabel}
+              >
+                View queue
+              </Link>
+            }
+            title="Priority Activities"
+          />
           {summary.priorityActivities.length > 0 ? (
             <ul className="activity-list">
-              {summary.priorityActivities.map((activity) => (
-                <li className="activity-item" key={activity.id}>
-                  <span className="activity-icon" aria-hidden="true">
-                    {formatActivityType(activity.type).slice(0, 1)}
-                  </span>
-                  <div className="activity-content">
-                    <Link className="inline-link" href={`/activities/${activity.id}/edit`}>
-                      <strong>{activity.title}</strong>
-                    </Link>
-                    <div className="deal-meta">
-                      <span>{formatActivityType(activity.type)}</span>
-                      <ActivityDueBadge activity={activity} />
-                      {activity.deal ? (
-                        <Link className="inline-link" href={`/deals/${activity.deal.id}`}>
-                          {activity.deal.title}
+              {summary.priorityActivities.map((activity) => {
+                const priorityActivityActionsLabel = `${activity.title} priority activity actions`;
+                const priorityActivityWorkspaceLabel = `Edit priority activity ${activity.title}`;
+
+                return (
+                  <li className="activity-item activity-item-open" key={activity.id}>
+                    <span className="activity-icon" aria-hidden="true">
+                      {formatActivityType(activity.type).slice(0, 1)}
+                    </span>
+                    <div className="activity-content">
+                      <div className="activity-row-header">
+                        <div className="activity-title-group">
+                          <Link
+                            aria-label={priorityActivityWorkspaceLabel}
+                            className="inline-link"
+                            href={`/activities/${activity.id}/edit`}
+                            title={priorityActivityWorkspaceLabel}
+                          >
+                            <strong>{activity.title}</strong>
+                          </Link>
+                          <span>{formatActivityType(activity.type)}</span>
+                        </div>
+                        <ActivityDueBadge activity={activity} />
+                      </div>
+                      <TimelineMetaRow
+                        ariaLabel={`${activity.title} priority activity metadata`}
+                        className="activity-context-line"
+                        items={[
+                          recordOwnerLabel(activity.owner),
+                          activity.deal ? (
+                            <Link
+                              className="inline-link"
+                              href={`/deals/${activity.deal.id}`}
+                              key="deal"
+                            >
+                              Deal: {activity.deal.title}
+                            </Link>
+                          ) : null,
+                          activity.lead ? (
+                            <Link
+                              className="inline-link"
+                              href={`/leads/${activity.lead.id}`}
+                              key="lead"
+                            >
+                              Lead: {activity.lead.title}
+                            </Link>
+                          ) : null,
+                          activity.person ? (
+                            <Link
+                              className="inline-link"
+                              href={`/contacts/${activity.person.id}`}
+                              key="person"
+                            >
+                              Contact: {formatPersonName(activity.person) ?? "Unnamed contact"}
+                            </Link>
+                          ) : null,
+                          activity.organization ? (
+                            <Link
+                              className="inline-link"
+                              href={`/organizations/${activity.organization.id}`}
+                              key="organization"
+                            >
+                              Organization: {activity.organization.name}
+                            </Link>
+                          ) : null,
+                        ]}
+                      />
+                      <ActionGroup
+                        className="activity-actions"
+                        label={priorityActivityActionsLabel}
+                      >
+                        <Link
+                          aria-label={`Edit priority activity ${activity.title}`}
+                          className="button-secondary button-compact"
+                          href={`/activities/${activity.id}/edit`}
+                          title={`Edit priority activity ${activity.title}`}
+                        >
+                          Edit
                         </Link>
-                      ) : null}
-                      {activity.lead ? (
-                        <Link className="inline-link" href={`/leads/${activity.lead.id}`}>
-                          {activity.lead.title}
-                        </Link>
-                      ) : null}
-                      {activity.person ? (
-                        <Link className="inline-link" href={`/contacts/${activity.person.id}`}>
-                          {formatPersonName(activity.person)}
-                        </Link>
-                      ) : null}
-                      {activity.organization ? (
-                        <Link className="inline-link" href={`/organizations/${activity.organization.id}`}>
-                          {activity.organization.name}
-                        </Link>
-                      ) : null}
+                        <ActivityCompleteButton
+                          activityId={activity.id}
+                          ariaLabel={`Mark priority activity ${activity.title} complete`}
+                          inline
+                          workspaceId={workspace.id}
+                        />
+                      </ActionGroup>
                     </div>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
-            <p className="empty-copy">
-              No open activities yet. <Link href="/activities/new">Create an activity</Link> to plan the next step.
-            </p>
+            <EmptyState
+              actions={
+                <Link
+                  aria-label={createActivityLabel}
+                  className="button-secondary button-compact"
+                  href="/activities/new"
+                  title={createActivityLabel}
+                >
+                  Create activity
+                </Link>
+              }
+              className="empty-state-compact empty-state-panel"
+              description="Plan the next call, email, meeting, or task so follow-up work stays visible."
+              title="No open activities yet"
+            />
           )}
         </div>
       </section>
 
-      <section className="content-grid" style={{ marginTop: 14 }}>
+      <section className="content-grid section-spaced">
         <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Recent Quotes</h2>
-            <Link className="inline-link" href="/deals">
-              Find deals
-            </Link>
-          </div>
+          <PanelTitleRow
+            actions={
+              <Link
+                aria-label={viewQuotedDealsLabel}
+                className="inline-link"
+                href="/deals?commercial=hasQuote"
+                title={viewQuotedDealsLabel}
+              >
+                Quoted deals
+              </Link>
+            }
+            title="Recent Quotes"
+          />
           {summary.recentQuotes.length > 0 ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Quote</th>
-                  <th>Status</th>
-                  <th>Total</th>
-                  <th>Deal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.recentQuotes.map((quote) => (
-                  <tr key={quote.id}>
-                    <td>
-                      <Link className="inline-link" href={`/deals/${quote.dealId}/quotes/${quote.id}`}>
-                        {quote.number}
-                      </Link>
-                      <div className="deal-meta">{formatDate(quote.createdAt)}</div>
-                    </td>
-                    <td>{quote.status}</td>
-                    <td>{formatMoney(quote.totalCents, quote.currency)}</td>
-                    <td>
-                      <Link className="inline-link" href={`/deals/${quote.dealId}`}>
-                        {quote.deal.title}
-                      </Link>
-                    </td>
+            <TableScroll aria-label="Dashboard recent quotes table">
+              <table className="table crm-list-table">
+                <thead>
+                  <tr>
+                    <th>Quote</th>
+                    <th>Status</th>
+                    <th>Total</th>
+                    <th>Deal</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {summary.recentQuotes.map((quote) => (
+                    <tr key={quote.id}>
+                      <td data-label="Quote">
+                        <span className="table-primary-cell">
+                          <Link
+                            className="inline-link"
+                            href={`/deals/${quote.dealId}/quotes/${quote.id}`}
+                          >
+                            <strong>{quote.number}</strong>
+                          </Link>
+                          <span className="table-secondary-text">
+                            {formatDate(quote.createdAt)}
+                          </span>
+                        </span>
+                      </td>
+                      <td data-label="Status">
+                        <StatusBadge status={quote.status} />
+                      </td>
+                      <td data-label="Total">
+                        {formatMoney(quote.totalCents, quote.currency)}
+                      </td>
+                      <td data-label="Deal">
+                        <Link
+                          className="inline-link"
+                          href={`/deals/${quote.dealId}`}
+                        >
+                          {quote.deal.title}
+                        </Link>
+                      </td>
+                      <td className="table-actions-cell" data-label="Actions">
+                        <ListRowActions
+                          aria-label={`${quote.number} quote actions`}
+                          actions={[
+                            {
+                              href: `/deals/${quote.dealId}/quotes/${quote.id}`,
+                              label: "Open quote",
+                              ariaLabel: `Open quote ${quote.number}`,
+                            },
+                            {
+                              href: `/deals/${quote.dealId}`,
+                              label: "Open deal",
+                              ariaLabel: `Open deal for quote ${quote.number}`,
+                            },
+                          ]}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">
-              No quotes yet. Quotes usually come after a deal has a customer conversation and line items to review.
-            </p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="Quotes usually come after a deal has a customer conversation and line items to review."
+              title="No quotes yet"
+            />
           )}
         </div>
         <div className="panel">
-          <h2 className="panel-title">Activity Snapshot</h2>
+          <PanelTitleRow
+            actions={
+              <Link
+                aria-label={viewActivitySnapshotLabel}
+                className="inline-link"
+                href="/activities"
+                title={viewActivitySnapshotLabel}
+              >
+                View queue
+              </Link>
+            }
+            title="Activity Snapshot"
+          />
           <div className="field-grid">
-            <SnapshotItem label="Open overdue" value={summary.activitySnapshot.overdue} />
-            <SnapshotItem label="Open due today" value={summary.activitySnapshot.dueToday} />
-            <SnapshotItem label="Open upcoming" value={summary.activitySnapshot.upcoming} />
-            <SnapshotItem label="Completed activities" value={summary.activitySnapshot.completed} />
+            <SnapshotItem
+              href="/activities?status=open&due=overdue"
+              label="Open overdue"
+              value={summary.activitySnapshot.overdue}
+            />
+            <SnapshotItem
+              href="/activities?status=open&due=today"
+              label="Open due today"
+              value={summary.activitySnapshot.dueToday}
+            />
+            <SnapshotItem
+              href="/activities?status=open&due=upcoming"
+              label="Open upcoming"
+              value={summary.activitySnapshot.upcoming}
+            />
+            <SnapshotItem
+              href="/activities?status=completed"
+              label="Completed activities"
+              value={summary.activitySnapshot.completed}
+            />
+            <SnapshotItem
+              href="/activities?status=completed&completed=recent"
+              label="Completed recently"
+              value={summary.activitySnapshot.completedRecently}
+            />
           </div>
         </div>
       </section>
 
       <section className="content-grid">
         <div className="panel">
-          <h2 className="panel-title">Pipeline By Stage</h2>
+          <PanelTitleRow
+            actions={
+              <Link
+                aria-label={viewPipelineStagesLabel}
+                className="inline-link"
+                href="/deals?status=OPEN"
+                title={viewPipelineStagesLabel}
+              >
+                Open deals
+              </Link>
+            }
+            title="Pipeline By Stage"
+          />
           {summary.pipelineBreakdown.length > 0 ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th>Open deals</th>
-                  <th>Open value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.pipelineBreakdown.map((stage) => (
-                  <tr key={stage.stageId}>
-                    <td>
-                      <strong>{stage.stageName}</strong>
-                      <div className="deal-meta">{stage.pipelineName}</div>
-                    </td>
-                    <td>{stage.openDealCount}</td>
-                    <td>{formatMoney(stage.openDealValueCents)}</td>
+            <TableScroll aria-label="Dashboard pipeline by stage table">
+              <table className="table crm-list-table">
+                <thead>
+                  <tr>
+                    <th>Stage</th>
+                    <th>Open deals</th>
+                    <th>Open value</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {summary.pipelineBreakdown.map((stage) => (
+                    <tr key={stage.stageId}>
+                      <td data-label="Stage">
+                        <span className="table-primary-cell">
+                          <Link
+                            className="inline-link"
+                            href={
+                              `/deals?status=OPEN&stageId=${stage.stageId}` as Route
+                            }
+                          >
+                            <strong>{stage.stageName}</strong>
+                          </Link>
+                          <span className="table-secondary-text">
+                            {stage.pipelineName}
+                          </span>
+                        </span>
+                      </td>
+                      <td data-label="Open deals">{stage.openDealCount}</td>
+                      <td data-label="Open value">
+                        {formatMoney(stage.openDealValueCents)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">No pipeline stages are available yet. Add stages to see open deal value by stage.</p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="Add stages to see open deal value by stage."
+              title="No pipeline stages are available yet"
+            />
           )}
         </div>
       </section>
 
-      <section className="content-grid" style={{ marginTop: 14 }}>
+      <section className="content-grid section-spaced">
         <div className="panel">
-          <h2 className="panel-title">Leads By Status</h2>
+          <PanelTitleRow
+            actions={
+              <Link
+                aria-label={viewLeadStatusLabel}
+                className="inline-link"
+                href="/leads"
+                title={viewLeadStatusLabel}
+              >
+                View leads
+              </Link>
+            }
+            title="Leads By Status"
+          />
           {summary.leadBreakdown.length > 0 ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Leads</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.leadBreakdown.map((lead) => (
-                  <tr key={lead.status}>
-                    <td>{lead.status}</td>
-                    <td>{lead.count}</td>
+            <TableScroll aria-label="Dashboard leads by status table">
+              <table className="table crm-list-table">
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Leads</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {summary.leadBreakdown.map((lead) => (
+                    <tr key={lead.status}>
+                      <td data-label="Status">
+                        <Link
+                          className="inline-link"
+                          href={`/leads?status=${lead.status}` as Route}
+                        >
+                          <StatusBadge status={lead.status} />
+                        </Link>
+                      </td>
+                      <td data-label="Leads">{lead.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">No leads have been created yet.</p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="Qualified leads will appear here as they move through intake."
+              title="No leads have been created yet"
+            />
           )}
         </div>
         <div className="panel">
-          <h2 className="panel-title">Recent Changes</h2>
+          <PanelTitleRow title="Recent Changes" />
           {summary.recentChanges.length > 0 ? (
-            <AuditEventList entries={summary.recentChanges} label="Recent workspace changes" showTarget />
+            <AuditEventList
+              entries={summary.recentChanges}
+              label="Recent workspace changes"
+              showTarget
+            />
           ) : (
-            <p className="empty-copy">Recent workspace changes will appear here as CRM records are updated.</p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="CRM updates, imports, lifecycle changes, and workspace activity will appear here as records change."
+              title="No recent workspace changes"
+            />
           )}
         </div>
       </section>
@@ -273,28 +674,340 @@ export default async function DashboardPage() {
   );
 }
 
-function MetricCard({ href, label, value }: { href?: Route | string; label: string; value: number | string }) {
-  const content = (
-    <div className="stat-card">
-      <p className="stat-label">{label}</p>
-      <p className="stat-value">{value}</p>
-    </div>
-  );
+function PipelineHealthPanel({ health }: { health: DashboardPipelineHealth }) {
+  const healthLabel =
+    health.overdueActivities > 0 ||
+    health.dueTodayActivities > 0 ||
+    health.openDealsWithoutNextActivity > 0 ||
+    health.activeLeadsWithoutNextActivity > 0
+      ? "Needs action"
+      : "Healthy";
+  const focusItems = getPipelineHealthFocusItems(health);
+  const createHealthDealLabel =
+    "Create a deal to start pipeline health tracking";
 
-  return href ? (
-    <Link className="stat-card-link" href={href as Route}>
-      {content}
-    </Link>
-  ) : (
-    content
+  return (
+    <div className="panel">
+      <PanelTitleRow
+        actions={
+          <span
+            className={
+              healthLabel === "Healthy" ? "badge badge-won" : "badge badge-lost"
+            }
+          >
+            {healthLabel}
+          </span>
+        }
+        description="Open pipeline operating signals, not forecast promises."
+        title="Pipeline Health"
+      />
+      {health.openDeals > 0 || focusItems.length > 0 ? (
+        <>
+          {focusItems.length > 0 ? (
+            <PipelineHealthFocusList items={focusItems} />
+          ) : null}
+          <div className="field-grid">
+            <DashboardHealthItem
+              href="/deals?status=OPEN"
+              label="Open value"
+              value={formatMoney(health.openValueCents)}
+            />
+            <DashboardHealthItem
+              href="/deals?status=OPEN"
+              label="Open deals"
+              value={health.openDeals}
+            />
+            <DashboardHealthItem
+              href="/activities?status=open&due=overdue"
+              label="Overdue activities"
+              value={health.overdueActivities}
+            />
+            <DashboardHealthItem
+              href="/activities?status=open&due=today"
+              label="Due today"
+              value={health.dueTodayActivities}
+            />
+            <DashboardHealthItem
+              href="/deals?followUp=missing"
+              label="Deals with no next activity"
+              value={health.openDealsWithoutNextActivity}
+            />
+            <DashboardHealthItem
+              href="/leads?followUp=missing"
+              label="Leads with no next activity"
+              value={health.activeLeadsWithoutNextActivity}
+            />
+          </div>
+        </>
+      ) : (
+        <EmptyState
+          actions={
+            <Link
+              aria-label={createHealthDealLabel}
+              className="button-secondary button-compact"
+              href="/deals/new"
+              title={createHealthDealLabel}
+            >
+              Create deal
+            </Link>
+          }
+          className="empty-state-compact empty-state-panel pipeline-health-empty"
+          description="Create a deal or add an active lead follow-up to start tracking operating signals."
+          title="No pipeline health signals yet"
+        />
+      )}
+    </div>
   );
 }
 
-function SnapshotItem({ label, value }: { label: string; value: number }) {
+function getPipelineHealthFocusItems(health: DashboardPipelineHealth) {
+  return [
+    {
+      href: "/activities?status=open&due=overdue",
+      label: "Review overdue activities",
+      detail: "Past-due work that can block active pipeline.",
+      value: health.overdueActivities,
+      tone: "critical" as const,
+    },
+    {
+      href: "/activities?status=open&due=today",
+      label: "Work today's activity queue",
+      detail: "Calls, emails, meetings, and tasks due today.",
+      value: health.dueTodayActivities,
+    },
+    {
+      href: "/deals?followUp=missing",
+      label: "Schedule deal next steps",
+      detail: "Open deals missing a planned next activity.",
+      value: health.openDealsWithoutNextActivity,
+    },
+    {
+      href: "/leads?followUp=missing",
+      label: "Schedule lead follow-ups",
+      detail: "Active leads missing a planned next activity.",
+      value: health.activeLeadsWithoutNextActivity,
+    },
+  ].filter((item) => item.value > 0);
+}
+
+function PipelineHealthFocusList({
+  items,
+}: {
+  items: Array<{
+    detail: string;
+    href: string;
+    label: string;
+    tone?: "critical";
+    value: number;
+  }>;
+}) {
   return (
-    <div>
-      <p className="field-label">{label}</p>
-      <p className="field-value">{value}</p>
+    <div
+      className="dashboard-action-list"
+      aria-label="Pipeline health focus queue"
+    >
+      {items.map((item) => {
+        const actionLabel = `${item.label}: ${item.value}. ${item.detail}`;
+
+        return (
+          <Link
+            aria-label={actionLabel}
+            className={
+              item.tone === "critical"
+                ? "dashboard-action-card dashboard-action-card-critical"
+                : "dashboard-action-card"
+            }
+            href={item.href as Route}
+            key={item.href}
+            title={actionLabel}
+          >
+            <span className="dashboard-action-count">{item.value}</span>
+            <span className="dashboard-action-copy">
+              <strong>{item.label}</strong>
+              <small>{item.detail}</small>
+            </span>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function CommercialSnapshotPanel({
+  snapshot,
+}: {
+  snapshot: {
+    acceptedQuotes: number;
+    draftQuotes: number;
+    openDealsWithoutQuotes: number;
+    openQuotedDealValueCents: number;
+    openUnquotedDealValueCents: number;
+    openValueWithoutLineItems: number;
+  };
+}) {
+  const reviewUnquotedLabel = "Review open deals without quotes";
+
+  return (
+    <div className="panel">
+      <PanelTitleRow
+        actions={
+          <Link
+            aria-label={reviewUnquotedLabel}
+            className="inline-link"
+            href="/deals?commercial=noQuote"
+            title={reviewUnquotedLabel}
+          >
+            Review unquoted
+          </Link>
+        }
+        description="Quote-to-cash signals based on current deal value and quote status."
+        title="Commercial Snapshot"
+      />
+      <div className="field-grid">
+        <DashboardHealthItem
+          href="/deals?commercial=hasQuote"
+          label="Open quoted value"
+          value={formatMoney(snapshot.openQuotedDealValueCents)}
+        />
+        <DashboardHealthItem
+          href="/deals?commercial=noQuote"
+          label="Open unquoted value"
+          value={formatMoney(snapshot.openUnquotedDealValueCents)}
+        />
+        <DashboardHealthItem
+          href="/deals?commercial=noQuote"
+          label="Open deals without quotes"
+          value={snapshot.openDealsWithoutQuotes}
+        />
+        <DashboardHealthItem
+          href="/deals?commercial=valueNoLineItems"
+          label="Value without line items"
+          value={snapshot.openValueWithoutLineItems}
+        />
+        <DashboardHealthItem
+          href="/deals?status=OPEN"
+          label="Draft quotes"
+          value={snapshot.draftQuotes}
+        />
+        <DashboardHealthItem
+          href="/deals?commercial=acceptedQuote"
+          label="Accepted quotes"
+          value={snapshot.acceptedQuotes}
+        />
+      </div>
+    </div>
+  );
+}
+
+function RecentClosedDealsPanel({
+  deals,
+}: {
+  deals: Array<{
+    closedAt: Date | string;
+    currency: string;
+    id: string;
+    organization?: { id: string; name: string } | null;
+    ownerName: string;
+    person?: { id: string; firstName: string; lastName: string | null } | null;
+    stageName: string;
+    status: string;
+    title: string;
+    valueCents: number;
+  }>;
+}) {
+  const wonFilterLabel = "Show recently won deals";
+  const lostFilterLabel = "Show recently lost deals";
+
+  return (
+    <div className="panel">
+      <PanelTitleRow
+        actions={
+          <>
+            <Link
+              aria-label={wonFilterLabel}
+              className="button-secondary button-compact"
+              href="/deals?status=WON&sortBy=updatedAt&sortDirection=desc"
+              title={wonFilterLabel}
+            >
+              Won
+            </Link>
+            <Link
+              aria-label={lostFilterLabel}
+              className="button-secondary button-compact"
+              href="/deals?status=LOST&sortBy=updatedAt&sortDirection=desc"
+              title={lostFilterLabel}
+            >
+              Lost
+            </Link>
+          </>
+        }
+        actionsLabel="Recent closed deal filters"
+        description="Closed deals with recorded won/lost timestamps."
+        title="Recent Won / Lost Movement"
+      />
+      {deals.length > 0 ? (
+        <TableScroll aria-label="Dashboard recent won and lost movement table">
+          <table className="table crm-list-table">
+            <thead>
+              <tr>
+                <th>Deal</th>
+                <th>Status</th>
+                <th>Value</th>
+                <th>Closed</th>
+                <th>Owner</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deals.map((deal) => (
+                <tr key={deal.id}>
+                  <td data-label="Deal">
+                    <span className="table-primary-cell">
+                      <Link className="inline-link" href={`/deals/${deal.id}`}>
+                        <strong>{deal.title}</strong>
+                      </Link>
+                      <span className="table-secondary-text">
+                        {deal.stageName}
+                      </span>
+                      <RelatedLinks
+                        ariaLabel={`${deal.title} related records`}
+                        organization={deal.organization}
+                        person={deal.person}
+                      />
+                    </span>
+                  </td>
+                  <td data-label="Status">
+                    <StatusBadge status={deal.status} />
+                  </td>
+                  <td data-label="Value">
+                    {formatMoney(deal.valueCents, deal.currency)}
+                  </td>
+                  <td data-label="Closed">{formatDate(deal.closedAt)}</td>
+                  <td data-label="Owner">{deal.ownerName}</td>
+                  <td className="table-actions-cell" data-label="Actions">
+                    <ListRowActions
+                      aria-label={`${deal.title} recent closed deal actions`}
+                      actions={[
+                        {
+                          href: `/deals/${deal.id}`,
+                          label: "Open deal",
+                          ariaLabel: `Open deal ${deal.title}`,
+                        },
+                      ]}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
+      ) : (
+        <EmptyState
+          className="empty-state-compact empty-state-panel"
+          description="Won and lost deal movement will appear here after deals are closed in Northstar."
+          title="No closed deal movement yet"
+        />
+      )}
     </div>
   );
 }
@@ -303,79 +1016,169 @@ function DashboardFocusStrip({
   dueToday,
   needsAttentionCount,
   openPipelineValue,
-  overdue
+  overdue,
 }: {
   dueToday: number;
   needsAttentionCount: number;
   openPipelineValue: string;
   overdue: number;
 }) {
+  const workQueueHref = dashboardWorkQueueHref({ dueToday, overdue });
+
   return (
     <section className="command-strip" aria-label="Dashboard focus">
-      <Link className="command-card command-card-critical" href="/dashboard#needs-attention-title">
-        <span>Needs attention</span>
-        <strong>{needsAttentionCount}</strong>
-        <small>{needsAttentionCount === 1 ? "next action" : "next actions"}</small>
-      </Link>
-      <Link className="command-card" href="/deals?status=OPEN">
-        <span>Open pipeline</span>
-        <strong>{openPipelineValue}</strong>
-        <small>active opportunity value</small>
-      </Link>
-      <Link className="command-card" href="/activities?status=open">
-        <span>Today&apos;s work queue</span>
-        <strong>{dueToday + overdue}</strong>
-        <small>
-          {overdue} overdue, {dueToday} due today
-        </small>
-      </Link>
+      <DashboardCommandCard
+        actionLabel={`Review ${needsAttentionCount} dashboard attention ${needsAttentionCount === 1 ? "item" : "items"}`}
+        href="/dashboard#needs-attention-title"
+        label="Needs attention"
+        tone="critical"
+        value={needsAttentionCount}
+      >
+        {needsAttentionCount === 1 ? "next action" : "next actions"}
+      </DashboardCommandCard>
+      <DashboardCommandCard
+        actionLabel={`View open pipeline value of ${openPipelineValue}`}
+        href="/deals?status=OPEN"
+        label="Open pipeline"
+        value={openPipelineValue}
+      >
+        active opportunity value
+      </DashboardCommandCard>
+      <DashboardCommandCard
+        actionLabel={`Open work queue with ${overdue} overdue and ${dueToday} due today activities`}
+        href={workQueueHref}
+        label="Today's work queue"
+        value={dueToday + overdue}
+      >
+        {overdue} overdue, {dueToday} due today
+      </DashboardCommandCard>
     </section>
   );
 }
 
-function NeedsAttentionPanel({ items, isCleanWorkspace }: { items: NeedsAttentionItem[]; isCleanWorkspace: boolean }) {
+function dashboardWorkQueueHref({
+  dueToday,
+  overdue,
+}: {
+  dueToday: number;
+  overdue: number;
+}) {
+  if (overdue > 0) return "/activities?status=open&due=overdue";
+  if (dueToday > 0) return "/activities?status=open&due=today";
+  return "/activities?status=open";
+}
+
+function DashboardCommandCard({
+  actionLabel,
+  children,
+  href,
+  label,
+  tone,
+  value,
+}: {
+  actionLabel: string;
+  children: ReactNode;
+  href: string;
+  label: string;
+  tone?: "critical";
+  value: ReactNode;
+}) {
   return (
-    <section className="panel needs-attention-panel" aria-labelledby="needs-attention-title">
-      <div className="panel-title-row">
-        <div>
-          <p className="page-kicker">Sales Assistant</p>
-          <h2 className="panel-title" id="needs-attention-title">
-            Needs Attention
-          </h2>
-        </div>
-        <span className="badge">{items.length > 0 ? `${items.length} next action${items.length === 1 ? "" : "s"}` : "Caught up"}</span>
-      </div>
+    <Link
+      aria-label={actionLabel}
+      className={
+        tone === "critical"
+          ? "command-card command-card-critical"
+          : "command-card"
+      }
+      href={href as Route}
+      title={actionLabel}
+    >
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{children}</small>
+    </Link>
+  );
+}
+
+function NeedsAttentionPanel({
+  items,
+  isCleanWorkspace,
+}: {
+  items: NeedsAttentionItem[];
+  isCleanWorkspace: boolean;
+}) {
+  return (
+    <section
+      className="panel needs-attention-panel"
+      aria-labelledby="needs-attention-title"
+    >
+      <PanelTitleRow
+        actions={
+          <span className="badge">
+            {items.length > 0
+              ? `${items.length} next action${items.length === 1 ? "" : "s"}`
+              : "Caught up"}
+          </span>
+        }
+        eyebrow="Sales Assistant"
+        title="Needs Attention"
+        titleId="needs-attention-title"
+      />
       {items.length > 0 ? (
         <div className="needs-attention-list">
-          {items.map((item) => (
-            <article className="needs-attention-item" key={item.id}>
-              <div>
-                <span className={`attention-kind attention-kind-${item.kind}`}>{attentionKindLabel(item.kind)}</span>
-                <h3>
-                  <Link className="inline-link" href={item.href as Route}>
-                    {item.title}
-                  </Link>
-                </h3>
-                <p>{item.reason}</p>
-              </div>
-              <Link className="button-secondary button-compact" href={item.actionHref as Route}>
-                {item.actionLabel}
-              </Link>
-            </article>
-          ))}
+          {items.map((item) => {
+            const actionLabel = `${item.actionLabel} for ${item.title}`;
+
+            return (
+              <article className="needs-attention-item" key={item.id}>
+                <CompactTitleRow
+                  actions={
+                    <span
+                      className={`attention-kind attention-kind-${item.kind}`}
+                    >
+                      {attentionKindLabel(item.kind)}
+                    </span>
+                  }
+                  description={item.reason}
+                  title={
+                    <Link className="inline-link" href={item.href as Route}>
+                      {item.title}
+                    </Link>
+                  }
+                />
+                <Link
+                  aria-label={actionLabel}
+                  className="button-secondary button-compact"
+                  href={item.actionHref as Route}
+                  title={actionLabel}
+                >
+                  {item.actionLabel}
+                </Link>
+              </article>
+            );
+          })}
         </div>
       ) : (
-        <div className="empty-state empty-state-compact">
-          <h3>{isCleanWorkspace ? "No follow-ups yet" : "Nothing urgent right now"}</h3>
-          <p>
-            {isCleanWorkspace
+        <EmptyState
+          actions={
+            <Link
+              className="button-secondary button-compact"
+              href={isCleanWorkspace ? "/deals/new" : "/activities"}
+            >
+              {isCleanWorkspace ? "Create first deal" : "View activities"}
+            </Link>
+          }
+          className="empty-state-compact"
+          description={
+            isCleanWorkspace
               ? "As you add real deals, activities, quotes, and emails, Northstar will highlight the next actions here."
-              : "Overdue work, stale deals, waiting quotes, and contract follow-ups will appear here automatically."}
-          </p>
-          <Link className="button-secondary button-compact" href={isCleanWorkspace ? "/deals/new" : "/activities"}>
-            {isCleanWorkspace ? "Create first deal" : "View activities"}
-          </Link>
-        </div>
+              : "Overdue work, stale deals, waiting quotes, and contract follow-ups will appear here automatically."
+          }
+          title={
+            isCleanWorkspace ? "No follow-ups yet" : "Nothing urgent right now"
+          }
+        />
       )}
     </section>
   );
@@ -394,98 +1197,109 @@ function attentionKindLabel(kind: NeedsAttentionItem["kind"]) {
 }
 
 function RelatedLinks({
+  ariaLabel,
   organization,
-  person
+  person,
 }: {
+  ariaLabel: string;
   organization?: { id: string; name: string } | null;
   person?: { id: string; firstName: string; lastName: string | null } | null;
 }) {
-  if (!organization && !person) return <span className="muted">None</span>;
+  if (!organization && !person) return <InlineEmptyStateText>No linked CRM record</InlineEmptyStateText>;
 
   return (
-    <span className="deal-meta">
+    <span aria-label={ariaLabel} className="deal-meta">
       {organization ? (
-        <Link className="inline-link" href={`/organizations/${organization.id}`}>
+        <Link
+          className="inline-link"
+          href={`/organizations/${organization.id}`}
+        >
           {organization.name}
         </Link>
       ) : null}
       {person ? (
         <Link className="inline-link" href={`/contacts/${person.id}`}>
-          {formatPersonName(person)}
+          {formatPersonName(person) ?? "Unnamed contact"}
         </Link>
       ) : null}
     </span>
   );
 }
 
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
-}
-
 function FirstRunChecklist() {
   const steps = [
     {
       title: "Create or import contacts",
-      description: "Add the people you sell to, or import a CSV when you already have a list.",
+      description:
+        "Add the people you sell to, or import a CSV when you already have a list.",
       href: "/contacts/new",
-      action: "Add contact"
+      action: "Add contact",
     },
     {
       title: "Add an organization",
       description: "Create the company or account behind the opportunity.",
       href: "/organizations/new",
-      action: "New organization"
+      action: "New organization",
     },
     {
       title: "Create your first deal",
-      description: "Start the sales workflow in your ready-to-use New Business pipeline.",
+      description:
+        "Start the sales workflow in your ready-to-use New Business pipeline.",
       href: "/deals/new",
-      action: "New deal"
+      action: "New deal",
     },
     {
       title: "Schedule a follow-up activity",
       description: "Plan the next call, email, meeting, or task.",
       href: "/activities/new",
-      action: "New activity"
+      action: "New activity",
     },
     {
       title: "Connect Gmail or Google Workspace",
-      description: "Sync recent matched email metadata and snippets from known contacts.",
+      description:
+        "Sync recent matched email metadata and snippets from known contacts.",
       href: "/email",
-      action: "Open email"
+      action: "Open email",
     },
     {
       title: "Invite a teammate",
-      description: "Add another Northstar user to the workspace when you are ready to collaborate.",
+      description:
+        "Add another Northstar user to the workspace when you are ready to collaborate.",
       href: "/settings",
-      action: "Open settings"
-    }
+      action: "Open settings",
+    },
   ] as const;
 
   return (
     <section className="onboarding-panel" aria-labelledby="first-run-title">
-      <div>
-        <p className="page-kicker">First run</p>
-        <h2 className="panel-title" id="first-run-title">
-          Set up your sales workspace
-        </h2>
-        <p className="empty-copy">
-          Your workspace is clean and ready. The New Business pipeline is already in place; add real records as you start working.
-        </p>
-      </div>
+      <PanelTitleRow
+        description="Your workspace is clean and ready. The New Business pipeline is already in place; add real records as you start working."
+        eyebrow="First run"
+        title="Set up your sales workspace"
+        titleId="first-run-title"
+      />
       <ol className="onboarding-list">
-        {steps.map((step, index) => (
-          <li className="onboarding-item" key={step.title}>
-            <span className="onboarding-step">{index + 1}</span>
-            <div>
-              <strong>{step.title}</strong>
-              <p>{step.description}</p>
-            </div>
-            <Link className="button-secondary button-compact" href={step.href}>
-              {step.action}
-            </Link>
-          </li>
-        ))}
+        {steps.map((step, index) => {
+          const actionLabel = `${step.action}: ${step.title}`;
+
+          return (
+            <li className="onboarding-item" key={step.title}>
+              <span className="onboarding-step">{index + 1}</span>
+              <div>
+                <strong>{step.title}</strong>
+                <p>{step.description}</p>
+              </div>
+              <Link
+                aria-label={actionLabel}
+                className="button-secondary button-compact"
+                href={step.href}
+                title={actionLabel}
+              >
+                {step.action}
+              </Link>
+            </li>
+          );
+        })}
       </ol>
     </section>
   );

@@ -1,10 +1,10 @@
-import { CustomFieldType, Prisma } from "@prisma/client";
+import { CustomFieldType, Prisma, type CustomFieldDefinition } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import {
   isCustomFieldFilterOperatorAllowed,
   isEmptyCustomFieldValue,
-  isSupportedCustomFieldType,
+  isFilterableCustomFieldType,
   normalizeCustomFieldFilterOperator,
   normalizeCustomFieldFilterValue
 } from "@/lib/custom-field-display";
@@ -13,21 +13,10 @@ import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog 
 import { assertRecordInWorkspace } from "./record-guards";
 
 type EditableCustomFieldEntityType = "DEAL" | "PERSON" | "ORGANIZATION" | "LEAD";
-type CreateCustomFieldInput = Omit<Prisma.CustomFieldDefinitionUncheckedCreateInput, "workspaceId" | "options"> & {
-  options?: Prisma.InputJsonValue | null;
-};
-type ListCustomFieldsFilters = {
-  entityType?: "DEAL" | "LEAD" | "PERSON" | "ORGANIZATION";
-};
 export type CustomFieldListFilters = {
-  customFieldId?: string;
-  customFieldOperator?: string;
-  customFieldValue?: string;
-};
-type UpsertCustomFieldValuesInput = {
-  entityType: EditableCustomFieldEntityType;
-  entityId: string;
-  values: Record<string, unknown>;
+  customFieldId?: unknown;
+  customFieldOperator?: unknown;
+  customFieldValue?: unknown;
 };
 export type CustomFieldSummaryField = {
   id: string;
@@ -38,10 +27,11 @@ export type CustomFieldSummaryField = {
   value: unknown;
 };
 
-export async function listCustomFields(actor: WorkspaceActor, filters: ListCustomFieldsFilters = {}) {
+export async function listCustomFields(actor: WorkspaceActor, filters: unknown = {}) {
   await ensureWorkspaceAccess(actor);
+  const filterInput = objectInput(filters);
   const where: Prisma.CustomFieldDefinitionWhereInput = { workspaceId: actor.workspaceId, ...activeWhere };
-  if (filters.entityType) where.entityType = filters.entityType;
+  if (filterInput.entityType) where.entityType = normalizeCustomFieldEntityType(filterInput.entityType);
 
   return prisma.customFieldDefinition.findMany({
     where,
@@ -49,28 +39,41 @@ export async function listCustomFields(actor: WorkspaceActor, filters: ListCusto
   });
 }
 
-export async function createCustomField(actor: WorkspaceActor, data: CreateCustomFieldInput) {
+export async function createCustomField(actor: WorkspaceActor, data: unknown) {
   await ensureWorkspaceAccess(actor);
-  if (
-    data.entityType !== "DEAL" &&
-    data.entityType !== "PERSON" &&
-    data.entityType !== "ORGANIZATION" &&
-    data.entityType !== "LEAD"
-  ) {
-    throw new ApiError(
-      "UNSUPPORTED_CUSTOM_FIELD_ENTITY",
-      "Custom fields currently support deals, contacts, organizations, and leads only.",
-      422
-    );
-  }
-  const { options, ...fieldData } = data;
-  const field = await prisma.customFieldDefinition.create({
-    data: {
-      ...fieldData,
+  const input = objectInput(data);
+  const entityType = normalizeCustomFieldEntityType(input.entityType);
+  const fieldType = normalizeCustomFieldType(input.fieldType);
+  const fieldData = normalizeCustomFieldDefinitionInput(input, fieldType);
+
+  const existingField = await prisma.customFieldDefinition.findFirst({
+    where: {
       workspaceId: actor.workspaceId,
-      options: options === null ? Prisma.JsonNull : options
-    }
+      entityType,
+      key: fieldData.key
+    },
+    select: { id: true }
   });
+
+  if (existingField) throw duplicateCustomFieldError();
+
+  let field: CustomFieldDefinition;
+  try {
+    field = await prisma.customFieldDefinition.create({
+      data: {
+        ...fieldData,
+        entityType,
+        fieldType,
+        workspaceId: actor.workspaceId,
+        options: fieldData.options === null ? Prisma.JsonNull : fieldData.options
+      }
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw duplicateCustomFieldError();
+    }
+    throw error;
+  }
   await writeAuditLog(actor, "custom_field.created", "CustomFieldDefinition", field.id, {
     key: field.key,
     entityType: field.entityType
@@ -96,13 +99,14 @@ export async function listLeadCustomFields(actor: WorkspaceActor, leadId: string
 
 export async function listRecordCustomFields(actor: WorkspaceActor, entityType: EditableCustomFieldEntityType, entityId: string) {
   await ensureWorkspaceAccess(actor);
-  await assertRecordInWorkspace(recordModel(entityType), actor.workspaceId, entityId);
+  const normalizedEntityType = normalizeCustomFieldEntityType(entityType);
+  await assertRecordInWorkspace(recordModel(normalizedEntityType), actor.workspaceId, entityId);
 
   return prisma.customFieldDefinition.findMany({
-    where: { workspaceId: actor.workspaceId, entityType, ...activeWhere },
+    where: { workspaceId: actor.workspaceId, entityType: normalizedEntityType, ...activeWhere },
     include: {
       values: {
-        where: { workspaceId: actor.workspaceId, entityType, entityId },
+        where: { workspaceId: actor.workspaceId, entityType: normalizedEntityType, entityId },
         take: 1
       }
     },
@@ -116,29 +120,38 @@ export async function listCustomFieldSummaries(
   entityIds: string[]
 ) {
   await ensureWorkspaceAccess(actor);
-  const fields = await prisma.customFieldDefinition.findMany({
-    where: { workspaceId: actor.workspaceId, entityType, ...activeWhere },
-    orderBy: { name: "asc" }
-  });
+  const normalizedEntityType = normalizeCustomFieldEntityType(entityType);
+  const requestedEntityIds = Array.from(new Set(entityIds)).filter(
+    (entityId): entityId is string => typeof entityId === "string" && entityId.trim().length > 0
+  );
+  if (requestedEntityIds.length === 0) return new Map<string, CustomFieldSummaryField[]>();
+
+  const [fields, visibleEntityIds] = await Promise.all([
+    prisma.customFieldDefinition.findMany({
+      where: { workspaceId: actor.workspaceId, entityType: normalizedEntityType, ...activeWhere },
+      orderBy: { name: "asc" }
+    }),
+    listActiveCustomFieldEntityIdsForIds(actor.workspaceId, normalizedEntityType, requestedEntityIds)
+  ]);
 
   const summaries = new Map<string, CustomFieldSummaryField[]>(
-    entityIds.map((entityId) => [entityId, fields.map((field) => ({ ...summaryField(field), value: null }))])
+    visibleEntityIds.map((entityId) => [entityId, fields.map((field) => ({ ...summaryField(field), value: null }))])
   );
 
-  if (fields.length === 0 || entityIds.length === 0) return summaries;
+  if (fields.length === 0 || visibleEntityIds.length === 0) return summaries;
 
   const values = await prisma.customFieldValue.findMany({
     where: {
       workspaceId: actor.workspaceId,
-      entityType,
-      entityId: { in: entityIds },
+      entityType: normalizedEntityType,
+      entityId: { in: visibleEntityIds },
       fieldId: { in: fields.map((field) => field.id) }
     },
     select: { entityId: true, fieldId: true, value: true }
   });
   const valuesByEntityAndField = new Map(values.map((value) => [`${value.entityId}:${value.fieldId}`, value.value]));
 
-  for (const entityId of entityIds) {
+  for (const entityId of visibleEntityIds) {
     summaries.set(
       entityId,
       fields.map((field) => ({
@@ -151,33 +164,58 @@ export async function listCustomFieldSummaries(
   return summaries;
 }
 
+async function listActiveCustomFieldEntityIdsForIds(
+  workspaceId: string,
+  entityType: EditableCustomFieldEntityType,
+  entityIds: string[]
+) {
+  const normalizedEntityType = normalizeCustomFieldEntityType(entityType);
+  const where = { id: { in: entityIds }, workspaceId, ...activeWhere };
+  if (normalizedEntityType === "DEAL") {
+    const rows = await prisma.deal.findMany({ where, select: { id: true } });
+    return rows.map((row) => row.id);
+  }
+  if (normalizedEntityType === "PERSON") {
+    const rows = await prisma.person.findMany({ where, select: { id: true } });
+    return rows.map((row) => row.id);
+  }
+  if (normalizedEntityType === "LEAD") {
+    const rows = await prisma.lead.findMany({ where, select: { id: true } });
+    return rows.map((row) => row.id);
+  }
+  const rows = await prisma.organization.findMany({ where, select: { id: true } });
+  return rows.map((row) => row.id);
+}
+
 export async function listCustomFieldFilteredEntityIds(
   workspaceId: string,
   entityType: EditableCustomFieldEntityType,
-  filters: CustomFieldListFilters
+  filters: unknown
 ) {
-  const fieldId = filters.customFieldId?.trim();
-  const rawValue = filters.customFieldValue?.trim();
+  const normalizedEntityType = normalizeCustomFieldEntityType(entityType);
+  const filterInput = objectInput(filters);
+  const fieldId = normalizeOptionalCustomFieldFilterText(filterInput.customFieldId);
+  const rawValue = normalizeOptionalCustomFieldFilterText(filterInput.customFieldValue);
   if (!fieldId) return undefined;
 
-  const operator = normalizeCustomFieldFilterOperator(filters.customFieldOperator);
+  const operator = normalizeCustomFieldFilterOperator(filterInput.customFieldOperator);
   if (!operator) return [];
   if ((operator === "equals" || operator === "contains") && !rawValue) return undefined;
   const valueText = rawValue ?? "";
 
   const field = await prisma.customFieldDefinition.findFirst({
-    where: { id: fieldId, workspaceId, entityType, ...activeWhere },
+    where: { id: fieldId, workspaceId, entityType: normalizedEntityType, ...activeWhere },
     select: { id: true, fieldType: true }
   });
 
-  if (!field || !isSupportedCustomFieldType(field.fieldType)) return [];
+  if (!field || !isFilterableCustomFieldType(field.fieldType)) return [];
   if (!isCustomFieldFilterOperatorAllowed(field.fieldType, operator)) return [];
 
   if (operator === "is_empty" || operator === "is_not_empty") {
     const [entityIds, values] = await Promise.all([
-      listActiveCustomFieldEntityIds(workspaceId, entityType),
+      listActiveCustomFieldEntityIds(workspaceId, normalizedEntityType),
       prisma.customFieldValue.findMany({
-        where: { workspaceId, entityType, fieldId },
+        where: { workspaceId, entityType: normalizedEntityType, fieldId },
         select: { entityId: true, value: true }
       })
     ]);
@@ -190,7 +228,7 @@ export async function listCustomFieldFilteredEntityIds(
 
   if (operator === "contains") {
     const matches = await prisma.customFieldValue.findMany({
-      where: { workspaceId, entityType, fieldId },
+      where: { workspaceId, entityType: normalizedEntityType, fieldId },
       select: { entityId: true, value: true }
     });
     const needle = valueText.toLowerCase();
@@ -205,7 +243,7 @@ export async function listCustomFieldFilteredEntityIds(
   const matches = await prisma.customFieldValue.findMany({
     where: {
       workspaceId,
-      entityType,
+      entityType: normalizedEntityType,
       fieldId,
       value: { equals: value as Prisma.InputJsonValue }
     },
@@ -215,17 +253,24 @@ export async function listCustomFieldFilteredEntityIds(
   return matches.map((match) => match.entityId);
 }
 
+function normalizeOptionalCustomFieldFilterText(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") return undefined;
+  return value.trim() || undefined;
+}
+
 async function listActiveCustomFieldEntityIds(workspaceId: string, entityType: EditableCustomFieldEntityType) {
+  const normalizedEntityType = normalizeCustomFieldEntityType(entityType);
   const where = { workspaceId, ...activeWhere };
-  if (entityType === "DEAL") {
+  if (normalizedEntityType === "DEAL") {
     const rows = await prisma.deal.findMany({ where, select: { id: true } });
     return rows.map((row) => row.id);
   }
-  if (entityType === "PERSON") {
+  if (normalizedEntityType === "PERSON") {
     const rows = await prisma.person.findMany({ where, select: { id: true } });
     return rows.map((row) => row.id);
   }
-  if (entityType === "LEAD") {
+  if (normalizedEntityType === "LEAD") {
     const rows = await prisma.lead.findMany({ where, select: { id: true } });
     return rows.map((row) => row.id);
   }
@@ -235,56 +280,93 @@ async function listActiveCustomFieldEntityIds(workspaceId: string, entityType: E
 
 export async function upsertDealCustomFieldValues(
   actor: WorkspaceActor,
-  data: Omit<UpsertCustomFieldValuesInput, "entityType">
+  data: unknown
 ) {
-  return upsertCustomFieldValues(actor, { ...data, entityType: "DEAL" });
+  return upsertCustomFieldValues(actor, { ...objectInput(data), entityType: "DEAL" });
 }
 
 export async function upsertCustomFieldValues(
   actor: WorkspaceActor,
-  data: UpsertCustomFieldValuesInput
+  data: unknown
 ) {
   await ensureWorkspaceAccess(actor);
-  await assertRecordInWorkspace(recordModel(data.entityType), actor.workspaceId, data.entityId);
-  if (data.entityType === "LEAD") await assertLeadCustomFieldsEditable(actor.workspaceId, data.entityId);
+  const input = objectInput(data);
+  const entityType = normalizeCustomFieldEntityType(input.entityType);
+  const entityId = normalizeCustomFieldRecordId(input.entityId);
+  const values = normalizeCustomFieldValuesInput(input.values);
+  await assertRecordInWorkspace(recordModel(entityType), actor.workspaceId, entityId);
+  if (entityType === "DEAL") await assertDealCustomFieldsEditable(actor.workspaceId, entityId);
+  if (entityType === "LEAD") await assertLeadCustomFieldsEditable(actor.workspaceId, entityId);
 
   const fields = await prisma.customFieldDefinition.findMany({
-    where: { workspaceId: actor.workspaceId, entityType: data.entityType, ...activeWhere }
+    where: { workspaceId: actor.workspaceId, entityType, ...activeWhere }
   });
   const fieldsById = new Map(fields.map((field) => [field.id, field]));
-  const updates = Object.entries(data.values);
-
-  for (const [fieldId, rawValue] of updates) {
+  const updates = Object.entries(values);
+  const normalizedUpdates = updates.map(([fieldId, rawValue]) => {
     const field = fieldsById.get(fieldId);
     if (!field) throw new ApiError("NOT_FOUND", "Custom field was not found.", 404);
-    const value = normalizeCustomFieldValue(field, rawValue);
-
-    await prisma.customFieldValue.upsert({
-      where: { fieldId_entityId: { fieldId, entityId: data.entityId } },
-      update: { value },
-      create: {
-        workspaceId: actor.workspaceId,
-        fieldId,
-        entityType: data.entityType,
-        entityId: data.entityId,
-        value
-      }
-    });
-  }
-
-  await writeAuditLog(actor, "custom_field_value.updated", auditEntityType(data.entityType), data.entityId, {
-    entityType: data.entityType,
-    fieldIds: updates.map(([fieldId]) => fieldId)
+    return { fieldId, value: normalizeCustomFieldValue(field, rawValue) };
   });
 
-  return listRecordCustomFields(actor, data.entityType, data.entityId);
+  if (normalizedUpdates.length === 0) {
+    return listRecordCustomFields(actor, entityType, entityId);
+  }
+
+  const existingValues = await prisma.customFieldValue.findMany({
+    where: {
+      workspaceId: actor.workspaceId,
+      entityType,
+      entityId,
+      fieldId: { in: normalizedUpdates.map(({ fieldId }) => fieldId) }
+    },
+    select: { fieldId: true, value: true }
+  });
+  const existingValuesByFieldId = new Map(existingValues.map((value) => [value.fieldId, value.value]));
+  const changedUpdates = normalizedUpdates.filter(({ fieldId, value }) => {
+    if (!existingValuesByFieldId.has(fieldId)) return true;
+    return !customFieldJsonValuesEqual(existingValuesByFieldId.get(fieldId) ?? null, value);
+  });
+
+  if (changedUpdates.length === 0) {
+    return listRecordCustomFields(actor, entityType, entityId);
+  }
+
+  await prisma.$transaction(
+    changedUpdates.map(({ fieldId, value }) =>
+      prisma.customFieldValue.upsert({
+        where: { fieldId_entityId: { fieldId, entityId } },
+        update: { workspaceId: actor.workspaceId, entityType, value },
+        create: {
+          workspaceId: actor.workspaceId,
+          fieldId,
+          entityType,
+          entityId,
+          value
+        }
+      })
+    )
+  );
+
+  await writeAuditLog(actor, "custom_field_value.updated", auditEntityType(entityType), entityId, {
+    entityType,
+    fieldIds: changedUpdates.map(({ fieldId }) => fieldId)
+  });
+
+  return listRecordCustomFields(actor, entityType, entityId);
+}
+
+function customFieldJsonValuesEqual(current: Prisma.JsonValue, next: unknown) {
+  if (current === null && Object.is(next, Prisma.JsonNull)) return true;
+  return JSON.stringify(current) === JSON.stringify(next);
 }
 
 function normalizeCustomFieldValue(
   field: { name: string; fieldType: CustomFieldType; required: boolean; options: Prisma.JsonValue },
   rawValue: unknown
 ) {
-  const isBlank = rawValue === null || rawValue === undefined || rawValue === "";
+  const trimmedStringValue = typeof rawValue === "string" ? rawValue.trim() : rawValue;
+  const isBlank = rawValue === null || rawValue === undefined || trimmedStringValue === "";
   if (isBlank) {
     if (field.required) throw new ApiError("VALIDATION_ERROR", `${field.name} is required.`, 422);
     return Prisma.JsonNull;
@@ -295,13 +377,13 @@ function normalizeCustomFieldValue(
   }
 
   if (field.fieldType === "NUMBER") {
-    const value = typeof rawValue === "number" ? rawValue : Number(rawValue);
+    const value = typeof trimmedStringValue === "number" ? trimmedStringValue : Number(trimmedStringValue);
     if (!Number.isFinite(value)) throw new ApiError("VALIDATION_ERROR", `${field.name} must be a number.`, 422);
     return value;
   }
 
   if (field.fieldType === "DATE") {
-    const value = String(rawValue);
+    const value = String(trimmedStringValue);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       throw new ApiError("VALIDATION_ERROR", `${field.name} must be a date.`, 422);
     }
@@ -310,13 +392,13 @@ function normalizeCustomFieldValue(
 
   if (field.fieldType === "BOOLEAN") {
     if (typeof rawValue === "boolean") return rawValue;
-    if (rawValue === "true") return true;
-    if (rawValue === "false") return false;
+    if (trimmedStringValue === "true") return true;
+    if (trimmedStringValue === "false") return false;
     throw new ApiError("VALIDATION_ERROR", `${field.name} must be true or false.`, 422);
   }
 
   if (field.fieldType === "SELECT") {
-    const value = String(rawValue);
+    const value = String(trimmedStringValue);
     const options = customFieldSelectOptions(field.options);
     if (options.length > 0 && !options.includes(value)) {
       throw new ApiError("VALIDATION_ERROR", `${field.name} must be one of the configured options.`, 422);
@@ -329,6 +411,91 @@ function normalizeCustomFieldValue(
 
 function customFieldSelectOptions(options: Prisma.JsonValue) {
   return Array.isArray(options) ? options.filter((option): option is string => typeof option === "string") : [];
+}
+
+function normalizeCustomFieldEntityType(value: unknown): EditableCustomFieldEntityType {
+  if (value === "DEAL" || value === "PERSON" || value === "ORGANIZATION" || value === "LEAD") return value;
+  throw new ApiError("VALIDATION_ERROR", "Custom field entity type must be DEAL, PERSON, ORGANIZATION, or LEAD.", 422);
+}
+
+function normalizeCustomFieldType(value: unknown): CustomFieldType {
+  if (value === "TEXT" || value === "NUMBER" || value === "DATE" || value === "BOOLEAN" || value === "SELECT") {
+    return value;
+  }
+  throw new ApiError("VALIDATION_ERROR", "Custom field type must be TEXT, NUMBER, DATE, BOOLEAN, or SELECT.", 422);
+}
+
+function normalizeCustomFieldDefinitionInput(data: Record<string, unknown>, fieldType: CustomFieldType) {
+  return {
+    name: normalizeCustomFieldDefinitionName(data.name),
+    key: normalizeCustomFieldDefinitionKey(data.key),
+    required: normalizeOptionalCustomFieldRequired(data.required),
+    options: normalizeCustomFieldOptions(data.options, fieldType)
+  };
+}
+
+function normalizeCustomFieldRecordId(value: unknown) {
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Custom field record id must be text.", 422);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new ApiError("VALIDATION_ERROR", "Custom field record id must be text.", 422);
+  }
+  return trimmed;
+}
+
+function normalizeCustomFieldValuesInput(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  throw new ApiError("VALIDATION_ERROR", "Custom field values must be an object.", 422);
+}
+
+function objectInput(input: unknown): Record<string, unknown> {
+  if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>;
+  return {};
+}
+
+function normalizeCustomFieldDefinitionName(value: unknown) {
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Custom field name is required.", 422);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) throw new ApiError("VALIDATION_ERROR", "Custom field name is required.", 422);
+  return trimmed;
+}
+
+function normalizeCustomFieldDefinitionKey(value: unknown) {
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Custom field key must use lowercase letters, numbers, and underscores.", 422);
+  }
+  const trimmed = value.trim();
+  if (!/^[a-z][a-z0-9_]*$/.test(trimmed)) {
+    throw new ApiError("VALIDATION_ERROR", "Custom field key must use lowercase letters, numbers, and underscores.", 422);
+  }
+  return trimmed;
+}
+
+function normalizeOptionalCustomFieldRequired(value: unknown) {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  throw new ApiError("VALIDATION_ERROR", "Custom field required flag must be true or false.", 422);
+}
+
+function normalizeCustomFieldOptions(value: unknown, fieldType: CustomFieldType): Prisma.InputJsonValue | null {
+  if (fieldType !== "SELECT") return null;
+  if (!Array.isArray(value)) {
+    throw new ApiError("VALIDATION_ERROR", "Select custom fields require at least one option.", 422);
+  }
+
+  const options = Array.from(
+    new Set(value.filter((option): option is string => typeof option === "string").map((option) => option.trim()))
+  ).filter(Boolean);
+
+  if (options.length === 0) {
+    throw new ApiError("VALIDATION_ERROR", "Select custom fields require at least one option.", 422);
+  }
+
+  return options;
 }
 
 function recordModel(entityType: EditableCustomFieldEntityType) {
@@ -371,4 +538,24 @@ async function assertLeadCustomFieldsEditable(workspaceId: string, leadId: strin
   if (lead.status === "CONVERTED") {
     throw new ApiError("LEAD_CONVERTED", "Converted leads cannot have custom fields updated.", 409);
   }
+}
+
+async function assertDealCustomFieldsEditable(workspaceId: string, dealId: string) {
+  const deal = await prisma.deal.findFirst({
+    where: { id: dealId, workspaceId, ...activeWhere },
+    select: { status: true }
+  });
+
+  if (!deal) throw new ApiError("NOT_FOUND", "Record was not found in this workspace.", 404);
+  if (deal.status !== "OPEN") {
+    throw new ApiError("DEAL_CLOSED", "Closed deals cannot be edited.", 409);
+  }
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+function duplicateCustomFieldError() {
+  return new ApiError("CUSTOM_FIELD_EXISTS", "A custom field with this key already exists for this record type.", 409);
 }

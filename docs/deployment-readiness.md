@@ -96,17 +96,17 @@ Required:
 
 Optional:
 
-- `APP_BASE_URL`: canonical app URL used for displaying absolute public quote links and password reset email URLs. If unset, the app shows relative `/q/:token` quote links. If set, it must be a valid `http` or `https` URL. When password reset email delivery is configured in production, this must be `https`.
+- `APP_BASE_URL`: canonical app URL used for displaying absolute public quote links and password reset email URLs. If unset or if it includes embedded username/password credentials, the app shows relative `/q/:token` quote links. In production, public quote links also fall back to relative `/q/:token` paths unless `APP_BASE_URL` is a public `https` URL. When password reset email delivery is configured in production, this must be a public `https` URL without embedded username/password credentials, not localhost, loopback, private-network, link-local, or unspecified IP hosts.
 - `RAILWAY_SERVICE_ROLE`: optional Railway process selector. Leave unset or set to `web` for the Next.js web service. Set to `worker` for the background job worker service.
 - `AUTH_MODE`: `demo` for seeded local/demo fallback, `local` for the built-in email/password session MVP, or `trusted-header` for an upstream/session layer that provides the current user id. Production defaults to `trusted-header` when unset.
 - `AUTH_USER_ID_HEADER`: trusted request header containing the current user id. Required when the effective auth mode is `trusted-header`; use a dedicated safe header name such as `x-northstar-user-id`.
 - `AUTH_SESSION_SECRET`: signing secret for local session cookies. Required when `AUTH_MODE=local`; use at least 32 random characters.
-- `AUTH_EMAIL_WEBHOOK_URL`: optional provider-neutral webhook endpoint for password-reset-only email delivery. If set, `APP_BASE_URL` is required. Production requires `https`.
+- `AUTH_EMAIL_WEBHOOK_URL`: optional provider-neutral webhook endpoint for password-reset-only email delivery. If set, `APP_BASE_URL` is required. Production requires `https`. Webhook URLs must not include embedded username/password credentials; use `AUTH_EMAIL_WEBHOOK_TOKEN` for bearer authentication instead.
 - `AUTH_EMAIL_WEBHOOK_TOKEN`: optional bearer token sent to the password reset email webhook.
 - `AUTH_EMAIL_FROM`: sender/from label used by Resend and optionally included in the password reset email webhook payload. For Resend testing before a verified sending domain, `Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
-- `RESEND_API_KEY`: optional Resend API key for direct password-reset-only email delivery from the background job worker. If set, `AUTH_EMAIL_FROM` and `APP_BASE_URL` are required. Production requires `APP_BASE_URL` to use `https`.
+- `RESEND_API_KEY`: optional Resend API key for direct password-reset-only email delivery from the background job worker. If set, `AUTH_EMAIL_FROM` and `APP_BASE_URL` are required. Production requires `APP_BASE_URL` to use a public `https` URL.
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`: optional Gmail / Google Workspace OAuth configuration. The documented `GOOGLE_OAUTH_*` names take precedence over the shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` when both are present. Gmail Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured.
-- `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT_ID`, `MICROSOFT_OAUTH_REDIRECT_URI`: optional Microsoft 365 / Outlook OAuth configuration. The shorter `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` aliases are also accepted. Microsoft Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured. `MICROSOFT_OAUTH_TENANT_ID` is optional and defaults to `common`.
+- `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT_ID`, `MICROSOFT_OAUTH_REDIRECT_URI`: optional Microsoft 365 / Outlook OAuth configuration. The shorter `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` aliases are also accepted. Microsoft Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured. `MICROSOFT_OAUTH_TENANT_ID` is optional and defaults to `common`; when set, use a tenant id/domain such as `organizations`, `consumers`, a tenant GUID, or `contoso.onmicrosoft.com`, not a path-like value.
 - `EMAIL_TOKEN_ENCRYPTION_KEY`: secret used to derive AES-256-GCM keys for email OAuth token encryption. It must decode to at least 32 bytes. Raw 32+ character strings work for local setup; production should use a random secret.
 - `DEV_ACTOR_EMAIL`: temporary development actor email. Defaults to `alex@example.test`.
 - `DEV_WORKSPACE_SLUG`: temporary development workspace slug. Defaults to `northstar-revenue`.
@@ -117,7 +117,9 @@ Do not commit real secrets or production database URLs.
 
 ## Environment Validation
 
-Runtime validation lives in `lib/env.ts`. The app validates `DATABASE_URL` before creating the Prisma client and validates optional deployment/auth/demo variables when present. In production, password reset email delivery is reported as disabled unless either `RESEND_API_KEY` plus `AUTH_EMAIL_FROM`, or `AUTH_EMAIL_WEBHOOK_URL`, is configured. Forgot-password responses remain generic either way. Gmail and Microsoft OAuth env groups must be complete if any provider var is set; when OAuth env is configured without `EMAIL_TOKEN_ENCRYPTION_KEY`, Settings keeps provider actions disabled and reports that token encryption is required.
+Runtime validation lives in `lib/env.ts`. The app validates `DATABASE_URL` before creating the Prisma client and validates optional deployment/auth/demo variables when present. In production, password reset email delivery is reported as disabled unless `APP_BASE_URL` is configured and either `RESEND_API_KEY` plus `AUTH_EMAIL_FROM`, or `AUTH_EMAIL_WEBHOOK_URL`, is configured. Forgot-password responses remain generic either way. Gmail and Microsoft OAuth env groups must be complete if any provider var is set; when OAuth env is configured without `EMAIL_TOKEN_ENCRYPTION_KEY`, Settings keeps provider actions disabled and reports that token encryption is required.
+
+OAuth redirect URIs must use public `https` callback hosts in production and must not include embedded username/password credentials. Local builds and local development can use loopback `http://localhost`, `http://127.0.0.1`, or `http://[::1]` redirect URIs, but hosted Railway, Google Cloud, and Microsoft Entra callback URLs must be configured with the public `https://<host>/api/email-connections/.../callback` routes.
 
 Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`. OAuth authorization codes are short-lived and exchanged before token storage, but callback query strings should not be retained in application, proxy, CDN, or platform logs.
 
@@ -128,7 +130,7 @@ Use Microsoft Graph for both Microsoft 365 and Outlook; do not configure separat
 1. In Microsoft Entra, create an app registration for the hosted Northstar environment.
 2. Add a Web redirect URI: `https://<host>/api/email-connections/microsoft/callback`.
 3. Create a client secret for the hosted app registration.
-4. In Railway, set `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_REDIRECT_URI`, and `EMAIL_TOKEN_ENCRYPTION_KEY`. Set `MICROSOFT_OAUTH_TENANT_ID` only if the deployment should be tenant-specific; otherwise the app uses `common`.
+4. In Railway, set `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_REDIRECT_URI`, and `EMAIL_TOKEN_ENCRYPTION_KEY`. Set `MICROSOFT_OAUTH_TENANT_ID` only if the deployment should be tenant-specific; otherwise the app uses `common`. Tenant values must be a tenant id/domain segment, not an OAuth URL path.
 5. Redeploy the Railway web service so the provider card can read the new env.
 6. Open `/email`, connect either Microsoft 365 or Outlook, then run `Sync recent Microsoft 365 mail` or `Sync recent Outlook mail`.
 7. Verify matched known-contact messages appear on `/email` and the related CRM timelines.
@@ -144,7 +146,7 @@ For the current local-auth/password-reset deployment path:
 - Set `DATABASE_URL` to the production PostgreSQL database.
 - Set `AUTH_SESSION_SECRET` to at least 32 random characters.
 - Set `APP_BASE_URL` to the public `https` app origin.
-- Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` for direct Resend delivery from the worker, or set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint for password-reset-only email delivery.
+- Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` for direct Resend delivery from the worker, or set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint for password-reset-only email delivery. Webhook URLs must not include embedded username/password credentials.
 - Set `AUTH_EMAIL_WEBHOOK_TOKEN` if the webhook fallback requires bearer auth.
 - For Resend sandbox testing without a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
 - Run `npm run prisma:deploy` after pulling migrations and before serving traffic.
@@ -157,23 +159,23 @@ Password reset email delivery is only for auth reset links, delivered through th
 
 Northstar includes a narrow local login MVP while preserving the existing auth seam:
 
-- `AUTH_MODE=local` enables `/login`, email/password sign-in for existing users, signed httpOnly cookies, server-side `Session` lookup, expired-session rejection, login-time expired-session cleanup, and logout/session revocation.
-- Password reset for local-login users stores only hashed reset tokens, uses expiring one-time links, and returns a generic request response. Development/test can display reset links for manual QA and does not require delivery config. Production does not display reset links; when `APP_BASE_URL` and either Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or webhook delivery (`AUTH_EMAIL_WEBHOOK_URL`) are configured, it queues a password-reset-only email job. Running `npm run jobs:work` processes queued jobs continuously, while `npm run jobs:run-once` processes one due batch and exits. Missing config or delivery failure keeps the same generic response.
+- `AUTH_MODE=local` enables `/signup`, `/login`, email/password sign-in for existing users, clean workspace creation for new signups, signed httpOnly cookies, server-side `Session` lookup, expired-session rejection, login-time expired-session cleanup, and logout/session revocation.
+- Password reset for local-login users stores only hashed reset tokens, uses expiring one-time links, and returns a generic request response. Development/test can display reset links for manual QA and does not require delivery config. Production does not display reset links; when `APP_BASE_URL` can build an absolute reset URL from a public HTTPS origin, it queues a password-reset-only email job. Running `npm run jobs:work` processes queued jobs continuously, while `npm run jobs:run-once` processes one due batch and exits. The worker needs either Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or webhook delivery (`AUTH_EMAIL_WEBHOOK_URL`) to send queued reset emails. Missing config or delivery failure keeps the same generic response.
 - `lib/auth/session.ts` resolves a session identity from a trusted user-id header when available.
 - `AUTH_MODE=trusted-header` requires a safe `AUTH_USER_ID_HEADER` and returns a clear missing-session error when no trusted user header is present.
 - `AUTH_MODE=demo` preserves the seeded local/demo actor fallback, ignores trusted user-id headers, and reports a validation warning under `NODE_ENV=production`.
 - `lib/auth/request-context.ts` still verifies that the resolved user exists and belongs to the requested workspace.
 
 Only use `trusted-header` behind infrastructure that strips untrusted client-supplied auth headers before setting the trusted header. Do not expose the app directly to the public internet with a client-spoofable trusted user header.
-Local login is not a full account-management product. It does not include signup, OAuth, SSO, 2FA, account editing, general email delivery, or billing.
+Local auth is not a full account-management product. It includes signup/login, but does not include OAuth, SSO, 2FA, account email/password management from Settings, general email delivery, or billing.
 
 API access responses are intentionally generic at the boundary: missing sessions return `401`, non-members return `403`, and cross-workspace record access returns non-leaky `404` responses where resource existence should stay hidden.
 
 Browser users with multiple memberships can select an active workspace. The selection is stored in an httpOnly cookie and is revalidated against the current user's memberships on every browser page context resolution. Invalid or stale selections fall back to a valid membership; API routes continue to require explicit workspace IDs and preserve their existing `401`/`403`/`404` behavior.
 
-Signed-in browser users can create a new workspace from Settings. The creator receives an `OWNER` membership, the new workspace is selected through the same verified active-workspace cookie, and duplicate display names are allowed with unique generated slugs.
+Signed-in browser users can create a new workspace from Settings. Workspace names are required, trimmed, and capped at 120 characters. The creator receives an `OWNER` membership, the new workspace is selected through the same verified active-workspace cookie, and duplicate display names are allowed with unique generated slugs.
 
-Workspace owners/admins can create and revoke invitations for existing users from Settings. Invitations do not send email; the accept link is shown in the app and must be shared manually. Invite acceptance creates membership only when the signed-in user's email matches the invitation and then selects the invited workspace. Accepted links are idempotent only while the accepted membership still exists; removed members cannot rejoin through an old accepted link. Owners/admins can also remove non-admin members when doing so does not leave the workspace without an owner/admin.
+Workspace owners/admins can create and revoke invitations from Settings. Invitations do not send email; the accept link is shown in the app and must be shared manually. Invitees without accounts can sign up with the invited email before accepting. Invite acceptance creates membership only when the signed-in user's email matches the invitation and then selects the invited workspace. Accepted links are idempotent only while the accepted membership still exists; removed members cannot rejoin through an old accepted link. Owners/admins can also remove non-admin members when doing so does not leave the workspace without an owner/admin.
 
 The readiness endpoint is:
 
@@ -229,8 +231,13 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run test:browser
 npm run test:integration
 ```
+
+`npm run prisma` is kept as a short alias for `npm run prisma:validate`; use either command for schema validation.
+
+Run `npm run typecheck` and `npm run build` serially. Next typed routes are checked through generated `.next/types`, and `next build` can regenerate that directory while it runs; running both commands against the same workspace at the same time can produce false missing-file typecheck failures. Run `npm run build` before `npm run test:browser`; the browser smoke script starts `next start` on port `3100` and needs the production `.next` artifacts. The `typecheck` script runs TypeScript with incremental cache disabled so stale generated route-type references do not mask the current source state.
 
 `npm run test:integration` requires a safe `TEST_DATABASE_URL` and applies migrations before running database-backed tests.
 
@@ -255,15 +262,15 @@ Optional environment variables:
 - `JOBS_RETAIN_DEAD_DAYS`: positive integer retention window for terminal `DEAD` jobs cleaned by `jobs:cleanup`. Missing or invalid values default to 30 days.
 - `JOBS_IDLE_EXIT_AFTER_MS`: optional test/dev escape hatch for continuous-worker tests. Production should omit it.
 
-`npm run jobs:status` prints aggregate queue counts only: status totals, due/future pending counts, oldest due pending timestamp, and counts by job type. It does not print job payloads, reset URLs, tokens, recipient emails, or secrets.
+`npm run jobs:status` prints aggregate queue counts only: status totals, due/future pending counts, oldest due pending timestamp, registered-safe job type counts, and a single `unregistered` count for any other job types. It does not print job payloads, arbitrary/unregistered job type names, reset URLs, tokens, recipient emails, or secrets.
 
 `npm run jobs:run-once` claims one due batch, dispatches explicitly registered handlers, prints summary counts only, and exits. Handler failures are recorded on the job through retry/dead-letter semantics and do not make the command fail by themselves. The command exits non-zero only for command-level failures such as invalid runtime/database setup.
 
-`npm run jobs:work` repeatedly calls the same single-run worker logic, recovers stale `RUNNING` jobs, processes one batch at a time, handles `SIGINT`/`SIGTERM` by finishing the current batch before exit, and prints summary-only lifecycle, recovery, and batch output. It currently handles the harmless `internal.noop` job and queued `auth.password_reset_email` jobs. Without running `jobs:work`, `jobs:run-once`, or equivalent scheduling, password reset email jobs remain queued and no reset email is sent.
+`npm run jobs:work` repeatedly calls the same single-run worker logic, recovers stale `RUNNING` jobs, dead-letters stale jobs that already consumed their maximum attempts, processes one batch at a time, handles `SIGINT`/`SIGTERM` by finishing the current batch before exit, and prints summary-only lifecycle, recovery, and batch output. It currently handles the harmless `internal.noop` job and queued `auth.password_reset_email` jobs. Expired or no-longer-current password-reset email jobs are marked complete without sending dead reset links. Without running `jobs:work`, `jobs:run-once`, or equivalent scheduling, password reset email jobs remain queued and no reset email is sent.
 
-Stale recovery is intentionally part of `jobs:work`, not `jobs:run-once`. A job is recovered when it is still `RUNNING` and its `lockedAt` is older than the configured timeout. Recovery moves the job back to `PENDING`, clears `lockedAt`/`lockedBy`, sets `runAt` to now, preserves attempts and `lastError`, and lets a later claim increment attempts normally. A force-killed worker can therefore delay a job until the stale timeout expires, then the continuous worker can retry it.
+Stale recovery is intentionally part of `jobs:work`, not `jobs:run-once`. A job is recovered when it is still `RUNNING` and its `lockedAt` is older than the configured timeout. Recovery moves retryable stale jobs back to `PENDING`, clears `lockedAt`/`lockedBy`/`failedAt`, sets `runAt` to now, preserves attempts and `lastError`, and lets a later claim increment attempts normally. If the stale job has already reached `maxAttempts`, recovery marks it `DEAD` with a generic non-payload error instead of running it again. A force-killed worker can therefore delay a job until the stale timeout expires, then the continuous worker can retry it or terminally dead-letter it.
 
-`npm run jobs:cleanup` deletes old terminal jobs only: `SUCCEEDED` jobs older than `JOBS_RETAIN_SUCCEEDED_DAYS` by `processedAt`, and `DEAD` jobs older than `JOBS_RETAIN_DEAD_DAYS` by `failedAt`. It does not delete `PENDING`, `RUNNING`, or retryable `FAILED` jobs. Run it periodically through ops scheduling once queued password reset email delivery is enabled, because password-reset job payloads can contain reset URLs with raw tokens until terminal rows are cleaned up. Cleanup output is aggregate-only and does not print payloads, reset URLs, tokens, recipient emails, dedupe keys, `lastError`, or secrets.
+`npm run jobs:cleanup` deletes old terminal jobs only: `SUCCEEDED` jobs older than `JOBS_RETAIN_SUCCEEDED_DAYS` by `processedAt`, and `DEAD` jobs older than `JOBS_RETAIN_DEAD_DAYS` by `failedAt`. It is not limited to active workspaces, so old terminal rows tied to deleted workspaces can still be pruned. It does not delete `PENDING` retryable jobs, `RUNNING` jobs, or non-terminal `FAILED` rows. Run it periodically through ops scheduling once queued password reset email delivery is enabled, because password-reset job payloads can contain reset URLs with raw tokens until terminal rows are cleaned up. Cleanup output is aggregate-only and does not print payloads, reset URLs, tokens, recipient emails, dedupe keys, `lastError`, or secrets.
 
 Basic operational sequence:
 
@@ -279,7 +286,7 @@ Use the first status check to see whether due or dead jobs exist, run the contin
 Production password reset email delivery requires:
 
 - current database migrations, including the `Job` table.
-- `APP_BASE_URL` configured to the canonical HTTPS app URL so reset URLs can be built.
+- `APP_BASE_URL` configured to the canonical public HTTPS app URL without embedded username/password credentials, not localhost, loopback, private-network, link-local, or unspecified IP hosts, so reset URLs can be built.
 - either `RESEND_API_KEY` plus `AUTH_EMAIL_FROM`, or `AUTH_EMAIL_WEBHOOK_URL` configured to the password-reset-only HTTPS webhook.
 - a separate worker process running `npm run jobs:work`, or periodic execution of `npm run jobs:run-once`.
 
@@ -294,6 +301,6 @@ The queued password reset email payload includes the reset URL and must be treat
 - Invitation email delivery, workspace deletion, and billing are not implemented. Workspace switching is limited to current memberships plus newly created or accepted workspaces, while role editing and ownership transfer remain intentionally narrow.
 - Member removal only removes access. It does not delete user accounts or CRM records, and the service blocks removal of the last owner/admin.
 - Workspace roles are visible and reusable in code, but advanced permissions, visibility groups, and row-level permissions are not implemented.
-- No hosting-provider-specific deployment configuration is included.
-- Workspace-scoped CSV export exists for Deals, Contacts/People, Organizations, Leads, Activities, and Quotes. Deal, Contact, Organization, and Lead exports include record-type custom fields. Conservative Deals, Organizations, Contacts, and Leads CSV imports exist for pasted CSV text, but imports for activities/notes/quotes, custom field import, file upload/storage, background jobs, email/calendar sync, Slack/Teams integration, automations, API keys, and marketplace features are not implemented.
+- A minimal Railway deployment configuration is included for hosted preview use. Other hosting providers still need their own service, database, migration, worker, and secret-management setup.
+- Workspace-scoped CSV export exists for Deals, Contacts/People, Organizations, Leads, Activities, Products, and Quotes. Deal, Contact, Organization, and Lead exports include record-type custom fields. Conservative Deals, Organizations, Contacts, and Leads CSV imports exist for pasted CSV text, but imports for activities/notes/products/quotes, custom field import, file upload/storage, background jobs, email/calendar sync, Slack/Teams integration, automations, API keys, and marketplace features are not implemented.
 - Prisma configuration lives in `prisma.config.ts`; seed execution remains wired through `npm run prisma:seed`.

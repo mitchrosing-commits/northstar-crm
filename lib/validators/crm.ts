@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+import {
+  dealValueCentsMax,
+  productIntColumnMax,
+  quoteIntColumnMax,
+  stageProbabilityMax,
+  stageProbabilityMin,
+  sortOrderIntColumnMax,
+  sortOrderIntColumnMin
+} from "@/lib/product-limits";
+import { workspaceSlugMaxLength, workspaceSlugPattern } from "@/lib/workspace-validation";
+
 export const idSchema = z.string().min(1);
 
 const optionalDate = z
@@ -10,24 +21,34 @@ const optionalDate = z
 	  .transform((value) => (value ? new Date(value) : null));
 
 const requiredDate = z.string().datetime().transform((value) => new Date(value));
+const sortOrderSchema = z
+  .number()
+  .int()
+  .min(sortOrderIntColumnMin, "Sort order is too small.")
+  .max(sortOrderIntColumnMax, "Sort order is too large.");
 
 export const createPipelineSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional().nullable(),
-  sortOrder: z.number().int().optional()
+  sortOrder: sortOrderSchema.optional()
 });
 
 export const createWorkspaceSchema = z.object({
   name: z.string().min(1),
-  slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  slug: z
+    .string()
+    .trim()
+    .min(1, "Workspace slug is required.")
+    .max(workspaceSlugMaxLength, `Workspace slug must be ${workspaceSlugMaxLength} characters or fewer.`)
+    .regex(workspaceSlugPattern, "Workspace slug may contain lowercase letters, numbers, and single hyphens only.")
 });
 
 export const updatePipelineSchema = createPipelineSchema.partial();
 
 export const createStageSchema = z.object({
   name: z.string().min(1),
-  probability: z.number().int().min(0).max(100).optional().nullable(),
-  sortOrder: z.number().int()
+  probability: z.number().int().min(stageProbabilityMin).max(stageProbabilityMax).optional().nullable(),
+  sortOrder: sortOrderSchema
 });
 
 export const updateStageSchema = createStageSchema.partial();
@@ -39,7 +60,7 @@ export const createDealSchema = z.object({
   personId: idSchema.optional().nullable(),
   organizationId: idSchema.optional().nullable(),
   title: z.string().min(1),
-  valueCents: z.number().int().nonnegative().optional().nullable(),
+  valueCents: z.number().int().nonnegative().max(dealValueCentsMax, "Deal value is too large.").optional().nullable(),
   currency: z.string().length(3).default("USD"),
   status: z.enum(["OPEN", "WON", "LOST"]).optional(),
   expectedCloseAt: optionalDate
@@ -50,24 +71,39 @@ export const updateDealSchema = createDealSchema.partial();
 export const createProductSchema = z.object({
   name: z.string().trim().min(1),
   description: z.string().trim().optional().nullable(),
-  unitPriceCents: z.number().int().nonnegative(),
+  unitPriceCents: z.number().int().nonnegative().max(productIntColumnMax, "Product unit price is too large."),
   currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/).default("USD")
 });
 export const updateProductSchema = createProductSchema;
 
 export const createDealLineItemSchema = z.object({
   productId: idSchema,
-  quantity: z.number().int().positive(),
+  quantity: z.number().int().positive().max(productIntColumnMax, "Line item quantity is too large."),
   description: z.string().trim().optional().nullable()
 });
+
+const contractStepStatusSchema = z.enum(["NOT_STARTED", "IN_PROGRESS", "SENT", "SIGNED", "BLOCKED", "SKIPPED"]);
+
+export const createDealContractStepSchema = z.object({
+  type: z.enum(["NDA", "MSA", "SOW"]),
+  status: contractStepStatusSchema.optional(),
+  ownerId: idSchema.optional().nullable(),
+  dueAt: optionalDate,
+  sentAt: optionalDate,
+  signedAt: optionalDate,
+  notes: z.string().max(4000).optional().nullable(),
+  externalReference: z.string().max(500).optional().nullable()
+});
+
+export const updateDealContractStepSchema = createDealContractStepSchema.omit({ type: true }).partial();
 
 const quoteAdjustmentTypeSchema = z.enum(["NONE", "PERCENT", "FIXED"]);
 
 export const updateQuoteAdjustmentsSchema = z.object({
   discountType: quoteAdjustmentTypeSchema.default("NONE"),
-  discountValue: z.number().int().nonnegative().default(0),
+  discountValue: z.number().int().nonnegative().max(quoteIntColumnMax, "Discount value is too large.").default(0),
   taxType: quoteAdjustmentTypeSchema.default("NONE"),
-  taxValue: z.number().int().nonnegative().default(0)
+  taxValue: z.number().int().nonnegative().max(quoteIntColumnMax, "Tax value is too large.").default(0)
 }).superRefine((value, context) => {
   if (value.discountType === "PERCENT" && value.discountValue > 10000) {
     context.addIssue({
@@ -169,13 +205,13 @@ export const createEmailTemplateSchema = z.object({
   body: z.string().trim().min(1)
 });
 
-export const updateEmailTemplateSchema = createEmailTemplateSchema;
+export const updateEmailTemplateSchema = createEmailTemplateSchema.partial();
 
 export const createCustomFieldSchema = z.object({
   entityType: z.enum(["DEAL", "PERSON", "ORGANIZATION", "LEAD"]),
   name: z.string().min(1),
   key: z.string().regex(/^[a-z][a-z0-9_]*$/),
-  fieldType: z.enum(["TEXT", "NUMBER", "DATE", "BOOLEAN"]),
+  fieldType: z.enum(["TEXT", "NUMBER", "DATE", "BOOLEAN", "SELECT"]),
   required: z.boolean().optional(),
   options: z.unknown().optional().nullable()
 });

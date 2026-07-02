@@ -11,13 +11,26 @@ import {
   isWorkspaceAdmin,
   isWorkspaceMember,
   isWorkspaceOwner,
-  workspaceRoleLabel
+  workspaceRoleLabel,
 } from "@/lib/workspace-roles";
 
-const workspaceService = readFileSync(join(process.cwd(), "lib/services/workspace-service.ts"), "utf8");
-const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
-const settingsPage = readFileSync(join(process.cwd(), "app/settings/page.tsx"), "utf8");
-const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
+const workspaceService = readFileSync(
+  join(process.cwd(), "lib/services/workspace-service.ts"),
+  "utf8",
+);
+const primaryNav = readFileSync(
+  join(process.cwd(), "components/primary-nav.tsx"),
+  "utf8",
+);
+const navigation = readFileSync(join(process.cwd(), "lib/navigation.ts"), "utf8");
+const settingsPage = readFileSync(
+  join(process.cwd(), "app/settings/page.tsx"),
+  "utf8",
+);
+const currentStatus = readFileSync(
+  join(process.cwd(), "docs/current-status.md"),
+  "utf8",
+);
 
 describe("workspace roles and membership visibility", () => {
   it("centralizes role labels and settings-level capability flags", () => {
@@ -41,47 +54,82 @@ describe("workspace roles and membership visibility", () => {
     expect(canTransferWorkspaceOwnership("OWNER")).toBe(true);
     expect(canTransferWorkspaceOwnership("ADMIN")).toBe(false);
     const roles: MembershipRole[] = ["MEMBER", "OWNER", "ADMIN"];
-    expect(roles.sort(compareWorkspaceRoles)).toEqual(["OWNER", "ADMIN", "MEMBER"]);
+    expect(roles.sort(compareWorkspaceRoles)).toEqual([
+      "OWNER",
+      "ADMIN",
+      "MEMBER",
+    ]);
   });
 
   it("uses role policy in workspace membership summary code", () => {
     expect(workspaceService).toContain("getWorkspaceMembershipSummary");
-    expect(workspaceService).toContain("canManageWorkspaceSettings(currentMembership.role)");
+    expect(workspaceService).toContain(
+      "canManageWorkspaceSettings(currentMembership.role)",
+    );
     expect(workspaceService).toContain("workspaceRoleLabel(membership.role)");
     expect(workspaceService).toContain("compareWorkspaceRoles(a.role, b.role)");
     expect(workspaceService).toContain("role: workspaceOwnerRole");
     expect(workspaceService).toContain("ensureWorkspaceAccess(actor)");
     expect(workspaceService).toContain("updateWorkspaceMemberRole");
     expect(workspaceService).toContain("transferWorkspaceOwnership");
-    expect(workspaceService).toContain("Only the workspace owner can promote or demote admins.");
-    expect(workspaceService).toContain("Only the workspace owner can remove admins.");
-    expect(workspaceService).toContain("Choose another workspace member to receive ownership.");
+    expect(workspaceService).toContain(
+      "Only the workspace owner can promote or demote admins.",
+    );
+    expect(workspaceService).toContain(
+      "Only the workspace owner can remove admins.",
+    );
+    expect(workspaceService).toContain(
+      "Choose another workspace member to receive ownership.",
+    );
+    expect(workspaceService).toContain("if (membership.role === targetRole)");
     expect(workspaceService).toContain("workspace_member.role_updated");
-    expect(workspaceService).toContain("workspace_member.ownership_transferred");
+    expect(workspaceService).toContain(
+      "workspace_member.ownership_transferred",
+    );
   });
 
   it("renders conservative workspace settings member management controls", () => {
-    expect(primaryNav).toContain("href: \"/settings\"");
-    expect(primaryNav).toContain("label: \"Settings\"");
+    expect(primaryNav).toContain("appShellNavigationManifest");
+    expect(navigation).toContain('href: "/settings"');
+    expect(navigation).toContain('label: "Settings"');
     expect(settingsPage).toContain("getWorkspaceMembershipSummary(actor)");
     expect(settingsPage).toContain("Workspace Members");
+    expect(settingsPage).toContain('aria-label="Workspace members table"');
+    expect(settingsPage).toContain('className="table-primary-cell"');
+    expect(settingsPage).toContain('className="table-secondary-text"');
     expect(settingsPage).toContain("Your role");
     expect(settingsPage).toContain("Settings access");
     expect(settingsPage).toContain("Settings admin");
     expect(settingsPage).toContain("<CreateWorkspaceForm");
     expect(settingsPage).toContain("Workspace Invitations");
-    expect(settingsPage).toContain("summary.currentMembership.canManageWorkspaceSettings ? (");
+    expect(settingsPage).toContain(
+      "summary.currentMembership.canManageWorkspaceSettings ? (",
+    );
     expect(settingsPage).toContain("Current user");
     expect(settingsPage).toContain("Owner removal blocked");
     expect(settingsPage).toContain("Last admin");
     expect(settingsPage).toContain("Owner action required");
-    expect(settingsPage).toContain("Transferring ownership immediately makes that member the owner");
+    expect(settingsPage).toContain("MemberActionStatus");
+    expect(settingsPage).toContain("WorkspaceMemberActions");
+    expect(settingsPage).toContain('className="table-row-actions"');
+    expect(settingsPage).toContain("settings-member-action-status");
+    expect(settingsPage).toContain("Transferring ownership");
+    expect(settingsPage).toContain("immediately makes that member the owner");
     expect(settingsPage).toContain("updateWorkspaceMemberRoleAction");
     expect(settingsPage).toContain("transferWorkspaceOwnershipAction");
     expect(settingsPage).toContain("Make admin");
     expect(settingsPage).toContain("Make member");
     expect(settingsPage).toContain("Transfer owner");
+    expect(settingsPage).toContain("aria-label={roleActionLabel}");
+    expect(settingsPage).toContain("title={roleActionLabel}");
+    expect(settingsPage).toContain("aria-label={transferOwnerLabel}");
+    expect(settingsPage).toContain("title={transferOwnerLabel}");
+    expect(settingsPage).toContain("aria-label={removeMemberLabel}");
+    expect(settingsPage).toContain("title={removeMemberLabel}");
     expect(settingsPage).not.toContain("Delete");
-    expect(currentStatus).toContain("role editing and ownership-transfer controls");
+    expect(currentStatus).toContain(
+      "role editing and ownership-transfer controls",
+    );
+    expect(currentStatus).toContain("responsive member and invitation tables");
   });
 });

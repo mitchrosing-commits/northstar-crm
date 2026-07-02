@@ -28,7 +28,11 @@ Editable/filterable field types today are:
 - `DATE`
 - `BOOLEAN`
 
-Unsupported field types such as `SELECT`, `MULTI_SELECT`, and `URL` can exist in data, but current UI treats them as read-only/unsupported for editing and filtering.
+Editable-but-not-filterable field types today are:
+
+- `SELECT`
+
+Unsupported future field types such as multi-select and URL can exist in data, but current UI treats them as read-only/unsupported for editing and filtering.
 
 Current list filtering:
 

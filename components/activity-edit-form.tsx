@@ -1,9 +1,15 @@
 "use client";
 
 import type { Route } from "next";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+
+import { ActivityDueDateShortcuts } from "@/components/activity-due-date-shortcuts";
+import { ActivityDueDateHint, ActivityManualFollowUpHint } from "@/components/activity-form-guidance";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type ActivityType = "CALL" | "EMAIL" | "MEETING" | "TASK";
 
@@ -22,11 +28,18 @@ type ActivityEditFormProps = {
     ownerId: string | null;
     description: string | null;
   };
+  cancelLabel?: string;
   owners: EntityOption[];
   redirectTo: Route;
 };
 
-export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: ActivityEditFormProps) {
+export function ActivityEditForm({
+  workspaceId,
+  activity,
+  cancelLabel = "Back to activity",
+  owners,
+  redirectTo
+}: ActivityEditFormProps) {
   const router = useRouter();
   const [title, setTitle] = useState(activity.title);
   const [type, setType] = useState<ActivityType>(activity.type);
@@ -71,16 +84,16 @@ export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: 
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
-      <p className="form-hint">Manual follow-up only. Due dates help sort work; they do not send reminders.</p>
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      <ActivityManualFollowUpHint />
       <div className="form-grid">
         <label className="form-field form-field-wide">
-          <span>Title</span>
+          <FormFieldLabel required>Title</FormFieldLabel>
           <input onChange={(event) => setTitle(event.target.value)} required value={title} />
         </label>
 
         <label className="form-field">
-          <span>Type</span>
+          <FormFieldLabel>Type</FormFieldLabel>
           <select onChange={(event) => setType(event.target.value as ActivityType)} value={type}>
             <option value="TASK">Task</option>
             <option value="CALL">Call</option>
@@ -90,13 +103,14 @@ export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: 
         </label>
 
         <label className="form-field">
-          <span>Due date</span>
+          <FormFieldLabel>Due date</FormFieldLabel>
           <input onChange={(event) => setDueAt(event.target.value)} type="date" value={dueAt} />
-          <small className="form-hint">Used for work-queue order, not calendar reminders.</small>
+          <ActivityDueDateShortcuts onSelect={setDueAt} />
+          <ActivityDueDateHint />
         </label>
 
         <label className="form-field">
-          <span>Assigned to</span>
+          <FormFieldLabel>Assigned to</FormFieldLabel>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
             <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
@@ -105,20 +119,23 @@ export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: 
               </option>
             ))}
           </select>
-          <OwnerHint owners={owners} />
+          <OwnerAssignmentHint owners={owners} />
         </label>
 
         <label className="form-field form-field-wide">
-          <span>Description</span>
+          <FormFieldLabel>Description</FormFieldLabel>
           <textarea onChange={(event) => setDescription(event.target.value)} rows={3} value={description} />
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !title.trim()} type="submit">
-          {isSaving ? "Saving..." : "Save activity"}
-        </button>
-      </div>
+      <FormActionBar
+        cancelHref={redirectTo}
+        cancelLabel={cancelLabel}
+        disabledHint="Add an activity title before saving."
+        isSaving={isSaving}
+        submitDisabled={!title.trim()}
+        submitLabel="Save activity"
+      />
     </form>
   );
 }
@@ -126,30 +143,4 @@ export function ActivityEditForm({ workspaceId, activity, owners, redirectTo }: 
 function toDateInput(value: Date | string | null) {
   if (!value) return "";
   return new Date(value).toISOString().slice(0, 10);
-}
-
-function OwnerHint({ owners }: { owners: EntityOption[] }) {
-  if (owners.length === 1) {
-    return (
-      <small className="form-hint">
-        You are the only workspace member right now. Invite teammates later from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  if (owners.length === 0) {
-    return (
-      <small className="form-hint">
-        Save unassigned for now, then manage workspace members from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  return null;
 }

@@ -1,9 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormPrefillNotice } from "@/components/form-prefill-notice";
+import { FormRelatedRecordCallout } from "@/components/form-related-record-callout";
+import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type LeadStatus = "NEW" | "QUALIFIED" | "DISQUALIFIED";
 
@@ -31,7 +38,9 @@ type LeadFormProps = {
   defaultOwnerId?: string;
   defaultSource?: string;
   defaultTitle?: string;
+  prefillNotice?: string;
   initialLead?: LeadFormInitial;
+  cancelHref: Route;
 };
 
 export function LeadForm({
@@ -43,7 +52,9 @@ export function LeadForm({
   defaultOwnerId,
   defaultSource,
   defaultTitle,
-  initialLead
+  prefillNotice,
+  initialLead,
+  cancelHref
 }: LeadFormProps) {
   const router = useRouter();
   const defaultCreateOwnerId =
@@ -102,46 +113,38 @@ export function LeadForm({
 
   return (
     <form className="form-card" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       {mode === "create" ? (
-        <p className="empty-copy" style={{ marginBottom: 14 }}>
+        <FormIntroCallout>
           Capture a possible opportunity before it is qualified. Link a contact or organization now, or add those
           records later when you know more.
-        </p>
+        </FormIntroCallout>
+      ) : null}
+      {mode === "create" && prefillNotice ? (
+        <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
       ) : null}
       {mode === "create" && (people.length === 0 || organizations.length === 0) ? (
-        <div className="data-card" style={{ marginBottom: 14 }}>
-          <h2 className="panel-title">Need a related record?</h2>
-          <p className="empty-copy" style={{ marginBottom: 12 }}>
-            Leads can start without a contact or organization. Add one first if you already know the buyer or company.
-          </p>
-          <div className="filter-actions">
-            {people.length === 0 ? (
-              <Link className="button-secondary button-compact" href={"/contacts/new" as Route}>
-                Add a contact
-              </Link>
-            ) : null}
-            {organizations.length === 0 ? (
-              <Link className="button-secondary button-compact" href={"/organizations/new" as Route}>
-                Add an organization
-              </Link>
-            ) : null}
-          </div>
-        </div>
+        <FormRelatedRecordCallout
+          showContactAction={people.length === 0}
+          showOrganizationAction={organizations.length === 0}
+          title="Need a related record?"
+        >
+          Leads can start without a contact or organization. Add one first if you already know the buyer or company.
+        </FormRelatedRecordCallout>
       ) : null}
       <div className="form-grid">
         <label className="form-field form-field-wide">
-          <span>Title</span>
+          <FormFieldLabel required>Title</FormFieldLabel>
           <input onChange={(event) => setTitle(event.target.value)} required value={title} />
         </label>
 
         <label className="form-field">
-          <span>Source</span>
+          <FormFieldLabel>Source</FormFieldLabel>
           <input onChange={(event) => setSource(event.target.value)} value={source} />
         </label>
 
         <label className="form-field">
-          <span>Status</span>
+          <FormFieldLabel>Status</FormFieldLabel>
           <select onChange={(event) => setStatus(event.target.value as LeadStatus)} value={status}>
             <option value="NEW">New</option>
             <option value="QUALIFIED">Qualified</option>
@@ -150,7 +153,7 @@ export function LeadForm({
         </label>
 
         <label className="form-field">
-          <span>Assigned to</span>
+          <FormFieldLabel>Assigned to</FormFieldLabel>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
             <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
@@ -159,11 +162,11 @@ export function LeadForm({
               </option>
             ))}
           </select>
-          <OwnerHint owners={owners} />
+          <OwnerAssignmentHint owners={owners} />
         </label>
 
         <label className="form-field">
-          <span>Person</span>
+          <FormFieldLabel>Person</FormFieldLabel>
           <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
             <option value="">{people.length === 0 ? "No contacts yet - save lead without contact" : "None"}</option>
             {people.map((person) => (
@@ -176,7 +179,7 @@ export function LeadForm({
         </label>
 
         <label className="form-field">
-          <span>Organization</span>
+          <FormFieldLabel>Organization</FormFieldLabel>
           <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
             <option value="">{organizations.length === 0 ? "No organizations yet - save lead without one" : "None"}</option>
             {organizations.map((organization) => (
@@ -189,40 +192,14 @@ export function LeadForm({
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !title.trim()} type="submit">
-          {isSaving ? "Saving..." : mode === "create" ? "Create lead" : "Save changes"}
-        </button>
-        <button className="button-secondary" onClick={() => router.back()} type="button">
-          Cancel
-        </button>
-      </div>
+      <FormActionBar
+        cancelHref={cancelHref}
+        cancelLabel={mode === "create" ? "Back to leads" : "Back to lead"}
+        disabledHint="Add a lead title before saving."
+        isSaving={isSaving}
+        submitDisabled={!title.trim()}
+        submitLabel={mode === "create" ? "Create lead" : "Save changes"}
+      />
     </form>
   );
-}
-
-function OwnerHint({ owners }: { owners: EntityOption[] }) {
-  if (owners.length === 1) {
-    return (
-      <small className="form-hint">
-        You are the only workspace member right now. Invite teammates later from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  if (owners.length === 0) {
-    return (
-      <small className="form-hint">
-        Save unassigned for now, then manage workspace members from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  return null;
 }

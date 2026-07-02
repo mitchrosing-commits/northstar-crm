@@ -1,6 +1,6 @@
 # Background Jobs / Event Outbox Foundation Design
 
-Status: Background Jobs v1 Slices A through F and a small operational queue-status command are implemented. Northstar now has a DB-backed `Job` table, internal job service foundation, explicit handler registry, harmless `internal.noop` handler, queued `auth.password_reset_email` handler, `npm run jobs:status` aggregate status command, `npm run jobs:run-once` single-batch worker command, `npm run jobs:work` continuous worker mode, stale `RUNNING` job recovery in continuous mode, and `npm run jobs:cleanup` terminal retention cleanup. No broader product job handlers, event outbox, automations, reminders, webhooks platform, integrations, or async import processing is implemented yet.
+Status: Background Jobs v1 Slices A through F and a small operational queue-status command are implemented. Northstar now has a DB-backed `Job` table, internal job service foundation, explicit handler registry, harmless `internal.noop` handler, queued `auth.password_reset_email` handler, `npm run jobs:status` aggregate status command, `npm run jobs:run-once` single-batch worker command, `npm run jobs:work` continuous worker mode, stale `RUNNING` job recovery with max-attempt dead-lettering in continuous mode, and `npm run jobs:cleanup` terminal retention cleanup. No broader product job handlers, event outbox, automations, reminders, webhooks platform, integrations, or async import processing is implemented yet.
 
 ## Objective
 
@@ -225,7 +225,7 @@ Unit/source tests:
 
 - job type constants and payload validators.
 - enqueue function rejects unknown payload shapes.
-- enqueue function sets `workspaceId`, `type`, `payload`, `runAt`, `maxAttempts`, and optional `dedupeKey`.
+- enqueue function sets `workspaceId`, `type`, `payload`, `runAt`, `maxAttempts`, and optional `dedupeKey`; `maxAttempts` is validated against the current integer storage limit before writing.
 - password reset flow enqueues without exposing account existence.
 
 Integration tests:
@@ -273,6 +273,7 @@ Configuration:
 - `JOB_WORKER_ID`: optional worker id. Default should be stable and non-secret, for example `jobs-work-<pid>`.
 - `JOBS_BATCH_SIZE`: positive integer, default `10`, capped by the existing claim limit cap.
 - `JOBS_POLL_INTERVAL_MS`: positive integer, default `5000`. Invalid, zero, or negative values fall back to the default to avoid tight DB polling.
+- `JOBS_STALE_AFTER_MS`: positive integer stale lock timeout for `jobs:work`, default `15 minutes`. Invalid, zero, or negative values fall back to the default to avoid stealing active work.
 - `JOBS_IDLE_EXIT_AFTER_MS`: optional test/dev escape hatch only. If set, exit after this much idle time with no claimed jobs. Production should omit it.
 
 Graceful shutdown:
@@ -300,11 +301,12 @@ Implemented for continuous worker mode.
 
 Recommended policy:
 
-- A `RUNNING` job is stale when `lockedAt < now - JOBS_STALE_RUNNING_TIMEOUT_MS`.
+- A `RUNNING` job is stale when `lockedAt < now - JOBS_STALE_AFTER_MS`.
 - Default timeout: `15 minutes`.
 - Invalid, zero, or negative timeout config falls back to the 15-minute default.
-- Recovery should release stale jobs back to `PENDING`, clear `lockedAt` and `lockedBy`, and set `runAt = now`.
+- Recovery should release retryable stale jobs back to `PENDING`, clear `lockedAt` and `lockedBy`, and set `runAt = now`.
 - Recovery should not increment `attempts`; attempts already incremented when the job was claimed. Reprocessing the released job will increment attempts on the next claim.
+- Stale jobs that have already reached `maxAttempts` should move to `DEAD` with a generic non-payload error instead of being requeued for an extra attempt.
 - Do not recover jobs with `lockedAt` null unless they are `RUNNING`; that state should be treated as invalid and fixed explicitly by the recovery query.
 
 Implemented shape:
@@ -323,7 +325,8 @@ Avoid stealing active work:
 
 Tests for stale recovery:
 
-- stale `RUNNING` job is released to `PENDING`.
+- retryable stale `RUNNING` job is released to `PENDING`.
+- max-attempt stale `RUNNING` job is marked `DEAD`.
 - recent `RUNNING` job is not released.
 - released stale job clears lock fields and keeps attempts unchanged.
 - continuous worker can recover and then process a stale job.
@@ -337,7 +340,7 @@ Retention policy:
 
 - `SUCCEEDED`: delete after 7 days by default.
 - `DEAD`: retain for 30 days by default.
-- `FAILED`: do not delete while non-terminal and potentially retryable.
+- `FAILED`: do not delete while non-terminal. The current retry path requeues retryable failures as `PENDING` with a future `runAt`.
 - `RUNNING`: do not delete; stale recovery should handle these.
 - `PENDING`: do not delete; they are queued work.
 
@@ -392,11 +395,11 @@ Deployment docs now include:
 - `JOBS_POLL_INTERVAL_MS`, `JOBS_BATCH_SIZE`, `JOBS_STALE_AFTER_MS`, `JOBS_RETAIN_SUCCEEDED_DAYS`, `JOBS_RETAIN_DEAD_DAYS`, and `JOB_WORKER_ID`.
 - a reminder that no automations, reminders, webhooks platform, integrations, or general email sending are enabled by the worker in v1.
 
-### Future Tests
+### Implemented Stability Tests
 
 Continuous worker tests:
 
-- worker processes a queued `internal.noop` or password-reset email job and continues polling.
+- worker processes queued `internal.noop` and password-reset email jobs and continues polling.
 - worker exits cleanly after idle timeout in test mode.
 - worker stops polling on simulated shutdown and finishes the current batch.
 - worker respects `JOBS_BATCH_SIZE` and `JOBS_POLL_INTERVAL_MS`.
@@ -406,9 +409,9 @@ Continuous worker tests:
 
 Password reset tests:
 
-- queued reset delivery still succeeds through the continuous worker.
+- queued reset delivery succeeds through both one-batch and continuous workers.
 - failed webhook delivery retries/dead-letters through existing semantics.
-- stale queued reset links remain harmless because token consumption/expiry is checked at reset time.
+- stale queued reset links remain harmless because token consumption/expiry is checked before provider delivery and again at reset time.
 
 Retention tests:
 
@@ -416,6 +419,8 @@ Retention tests:
 - cleanup deletes old `DEAD` jobs according to the longer retention window.
 - cleanup skips `PENDING`, `RUNNING`, and retryable jobs.
 - cleanup output is aggregate-only.
+
+Future coverage should stay focused on regressions in new job types, new provider boundaries, or new operational surfaces. Do not add broader automations, reminders, webhooks platform, or async import processing under Background Jobs v1 without a separate product scope.
 
 ## Implementation Plan
 
@@ -455,8 +460,8 @@ Operational queue status command: Implemented.
 
 - Add `npm run jobs:status`.
 - Report counts by `JobStatus`.
-- Report due pending count, future pending count, running count through status totals, failed/dead counts through status totals, oldest due pending `runAt`, and counts by job type.
-- Keep output aggregate-only: no payloads, reset URLs, tokens, recipient emails, dedupe keys, last errors, or secrets.
+- Report due pending count, future pending count, running count through status totals, failed/dead counts through status totals, oldest due pending `runAt`, registered-safe job type counts, and a single `unregistered` count for any other job types.
+- Keep output aggregate-only: no payloads, arbitrary/unregistered job type names, reset URLs, tokens, recipient emails, dedupe keys, last errors, or secrets.
 - Exit cleanly when the queue is empty.
 
 Slice D: Continuous worker mode. Implemented.
@@ -480,17 +485,17 @@ Slice E: Stale RUNNING job recovery. Implemented.
 - Continuous worker should run recovery periodically before claiming due jobs.
 - Manual recovery command remains optional/deferred.
 
-Implementation note: `recoverStaleRunningJobs` releases only `RUNNING` jobs whose `lockedAt` is older than `JOBS_STALE_AFTER_MS`, clears `lockedAt`/`lockedBy`, sets `runAt = now`, and preserves attempts plus `lastError`. `jobs:work` runs recovery before each batch and prints aggregate recovery counts only when jobs are recovered. `jobs:run-once` does not run recovery.
+Implementation note: `recoverStaleRunningJobs` handles only `RUNNING` jobs whose `lockedAt` is older than `JOBS_STALE_AFTER_MS`; retryable stale jobs clear `lockedAt`/`lockedBy`, set `runAt = now`, and preserve attempts plus `lastError`, while stale jobs already at `maxAttempts` move to `DEAD` with a generic error. `jobs:work` runs recovery before each batch and prints aggregate recovery/dead-letter counts only when jobs are recovered or dead-lettered. `jobs:run-once` does not run recovery.
 
 Slice F: Terminal job retention cleanup. Implemented.
 
 - Define `SUCCEEDED` retention around 7 days.
 - Define `DEAD` retention around 30 days.
-- Skip `PENDING`, `RUNNING`, and retryable jobs.
+- Skip `PENDING` retryable jobs, `RUNNING` jobs, and non-terminal `FAILED` rows.
 - Prefer a maintenance command such as `npm run jobs:cleanup` over a cleanup job type for v1.
 - Keep cleanup output aggregate-only and payload-free.
 
-Implementation note: `cleanupTerminalJobs` deletes only `SUCCEEDED` jobs older than the succeeded retention window by `processedAt` and `DEAD` jobs older than the dead retention window by `failedAt`. It leaves `PENDING`, `RUNNING`, and retryable `FAILED` jobs untouched and returns aggregate counts only. The `jobs:cleanup` command prints only aggregate counts, retention windows, and cutoff timestamps.
+Implementation note: `cleanupTerminalJobs` deletes only `SUCCEEDED` jobs older than the succeeded retention window by `processedAt` and `DEAD` jobs older than the dead retention window by `failedAt`, including old terminal rows for deleted workspaces. It leaves `PENDING` retryable jobs, `RUNNING` jobs, and non-terminal `FAILED` rows untouched and returns aggregate counts only. The `jobs:cleanup` command prints only aggregate counts, retention windows, and cutoff timestamps.
 
 Slice G: Continuous-worker documentation and ops readiness. Implemented for Slice D.
 

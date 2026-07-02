@@ -7,16 +7,17 @@ import { acceptPublicQuoteByToken } from "@/lib/services/crm";
 
 export async function acceptPublicQuoteAction(formData: FormData) {
   const token = String(formData.get("token") ?? "");
+  const redirectToken = encodeURIComponent(token);
 
   try {
     await acceptPublicQuoteByToken(token);
   } catch (error) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
-    if (error instanceof ApiError && error.code === "VALIDATION_ERROR") {
-      redirect(`/q/${token}?acceptance=unavailable`);
+    if (error instanceof ApiError && (error.code === "VALIDATION_ERROR" || error.code === "DEAL_CLOSED")) {
+      redirect(`/q/${redirectToken}?acceptance=unavailable`);
     }
     throw error;
   }
 
-  redirect(`/q/${token}?accepted=1`);
+  redirect(`/q/${redirectToken}?accepted=1`);
 }

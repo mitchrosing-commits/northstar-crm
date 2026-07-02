@@ -13,12 +13,18 @@ import {
 import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 import { ensureDefaultPipelineForWorkspace } from "./pipeline-service";
 import { userDisplaySelect } from "./user-select";
+import { validateWorkspaceName, validateWorkspaceSlug } from "@/lib/workspace-validation";
+
+type CreateWorkspaceInput = {
+  name: unknown;
+  slug: unknown;
+};
 
 export async function listWorkspaces(actorUserId: string) {
   return prisma.workspace.findMany({
     where: {
       deletedAt: null,
-      memberships: { some: { userId: actorUserId } }
+      memberships: { some: { userId: actorUserId, user: { deletedAt: null } } }
     },
     orderBy: { name: "asc" }
   });
@@ -28,6 +34,7 @@ export async function listWorkspaceMembershipOptions(actorUserId: string) {
   const memberships = await prisma.workspaceMembership.findMany({
     where: {
       userId: actorUserId,
+      user: { deletedAt: null },
       workspace: { deletedAt: null }
     },
     select: {
@@ -58,18 +65,29 @@ export async function listWorkspaceMembershipOptions(actorUserId: string) {
   }));
 }
 
-export async function createWorkspace(actorUserId: string, data: Prisma.WorkspaceCreateInput) {
-  const workspace = await prisma.workspace.create({
-    data: {
-      ...data,
-      memberships: {
-        create: {
-          userId: actorUserId,
-          role: workspaceOwnerRole
+export async function createWorkspace(actorUserId: string, data: CreateWorkspaceInput) {
+  const normalizedName = validateWorkspaceName(data.name);
+  const normalizedSlug = validateWorkspaceSlug(data.slug);
+  await assertWorkspaceSlugAvailable(normalizedSlug);
+  const workspace = await prisma.workspace
+    .create({
+      data: {
+        name: normalizedName,
+        slug: normalizedSlug,
+        memberships: {
+          create: {
+            userId: actorUserId,
+            role: workspaceOwnerRole
+          }
         }
       }
-    }
-  });
+    })
+    .catch((error: unknown) => {
+      if (isUniqueConstraintError(error)) {
+        throw new ApiError("WORKSPACE_SLUG_EXISTS", "A workspace with this slug already exists.", 409);
+      }
+      throw error;
+    });
   await writeAuditLog(
     { workspaceId: workspace.id, actorUserId },
     "workspace.created",
@@ -81,12 +99,19 @@ export async function createWorkspace(actorUserId: string, data: Prisma.Workspac
   return workspace;
 }
 
-export async function createWorkspaceFromName(actorUserId: string, name: string) {
-  const normalizedName = normalizeWorkspaceName(name);
+async function assertWorkspaceSlugAvailable(slug: string) {
+  const existing = await prisma.workspace.findUnique({
+    where: { slug },
+    select: { id: true }
+  });
 
-  if (!normalizedName) {
-    throw new ApiError("VALIDATION_ERROR", "Workspace name is required.", 422);
+  if (existing) {
+    throw new ApiError("WORKSPACE_SLUG_EXISTS", "A workspace with this slug already exists.", 409);
   }
+}
+
+export async function createWorkspaceFromName(actorUserId: string, name: string) {
+  const normalizedName = validateWorkspaceName(name);
 
   return createWorkspace(actorUserId, {
     name: normalizedName,
@@ -98,7 +123,12 @@ export async function getWorkspace(actor: WorkspaceActor) {
   await ensureWorkspaceAccess(actor);
   const workspace = await prisma.workspace.findFirst({
     where: { id: actor.workspaceId, deletedAt: null },
-    include: { memberships: { include: { user: { select: userDisplaySelect } } } }
+    include: {
+      memberships: {
+        where: { user: { deletedAt: null } },
+        include: { user: { select: userDisplaySelect } }
+      }
+    }
   });
   if (!workspace) throw new ApiError("NOT_FOUND", "Workspace was not found.", 404);
   return workspace;
@@ -113,6 +143,7 @@ export async function getWorkspaceMembershipSummary(actor: WorkspaceActor) {
       name: true,
       slug: true,
       memberships: {
+        where: { user: { deletedAt: null } },
         select: {
           id: true,
           role: true,
@@ -190,7 +221,7 @@ export async function createWorkspaceInvitation(
   await ensureWorkspaceSettingsAdmin(actor);
 
   const email = normalizeInvitationEmail(input.email);
-  const role = input.role ?? "MEMBER";
+  const role = normalizeInvitationRole(input.role);
 
   if (!email) {
     throw new ApiError("VALIDATION_ERROR", "Invitee email is required.", 422);
@@ -198,10 +229,6 @@ export async function createWorkspaceInvitation(
 
   if (!isValidInvitationEmail(email)) {
     throw new ApiError("VALIDATION_ERROR", "Invitee email must be valid.", 422);
-  }
-
-  if (role === "OWNER") {
-    throw new ApiError("VALIDATION_ERROR", "Workspace invitations cannot grant owner access.", 422);
   }
 
   const invitedUser = await prisma.user.findFirst({
@@ -250,6 +277,11 @@ export async function createWorkspaceInvitation(
       role,
       invitedById: actor.actorUserId
     }
+  }).catch((error: unknown) => {
+    if (isUniqueConstraintError(error)) {
+      throw new ApiError("VALIDATION_ERROR", "A pending invitation already exists for this email.", 422);
+    }
+    throw error;
   });
 
   await writeAuditLog(
@@ -303,7 +335,8 @@ export async function removeWorkspaceMember(actor: WorkspaceActor, membershipId:
   const membership = await prisma.workspaceMembership.findFirst({
     where: {
       id: membershipId,
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
+      user: { deletedAt: null }
     },
     include: {
       user: { select: userDisplaySelect }
@@ -322,6 +355,7 @@ export async function removeWorkspaceMember(actor: WorkspaceActor, membershipId:
     const adminCount = await prisma.workspaceMembership.count({
       where: {
         workspaceId: actor.workspaceId,
+        user: { deletedAt: null },
         role: { in: ["OWNER", "ADMIN"] }
       }
     });
@@ -419,40 +453,63 @@ export async function transferWorkspaceOwnership(actor: WorkspaceActor, targetMe
     throw new ApiError("FORBIDDEN", "Only the workspace owner can transfer ownership.", 403);
   }
 
-  const targetMembership = await findWorkspaceMembershipOrThrow(actor.workspaceId, targetMembershipId);
+  const { newOwner, previousOwner } = await prisma.$transaction(async (tx) => {
+    await lockWorkspaceMembershipRoles(tx, actor.workspaceId);
 
-  if (targetMembership.userId === actor.actorUserId) {
-    throw new ApiError("VALIDATION_ERROR", "Choose another workspace member to receive ownership.", 422);
-  }
+    const targetMembership = await tx.workspaceMembership.findFirst({
+      where: {
+        id: targetMembershipId,
+        workspaceId: actor.workspaceId,
+        user: { deletedAt: null }
+      },
+      include: {
+        user: { select: userDisplaySelect }
+      }
+    });
 
-  const previousOwner = await prisma.workspaceMembership.findFirst({
-    where: {
-      workspaceId: actor.workspaceId,
-      userId: actor.actorUserId,
-      role: "OWNER"
-    },
-    include: {
-      user: { select: userDisplaySelect }
+    if (!targetMembership) {
+      throw new ApiError("NOT_FOUND", "Workspace member was not found.", 404);
     }
-  });
 
-  if (!previousOwner) {
-    throw new ApiError("FORBIDDEN", "Only the workspace owner can transfer ownership.", 403);
-  }
+    if (targetMembership.userId === actor.actorUserId) {
+      throw new ApiError("VALIDATION_ERROR", "Choose another workspace member to receive ownership.", 422);
+    }
 
-  const [newOwner] = await prisma.$transaction([
-    prisma.workspaceMembership.update({
+    const previousOwner = await tx.workspaceMembership.findFirst({
+      where: {
+        workspaceId: actor.workspaceId,
+        userId: actor.actorUserId,
+        role: "OWNER",
+        user: { deletedAt: null }
+      },
+      include: {
+        user: { select: userDisplaySelect }
+      }
+    });
+
+    if (!previousOwner) {
+      throw new ApiError("FORBIDDEN", "Only the workspace owner can transfer ownership.", 403);
+    }
+
+    const newOwner = await tx.workspaceMembership.update({
       where: { id: targetMembership.id },
       data: { role: "OWNER" },
       include: {
         user: { select: userDisplaySelect }
       }
-    }),
-    prisma.workspaceMembership.update({
-      where: { id: previousOwner.id },
+    });
+
+    await tx.workspaceMembership.updateMany({
+      where: {
+        workspaceId: actor.workspaceId,
+        role: "OWNER",
+        id: { not: newOwner.id }
+      },
       data: { role: "ADMIN" }
-    })
-  ]);
+    });
+
+    return { newOwner, previousOwner };
+  });
 
   await writeAuditLog(actor, "workspace_member.ownership_transferred", "WorkspaceMembership", newOwner.id, {
     previousOwnerUserId: previousOwner.userId,
@@ -472,10 +529,15 @@ export async function transferWorkspaceOwnership(actor: WorkspaceActor, targetMe
   };
 }
 
+async function lockWorkspaceMembershipRoles(client: Pick<Prisma.TransactionClient, "$executeRaw">, workspaceId: string) {
+  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`workspace-membership:${workspaceId}`}), 0)`;
+}
+
 export async function getWorkspaceInvitationForAcceptance(actorUserId: string, invitationId: string) {
   const user = await getActiveInvitationUser(actorUserId);
   const invitation = await findAcceptableInvitation(invitationId);
 
+  assertInvitationRoleIsAcceptable(invitation.role);
   assertInvitationMatchesUser(invitation.email, user.email);
   await assertAcceptedInvitationStillHasMembership(invitation, user.id);
 
@@ -493,29 +555,35 @@ export async function acceptWorkspaceInvitation(actorUserId: string, invitationI
   const user = await getActiveInvitationUser(actorUserId);
   const invitation = await findAcceptableInvitation(invitationId);
 
+  assertInvitationRoleIsAcceptable(invitation.role);
   assertInvitationMatchesUser(invitation.email, user.email);
   await assertAcceptedInvitationStillHasMembership(invitation, user.id);
 
   await prisma.$transaction(async (tx) => {
-    await tx.workspaceMembership.upsert({
-      where: {
-        workspaceId_userId: {
-          workspaceId: invitation.workspaceId,
-          userId: user.id
-        }
-      },
-      update: {},
-      create: {
-        workspaceId: invitation.workspaceId,
-        userId: user.id,
-        role: invitation.role
-      }
-    });
-
     if (invitation.status === WorkspaceInvitationStatus.PENDING) {
-      await tx.workspaceInvitation.update({
-        where: { id: invitation.id },
+      const accepted = await tx.workspaceInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          status: WorkspaceInvitationStatus.PENDING,
+          workspace: { deletedAt: null }
+        },
         data: { status: WorkspaceInvitationStatus.ACCEPTED }
+      });
+
+      if (accepted.count !== 1) {
+        await handlePendingInvitationClaimMiss(tx, invitation, user.id);
+        return;
+      }
+
+      await tx.workspaceMembership.createMany({
+        data: [
+          {
+            workspaceId: invitation.workspaceId,
+            userId: user.id,
+            role: invitation.role
+          }
+        ],
+        skipDuplicates: true
       });
       await tx.auditLog.create({
         data: {
@@ -527,18 +595,29 @@ export async function acceptWorkspaceInvitation(actorUserId: string, invitationI
           metadata: { email: invitation.email, role: invitation.role }
         }
       });
+      return;
     }
+
+    await assertAcceptedInvitationMembershipInTransaction(tx, invitation.workspaceId, user.id);
   });
 
   return invitation.workspace;
 }
 
-function normalizeWorkspaceName(name: string) {
-  return name.trim().replace(/\s+/g, " ");
+function normalizeInvitationEmail(email: unknown) {
+  if (typeof email !== "string") return "";
+  return email.trim().toLowerCase();
 }
 
-function normalizeInvitationEmail(email: string) {
-  return email.trim().toLowerCase();
+function normalizeInvitationRole(role: unknown) {
+  if (role === undefined) return "MEMBER";
+  if (role === "OWNER") {
+    throw new ApiError("VALIDATION_ERROR", "Workspace invitations cannot grant owner access.", 422);
+  }
+  if (role !== "ADMIN" && role !== "MEMBER") {
+    throw new ApiError("VALIDATION_ERROR", "Workspace invitation role must be Admin or Member.", 422);
+  }
+  return role;
 }
 
 function isValidInvitationEmail(email: string) {
@@ -559,7 +638,8 @@ async function findWorkspaceMembershipOrThrow(workspaceId: string, membershipId:
   const membership = await prisma.workspaceMembership.findFirst({
     where: {
       id: membershipId,
-      workspaceId
+      workspaceId,
+      user: { deletedAt: null }
     },
     include: {
       user: { select: userDisplaySelect }
@@ -586,6 +666,7 @@ async function assertWorkspaceKeepsAdmin(workspaceId: string, changingUserId: st
     where: {
       workspaceId,
       userId: { not: changingUserId },
+      user: { deletedAt: null },
       role: { in: ["OWNER", "ADMIN"] }
     }
   });
@@ -639,18 +720,42 @@ function assertInvitationMatchesUser(invitationEmail: string, userEmail: string)
   }
 }
 
-async function assertAcceptedInvitationStillHasMembership(
+function assertInvitationRoleIsAcceptable(role: MembershipRole) {
+  if (role === "OWNER") {
+    throw new ApiError("VALIDATION_ERROR", "Workspace invitations cannot grant owner access.", 422);
+  }
+}
+
+async function handlePendingInvitationClaimMiss(
+  tx: Prisma.TransactionClient,
   invitation: Awaited<ReturnType<typeof findAcceptableInvitation>>,
   userId: string
 ) {
-  if (invitation.status !== WorkspaceInvitationStatus.ACCEPTED) {
+  const currentInvitation = await tx.workspaceInvitation.findFirst({
+    where: {
+      id: invitation.id,
+      workspace: { deletedAt: null }
+    },
+    select: { status: true }
+  });
+
+  if (currentInvitation?.status === WorkspaceInvitationStatus.ACCEPTED) {
+    await assertAcceptedInvitationMembershipInTransaction(tx, invitation.workspaceId, userId);
     return;
   }
 
-  const membership = await prisma.workspaceMembership.findUnique({
+  throw new ApiError("NOT_FOUND", "Workspace invitation was not found.", 404);
+}
+
+async function assertAcceptedInvitationMembershipInTransaction(
+  tx: Pick<Prisma.TransactionClient, "workspaceMembership">,
+  workspaceId: string,
+  userId: string
+) {
+  const membership = await tx.workspaceMembership.findUnique({
     where: {
       workspaceId_userId: {
-        workspaceId: invitation.workspaceId,
+        workspaceId,
         userId
       }
     },
@@ -660,6 +765,17 @@ async function assertAcceptedInvitationStillHasMembership(
   if (!membership) {
     throw new ApiError("NOT_FOUND", "Workspace invitation was already accepted and is no longer available.", 404);
   }
+}
+
+async function assertAcceptedInvitationStillHasMembership(
+  invitation: Awaited<ReturnType<typeof findAcceptableInvitation>>,
+  userId: string
+) {
+  if (invitation.status !== WorkspaceInvitationStatus.ACCEPTED) {
+    return;
+  }
+
+  await assertAcceptedInvitationMembershipInTransaction(prisma, invitation.workspaceId, userId);
 }
 
 function workspaceSlugBase(name: string) {
@@ -693,4 +809,8 @@ async function generateUniqueWorkspaceSlug(name: string) {
   }
 
   return `${base}-${suffix}`;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }

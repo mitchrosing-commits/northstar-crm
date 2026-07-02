@@ -1002,6 +1002,7 @@ function contractStatusOptions() {
 
 async function resetWorkspace(workspaceId: string) {
   await prisma.job.deleteMany({ where: { workspaceId } });
+  await prisma.meetingIntake.deleteMany({ where: { workspaceId } });
   await prisma.auditLog.deleteMany({ where: { workspaceId } });
   await prisma.savedView.deleteMany({ where: { workspaceId } });
   await prisma.customFieldValue.deleteMany({ where: { workspaceId } });

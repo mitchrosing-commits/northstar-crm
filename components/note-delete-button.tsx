@@ -3,12 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { FormErrorMessage } from "@/components/form-error-message";
+
 type NoteDeleteButtonProps = {
+  ariaLabel?: string;
   noteId: string;
   workspaceId: string;
 };
 
-export function NoteDeleteButton({ noteId, workspaceId }: NoteDeleteButtonProps) {
+export function NoteDeleteButton({ ariaLabel, noteId, workspaceId }: NoteDeleteButtonProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -36,10 +39,17 @@ export function NoteDeleteButton({ noteId, workspaceId }: NoteDeleteButtonProps)
 
   return (
     <>
-      <button className="button-secondary button-compact" disabled={isDeleting} onClick={deleteNote} type="button">
+      <button
+        aria-label={ariaLabel}
+        className="button-secondary button-compact"
+        disabled={isDeleting}
+        onClick={deleteNote}
+        title={ariaLabel}
+        type="button"
+      >
         {isDeleting ? "Removing..." : "Remove"}
       </button>
-      {error ? <p className="form-error compact-error">{error}</p> : null}
+      {error ? <FormErrorMessage compact>{error}</FormErrorMessage> : null}
     </>
   );
 }

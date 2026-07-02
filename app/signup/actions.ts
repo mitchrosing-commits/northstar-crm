@@ -6,13 +6,16 @@ import type { Route } from "next";
 
 import { ApiError } from "@/lib/api/responses";
 import { signupWithEmailAndPassword } from "@/lib/auth/local-auth";
+import { sanitizeAuthNextPath } from "@/lib/auth/next-path";
 import { activeWorkspaceCookieName } from "@/lib/auth/request-context";
 import {
   localSessionCookieName,
   resolveAuthMode,
   serializeLocalSessionCookieValue
 } from "@/lib/auth/session";
+import { redactSensitiveText } from "@/lib/security/redaction";
 import { createWorkspaceFromName } from "@/lib/services/crm";
+import { validateWorkspaceName } from "@/lib/workspace-validation";
 
 export type SignupActionState = {
   email: string;
@@ -37,14 +40,12 @@ export async function signupAction(
   const name = String(formData.get("name") ?? "");
   const password = String(formData.get("password") ?? "");
   const workspaceName = String(formData.get("workspaceName") ?? "");
-  const nextPath = sanitizeNextPath(String(formData.get("next") ?? ""));
+  const nextPath = sanitizeAuthNextPath(String(formData.get("next") ?? ""));
   let session: Awaited<ReturnType<typeof signupWithEmailAndPassword>>["session"];
   let workspaceId: string;
 
   try {
-    if (!workspaceName.trim()) {
-      return { email, name, workspaceName, error: "Workspace name is required." };
-    }
+    const normalizedWorkspaceName = validateWorkspaceName(workspaceName);
 
     if (resolveAuthMode() !== "local") {
       return {
@@ -57,11 +58,11 @@ export async function signupAction(
 
     const result = await signupWithEmailAndPassword({ email, name, password });
     session = result.session;
-    const workspace = await createWorkspaceFromName(result.user.id, workspaceName);
+    const workspace = await createWorkspaceFromName(result.user.id, normalizedWorkspaceName);
     workspaceId = workspace.id;
   } catch (error) {
     if (error instanceof ApiError) {
-      return { email, name, workspaceName, error: error.message };
+      return { email, name, workspaceName, error: redactSensitiveText(error.message) };
     }
 
     return { email, name, workspaceName, error: "Signup failed." };
@@ -77,10 +78,4 @@ export async function signupAction(
   });
   cookieStore.set(activeWorkspaceCookieName, workspaceId, activeWorkspaceCookieOptions);
   redirect(nextPath as Route);
-}
-
-function sanitizeNextPath(nextPath: string) {
-  if (!nextPath.startsWith("/") || nextPath.startsWith("//")) return "/dashboard";
-  if (nextPath.startsWith("/login") || nextPath.startsWith("/signup")) return "/dashboard";
-  return nextPath;
 }

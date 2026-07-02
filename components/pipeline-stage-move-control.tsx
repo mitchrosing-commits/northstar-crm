@@ -34,6 +34,11 @@ export function PipelineStageMoveControl({
   const canMove = status === "OPEN" && stages.length > 1;
   const selectedStage = useMemo(() => stages.find((stage) => stage.id === stageId), [stageId, stages]);
   const unchanged = stageId === currentStageId;
+  const helperId = `pipeline-move-${dealId}-helper`;
+  const selectLabel = `Choose a new stage for ${dealTitle}`;
+  const moveActionLabel = isSaving ? `Moving ${dealTitle}` : `Move ${dealTitle} to ${selectedStage?.name ?? "selected stage"}`;
+  const disabledReason = pipelineMoveDisabledReason({ canMove, isSaving, status, stages, unchanged });
+  const moveTitle = disabledReason ? `${moveActionLabel}: ${disabledReason}` : moveActionLabel;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -65,10 +70,12 @@ export function PipelineStageMoveControl({
         Move
       </label>
       <select
-        aria-label={`Move ${dealTitle} to stage`}
+        aria-describedby={helperId}
+        aria-label={selectLabel}
         disabled={!canMove || isSaving}
         id={`pipeline-move-${dealId}`}
         onChange={(event) => setStageId(event.target.value)}
+        title={selectLabel}
         value={stageId}
       >
         {stages.map((stage) => (
@@ -77,10 +84,41 @@ export function PipelineStageMoveControl({
           </option>
         ))}
       </select>
-      <button className="button-secondary button-compact" disabled={!canMove || unchanged || isSaving} type="submit">
+      <button
+        aria-describedby={disabledReason ? helperId : undefined}
+        aria-label={moveActionLabel}
+        className="button-secondary button-compact"
+        disabled={!canMove || unchanged || isSaving}
+        title={moveTitle}
+        type="submit"
+      >
         {isSaving ? "Moving..." : "Move"}
       </button>
+      <span className="sr-only" id={helperId}>
+        {disabledReason ?? `Move ${dealTitle} from its current stage to ${selectedStage?.name ?? "the selected stage"}.`}
+      </span>
       {error ? <p className="pipeline-card-move-error">{error}</p> : null}
     </form>
   );
+}
+
+function pipelineMoveDisabledReason({
+  canMove,
+  isSaving,
+  status,
+  stages,
+  unchanged
+}: {
+  canMove: boolean;
+  isSaving: boolean;
+  status: string;
+  stages: StageOption[];
+  unchanged: boolean;
+}) {
+  if (isSaving) return "Stage move is in progress.";
+  if (status !== "OPEN") return "Closed deals cannot be moved from the pipeline board.";
+  if (stages.length <= 1) return "Add another stage before moving deals on the board.";
+  if (!canMove) return "This deal cannot be moved from the pipeline board.";
+  if (unchanged) return "Choose a different stage before moving this deal.";
+  return null;
 }

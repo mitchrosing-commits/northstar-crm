@@ -3,7 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Badge } from "@/components/badge";
+import { FormErrorMessage } from "@/components/form-error-message";
 import { formatMoney } from "@/components/format";
+import { PanelTitleRow } from "@/components/panel-title-row";
 
 type QuoteDealValueSyncActionProps = {
   workspaceId: string;
@@ -26,6 +29,11 @@ export function QuoteDealValueSyncAction({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const alreadySynced = dealValueCents === quoteTotalCents && dealCurrency === quoteCurrency;
+  const syncActionLabel = alreadySynced
+    ? "Deal value is already synced to this accepted quote"
+    : isSaving
+      ? "Syncing accepted quote total to deal value"
+      : "Sync accepted quote total to deal value";
 
   async function syncDealValue() {
     setError(null);
@@ -47,15 +55,13 @@ export function QuoteDealValueSyncAction({
   }
 
   return (
-    <section className="data-card" style={{ marginTop: 14 }}>
-      <div className="panel-title-row">
-        <h2 className="panel-title">Deal Value Sync</h2>
-        <span className="badge">Manual</span>
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 14 }}>
-        Syncing is manual, including after customer acceptance. Public acceptance does not run this step automatically; this action updates the deal value and currency from the accepted quote snapshot so reports and exports use the accepted total.
-      </p>
-      <div className="deal-context-metrics" style={{ marginBottom: 14 }}>
+    <section className="data-card section-spaced">
+      <PanelTitleRow
+        actions={<Badge label="Deal value sync is a manual action">Manual</Badge>}
+        description="Syncing is manual, including after customer acceptance. Public acceptance does not run this step automatically; this action updates the deal value and currency from the accepted quote snapshot so reports and exports use the accepted total."
+        title="Deal Value Sync"
+      />
+      <div className="deal-context-metrics panel-metric-strip">
         <div>
           <span>Current deal value</span>
           <strong>{formatMoney(dealValueCents, dealCurrency)}</strong>
@@ -65,8 +71,15 @@ export function QuoteDealValueSyncAction({
           <strong>{formatMoney(quoteTotalCents, quoteCurrency)}</strong>
         </div>
       </div>
-      {error ? <div className="form-error">{error}</div> : null}
-      <button className="button-primary button-compact" disabled={isSaving || alreadySynced} onClick={syncDealValue} type="button">
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      <button
+        aria-label={syncActionLabel}
+        className="button-primary button-compact"
+        disabled={isSaving || alreadySynced}
+        onClick={syncDealValue}
+        title={syncActionLabel}
+        type="button"
+      >
         {alreadySynced ? "Deal value synced" : isSaving ? "Syncing..." : "Sync quote total to deal value"}
       </button>
     </section>

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { ApiError } from "@/lib/api/responses";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { updateCurrentUserDisplayName } from "@/lib/auth/account";
+import { redactSensitiveText } from "@/lib/security/redaction";
 
 export type AccountSettingsActionState = {
   name: string;
@@ -33,7 +34,7 @@ export async function updateAccountDisplayNameAction(
     }
 
     if (error instanceof ApiError) {
-      return { name, error: error.message };
+      return { name, error: redactSensitiveText(error.message) };
     }
 
     return { name, error: "Account settings could not be updated." };

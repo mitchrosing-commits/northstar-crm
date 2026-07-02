@@ -2,6 +2,8 @@ import { JobStatus, Prisma, type Job } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
+import { jobMaxAttemptsMax } from "@/lib/product-limits";
+import { redactSensitiveText } from "@/lib/security/redaction";
 
 const activeDedupeStatuses = [JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED] as const;
 const defaultMaxAttempts = 3;
@@ -9,15 +11,18 @@ export const defaultStaleJobAfterMs = 15 * 60 * 1000;
 export const defaultRetainSucceededJobDays = 7;
 export const defaultRetainDeadJobDays = 30;
 const maxLastErrorLength = 1000;
+const jobTypeMaxLength = 120;
+const jobTypePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const retryBackoffMs = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
+type NormalizedJsonValue = string | number | boolean | null | NormalizedJsonValue[] | { [key: string]: NormalizedJsonValue };
 
 export type EnqueueJobInput = {
-  dedupeKey?: string | null;
+  dedupeKey?: unknown;
   maxAttempts?: number;
   payload: Prisma.InputJsonValue;
   runAt?: Date;
-  type: string;
-  workspaceId?: string | null;
+  type: unknown;
+  workspaceId?: unknown;
 };
 
 export type ClaimJobsInput = {
@@ -33,6 +38,7 @@ export type RecoverStaleRunningJobsInput = {
 
 export type RecoverStaleRunningJobsResult = {
   cutoff: Date;
+  dead: number;
   recovered: number;
   runAt: Date;
   staleAfterMs: number;
@@ -63,8 +69,9 @@ export type JobQueueStatus = {
   typeCounts: Array<{ count: number; type: string }>;
 };
 
-export async function enqueueJob(input: EnqueueJobInput) {
+export async function enqueueJob(input: unknown) {
   const data = normalizeEnqueueInput(input);
+  if (data.workspaceId) await assertActiveJobWorkspace(data.workspaceId);
 
   if (!data.dedupeKey) {
     return prisma.job.create({ data });
@@ -86,21 +93,23 @@ export async function enqueueJob(input: EnqueueJobInput) {
   });
 }
 
-export async function enqueueUniqueJob(input: EnqueueJobInput & { dedupeKey: string }) {
+export async function enqueueUniqueJob(input: unknown) {
   return enqueueJob(input);
 }
 
-export async function claimNextJob(input: ClaimJobsInput) {
-  const [job] = await claimJobs({ ...input, limit: 1 });
+export async function claimNextJob(input: unknown) {
+  const [job] = await claimJobs({ ...objectInput(input), limit: 1 });
   return job ?? null;
 }
 
-export async function claimJobs({ limit = 1, now = new Date(), workerId }: ClaimJobsInput) {
-  const normalizedLimit = normalizeClaimLimit(limit);
-  const normalizedWorkerId = readNonEmpty(workerId);
+export async function claimJobs(input: unknown = {}) {
+  const claimInput = objectInput(input);
+  const normalizedLimit = normalizeClaimLimit(claimInput.limit);
+  const normalizedWorkerId = readNonEmpty(claimInput.workerId);
   if (!normalizedWorkerId) {
     throw new ApiError("VALIDATION_ERROR", "Job worker id is required.", 422);
   }
+  const now = normalizeOptionalJobDate(claimInput.now, "Job claim timestamp is invalid.");
   const claimNow = now.toISOString();
 
   return prisma.$transaction(async (tx) => {
@@ -109,6 +118,15 @@ export async function claimJobs({ limit = 1, now = new Date(), workerId }: Claim
       FROM "Job"
       WHERE "status" = 'PENDING'::"JobStatus"
         AND "runAt" <= ${claimNow}::timestamp
+        AND (
+          "workspaceId" IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM "Workspace"
+            WHERE "Workspace"."id" = "Job"."workspaceId"
+              AND "Workspace"."deletedAt" IS NULL
+          )
+        )
       ORDER BY "runAt" ASC, "createdAt" ASC
       LIMIT ${normalizedLimit}
       FOR UPDATE SKIP LOCKED
@@ -132,6 +150,7 @@ export async function claimJobs({ limit = 1, now = new Date(), workerId }: Claim
 }
 
 export async function markJobSucceeded(jobId: string, now = new Date()) {
+  assertValidJobDate(now, "Job completion timestamp is invalid.");
   const updated = await prisma.job.updateMany({
     where: { id: jobId, status: JobStatus.RUNNING },
     data: {
@@ -157,6 +176,8 @@ export async function markJobFailedForRetry(
   options: { now?: Date; retryAt?: Date } = {}
 ) {
   const now = options.now ?? new Date();
+  assertValidJobDate(now, "Job failure timestamp is invalid.");
+  if (options.retryAt) assertValidJobDate(options.retryAt, "Job retry timestamp is invalid.");
   const job = await getRunningJob(jobId);
   const lastError = formatJobError(error);
 
@@ -181,6 +202,7 @@ export async function markJobFailedForRetry(
 }
 
 export async function markJobDead(jobId: string, error: unknown, now = new Date()) {
+  assertValidJobDate(now, "Job failure timestamp is invalid.");
   const updated = await prisma.job.updateMany({
     where: { id: jobId, status: JobStatus.RUNNING },
     data: {
@@ -202,13 +224,16 @@ export async function markJobDead(jobId: string, error: unknown, now = new Date(
 export async function releaseJob(jobId: string, options: { now?: Date; runAt?: Date } = {}) {
   const now = options.now ?? new Date();
   const runAt = options.runAt ?? now;
+  assertValidJobDate(now, "Job release timestamp is invalid.");
+  assertValidJobDate(runAt, "Job run timestamp is invalid.");
   const updated = await prisma.job.updateMany({
     where: { id: jobId, status: JobStatus.RUNNING },
     data: {
       status: JobStatus.PENDING,
       runAt,
       lockedAt: null,
-      lockedBy: null
+      lockedBy: null,
+      failedAt: null
     }
   });
 
@@ -220,53 +245,89 @@ export async function releaseJob(jobId: string, options: { now?: Date; runAt?: D
 }
 
 export async function recoverStaleRunningJobs(
-  options: RecoverStaleRunningJobsInput = {}
+  options: unknown = {}
 ): Promise<RecoverStaleRunningJobsResult> {
-  const now = options.now ?? new Date();
-  const staleAfterMs = normalizeStaleAfterMs(options.staleAfterMs);
+  const input = objectInput(options);
+  const now = normalizeOptionalJobDate(input.now, "Job recovery timestamp is invalid.");
+  const staleAfterMs = normalizeStaleAfterMs(input.staleAfterMs);
   const cutoff = new Date(now.getTime() - staleAfterMs);
-  const updated = await prisma.job.updateMany({
+  const staleJobs = await prisma.job.findMany({
     where: {
       status: JobStatus.RUNNING,
-      lockedAt: { lt: cutoff }
+      lockedAt: { lt: cutoff },
+      ...activeJobWorkspaceWhere()
     },
-    data: {
-      status: JobStatus.PENDING,
-      runAt: now,
-      lockedAt: null,
-      lockedBy: null
-    }
+    select: { attempts: true, id: true, maxAttempts: true }
   });
+  const recoverableIds = staleJobs.filter((job) => job.attempts < job.maxAttempts).map((job) => job.id);
+  const deadIds = staleJobs.filter((job) => job.attempts >= job.maxAttempts).map((job) => job.id);
+  const [recovered, dead] = await prisma.$transaction([
+    prisma.job.updateMany({
+      where: {
+        id: { in: recoverableIds },
+        status: JobStatus.RUNNING,
+        lockedAt: { lt: cutoff }
+      },
+      data: {
+        status: JobStatus.PENDING,
+        runAt: now,
+        lockedAt: null,
+        lockedBy: null,
+        failedAt: null
+      }
+    }),
+    prisma.job.updateMany({
+      where: {
+        id: { in: deadIds },
+        status: JobStatus.RUNNING,
+        lockedAt: { lt: cutoff }
+      },
+      data: {
+        status: JobStatus.DEAD,
+        lockedAt: null,
+        lockedBy: null,
+        failedAt: now,
+        lastError: "Stale running job exceeded max attempts during recovery."
+      }
+    })
+  ]);
 
   return {
     cutoff,
-    recovered: updated.count,
+    dead: dead.count,
+    recovered: recovered.count,
     runAt: now,
     staleAfterMs
   };
 }
 
-export async function getJobQueueStatus(options: { now?: Date } = {}): Promise<JobQueueStatus> {
-  const now = options.now ?? new Date();
+export async function getJobQueueStatus(options: unknown = {}): Promise<JobQueueStatus> {
+  const input = objectInput(options);
+  const now = normalizeOptionalJobDate(input.now, "Job status timestamp is invalid.");
+  const activeWorkspaceWhere = activeJobWorkspaceWhere();
   const [statusGroups, duePendingCount, futurePendingCount, oldestDuePending, typeGroups] = await Promise.all([
     prisma.job.groupBy({
       by: ["status"],
+      where: activeWorkspaceWhere,
       _count: { _all: true }
     }),
     prisma.job.count({
       where: {
+        ...activeWorkspaceWhere,
         status: JobStatus.PENDING,
         runAt: { lte: now }
       }
     }),
     prisma.job.count({
       where: {
+        ...activeWorkspaceWhere,
         status: JobStatus.PENDING,
         runAt: { gt: now }
       }
     }),
     prisma.job.findFirst({
       where: {
+        ...activeWorkspaceWhere,
         status: JobStatus.PENDING,
         runAt: { lte: now }
       },
@@ -275,6 +336,7 @@ export async function getJobQueueStatus(options: { now?: Date } = {}): Promise<J
     }),
     prisma.job.groupBy({
       by: ["type"],
+      where: activeWorkspaceWhere,
       _count: { _all: true },
       orderBy: { type: "asc" }
     })
@@ -299,14 +361,15 @@ export async function getJobQueueStatus(options: { now?: Date } = {}): Promise<J
 }
 
 export async function cleanupTerminalJobs(
-  options: CleanupTerminalJobsInput = {}
+  options: unknown = {}
 ): Promise<CleanupTerminalJobsResult> {
-  const now = options.now ?? new Date();
+  const input = objectInput(options);
+  const now = normalizeOptionalJobDate(input.now, "Job cleanup timestamp is invalid.");
   const retainSucceededDays = normalizeRetentionDays(
-    options.retainSucceededDays,
+    input.retainSucceededDays,
     defaultRetainSucceededJobDays
   );
-  const retainDeadDays = normalizeRetentionDays(options.retainDeadDays, defaultRetainDeadJobDays);
+  const retainDeadDays = normalizeRetentionDays(input.retainDeadDays, defaultRetainDeadJobDays);
   const succeededCutoff = subtractDays(now, retainSucceededDays);
   const deadCutoff = subtractDays(now, retainDeadDays);
 
@@ -336,47 +399,145 @@ export async function cleanupTerminalJobs(
   };
 }
 
-function normalizeEnqueueInput(input: EnqueueJobInput): Prisma.JobUncheckedCreateInput {
-  const type = readNonEmpty(input.type);
-  if (!type) throw new ApiError("VALIDATION_ERROR", "Job type is required.", 422);
+function normalizeEnqueueInput(input: unknown): Prisma.JobUncheckedCreateInput {
+  const jobInput = objectInput(input);
+  const type = normalizeJobType(jobInput.type);
 
-  const dedupeKey = readNonEmpty(input.dedupeKey ?? undefined);
-  const maxAttempts = input.maxAttempts ?? defaultMaxAttempts;
-  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-    throw new ApiError("VALIDATION_ERROR", "Job maxAttempts must be a positive integer.", 422);
-  }
+  const dedupeKey = readNonEmpty(jobInput.dedupeKey ?? undefined);
+  const workspaceId = normalizeOptionalJobWorkspaceId(jobInput.workspaceId);
+  const maxAttempts = normalizeJobMaxAttempts(jobInput.maxAttempts);
 
   return {
-    workspaceId: input.workspaceId ?? null,
+    workspaceId,
     type,
-    payload: input.payload,
+    payload: normalizeJobPayload(jobInput.payload),
     maxAttempts,
-    runAt: input.runAt ?? new Date(),
+    runAt: normalizeOptionalJobDate(jobInput.runAt, "Job run timestamp is invalid."),
     dedupeKey: dedupeKey ?? null
   };
 }
 
-function normalizeClaimLimit(limit: number) {
-  if (!Number.isInteger(limit) || limit < 1) {
+function normalizeJobMaxAttempts(value: unknown): number {
+  const maxAttempts = value ?? defaultMaxAttempts;
+  if (typeof maxAttempts !== "number" || !Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new ApiError("VALIDATION_ERROR", "Job maxAttempts must be a positive integer.", 422);
+  }
+  if (maxAttempts > jobMaxAttemptsMax) {
+    throw new ApiError("VALIDATION_ERROR", "Job maxAttempts is too large.", 422);
+  }
+
+  return maxAttempts;
+}
+
+function normalizeJobPayload(value: unknown): Prisma.InputJsonValue {
+  const normalized = normalizeJsonValue(value, new WeakSet<object>());
+  return (normalized === null ? Prisma.JsonNull : normalized) as Prisma.InputJsonValue;
+}
+
+function normalizeJsonValue(value: unknown, seen: WeakSet<object>): NormalizedJsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throwInvalidJobPayload();
+    seen.add(value);
+    const normalized = value.map((item) => normalizeJsonValue(item, seen));
+    seen.delete(value);
+    return normalized;
+  }
+
+  if (isPlainJsonObject(value)) {
+    if (seen.has(value)) throwInvalidJobPayload();
+    seen.add(value);
+    const normalized = Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeJsonValue(item, seen)])
+    );
+    seen.delete(value);
+    return normalized;
+  }
+
+  throwInvalidJobPayload();
+}
+
+function throwInvalidJobPayload(): never {
+  throw new ApiError("VALIDATION_ERROR", "Job payload must be JSON-compatible.", 422);
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeJobType(value: unknown): string {
+  const type = readNonEmpty(value);
+  if (!type) throw new ApiError("VALIDATION_ERROR", "Job type is required.", 422);
+  if (type.length > jobTypeMaxLength) {
+    throw new ApiError("VALIDATION_ERROR", "Job type is too large.", 422);
+  }
+  if (!jobTypePattern.test(type)) {
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "Job type must use lowercase letters, numbers, dots, underscores, or hyphens.",
+      422
+    );
+  }
+  return type;
+}
+
+function normalizeOptionalJobWorkspaceId(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Job workspace id must be text.", 422);
+  }
+  return value.trim() || null;
+}
+
+async function assertActiveJobWorkspace(workspaceId: string) {
+  const workspace = await prisma.workspace.findFirst({
+    where: { id: workspaceId, deletedAt: null },
+    select: { id: true }
+  });
+
+  if (!workspace) {
+    throw new ApiError("NOT_FOUND", "Workspace was not found.", 404);
+  }
+}
+
+function normalizeOptionalJobDate(value: unknown, message: string): Date {
+  const date = value ?? new Date();
+  assertValidJobDate(date, message);
+  return date;
+}
+
+function assertValidJobDate(value: unknown, message: string): asserts value is Date {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    throw new ApiError("VALIDATION_ERROR", message, 422);
+  }
+}
+
+function normalizeClaimLimit(limit: unknown): number {
+  const normalizedLimit = limit ?? 1;
+  if (typeof normalizedLimit !== "number" || !Number.isInteger(normalizedLimit) || normalizedLimit < 1) {
     throw new ApiError("VALIDATION_ERROR", "Job claim limit must be a positive integer.", 422);
   }
 
-  return Math.min(limit, 100);
+  return Math.min(normalizedLimit, 100);
 }
 
-function normalizeStaleAfterMs(staleAfterMs: number | undefined) {
+function normalizeStaleAfterMs(staleAfterMs: unknown): number {
   if (staleAfterMs === undefined) return defaultStaleJobAfterMs;
-  if (!Number.isInteger(staleAfterMs) || staleAfterMs < 1) return defaultStaleJobAfterMs;
+  if (typeof staleAfterMs !== "number" || !Number.isInteger(staleAfterMs) || staleAfterMs < 1) return defaultStaleJobAfterMs;
   return staleAfterMs;
 }
 
-function normalizeRetentionDays(value: number | undefined, defaultValue: number) {
+function normalizeRetentionDays(value: unknown, defaultValue: number): number {
   if (value === undefined) return defaultValue;
-  if (!Number.isInteger(value) || value < 1) return defaultValue;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) return defaultValue;
   return value;
 }
 
-function subtractDays(date: Date, days: number) {
+function subtractDays(date: Date, days: number): Date {
   return new Date(date.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
@@ -393,6 +554,10 @@ function findActiveDuplicateJob(
     },
     orderBy: { createdAt: "asc" }
   });
+}
+
+function activeJobWorkspaceWhere(): Prisma.JobWhereInput {
+  return { OR: [{ workspaceId: null }, { workspace: { deletedAt: null } }] };
 }
 
 async function getRunningJob(jobId: string) {
@@ -415,11 +580,7 @@ function retryDelayMs(attempts: number) {
 
 function formatJobError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return message
-    .replace(/Bearer\s+[\w.+/~=-]+/gi, "Bearer [redacted]")
-    .replace(/https?:\/\/[^\s]+\/reset-password\?token=[^&\s]+[^\s]*/gi, "[redacted reset url]")
-    .replace(/\/reset-password\?token=[^&\s]+[^\s]*/gi, "[redacted reset url]")
-    .replace(/([?&]token=)[^&\s]+/gi, "$1[redacted]")
+  return redactSensitiveText(message)
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLastErrorLength);
@@ -435,9 +596,15 @@ function createEmptyStatusCounts(): Record<JobStatus, number> {
   };
 }
 
-function readNonEmpty(value: string | null | undefined) {
-  const trimmed = value?.trim();
+function readNonEmpty(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function objectInput(input: unknown): Record<string, unknown> {
+  if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>;
+  return {};
 }
 
 function isUniqueConstraintError(error: unknown) {

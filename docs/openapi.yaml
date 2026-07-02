@@ -69,6 +69,12 @@ components:
       required: true
       schema:
         type: string
+    MeetingIntakeId:
+      name: intakeId
+      in: path
+      required: true
+      schema:
+        type: string
     ProductId:
       name: productId
       in: path
@@ -83,6 +89,12 @@ components:
         type: string
     LineItemId:
       name: lineItemId
+      in: path
+      required: true
+      schema:
+        type: string
+    ContractStepId:
+      name: contractStepId
       in: path
       required: true
       schema:
@@ -121,6 +133,8 @@ components:
           nullable: true
         sortOrder:
           type: integer
+          minimum: -2147483648
+          maximum: 2147483647
     StageInput:
       type: object
       required: [name, sortOrder]
@@ -134,6 +148,8 @@ components:
           nullable: true
         sortOrder:
           type: integer
+          minimum: -2147483648
+          maximum: 2147483647
     DealInput:
       type: object
       required: [pipelineId, stageId, title]
@@ -155,6 +171,8 @@ components:
           type: string
         valueCents:
           type: integer
+          minimum: 0
+          maximum: 2147483647
           nullable: true
         currency:
           type: string
@@ -165,6 +183,20 @@ components:
         expectedCloseAt:
           type: string
           format: date-time
+          nullable: true
+    DealLineItemInput:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+          description: Active product ID in the same workspace.
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        description:
+          type: string
           nullable: true
     CloseDealInput:
       type: object
@@ -177,6 +209,91 @@ components:
           type: string
           nullable: true
           maxLength: 1000
+    DealContractStepInput:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [NDA, MSA, SOW]
+        status:
+          type: string
+          enum: [NOT_STARTED, IN_PROGRESS, SENT, SIGNED, BLOCKED, SKIPPED]
+        ownerId:
+          type: string
+          nullable: true
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        sentAt:
+          type: string
+          format: date-time
+          nullable: true
+        signedAt:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          maxLength: 4000
+        externalReference:
+          type: string
+          nullable: true
+          maxLength: 500
+    DealContractStepUpdateInput:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [NOT_STARTED, IN_PROGRESS, SENT, SIGNED, BLOCKED, SKIPPED]
+        ownerId:
+          type: string
+          nullable: true
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        sentAt:
+          type: string
+          format: date-time
+          nullable: true
+        signedAt:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          maxLength: 4000
+        externalReference:
+          type: string
+          nullable: true
+          maxLength: 500
+    QuoteAdjustmentsInput:
+      type: object
+      properties:
+        discountType:
+          type: string
+          enum: [NONE, PERCENT, FIXED]
+          default: NONE
+        discountValue:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: Basis points for PERCENT, cents for FIXED, or 0 for NONE.
+          default: 0
+        taxType:
+          type: string
+          enum: [NONE, PERCENT, FIXED]
+          default: NONE
+        taxValue:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: Basis points for PERCENT, cents for FIXED, or 0 for NONE.
+          default: 0
     LeadInput:
       type: object
       required: [title]
@@ -197,7 +314,8 @@ components:
           nullable: true
         status:
           type: string
-          enum: [NEW, QUALIFIED, DISQUALIFIED, CONVERTED]
+          enum: [NEW, QUALIFIED, DISQUALIFIED]
+          description: Writable lead statuses. Use the lead conversion endpoint to move a lead to CONVERTED.
     ConvertLeadInput:
       type: object
       required: [pipelineId, stageId]
@@ -242,8 +360,72 @@ components:
         domain:
           type: string
           nullable: true
+    MeetingIntakeInput:
+      type: object
+      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, text-based PDF, and DOCX sources process locally; scanned PDF/image/audio/video processors return clear provider-required failures until integrations exist.
+      properties:
+        explicitSourceType:
+          type: string
+          enum: [pasted_text, markdown, text_file, pdf, docx, image, audio, video, unsupported]
+        originalFilename:
+          type: string
+          nullable: true
+        originalMimeType:
+          type: string
+          nullable: true
+        contextText:
+          type: string
+          nullable: true
+        text:
+          type: string
+          nullable: true
+        fileText:
+          type: string
+          nullable: true
+        fileBase64:
+          type: string
+          nullable: true
+          description: Base64-encoded file bytes for bounded local PDF/DOCX extraction. Original binary files are not stored.
+        hints:
+          type: object
+          additionalProperties: true
+    MeetingIntakeApplyInput:
+      type: object
+      description: Edited/selected proposal payload. Only selected updates are applied through existing note/activity services. Proposal targets may be reassigned to known CRM records or cleared; unavailable, locked, deleted, or cross-workspace targets are skipped with clear reasons.
+      properties:
+        meetingActivity:
+          type: object
+          nullable: true
+          additionalProperties: true
+        notes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        nextStepActivities:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    ProductInput:
+      type: object
+      required: [name, unitPriceCents]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        unitPriceCents:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        currency:
+          type: string
+          default: USD
     ActivityInput:
       type: object
+      description: Activity follow-ups must attach to at least one Deal, Lead, Contact/Person, or Organization in the workspace.
       required: [type, title]
       properties:
         ownerId:
@@ -279,6 +461,7 @@ components:
           nullable: true
     NoteInput:
       type: object
+      description: Notes must attach to at least one Deal, Lead, Contact/Person, or Organization in the workspace.
       required: [body]
       properties:
         dealId:
@@ -357,8 +540,8 @@ components:
           pattern: "^[a-z][a-z0-9_]*$"
         fieldType:
           type: string
-          enum: [TEXT, NUMBER, DATE, BOOLEAN]
-          description: SELECT, MULTI_SELECT, and URL definitions may exist in seeded/demo data but are read-only in the MVP UI.
+          enum: [TEXT, NUMBER, DATE, BOOLEAN, SELECT]
+          description: Single-select fields are validated against configured string options when options are provided. Future unsupported definitions remain read-only.
         required:
           type: boolean
         options:
@@ -489,12 +672,15 @@ paths:
           $ref: "#/components/responses/Ok"
     delete:
       summary: Soft delete a pipeline
+      description: Returns a conflict while active deals still reference the pipeline.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/PipelineId"
       responses:
         "204":
           $ref: "#/components/responses/NoContent"
+        "409":
+          $ref: "#/components/responses/Error"
   /workspaces/{workspaceId}/pipelines/{pipelineId}/stages:
     get:
       summary: List stages for a pipeline
@@ -534,15 +720,19 @@ paths:
           $ref: "#/components/responses/Ok"
     delete:
       summary: Soft delete a stage
+      description: Returns a conflict while active deals still reference the stage.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/StageId"
       responses:
         "204":
           $ref: "#/components/responses/NoContent"
+        "409":
+          $ref: "#/components/responses/Error"
   /workspaces/{workspaceId}/deals:
     get:
       summary: List deals
+      description: Returns the workspace-scoped deal list snapshot. Browser list filters are not accepted on this REST list endpoint; use `/workspaces/{workspaceId}/exports/deals` for filtered all-row CSV downloads.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       responses:
@@ -625,6 +815,37 @@ paths:
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/DealId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealLineItemInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/deals/{dealId}/contracts:
+    get:
+      summary: List deal contract workflow steps
+      description: Returns workspace-scoped NDA, MSA, and SOW contract-step rows saved for the deal.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create a deal contract workflow step
+      description: Creates one NDA, MSA, or SOW step for the deal. Forward-moving MSA/SOW statuses require prior steps to be signed or skipped.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/DealId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealContractStepInput"
       responses:
         "201":
           $ref: "#/components/responses/Created"
@@ -647,6 +868,21 @@ paths:
       responses:
         "204":
           $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/contract-steps/{contractStepId}:
+    patch:
+      summary: Update a deal contract workflow step
+      description: Updates local CRM tracking fields only. OpenContracts templates, document generation/storage, and e-signatures are not implemented.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ContractStepId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealContractStepUpdateInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
   /workspaces/{workspaceId}/quotes/{quoteId}/mark-sent:
     post:
       summary: Mark a draft quote sent
@@ -680,12 +916,17 @@ paths:
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/QuoteId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAdjustmentsInput"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
   /workspaces/{workspaceId}/quotes/{quoteId}/public-link:
     post:
-      summary: Create or return the active public quote link
+      summary: Create or return the active public quote link for a sent quote
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/QuoteId"
@@ -722,6 +963,12 @@ paths:
       summary: Create a product
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
       responses:
         "201":
           $ref: "#/components/responses/Created"
@@ -731,6 +978,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
       responses:
         "200":
           $ref: "#/components/responses/Ok"
@@ -755,6 +1008,7 @@ paths:
   /workspaces/{workspaceId}/leads:
     get:
       summary: List leads
+      description: Returns the workspace-scoped lead list snapshot. Browser list filters are not accepted on this REST list endpoint; use `/workspaces/{workspaceId}/exports/leads` for filtered all-row CSV downloads.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       responses:
@@ -815,6 +1069,7 @@ paths:
   /workspaces/{workspaceId}/people:
     get:
       summary: List contacts
+      description: Returns the workspace-scoped contact list snapshot. Browser list filters are not accepted on this REST list endpoint; use `/workspaces/{workspaceId}/exports/contacts` for filtered all-row CSV downloads.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       responses:
@@ -866,6 +1121,7 @@ paths:
   /workspaces/{workspaceId}/organizations:
     get:
       summary: List organizations
+      description: Returns the workspace-scoped organization list snapshot. Browser list filters are not accepted on this REST list endpoint; use `/workspaces/{workspaceId}/exports/organizations` for filtered all-row CSV downloads.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       responses:
@@ -917,6 +1173,7 @@ paths:
   /workspaces/{workspaceId}/activities:
     get:
       summary: List activities
+      description: Returns the workspace-scoped activity list snapshot. Browser list filters are not accepted on this REST list endpoint; use `/workspaces/{workspaceId}/exports/activities` for filtered all-row CSV downloads.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       responses:
@@ -924,7 +1181,7 @@ paths:
           $ref: "#/components/responses/Ok"
     post:
       summary: Create an activity
-      description: Activities can attach to deals, leads, contacts, or organizations. Converted leads reject new activities.
+      description: Activities can attach to open deals, unconverted leads, contacts, or organizations. Closed deals and converted leads reject new activities.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:
@@ -939,7 +1196,7 @@ paths:
   /workspaces/{workspaceId}/activities/{activityId}:
     patch:
       summary: Update, reschedule, or complete an activity
-      description: Set completedAt to complete an open activity. Open activities can edit title, type, dueAt, ownerId, and description. Completed activities reject normal edits, and attachments cannot be changed.
+      description: Set completedAt to complete an open activity. Open activities can edit title, type, dueAt, ownerId, and description. Completed activities reject normal edits. Deal-attached activities on closed deals and lead-attached activities on converted leads reject update, completion, and deletion; attachments cannot be changed.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/ActivityId"
@@ -953,6 +1210,7 @@ paths:
           $ref: "#/components/responses/Ok"
     delete:
       summary: Soft delete an activity
+      description: Completed activities, deal-attached activities on closed deals, and lead-attached activities on converted leads reject deletion.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/ActivityId"
@@ -969,7 +1227,7 @@ paths:
           $ref: "#/components/responses/Ok"
     post:
       summary: Create a note
-      description: Notes can attach to deals, leads, contacts, or organizations. Converted leads reject new notes.
+      description: Notes can attach to open deals, unconverted leads, contacts, or organizations. Closed deals and converted leads reject new notes.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:
@@ -984,12 +1242,60 @@ paths:
   /workspaces/{workspaceId}/notes/{noteId}:
     delete:
       summary: Soft delete a note
+      description: Notes attached to closed deals or converted leads reject deletion.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
         - $ref: "#/components/parameters/NoteId"
       responses:
         "204":
           $ref: "#/components/responses/NoContent"
+  /workspaces/{workspaceId}/meeting-intakes:
+    get:
+      summary: List recent meeting intakes
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+    post:
+      summary: Create and analyze a meeting intake
+      description: Creates a persisted review record, extracts supported text/markdown/PDF/DOCX sources, matches CRM records, and stores a reviewable proposal without mutating CRM data. Empty source submissions return 422 before an intake record is created.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/Created"
+  /workspaces/{workspaceId}/meeting-intakes/{intakeId}:
+    get:
+      summary: Get a meeting intake
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/MeetingIntakeId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/meeting-intakes/{intakeId}/apply:
+    post:
+      summary: Apply selected meeting intake updates
+      description: Applies only user-approved notes and activities. Existing workspace, record lifecycle, and audit behavior are enforced by the note/activity services. Already-applied intakes return the stored result without duplicating updates.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/MeetingIntakeId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeApplyInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
   /workspaces/{workspaceId}/email-logs:
     get:
       summary: List manual email logs
@@ -1000,7 +1306,7 @@ paths:
           $ref: "#/components/responses/Ok"
     post:
       summary: Create a manual email log
-      description: Email logs can attach to deals, unconverted leads, contacts, or organizations. This route records CRM history only and never sends email.
+      description: Email logs can attach to open deals, unconverted leads, contacts, or organizations. Closed deals and converted leads reject new manual email logs. This route records CRM history only and never sends email.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:
@@ -1097,7 +1403,7 @@ paths:
           $ref: "#/components/responses/Error"
     post:
       summary: Create a custom field definition
-      description: Creates a Deal, Contact/Person, Organization, or Lead custom field definition. Supported editable field types are TEXT, NUMBER, DATE, and BOOLEAN.
+      description: Creates a Deal, Contact/Person, Organization, or Lead custom field definition. Supported editable field types are TEXT, NUMBER, DATE, BOOLEAN, and SELECT.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:
@@ -1124,7 +1430,7 @@ paths:
   /workspaces/{workspaceId}/custom-field-values:
     patch:
       summary: Update Deal, Contact, Organization, or Lead custom field values
-      description: Updates values for Deal, Contact/Person, Organization, or unconverted Lead custom fields. Converted leads reject custom field value updates. Values are validated by field type. Unsupported field types such as seeded SELECT fields are read-only and return a validation-style error if submitted.
+      description: Updates values for open Deal, Contact/Person, Organization, or unconverted Lead custom fields. Closed deals and converted leads reject custom field value updates. Values are validated by field type, including single-select values against configured string options when options are provided. Unsupported future field types are read-only and return a validation-style error if submitted.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:
@@ -1158,7 +1464,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Converted lead cannot be updated.
+          description: Closed deal or converted lead cannot be updated.
           content:
             application/json:
               schema:
@@ -1212,6 +1518,14 @@ paths:
   /workspaces/{workspaceId}/exports/activities:
     get:
       summary: Export activities as CSV
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: CSV attachment.
+  /workspaces/{workspaceId}/exports/products:
+    get:
+      summary: Export products as CSV
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       responses:

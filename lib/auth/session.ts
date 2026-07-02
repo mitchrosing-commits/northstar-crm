@@ -90,6 +90,7 @@ export function resolveAuthUserIdHeader(env: EnvInput = process.env) {
 }
 
 export function isSafeAuthUserIdHeaderName(headerName: string) {
+  if (typeof headerName !== "string") return false;
   const normalized = headerName.trim().toLowerCase();
   return isValidHeaderName(normalized) && !unsafeAuthUserIdHeaders.includes(normalized as (typeof unsafeAuthUserIdHeaders)[number]);
 }
@@ -99,7 +100,8 @@ function isValidHeaderName(headerName: string) {
 }
 
 export function serializeLocalSessionCookieValue(token: string, env: EnvInput = process.env) {
-  return `${token}.${signLocalSessionToken(token, env)}`;
+  const normalizedToken = normalizeLocalSessionToken(token);
+  return `${normalizedToken}.${signLocalSessionToken(normalizedToken, env)}`;
 }
 
 export function readLocalSessionToken(cookieHeader: string | null | undefined, env: EnvInput = process.env) {
@@ -121,14 +123,20 @@ export function readLocalSessionToken(cookieHeader: string | null | undefined, e
 }
 
 function signLocalSessionToken(token: string, env: EnvInput = process.env) {
+  if (typeof token !== "string" || !token) return "";
   const secret = env.AUTH_SESSION_SECRET?.trim();
   if (!secret) return "";
   return createHmac("sha256", secret).update(token).digest("base64url");
 }
 
-function parseCookieHeader(cookieHeader: string | null | undefined) {
+function normalizeLocalSessionToken(token: unknown) {
+  return typeof token === "string" ? token : "";
+}
+
+function parseCookieHeader(cookieHeader: unknown) {
   const cookies = new Map<string, string>();
-  for (const part of cookieHeader?.split(";") ?? []) {
+  const parts = typeof cookieHeader === "string" ? cookieHeader.split(";") : [];
+  for (const part of parts) {
     const [rawName, ...rawValue] = part.split("=");
     const name = rawName?.trim();
     if (!name) continue;

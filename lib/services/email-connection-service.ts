@@ -3,6 +3,7 @@ import { EmailConnectionProvider, EmailConnectionStatus, Prisma, type EmailDirec
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { canUseEmailTokenEncryptionKey, decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
+import { redactSensitiveText } from "@/lib/security/redaction";
 import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 
 type ProviderConfig = {
@@ -15,12 +16,16 @@ type EmailConnectionEnv = Record<string, string | undefined>;
 type GmailFetch = typeof fetch;
 type MicrosoftFetch = typeof fetch;
 
+const defaultRecentEmailSyncMaxResults = 10;
+const maxRecentEmailSyncMaxResults = 25;
+
 export type EmailProviderCard = {
   accountEmail?: string | null;
   actionLabel: string;
   detail: string;
   disabled: boolean;
   href?: string;
+  lastError?: string | null;
   lastSyncAt?: Date | null;
   name: string;
   provider: EmailConnectionProvider;
@@ -275,7 +280,10 @@ export async function exchangeGoogleAuthorizationCode({
     throw new ApiError("EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED", "Gmail authorization could not be completed.", 400);
   }
 
-  const tokenResponse = (await response.json()) as GoogleTokenResponse;
+  const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(response, {
+    code: "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
+    message: "Gmail authorization could not be completed."
+  });
   if (!tokenResponse.access_token) {
     throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
   }
@@ -310,7 +318,10 @@ export async function exchangeMicrosoftAuthorizationCode({
     throw new ApiError("EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED", "Microsoft authorization could not be completed.", 400);
   }
 
-  const tokenResponse = (await response.json()) as MicrosoftTokenResponse;
+  const tokenResponse = await readEmailProviderJson<MicrosoftTokenResponse>(response, {
+    code: "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
+    message: "Microsoft authorization could not be completed."
+  });
   if (!tokenResponse.access_token) {
     throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Microsoft did not return an access token.", 400);
   }
@@ -333,12 +344,13 @@ export async function fetchGoogleUserProfile({
     throw new ApiError("EMAIL_OAUTH_PROFILE_FAILED", "Gmail account profile could not be loaded.", 400);
   }
 
-  const profile = (await response.json()) as GoogleUserProfile;
-  if (!profile.email) {
-    throw new ApiError("EMAIL_OAUTH_PROFILE_MISSING_EMAIL", "Gmail did not return an account email address.", 400);
-  }
+  const profile = await readEmailProviderJson<GoogleUserProfile>(response, {
+    code: "EMAIL_OAUTH_PROFILE_FAILED",
+    message: "Gmail account profile could not be loaded."
+  });
+  const accountEmail = normalizeProviderAccountEmail(profile.email, "Gmail");
 
-  return profile;
+  return { ...profile, email: accountEmail };
 }
 
 export async function fetchMicrosoftUserProfile({
@@ -356,12 +368,13 @@ export async function fetchMicrosoftUserProfile({
     throw new ApiError("EMAIL_OAUTH_PROFILE_FAILED", "Microsoft account profile could not be loaded.", 400);
   }
 
-  const profile = (await response.json()) as MicrosoftUserProfile;
-  if (!profile.mail && !profile.userPrincipalName) {
-    throw new ApiError("EMAIL_OAUTH_PROFILE_MISSING_EMAIL", "Microsoft did not return an account email address.", 400);
-  }
+  const profile = await readEmailProviderJson<MicrosoftUserProfile>(response, {
+    code: "EMAIL_OAUTH_PROFILE_FAILED",
+    message: "Microsoft account profile could not be loaded."
+  });
+  const accountEmail = normalizeProviderAccountEmail(profile.mail ?? profile.userPrincipalName, "Microsoft");
 
-  return profile;
+  return profile.mail ? { ...profile, mail: accountEmail } : { ...profile, userPrincipalName: accountEmail };
 }
 
 export async function storeGoogleOAuthConnection({
@@ -381,7 +394,7 @@ export async function storeGoogleOAuthConnection({
   }
 
   const scopes = normalizeScopes(tokenResponse.scope);
-  const accountEmail = profile.email.toLowerCase();
+  const accountEmail = normalizeProviderAccountEmail(profile.email, "Gmail");
   const connection = await prisma.emailConnection.upsert({
     where: {
       workspaceId_provider_accountEmail: {
@@ -414,7 +427,7 @@ export async function storeGoogleOAuthConnection({
   const encryptedRefreshToken = tokenResponse.refresh_token
     ? encryptEmailToken(tokenResponse.refresh_token, env)
     : existingSecret?.encryptedRefreshToken;
-  const accessTokenExpiresAt = tokenResponse.expires_in ? new Date(Date.now() + tokenResponse.expires_in * 1000) : null;
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(tokenResponse.expires_in);
 
   await prisma.emailConnectionSecret.upsert({
     where: { connectionId: connection.id },
@@ -465,11 +478,7 @@ export async function storeMicrosoftOAuthConnection({
   }
 
   const scopes = normalizeScopes(tokenResponse.scope, microsoftOAuthScopes);
-  const profileEmail = profile.mail ?? profile.userPrincipalName;
-  if (!profileEmail) {
-    throw new ApiError("EMAIL_OAUTH_PROFILE_MISSING_EMAIL", "Microsoft did not return an account email address.", 400);
-  }
-  const accountEmail = profileEmail.toLowerCase();
+  const accountEmail = normalizeProviderAccountEmail(profile.mail ?? profile.userPrincipalName, "Microsoft");
   const connection = await prisma.emailConnection.upsert({
     where: {
       workspaceId_provider_accountEmail: {
@@ -502,7 +511,7 @@ export async function storeMicrosoftOAuthConnection({
   const encryptedRefreshToken = tokenResponse.refresh_token
     ? encryptEmailToken(tokenResponse.refresh_token, env)
     : existingSecret?.encryptedRefreshToken;
-  const accessTokenExpiresAt = tokenResponse.expires_in ? new Date(Date.now() + tokenResponse.expires_in * 1000) : null;
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(tokenResponse.expires_in);
 
   await prisma.emailConnectionSecret.upsert({
     where: { connectionId: connection.id },
@@ -540,7 +549,7 @@ export async function syncRecentGmailMessages({
   actor,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = 10
+  maxResults = defaultRecentEmailSyncMaxResults
 }: {
   actor: WorkspaceActor;
   env?: EmailConnectionEnv;
@@ -564,6 +573,8 @@ export async function syncRecentGmailMessages({
     throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
   }
 
+  try {
+  assertEmailConnectionSecretIntegrity(connection, "Gmail");
   const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
   const contacts = await prisma.person.findMany({
     where: {
@@ -573,21 +584,17 @@ export async function syncRecentGmailMessages({
     },
     select: {
       deals: {
-        where: { deletedAt: null, status: "OPEN" },
+        where: { deletedAt: null, status: "OPEN", workspaceId: actor.workspaceId },
         orderBy: { updatedAt: "desc" },
         select: { id: true },
         take: 1
       },
       email: true,
       id: true,
-      organizationId: true
+      organization: { select: { deletedAt: true, id: true, workspaceId: true } }
     }
   });
-  const contactByEmail = new Map(
-    contacts
-      .map((contact) => [normalizeEmailAddress(contact.email), contact] as const)
-      .filter((item): item is readonly [string, (typeof contacts)[number]] => Boolean(item[0]))
-  );
+  const contactByEmail = buildContactEmailMap(contacts);
 
   const messages = await listRecentGmailMessages({ accessToken, fetchImpl, maxResults });
   const ids = messages.map((message) => message.id).filter((id): id is string => Boolean(id));
@@ -630,7 +637,7 @@ export async function syncRecentGmailMessages({
           dealId: match.deals[0]?.id ?? null,
           direction: normalized.direction as EmailDirection,
           fromText: normalized.fromText,
-          organizationId: match.organizationId,
+          organizationId: workspaceScopedOrganizationId(match, actor.workspaceId),
           occurredAt: normalized.occurredAt,
           personId: match.id,
           provider: "GOOGLE_WORKSPACE",
@@ -670,13 +677,17 @@ export async function syncRecentGmailMessages({
   });
 
   return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
+  } catch (error) {
+    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
+    throw error;
+  }
 }
 
 export async function syncRecentMicrosoftMessages({
   actor,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = 10
+  maxResults = defaultRecentEmailSyncMaxResults
 }: {
   actor: WorkspaceActor;
   env?: EmailConnectionEnv;
@@ -700,6 +711,8 @@ export async function syncRecentMicrosoftMessages({
     throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Microsoft 365 or Outlook before syncing recent messages.", 400);
   }
 
+  try {
+  assertEmailConnectionSecretIntegrity(connection, "Microsoft");
   const accessToken = await resolveUsableMicrosoftAccessToken({ config, connection, env, fetchImpl });
   const contacts = await prisma.person.findMany({
     where: {
@@ -709,14 +722,14 @@ export async function syncRecentMicrosoftMessages({
     },
     select: {
       deals: {
-        where: { deletedAt: null, status: "OPEN" },
+        where: { deletedAt: null, status: "OPEN", workspaceId: actor.workspaceId },
         orderBy: { updatedAt: "desc" },
         select: { id: true },
         take: 1
       },
       email: true,
       id: true,
-      organizationId: true
+      organization: { select: { deletedAt: true, id: true, workspaceId: true } }
     }
   });
   const contactByEmail = buildContactEmailMap(contacts);
@@ -761,7 +774,7 @@ export async function syncRecentMicrosoftMessages({
           dealId: match.deals[0]?.id ?? null,
           direction: normalized.direction as EmailDirection,
           fromText: normalized.fromText,
-          organizationId: match.organizationId,
+          organizationId: workspaceScopedOrganizationId(match, actor.workspaceId),
           occurredAt: normalized.occurredAt,
           personId: match.id,
           provider: "MICROSOFT_365",
@@ -801,6 +814,73 @@ export async function syncRecentMicrosoftMessages({
   });
 
   return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
+  } catch (error) {
+    await recordEmailConnectionSyncFailure(connection.id, "Microsoft", error);
+    throw error;
+  }
+}
+
+async function recordEmailConnectionSyncFailure(connectionId: string, providerLabel: "Gmail" | "Microsoft", error: unknown) {
+  try {
+    await prisma.emailConnection.update({
+      where: { id: connectionId },
+      data: { lastError: formatEmailConnectionSyncError(providerLabel, error) }
+    });
+  } catch {
+    // Preserve the original sync failure if recording the diagnostic fails.
+  }
+}
+
+function assertEmailConnectionSecretIntegrity(
+  connection: {
+    accountEmail: string | null;
+    provider: EmailConnectionProvider;
+    secret: {
+      accountEmail: string;
+      provider: EmailConnectionProvider;
+      workspaceId: string;
+    } | null;
+    workspaceId: string;
+  },
+  providerLabel: "Gmail" | "Microsoft"
+) {
+  const secret = connection.secret;
+  if (!secret) {
+    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", `Connect ${providerLabel} before syncing recent messages.`, 400);
+  }
+
+  const connectionEmail = normalizeEmailAddress(connection.accountEmail);
+  const secretEmail = normalizeEmailAddress(secret.accountEmail);
+  if (
+    secret.workspaceId !== connection.workspaceId ||
+    secret.provider !== connection.provider ||
+    (connectionEmail && connectionEmail !== secretEmail)
+  ) {
+    throw new ApiError(
+      "EMAIL_CONNECTION_SECRET_MISMATCH",
+      `Reconnect ${providerLabel} before syncing; stored credentials do not match this workspace.`,
+      400
+    );
+  }
+}
+
+function formatEmailConnectionSyncError(providerLabel: "Gmail" | "Microsoft", error: unknown) {
+  if (error instanceof ApiError) {
+    return truncateEmailPreviewText(redactSensitiveText(`${error.code}: ${error.message}`), 500) ?? `${providerLabel} sync failed.`;
+  }
+
+  return `${providerLabel} sync failed. Try again or reconnect the account.`;
+}
+
+async function readEmailProviderJson<T>(
+  response: Response,
+  error: { code: string; message: string; status?: number }
+) {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError(error.code, error.message, error.status ?? 400);
+  }
 }
 
 async function resolveUsableGoogleAccessToken({
@@ -832,7 +912,7 @@ async function resolveUsableGoogleAccessToken({
     fetchImpl,
     refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
   });
-  const accessTokenExpiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null;
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(refreshed.expires_in);
 
   await prisma.emailConnectionSecret.update({
     where: { connectionId: connection.id },
@@ -875,7 +955,7 @@ async function resolveUsableMicrosoftAccessToken({
     fetchImpl,
     refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
   });
-  const accessTokenExpiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null;
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(refreshed.expires_in);
 
   await prisma.emailConnectionSecret.update({
     where: { connectionId: connection.id },
@@ -912,7 +992,10 @@ async function refreshGoogleAccessToken({
     throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Gmail access token could not be refreshed.", 400);
   }
 
-  const tokenResponse = (await response.json()) as GoogleTokenResponse;
+  const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(response, {
+    code: "EMAIL_REFRESH_TOKEN_FAILED",
+    message: "Gmail access token could not be refreshed."
+  });
   if (!tokenResponse.access_token) {
     throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING_ACCESS", "Gmail did not return a refreshed access token.", 400);
   }
@@ -946,7 +1029,10 @@ async function refreshMicrosoftAccessToken({
     throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Microsoft access token could not be refreshed.", 400);
   }
 
-  const tokenResponse = (await response.json()) as MicrosoftTokenResponse;
+  const tokenResponse = await readEmailProviderJson<MicrosoftTokenResponse>(response, {
+    code: "EMAIL_REFRESH_TOKEN_FAILED",
+    message: "Microsoft access token could not be refreshed."
+  });
   if (!tokenResponse.access_token) {
     throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING_ACCESS", "Microsoft did not return a refreshed access token.", 400);
   }
@@ -964,7 +1050,7 @@ async function listRecentGmailMessages({
   maxResults: number;
 }) {
   const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  url.searchParams.set("maxResults", String(Math.min(Math.max(maxResults, 1), 25)));
+  url.searchParams.set("maxResults", String(normalizeRecentEmailSyncMaxResults(maxResults)));
   const response = await fetchImpl(url, {
     headers: { authorization: `Bearer ${accessToken}` }
   });
@@ -973,7 +1059,10 @@ async function listRecentGmailMessages({
     throw new ApiError("EMAIL_GMAIL_LIST_FAILED", "Recent Gmail messages could not be listed.", 400);
   }
 
-  const body = (await response.json()) as GmailListResponse;
+  const body = await readEmailProviderJson<GmailListResponse>(response, {
+    code: "EMAIL_GMAIL_LIST_FAILED",
+    message: "Recent Gmail messages could not be listed."
+  });
   return body.messages?.filter((message) => message.id) ?? [];
 }
 
@@ -999,7 +1088,10 @@ async function getGmailMessageMetadata({
     throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", "Gmail message metadata could not be loaded.", 400);
   }
 
-  return (await response.json()) as GmailMessageResponse;
+  return readEmailProviderJson<GmailMessageResponse>(response, {
+    code: "EMAIL_GMAIL_MESSAGE_FAILED",
+    message: "Gmail message metadata could not be loaded."
+  });
 }
 
 async function listRecentMicrosoftMessages({
@@ -1012,7 +1104,7 @@ async function listRecentMicrosoftMessages({
   maxResults: number;
 }) {
   const url = new URL("https://graph.microsoft.com/v1.0/me/messages");
-  url.searchParams.set("$top", String(Math.min(Math.max(maxResults, 1), 25)));
+  url.searchParams.set("$top", String(normalizeRecentEmailSyncMaxResults(maxResults)));
   url.searchParams.set("$orderby", "receivedDateTime desc");
   url.searchParams.set(
     "$select",
@@ -1026,7 +1118,10 @@ async function listRecentMicrosoftMessages({
     throw new ApiError("EMAIL_MICROSOFT_LIST_FAILED", "Recent Microsoft mail could not be listed.", 400);
   }
 
-  const body = (await response.json()) as MicrosoftMessagesResponse;
+  const body = await readEmailProviderJson<MicrosoftMessagesResponse>(response, {
+    code: "EMAIL_MICROSOFT_LIST_FAILED",
+    message: "Recent Microsoft mail could not be listed."
+  });
   return body.value?.filter((message) => message.id) ?? [];
 }
 
@@ -1080,16 +1175,20 @@ function normalizeMicrosoftMessage(message: MicrosoftMessageResponse, accountEma
   };
 }
 
-function matchGmailMessageToContact(
-  message: ReturnType<typeof normalizeGmailMessage>,
-  contactByEmail: Map<string, { deals: { id: string }[]; email: string | null; id: string; organizationId: string | null }>
-) {
+type EmailSyncContactMatch = {
+  deals: { id: string }[];
+  email: string | null;
+  id: string;
+  organization?: { deletedAt: Date | null; id: string; workspaceId: string } | null;
+};
+
+function matchGmailMessageToContact(message: ReturnType<typeof normalizeGmailMessage>, contactByEmail: Map<string, EmailSyncContactMatch>) {
   return matchEmailMessageToContact(message, contactByEmail);
 }
 
 function matchEmailMessageToContact(
   message: { direction: string; fromEmails: string[]; toEmails: string[] },
-  contactByEmail: Map<string, { deals: { id: string }[]; email: string | null; id: string; organizationId: string | null }>
+  contactByEmail: Map<string, EmailSyncContactMatch>
 ) {
   const candidates = message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
   for (const email of candidates) {
@@ -1097,6 +1196,11 @@ function matchEmailMessageToContact(
     if (contact) return contact;
   }
   return null;
+}
+
+function workspaceScopedOrganizationId(contact: EmailSyncContactMatch, workspaceId: string) {
+  const organization = contact.organization;
+  return organization?.workspaceId === workspaceId && !organization.deletedAt ? organization.id : null;
 }
 
 function addUnmatchedPreview(
@@ -1130,6 +1234,10 @@ function truncateEmailPreviewText(value: string | null | undefined, maxLength: n
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}...` : trimmed;
 }
 
+function safeProviderLastError(value: string | null | undefined) {
+  return truncateEmailPreviewText(redactSensitiveText(value ?? undefined), 500);
+}
+
 function googleProviderCard({
   config,
   connection,
@@ -1137,7 +1245,7 @@ function googleProviderCard({
   tokenEncryptionReady
 }: {
   config: ProviderConfig;
-  connection?: { accountEmail: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
+  connection?: { accountEmail: string | null; lastError: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
   provider: "GOOGLE_WORKSPACE";
   tokenEncryptionReady: boolean;
 }): EmailProviderCard {
@@ -1176,12 +1284,13 @@ function googleProviderCard({
         : "Connect Gmail with read-only profile and Gmail metadata scopes. This stores encrypted OAuth tokens only; manual sync imports matched recent metadata after connection.",
     disabled: false,
     href: "/api/email-connections/google/connect",
+    lastError: safeProviderLastError(connection?.lastError),
     lastSyncAt: connection?.lastSyncAt,
     name: providerLabels[provider],
     provider,
     scopes: [...gmailOAuthScopes],
     syncAvailable: connection?.status === "CONNECTED",
-    status: connection?.status === "CONNECTED" ? "Connected" : "Ready to connect"
+    status: connection?.status === "CONNECTED" ? (connection.lastError ? "Sync issue" : "Connected") : "Ready to connect"
   };
 }
 
@@ -1191,7 +1300,7 @@ function microsoftProviderCard({
   connectionStatus,
   tokenEncryptionReady
 }: {
-  connection?: { accountEmail: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
+  connection?: { accountEmail: string | null; lastError: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
   config: ProviderConfig;
   connectionStatus?: EmailConnectionStatus;
   tokenEncryptionReady: boolean;
@@ -1232,13 +1341,14 @@ function microsoftProviderCard({
       : "Connect Microsoft 365 or Outlook with read-only profile and mail scopes. This stores encrypted OAuth tokens only; manual sync imports matched recent metadata after connection.",
     disabled: false,
     href: "/api/email-connections/microsoft/connect",
+    lastError: safeProviderLastError(connection?.lastError),
     lastSyncAt: connection?.lastSyncAt,
     name: providerLabels.MICROSOFT_365,
     provider: "MICROSOFT_365",
     scopes,
     syncAvailable: connection?.status === "CONNECTED",
     syncLabel: "Sync recent Microsoft mail",
-    status: connection?.status === "CONNECTED" ? "Connected" : "Ready to connect"
+    status: connection?.status === "CONNECTED" ? (connection.lastError ? "Sync issue" : "Connected") : "Ready to connect"
   };
 }
 
@@ -1246,14 +1356,29 @@ function isProviderConfigured(config: ProviderConfig) {
   return Boolean(readNonEmpty(config.clientId) && readNonEmpty(config.clientSecret) && readNonEmpty(config.redirectUri));
 }
 
-function normalizeScopes(scope: string | undefined, fallback: readonly string[] = gmailOAuthScopes) {
-  const scopes = scope?.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+function normalizeScopes(scope: unknown, fallback: readonly string[] = gmailOAuthScopes) {
+  const scopes = typeof scope === "string" ? scope.split(/\s+/).map((item) => item.trim()).filter(Boolean) : undefined;
   return scopes && scopes.length > 0 ? scopes : [...fallback];
+}
+
+function normalizeAccessTokenExpiresAt(expiresIn: unknown) {
+  const seconds =
+    typeof expiresIn === "number" ? expiresIn : typeof expiresIn === "string" ? Number.parseFloat(expiresIn) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(Date.now() + seconds * 1000);
 }
 
 function readNonEmpty(value: string | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeRecentEmailSyncMaxResults(value: number) {
+  if (!Number.isFinite(value)) return defaultRecentEmailSyncMaxResults;
+  const normalized = Math.trunc(value);
+  if (normalized < 1) return 1;
+  if (normalized > maxRecentEmailSyncMaxResults) return maxRecentEmailSyncMaxResults;
+  return normalized;
 }
 
 function parseGmailDate(dateHeader: string | undefined, internalDate: string | undefined) {
@@ -1281,11 +1406,31 @@ function normalizeEmailAddress(value: string | null | undefined) {
   return value?.trim().toLowerCase() || "";
 }
 
+function normalizeProviderAccountEmail(value: unknown, providerLabel: "Gmail" | "Microsoft") {
+  const email = optionalText(value)?.toLowerCase();
+  if (!email) {
+    throw new ApiError(
+      "EMAIL_OAUTH_PROFILE_MISSING_EMAIL",
+      `${providerLabel} did not return an account email address.`,
+      400
+    );
+  }
+  return email;
+}
+
 function buildContactEmailMap<T extends { email: string | null }>(contacts: T[]) {
+  const contactsByEmail = new Map<string, T[]>();
+
+  for (const contact of contacts) {
+    const email = normalizeEmailAddress(contact.email);
+    if (!email) continue;
+    contactsByEmail.set(email, [...(contactsByEmail.get(email) ?? []), contact]);
+  }
+
   return new Map(
-    contacts
-      .map((contact) => [normalizeEmailAddress(contact.email), contact] as const)
-      .filter((item): item is readonly [string, (typeof contacts)[number]] => Boolean(item[0]))
+    [...contactsByEmail.entries()]
+      .filter(([, matches]) => matches.length === 1)
+      .map(([email, matches]) => [email, matches[0]] as const)
   );
 }
 
@@ -1306,7 +1451,12 @@ function extractMicrosoftRecipientEmails(recipients: MicrosoftRecipient[]) {
 }
 
 function resolveMicrosoftTenant(env: EmailConnectionEnv = process.env) {
-  return readNonEmpty(env.MICROSOFT_OAUTH_TENANT_ID) ?? "common";
+  const tenant = readNonEmpty(env.MICROSOFT_OAUTH_TENANT_ID);
+  return tenant && isSafeMicrosoftTenantId(tenant) ? tenant : "common";
+}
+
+function isSafeMicrosoftTenantId(value: string) {
+  return /^[A-Za-z0-9.-]+$/.test(value);
 }
 
 function optionalText(value: unknown) {

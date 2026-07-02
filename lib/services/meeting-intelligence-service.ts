@@ -1,0 +1,546 @@
+import { MeetingIntakeSourceType, MeetingIntakeStatus, Prisma } from "@prisma/client";
+
+import { ApiError } from "@/lib/api/responses";
+import { prisma } from "@/lib/db/prisma";
+import { extractMeetingText } from "@/lib/meeting-intelligence/extractors";
+import { normalizeMeetingMarkdown } from "@/lib/meeting-intelligence/markdown-normalizer";
+import { matchMeetingCrmObjects, type MatchRecordHints } from "@/lib/meeting-intelligence/match-records";
+import { deterministicMeetingAnalysisProvider } from "@/lib/meeting-intelligence/providers";
+import { detectMeetingSource, normalizeSourceType } from "@/lib/meeting-intelligence/source-detection";
+import type {
+  ApplyMeetingIntelligenceInput,
+  ApplyMeetingIntelligenceResult,
+  CrmTarget,
+  MeetingIntelligenceDraft,
+  MeetingSourceType
+} from "@/lib/meeting-intelligence/types";
+import { redactSensitiveText } from "@/lib/security/redaction";
+
+import { createActivity } from "./activity-service";
+import { createNote } from "./note-service";
+import { userDisplaySelect } from "./user-select";
+import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
+
+type CreateMeetingIntakeInput = {
+  contextText?: unknown;
+  explicitSourceType?: unknown;
+  fileBase64?: unknown;
+  fileText?: unknown;
+  originalFilename?: unknown;
+  originalMimeType?: unknown;
+  text?: unknown;
+  hints?: unknown;
+};
+
+export async function listMeetingIntakes(actor: WorkspaceActor) {
+  await ensureWorkspaceAccess(actor);
+  return prisma.meetingIntake.findMany({
+    where: { workspaceId: actor.workspaceId },
+    orderBy: { createdAt: "desc" },
+    take: 20
+  });
+}
+
+export async function getMeetingIntake(actor: WorkspaceActor, intakeId: string) {
+  await ensureWorkspaceAccess(actor);
+  const intake = await prisma.meetingIntake.findFirst({
+    where: { id: intakeId, workspaceId: actor.workspaceId }
+  });
+  if (!intake) throw new ApiError("NOT_FOUND", "Meeting intake was not found.", 404);
+  return intake;
+}
+
+export async function getMeetingIntelligenceOptions(actor: WorkspaceActor) {
+  await ensureWorkspaceAccess(actor);
+  const [deals, leads, people, organizations, workspace] = await Promise.all([
+    prisma.deal.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      orderBy: { updatedAt: "desc" },
+      take: 100
+    }),
+    prisma.lead.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      orderBy: { updatedAt: "desc" },
+      take: 100
+    }),
+    prisma.person.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      take: 200
+    }),
+    prisma.organization.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      orderBy: { name: "asc" },
+      take: 200
+    }),
+    prisma.workspace.findFirstOrThrow({
+      where: { id: actor.workspaceId },
+      include: {
+        memberships: {
+          where: { user: { deletedAt: null } },
+          include: { user: { select: userDisplaySelect } },
+          orderBy: { createdAt: "asc" }
+        }
+      }
+    })
+  ]);
+
+  return {
+    deals: deals.map((deal) => ({ id: deal.id, label: deal.status === "OPEN" ? deal.title : `${deal.title} (${deal.status})` })),
+    leads: leads.map((lead) => ({ id: lead.id, label: lead.status === "CONVERTED" ? `${lead.title} (CONVERTED)` : lead.title })),
+    organizations: organizations.map((organization) => ({ id: organization.id, label: organization.name })),
+    people: people.map((person) => ({ id: person.id, label: formatPersonName(person) ?? person.email ?? "Unnamed contact" })),
+    users: workspace.memberships.map((membership) => ({ id: membership.user.id, label: membership.user.name ?? membership.user.email }))
+  };
+}
+
+export async function createMeetingIntake(actor: WorkspaceActor, data: CreateMeetingIntakeInput) {
+  await ensureWorkspaceAccess(actor);
+  const input = normalizeCreateMeetingIntakeInput(data);
+  assertMeetingIntakeHasSource(input);
+  const detection = detectMeetingSource({
+    explicitSourceType: input.explicitSourceType,
+    filename: input.originalFilename,
+    mimeType: input.originalMimeType,
+    text: input.fileText ?? input.text
+  });
+  const intake = await prisma.meetingIntake.create({
+    data: {
+      workspaceId: actor.workspaceId,
+      createdById: actor.actorUserId,
+      sourceType: toPrismaSourceType(detection.sourceType),
+      originalFilename: input.originalFilename,
+      originalMimeType: input.originalMimeType,
+      contextText: input.contextText,
+      status: MeetingIntakeStatus.EXTRACTING
+    }
+  });
+
+  try {
+    const extracted = await extractMeetingText({
+      explicitSourceType: detection.sourceType,
+      fileBase64: input.fileBase64,
+      fileText: input.fileText,
+      filename: input.originalFilename,
+      mimeType: input.originalMimeType,
+      text: input.text
+    });
+    const normalized = normalizeMeetingMarkdown({
+      contextText: input.contextText,
+      metadata: extracted.metadata,
+      originalFilename: input.originalFilename,
+      rawText: extracted.rawText,
+      sourceType: extracted.sourceType
+    });
+    await prisma.meetingIntake.update({
+      where: { id: intake.id },
+      data: {
+        markdownText: normalized.markdown,
+        rawText: extracted.rawText,
+        status: MeetingIntakeStatus.ANALYZING
+      }
+    });
+    const matches = await matchMeetingCrmObjects(actor, {
+      contextText: input.contextText,
+      hints: input.hints,
+      markdownText: normalized.markdown
+    });
+    const draft = await deterministicMeetingAnalysisProvider.analyzeMeetingMarkdown({
+      contextText: input.contextText,
+      markdown: normalized.markdown,
+      sourceMetadata: extracted.metadata,
+      ...matches
+    });
+    draft.warnings = [...extracted.warnings, ...draft.warnings];
+    const updated = await prisma.meetingIntake.update({
+      where: { id: intake.id },
+      data: {
+        analysisJson: toJson({ detection, extractionWarnings: extracted.warnings, metadata: extracted.metadata, sections: normalized.sections }),
+        proposedChangesJson: toJson(draft),
+        status: MeetingIntakeStatus.READY_FOR_REVIEW
+      }
+    });
+    await writeAuditLog(actor, "meeting_intake.created", "MeetingIntake", intake.id, {
+      sourceType: detection.sourceType,
+      status: updated.status
+    });
+    return updated;
+  } catch (error) {
+    const message = formatMeetingIntakeFailureMessage(error);
+    const failed = await prisma.meetingIntake.update({
+      where: { id: intake.id },
+      data: {
+        analysisJson: toJson({ detection }),
+        errorMessage: message,
+        status: MeetingIntakeStatus.FAILED
+      }
+    });
+    await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intake.id, {
+      sourceType: detection.sourceType,
+      message
+    });
+    return failed;
+  }
+}
+
+export async function applyMeetingIntake(actor: WorkspaceActor, intakeId: string, data: unknown) {
+  await ensureWorkspaceAccess(actor);
+  const intake = await getMeetingIntake(actor, intakeId);
+  if (intake.status === MeetingIntakeStatus.APPLIED && intake.applyResultJson) {
+    return intake.applyResultJson as ApplyMeetingIntelligenceResult;
+  }
+  if (intake.status !== MeetingIntakeStatus.READY_FOR_REVIEW) {
+    throw new ApiError("MEETING_INTAKE_NOT_READY", "Meeting intake is not ready to apply.", 409);
+  }
+
+  const draft = parseDraft(intake.proposedChangesJson);
+  const approved = normalizeApplyInput(data, draft);
+  const result: ApplyMeetingIntelligenceResult = {
+    appliedAt: new Date().toISOString(),
+    created: [],
+    skipped: [],
+    warnings: [...draft.warnings]
+  };
+
+  if (approved.meetingActivity?.include) {
+    await createApprovedActivity(actor, approved.meetingActivity, result, "meeting activity");
+  }
+  for (const note of approved.notes ?? []) {
+    if (!note.include) {
+      result.skipped.push({ label: targetLabel(note.target, "note"), reason: "Not selected for apply.", type: "note" });
+      continue;
+    }
+    await createApprovedNote(actor, note, result);
+  }
+  for (const activity of approved.nextStepActivities ?? []) {
+    if (!activity.include) {
+      result.skipped.push({ label: activity.title, reason: "Not selected for apply.", type: "activity" });
+      continue;
+    }
+    await createApprovedActivity(actor, activity, result, "next-step activity");
+  }
+
+  await prisma.meetingIntake.update({
+    where: { id: intake.id },
+    data: {
+      appliedAt: new Date(result.appliedAt),
+      applyResultJson: toJson(result),
+      status: MeetingIntakeStatus.APPLIED
+    }
+  });
+  await writeAuditLog(actor, "meeting_intake.applied", "MeetingIntake", intake.id, {
+    createdCount: result.created.length,
+    skippedCount: result.skipped.length
+  });
+  return result;
+}
+
+async function createApprovedNote(
+  actor: WorkspaceActor,
+  note: NonNullable<ApplyMeetingIntelligenceInput["notes"]>[number],
+  result: ApplyMeetingIntelligenceResult
+) {
+  const targetValidation = await validateApplyTarget(actor, note.target);
+  if (!targetValidation.target) {
+    result.skipped.push({
+      label: targetLabel(note.target, "note"),
+      reason: targetValidation.reason ?? "No target record was selected.",
+      type: "note"
+    });
+    return;
+  }
+  try {
+    const created = await createNote(actor, {
+      ...targetAttachment(targetValidation.target),
+      body: note.body
+    });
+    result.created.push({
+      href: targetHref(targetValidation.target),
+      id: created.id,
+      label: targetLabel(targetValidation.target, "note"),
+      type: "note"
+    });
+  } catch (error) {
+    result.skipped.push({
+      label: targetLabel(targetValidation.target, "note"),
+      reason: formatMeetingIntakeFailureMessage(error, "Could not create note."),
+      type: "note"
+    });
+  }
+}
+
+async function createApprovedActivity(
+  actor: WorkspaceActor,
+  activity: NonNullable<ApplyMeetingIntelligenceInput["meetingActivity"]> | NonNullable<ApplyMeetingIntelligenceInput["nextStepActivities"]>[number],
+  result: ApplyMeetingIntelligenceResult,
+  label: string
+) {
+  const targetValidation = await validateApplyTarget(actor, activity.target);
+  if (!targetValidation.target) {
+    result.skipped.push({
+      label: activity.title || label,
+      reason: targetValidation.reason ?? "No target record was selected.",
+      type: "activity"
+    });
+    return;
+  }
+  try {
+    const created = await createActivity(actor, {
+      ...targetAttachment(targetValidation.target),
+      completedAt: "completedAt" in activity ? activity.completedAt ?? null : null,
+      description: activity.description ?? null,
+      dueAt: "dueAt" in activity ? activity.dueAt ?? null : null,
+      ownerId: "ownerId" in activity ? activity.ownerId ?? null : null,
+      title: activity.title,
+      type: "type" in activity ? activity.type : "MEETING"
+    });
+    result.created.push({
+      href: `/activities/${created.id}/edit`,
+      id: created.id,
+      label: created.title,
+      type: "activity"
+    });
+  } catch (error) {
+    result.skipped.push({
+      label: activity.title,
+      reason: formatMeetingIntakeFailureMessage(error, "Could not create activity."),
+      type: "activity"
+    });
+  }
+}
+
+async function validateApplyTarget(actor: WorkspaceActor, target: CrmTarget | null | undefined) {
+  if (!target) {
+    return { reason: "No target record was selected.", target: null };
+  }
+
+  if (target.type === "deal") {
+    const deal = await prisma.deal.findFirst({
+      where: { id: target.id, workspaceId: actor.workspaceId, deletedAt: null },
+      select: { id: true, status: true, title: true }
+    });
+    if (!deal) return { reason: "Selected target is not available in this workspace.", target: null };
+    if (deal.status !== "OPEN") return { reason: "Closed deals cannot be edited.", target: null };
+    return { target: { id: deal.id, label: deal.title, type: "deal" as const } };
+  }
+
+  if (target.type === "lead") {
+    const lead = await prisma.lead.findFirst({
+      where: { id: target.id, workspaceId: actor.workspaceId, deletedAt: null },
+      select: { id: true, status: true, title: true }
+    });
+    if (!lead) return { reason: "Selected target is not available in this workspace.", target: null };
+    if (lead.status === "CONVERTED") {
+      return { reason: "Converted leads are locked. Add new context on the converted deal.", target: null };
+    }
+    return { target: { id: lead.id, label: lead.title, type: "lead" as const } };
+  }
+
+  if (target.type === "person") {
+    const person = await prisma.person.findFirst({
+      where: { id: target.id, workspaceId: actor.workspaceId, deletedAt: null },
+      select: { email: true, firstName: true, id: true, lastName: true }
+    });
+    if (!person) return { reason: "Selected target is not available in this workspace.", target: null };
+    return { target: { id: person.id, label: formatPersonName(person) ?? person.email ?? "Unnamed contact", type: "person" as const } };
+  }
+
+  const organization = await prisma.organization.findFirst({
+    where: { id: target.id, workspaceId: actor.workspaceId, deletedAt: null },
+    select: { id: true, name: true }
+  });
+  if (!organization) return { reason: "Selected target is not available in this workspace.", target: null };
+  return { target: { id: organization.id, label: organization.name, type: "organization" as const } };
+}
+
+export function formatMeetingIntakeFailureMessage(error: unknown, fallback = "Meeting intake processing failed.") {
+  if (error instanceof ApiError || error instanceof Error) {
+    return redactSensitiveText(error.message) || fallback;
+  }
+  if (typeof error === "string") {
+    return redactSensitiveText(error) || fallback;
+  }
+  return fallback;
+}
+
+function normalizeCreateMeetingIntakeInput(data: CreateMeetingIntakeInput) {
+  const input = objectInput(data);
+  return {
+    contextText: normalizeOptionalText(input.contextText, 20_000),
+    explicitSourceType: normalizeSourceType(input.explicitSourceType),
+    fileBase64: normalizeOptionalBase64(input.fileBase64, 12_000_000),
+    fileText: normalizeOptionalText(input.fileText, 120_000),
+    hints: normalizeHints(input.hints),
+    originalFilename: normalizeOptionalText(input.originalFilename, 255),
+    originalMimeType: normalizeOptionalText(input.originalMimeType, 255),
+    text: normalizeOptionalText(input.text, 120_000)
+  };
+}
+
+function assertMeetingIntakeHasSource(input: ReturnType<typeof normalizeCreateMeetingIntakeInput>) {
+  if (input.text || input.fileText || input.fileBase64 || input.originalFilename || input.originalMimeType) return;
+  throw new ApiError("VALIDATION_ERROR", "Paste meeting notes or upload a meeting artifact before creating an intake.", 422);
+}
+
+function normalizeApplyInput(data: unknown, draft: MeetingIntelligenceDraft): ApplyMeetingIntelligenceInput {
+  const input = objectInput(data);
+  return {
+    meetingActivity: normalizeMeetingActivity(input.meetingActivity, draft.meetingActivity),
+    notes: normalizeNotes(input.notes, draft.notes),
+    nextStepActivities: normalizeNextActivities(input.nextStepActivities, draft.nextStepActivities)
+  };
+}
+
+function normalizeMeetingActivity(value: unknown, fallback: MeetingIntelligenceDraft["meetingActivity"]) {
+  if (!fallback) return null;
+  const input = objectInput(value);
+  return {
+    ...fallback,
+    completedAt: normalizeOptionalText(input.completedAt, 80) ?? fallback.completedAt,
+    description: normalizeRequiredText(input.description, "Meeting activity description is required.", 40_000) ?? fallback.description,
+    include: normalizeBoolean(input.include, fallback.include),
+    target: normalizeTarget(input.target, fallback.target),
+    title: normalizeRequiredText(input.title, "Meeting activity title is required.", 180) ?? fallback.title
+  };
+}
+
+function normalizeNotes(value: unknown, fallback: MeetingIntelligenceDraft["notes"]) {
+  const values = Array.isArray(value) ? value : [];
+  return fallback.map((note, index) => {
+    const input = objectInput(values[index]);
+    return {
+      ...note,
+      body: normalizeRequiredText(input.body, "Note body is required.", 40_000) ?? note.body,
+      include: normalizeBoolean(input.include, note.include),
+      target: normalizeTarget(input.target, note.target)
+    };
+  });
+}
+
+function normalizeNextActivities(value: unknown, fallback: MeetingIntelligenceDraft["nextStepActivities"]) {
+  const values = Array.isArray(value) ? value : [];
+  return fallback.map((activity, index) => {
+    const input = objectInput(values[index]);
+    return {
+      ...activity,
+      description: normalizeOptionalText(input.description, 20_000) ?? activity.description,
+      dueAt: normalizeOptionalText(input.dueAt, 80) ?? activity.dueAt,
+      include: normalizeBoolean(input.include, activity.include),
+      ownerId: normalizeOptionalText(input.ownerId, 120) ?? activity.ownerId,
+      target: normalizeTarget(input.target, activity.target),
+      title: normalizeRequiredText(input.title, "Activity title is required.", 180) ?? activity.title,
+      type: normalizeActivityType(input.type, activity.type)
+    };
+  });
+}
+
+function normalizeTarget(value: unknown, fallback: CrmTarget | null): CrmTarget | null {
+  if (value === undefined) return fallback;
+  if (value === null) return null;
+  const input = objectInput(value);
+  const type = input.type === "deal" || input.type === "lead" || input.type === "person" || input.type === "organization" ? input.type : undefined;
+  const id = normalizeOptionalText(input.id, 120);
+  if (!type || !id) return null;
+  return { id, label: normalizeOptionalText(input.label, 255), type };
+}
+
+function normalizeHints(value: unknown): MatchRecordHints {
+  const input = objectInput(value);
+  return {
+    dealId: normalizeOptionalText(input.dealId, 120),
+    leadId: normalizeOptionalText(input.leadId, 120),
+    organizationId: normalizeOptionalText(input.organizationId, 120),
+    personIds: Array.isArray(input.personIds)
+      ? input.personIds.map((item) => normalizeOptionalText(item, 120)).filter((item): item is string => Boolean(item))
+      : []
+  };
+}
+
+function parseDraft(value: Prisma.JsonValue): MeetingIntelligenceDraft {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError("MEETING_INTAKE_DRAFT_INVALID", "Meeting intake draft is invalid.", 409);
+  }
+  return value as unknown as MeetingIntelligenceDraft;
+}
+
+function toPrismaSourceType(sourceType: MeetingSourceType) {
+  const map: Record<MeetingSourceType, MeetingIntakeSourceType> = {
+    audio: MeetingIntakeSourceType.AUDIO,
+    docx: MeetingIntakeSourceType.DOCX,
+    image: MeetingIntakeSourceType.IMAGE,
+    markdown: MeetingIntakeSourceType.MARKDOWN,
+    pasted_text: MeetingIntakeSourceType.PASTED_TEXT,
+    pdf: MeetingIntakeSourceType.PDF,
+    text_file: MeetingIntakeSourceType.TEXT_FILE,
+    unsupported: MeetingIntakeSourceType.UNSUPPORTED,
+    video: MeetingIntakeSourceType.VIDEO
+  };
+  return map[sourceType];
+}
+
+function targetAttachment(target: CrmTarget) {
+  if (target.type === "deal") return { dealId: target.id };
+  if (target.type === "lead") return { leadId: target.id };
+  if (target.type === "person") return { personId: target.id };
+  return { organizationId: target.id };
+}
+
+function targetHref(target: CrmTarget) {
+  if (target.type === "deal") return `/deals/${target.id}`;
+  if (target.type === "lead") return `/leads/${target.id}`;
+  if (target.type === "person") return `/contacts/${target.id}`;
+  return `/organizations/${target.id}`;
+}
+
+function targetLabel(target: CrmTarget | null | undefined, fallback: string) {
+  if (!target) return fallback;
+  return target.label ? `${target.label} ${fallback}` : fallback;
+}
+
+function normalizeActivityType(value: unknown, fallback: "CALL" | "EMAIL" | "MEETING" | "TASK") {
+  return value === "CALL" || value === "EMAIL" || value === "MEETING" || value === "TASK" ? value : fallback;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  return fallback;
+}
+
+function normalizeRequiredText(value: unknown, message: string, maxLength: number) {
+  const text = normalizeOptionalText(value, maxLength);
+  if (!text && value !== undefined) throw new ApiError("VALIDATION_ERROR", message, 422);
+  return text;
+}
+
+function normalizeOptionalText(value: unknown, maxLength: number) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function normalizeOptionalBase64(value: unknown, maxLength: number) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+    throw new ApiError("VALIDATION_ERROR", "Uploaded file payload is invalid.", 422);
+  }
+  if (trimmed.length > maxLength) {
+    throw new ApiError("VALIDATION_ERROR", "Uploaded file payload is too large for Meeting Intelligence.", 422);
+  }
+  return trimmed;
+}
+
+function objectInput(input: unknown): Record<string, unknown> {
+  if (typeof input === "object" && input !== null && !Array.isArray(input)) return input as Record<string, unknown>;
+  return {};
+}
+
+function toJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function formatPersonName(person: { firstName: string | null; lastName: string | null }) {
+  const name = [person.firstName, person.lastName].filter(Boolean).join(" ").trim();
+  return name || undefined;
+}

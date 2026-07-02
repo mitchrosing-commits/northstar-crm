@@ -1,21 +1,32 @@
 import Link from "next/link";
+import type { Route } from "next";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
-import { RecordCustomFieldsForm, RecordCustomFieldsReadOnly } from "@/components/record-custom-fields-form";
+import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
+import { FormIntroCallout } from "@/components/form-intro-callout";
 import { formatDate } from "@/components/format";
 import { LeadConversionForm } from "@/components/lead-conversion-form";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
 import { NotesPanel } from "@/components/notes-panel";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { getNextOpenActivity, RecordNextActivitySummary } from "@/components/record-next-activity-summary";
+import { RecordHeaderActions } from "@/components/record-header-actions";
+import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
+import { RecordSummary } from "@/components/record-summary";
 import { RecordTimeline } from "@/components/record-timeline";
 import { StatusBadge } from "@/components/status-badge";
 import { createLeadAutomationActivityAction } from "@/app/leads/actions";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import { formatPersonName } from "@/lib/person-name";
+import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
+import { convertedLeadLockedLabel, convertedLeadLockMessage } from "@/lib/record-lock-copy";
+import { recordSubtitle } from "@/lib/record-subtitle";
 import { getLead, getRecordTimeline, getWorkspace, listEmailTemplates, listLeadCustomFields, listPipelines } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -43,62 +54,88 @@ export default async function LeadDetailPage({ params }: PageProps) {
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
   }));
+  const nextActivity = getNextOpenActivity(lead.activities);
+  const activityCopy = recordActivitySectionCopy("lead");
+  const emailLogCount = timelineItems.filter((item) => item.type === "email").length;
+  const outreachActionLabel = `Create outreach: create first outreach activity for ${lead.title}`;
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Lead</p>
-          <h1 className="page-title">{lead.title}</h1>
-        </div>
-        <div className="header-actions">
-          <StatusBadge status={lead.status} />
-          {lead.status !== "CONVERTED" ? (
-            <Link
-              className="button-secondary"
-              href={buildActivityFollowUpHref({
-                related: { type: "lead", id: lead.id },
-                title: `Follow up on ${lead.title}`,
-                type: "TASK"
-              })}
-            >
-              Add follow-up
-            </Link>
-          ) : null}
-          <Link className="button-secondary" href="/leads">
-            Back to leads
-          </Link>
-          {lead.status === "CONVERTED" ? (
-            <button className="button-secondary" disabled type="button">
-              Editing locked
-            </button>
-          ) : (
-            <Link className="button-primary" href={`/leads/${lead.id}/edit`}>
-              Edit lead
-            </Link>
-          )}
-        </div>
-      </header>
+      <PageHeader
+        actions={
+          <RecordHeaderActions
+            addHref={"#add-activity" as Route}
+            addLockedLabel="Activity locked"
+            backHref="/leads"
+            backLabel="Back to leads"
+            customFieldsHref={"#custom-fields" as Route}
+            editHref={lead.status !== "CONVERTED" ? (`/leads/${lead.id}/edit` as Route) : undefined}
+            editLabel="Edit lead"
+            leadingActions={<StatusBadge status={lead.status} />}
+            locked={lead.status === "CONVERTED"}
+            lockedLabel={convertedLeadLockedLabel}
+            noteHref={"#notes" as Route}
+            noteLockedLabel="Notes locked"
+            recordTitle={lead.title}
+          />
+        }
+        eyebrow="Lead"
+        subtitle={recordSubtitle([lead.source, lead.owner?.name ?? lead.owner?.email, lead.organization?.name ?? formatPersonName(lead.person)])}
+        title={lead.title}
+      />
+
+      <RecordSummary
+        actions={
+          <RecordPanelJumpNav
+            counts={{
+              activities: lead.activities.length,
+              auditHistory: lead.auditLogs.length,
+              customFields: customFields.length,
+              emailLog: emailLogCount,
+              notes: lead.notes.length,
+              timeline: timelineItems.length
+            }}
+            extraJumps={[{ href: "#convert-lead" as Route, label: "Conversion" }]}
+          />
+        }
+        eyebrow="Lead readiness"
+        items={[
+          { label: "Status", value: <StatusBadge status={lead.status} />, tone: lead.status === "CONVERTED" ? "success" : "default" },
+          { label: "Activities", value: lead.activities.length, tone: lead.status !== "CONVERTED" && lead.activities.length === 0 ? "warning" : "default" },
+          { label: "Owner", value: lead.owner?.name ?? lead.owner?.email ?? "Unassigned", tone: lead.owner ? "default" : "muted" },
+          {
+            label: "Next follow-up",
+            value: <RecordNextActivitySummary activity={nextActivity} emptyLabel="No open lead follow-up" />,
+            tone: nextActivity ? "default" : lead.status === "CONVERTED" ? "muted" : "warning"
+          },
+          { label: "Notes", value: lead.notes.length },
+          {
+            label: "Conversion",
+            value: lead.status === "CONVERTED" ? "Locked after conversion" : "Ready when qualified",
+            tone: lead.status === "CONVERTED" ? "muted" : "default"
+          }
+        ]}
+        title="Lead workspace"
+      />
 
       {lead.status !== "CONVERTED" && lead.activities.length === 0 ? (
-        <section className="data-card automation-template-panel" style={{ marginBottom: 14 }}>
-          <div className="panel-title-row">
-            <div>
-              <p className="page-kicker">Suggested Automation</p>
-              <h2 className="panel-title">First outreach</h2>
-            </div>
-            <span className="badge">Creates activity</span>
-          </div>
-          <p className="empty-copy">
+        <section className="data-card automation-template-panel section-separated">
+          <PanelTitleRow actions={<span className="badge">Creates activity</span>} eyebrow="Suggested Automation" title="First outreach" />
+          <FormIntroCallout title="Suggested next step">
             Create a first outreach activity for this lead. This is a one-click template, not an automatic rule.
-          </p>
+          </FormIntroCallout>
           <form action={createLeadAutomationActivityAction} className="automation-template-item">
             <input name="leadId" type="hidden" value={lead.id} />
             <div>
               <strong>Lead first outreach</strong>
               <p>Schedule a call for tomorrow so the lead has a clear next step.</p>
             </div>
-            <button className="button-secondary button-compact" type="submit">
+            <button
+              aria-label={outreachActionLabel}
+              className="button-secondary button-compact"
+              title={outreachActionLabel}
+              type="submit"
+            >
               Create outreach
             </button>
           </form>
@@ -108,44 +145,46 @@ export default async function LeadDetailPage({ params }: PageProps) {
       <section className="detail-grid">
         <DetailFieldGrid
           fields={[
-            { label: "Source", value: lead.source ?? "None" },
+            { emptyLabel: "No source", label: "Source", value: lead.source },
             { label: "Created", value: formatDate(lead.createdAt) },
             { label: "Owner", value: lead.owner?.name ?? lead.owner?.email ?? "Unassigned" },
             {
+              emptyLabel: "No contact",
               label: "Person",
               value: lead.person ? (
                 <Link className="inline-link" href={`/contacts/${lead.person.id}`}>
-                  {formatPersonName(lead.person)}
+                  {formatPersonName(lead.person) ?? "Unnamed contact"}
                 </Link>
               ) : (
-                "None"
+                null
               )
             },
             {
+              emptyLabel: "No organization",
               label: "Organization",
               value: lead.organization ? (
                 <Link className="inline-link" href={`/organizations/${lead.organization.id}`}>
                   {lead.organization.name}
                 </Link>
               ) : (
-                "None"
+                null
               )
             }
           ]}
         />
-        <div className="data-card">
-          <h2 className="panel-title">Convert to Deal</h2>
-          <p className="empty-copy">
-            Create a deal from this lead in a selected pipeline stage. Linked activities and notes will move to the
-            new deal timeline, then Northstar opens the converted deal so you can add the next sales step.
-          </p>
+        <div className="data-card" id="convert-lead">
+          <PanelTitleRow title="Convert to Deal" />
+          <FormIntroCallout title="Conversion path">
+            Create a deal from this lead in a selected pipeline stage. Linked activities, notes, and email logs will
+            move to the new deal timeline, then Northstar opens the converted deal so you can add the next sales step.
+          </FormIntroCallout>
           {!lead.person && !lead.organization ? (
-            <p className="empty-copy" style={{ marginTop: 8 }}>
+            <FormIntroCallout className="lead-conversion-note" title="Relationship check">
               This lead has no linked contact or organization yet. You can still convert it now, or add those details first
               if you want the new deal linked from day one.
-            </p>
+            </FormIntroCallout>
           ) : null}
-          <div style={{ marginTop: 14 }}>
+          <div className="section-spaced">
             <LeadConversionForm
               leadId={lead.id}
               leadStatus={lead.status}
@@ -159,53 +198,31 @@ export default async function LeadDetailPage({ params }: PageProps) {
             />
           </div>
         </div>
-        <div className="data-card">
-          <h2 className="panel-title">Custom Fields</h2>
-          {lead.status === "CONVERTED" ? (
-            <RecordCustomFieldsReadOnly
-              emptyMessage="No lead custom fields have been created yet."
-              fields={customFields.map((field) => ({
-                id: field.id,
-                name: field.name,
-                key: field.key,
-                fieldType: field.fieldType,
-                options: field.options,
-                required: field.required,
-                value: field.values[0]?.value
-              }))}
-              lockedMessage="This lead has been converted. Custom fields are read-only."
-            />
-          ) : (
-            <RecordCustomFieldsForm
-              emptyMessage="No lead custom fields have been created yet."
-              entityId={lead.id}
-              entityType="LEAD"
-              fields={customFields.map((field) => ({
-                id: field.id,
-                name: field.name,
-                key: field.key,
-                fieldType: field.fieldType,
-                options: field.options,
-                required: field.required,
-                value: field.values[0]?.value
-              }))}
-              workspaceId={workspace.id}
-            />
-          )}
-        </div>
       </section>
+
+      <RecordCustomFieldsPanel
+        emptyMessage="No lead custom fields have been created yet."
+        entityId={lead.id}
+        entityType="LEAD"
+        fields={customFields}
+        lockedMessage={convertedLeadLockMessage("customFields")}
+        readOnly={lead.status === "CONVERTED"}
+        workspaceId={workspace.id}
+      />
 
       <RecordActivitiesPanel
         attachment={{ leadId: lead.id }}
         defaultOwnerId={actorUserId}
-        lockedMessage="This lead has been converted. Create follow-up activities on the converted deal."
+        formId="add-activity"
+        lockedMessage={convertedLeadLockMessage("activities")}
         owners={owners}
         sections={[
           {
             activities: lead.activities,
-            emptyMessage: "No activities are linked to this lead.",
-            showCompleteAction: true,
-            title: "Activities"
+            description: activityCopy.description,
+            emptyMessage: activityCopy.emptyMessage,
+            showCompleteAction: lead.status !== "CONVERTED",
+            title: activityCopy.title
           }
         ]}
         showForm={lead.status !== "CONVERTED"}
@@ -215,15 +232,16 @@ export default async function LeadDetailPage({ params }: PageProps) {
       <NotesPanel
         attachment={{ leadId: lead.id }}
         emptyMessage="No notes are linked to this lead."
-        lockedMessage="This lead has been converted. Add new context on the converted deal."
+        lockedMessage={convertedLeadLockMessage("notes")}
         notes={lead.notes}
+        showDeleteActions={lead.status !== "CONVERTED"}
         showForm={lead.status !== "CONVERTED"}
         workspaceId={workspace.id}
       />
 
       <ManualEmailLogPanel
         attachment={{ leadId: lead.id }}
-        lockedMessage="This lead has been converted. Log new email context on the converted deal."
+        lockedMessage={convertedLeadLockMessage("emailLogs")}
         showForm={lead.status !== "CONVERTED"}
         templates={emailTemplates}
         workspaceId={workspace.id}
@@ -237,8 +255,4 @@ export default async function LeadDetailPage({ params }: PageProps) {
       />
     </AppShell>
   );
-}
-
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }

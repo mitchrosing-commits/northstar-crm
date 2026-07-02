@@ -1,42 +1,26 @@
 import Link from "next/link";
 import type { Route } from "next";
+import type { ComponentType, ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
+import { CompactTitleRow } from "@/components/compact-title-row";
+import { FieldMetric } from "@/components/field-metric";
+import {
+  buildListExportHref,
+  exportRowCountLabel,
+  fullWorkspaceExportHelperText
+} from "@/components/list-export-link";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { exportResources, type ExportResource } from "@/lib/services/crm";
+import { exportResourceDetails, exportResources, getWorkspaceExportOverview } from "@/lib/services/crm";
 import { ContactImportForm } from "./contact-import-form";
 import { DealImportForm } from "./deal-import-form";
 import { LeadImportForm } from "./lead-import-form";
 import { OrganizationImportForm } from "./organization-import-form";
 
 export const dynamic = "force-dynamic";
-
-const exportLabels: Record<ExportResource, { title: string; description: string }> = {
-  deals: {
-    title: "Deals",
-    description: "Pipeline, stage, value, owner, contact, organization, and deal custom fields."
-  },
-  contacts: {
-    title: "Contacts",
-    description: "Names, email, phone, owner, organization, timestamps, and contact custom fields."
-  },
-  organizations: {
-    title: "Organizations",
-    description: "Company names, domains, owner, related record counts, timestamps, and organization custom fields."
-  },
-  leads: {
-    title: "Leads",
-    description: "Lead status, source, owner, contact, organization, timestamps, and lead custom fields."
-  },
-  activities: {
-    title: "Activities",
-    description: "Follow-up title, type, status, due/completed dates, owner, related records, and description."
-  },
-  quotes: {
-    title: "Quotes",
-    description: "Quote number, status, deal, contact, organization, totals, item count, and timestamps."
-  }
-};
 
 const importSamples = [
   {
@@ -65,59 +49,112 @@ const importSamples = [
   }
 ] as const;
 
+const importPreviewPanels: Array<{
+  Form: ComponentType;
+  description: string;
+  id: string;
+  title: string;
+}> = [
+  {
+    Form: OrganizationImportForm,
+    description:
+      "Paste a small Organizations CSV to validate rows and detect likely duplicates before importing. This preview does not create records until you import valid organizations.",
+    id: "organizations-import",
+    title: "Organizations Import Preview"
+  },
+  {
+    Form: ContactImportForm,
+    description:
+      "Paste a small Contacts CSV to validate rows, detect email duplicates, and check organization references before creating valid contacts.",
+    id: "contacts-import",
+    title: "Contacts Import Preview"
+  },
+  {
+    Form: LeadImportForm,
+    description:
+      "Paste a small Leads CSV to validate titles, detect title duplicates, and check organization references before creating valid leads.",
+    id: "leads-import",
+    title: "Leads Import Preview"
+  },
+  {
+    Form: DealImportForm,
+    description:
+      "Paste a small Deals CSV to validate pipeline and stage references, detect deal duplicates, and check associations before creating valid deals.",
+    id: "deals-import",
+    title: "Deals Import Preview"
+  }
+];
+
 export default async function ImportExportPage() {
-  const { workspace } = await getCurrentWorkspaceContext();
+  const { actor, workspace } = await getCurrentWorkspaceContext();
+  const exportOverview = await getWorkspaceExportOverview(actor);
+  const backToSettingsLabel = "Back to settings from import and export";
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Settings</p>
-          <h1 className="page-title">Import / Export</h1>
-        </div>
-        <div className="header-actions">
-          <Link className="button-secondary" href="/settings">
+      <PageHeader
+        actions={
+          <Link
+            aria-label={backToSettingsLabel}
+            className="button-secondary"
+            href="/settings"
+            title={backToSettingsLabel}
+          >
             Back to settings
           </Link>
-        </div>
-      </header>
+        }
+        eyebrow="Settings"
+        subtitle="Move CRM data safely with filter-aware exports and preview-first CSV imports."
+        title="Import / Export"
+      />
 
       <section className="panel">
-        <h2 className="panel-title">CSV Exports</h2>
-        <p className="empty-copy">
-          Exports include core columns plus workspace custom fields for the selected record type.
-        </p>
+        <PanelTitleRow
+          actions={<Badge label="CSV exports are scoped to the active workspace">Workspace scoped</Badge>}
+          description="Settings exports download full workspace snapshots with core columns and workspace custom fields. For filtered exports, apply filters on a list page and use that page's CSV export."
+          title="CSV Exports"
+        />
         <div className="export-grid">
           {exportResources.map((resource) => {
-            const label = exportLabels[resource];
+            const label = exportResourceDetails[resource];
+            const overview = exportOverview[resource];
+            const exportActionLabel = `Download ${label.title} full workspace CSV`;
             return (
-              <div className="export-item" key={resource}>
-                <div>
-                  <h3>{label.title}</h3>
-                  <p>{label.description}</p>
-                </div>
-                <Link
-                  className="button-primary"
-                  href={`/api/v1/workspaces/${workspace.id}/exports/${resource}` as Route}
-                >
-                  Download CSV
-                </Link>
-              </div>
+              <DataTransferCard
+                action={
+                  <Link
+                    aria-label={exportActionLabel}
+                    className="button-primary"
+                    href={buildListExportHref(workspace.id, resource, {}) as Route}
+                    title={exportActionLabel}
+                  >
+                    Download CSV
+                  </Link>
+                }
+                description={label.description}
+                helper={fullWorkspaceExportHelperText(overview)}
+                key={resource}
+                meta={
+                  <ExportCardMeta
+                    customFieldCount={overview.customFieldCount}
+                    rowCount={overview.rowCount}
+                  />
+                }
+                title={label.title}
+              />
             );
           })}
         </div>
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Sample CSV Templates</h2>
-        <p className="empty-copy">
-          Use these small samples as starting points. Imports remain preview-first: paste a CSV, review validation, then
-          import valid rows.
-        </p>
+        <PanelTitleRow
+          description="Use these small samples as starting points. Imports remain preview-first: paste a CSV, review validation, then import valid rows."
+          title="Sample CSV Templates"
+        />
         <div className="sample-csv-grid">
           {importSamples.map((sample) => (
-            <div className="sample-csv-card" key={sample.title}>
-              <h3>{sample.title}</h3>
+            <DataTransferCard className="sample-csv-card" key={sample.title} title={sample.title}>
               <p>
                 <strong>Required:</strong> {sample.required}
               </p>
@@ -125,46 +162,99 @@ export default async function ImportExportPage() {
                 <strong>Optional:</strong> {sample.optional}
               </p>
               <pre>{sample.csv}</pre>
-            </div>
+            </DataTransferCard>
           ))}
         </div>
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Deals Import Preview</h2>
-        <p className="empty-copy">
-          Paste a small Deals CSV to validate pipeline and stage references, detect deal duplicates, and check associations
-          before creating valid deals.
-        </p>
-        <DealImportForm />
+        <PanelTitleRow
+          actions={<Badge label="CSV imports require preview and validation before records are created">Preview first</Badge>}
+          description="Imports are intentionally conservative. Preview the CSV first, then create only the rows Northstar can validate against this workspace."
+          title="Import Safety Rules"
+        />
+        <div className="field-grid">
+          <FieldMetric label="Preview first" value="No records are created until you choose an import action after validation." />
+          <FieldMetric label="Row-level results" value="Valid, duplicate, invalid, and unsupported-column outcomes are shown before import." />
+          <FieldMetric label="Workspace scoped" value="Owners and related records must already exist in the active workspace." />
+          <FieldMetric label="Custom fields" value="Exports include custom fields; custom-field import remains deferred until mapping is explicit." />
+        </div>
       </section>
 
-      <section className="panel">
-        <h2 className="panel-title">Organizations Import Preview</h2>
-        <p className="empty-copy">
-          Paste a small Organizations CSV to validate rows and detect likely duplicates before importing. This preview does
-          not create records until you import valid organizations.
-        </p>
-        <OrganizationImportForm />
-      </section>
-
-      <section className="panel">
-        <h2 className="panel-title">Contacts Import Preview</h2>
-        <p className="empty-copy">
-          Paste a small Contacts CSV to validate rows, detect email duplicates, and check organization references before
-          creating valid contacts.
-        </p>
-        <ContactImportForm />
-      </section>
-
-      <section className="panel">
-        <h2 className="panel-title">Leads Import Preview</h2>
-        <p className="empty-copy">
-          Paste a small Leads CSV to validate titles, detect title duplicates, and check organization references before
-          creating valid leads.
-        </p>
-        <LeadImportForm />
-      </section>
+      {importPreviewPanels.map(({ Form, description, id, title }) => (
+        <ImportPreviewSection description={description} id={id} key={title} title={title}>
+          <Form />
+        </ImportPreviewSection>
+      ))}
     </AppShell>
+  );
+}
+
+function DataTransferCard({
+  action,
+  children,
+  className = "export-item",
+  description,
+  helper,
+  meta,
+  title
+}: {
+  action?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  description?: ReactNode;
+  helper?: ReactNode;
+  meta?: ReactNode;
+  title: ReactNode;
+}) {
+  return (
+    <div className={className}>
+      <CompactTitleRow actions={action} description={description} title={title} />
+      {meta}
+      {children}
+      {helper ? <p className="export-scope-note">{helper}</p> : null}
+    </div>
+  );
+}
+
+function ExportCardMeta({
+  customFieldCount,
+  rowCount
+}: {
+  customFieldCount: number;
+  rowCount: number;
+}) {
+  const rowCountLabel = exportRowCountLabel(rowCount);
+  const rowCountBadgeLabel = `Export row count: ${rowCountLabel}`;
+  const customFieldBadgeLabel = `Export includes ${customFieldCount} custom ${customFieldCount === 1 ? "field" : "fields"}`;
+
+  return (
+    <div className="import-export-card-meta">
+      <Badge label={rowCountBadgeLabel}>{rowCountLabel}</Badge>
+      {customFieldCount > 0 ? (
+        <Badge label={customFieldBadgeLabel}>
+          {customFieldCount} custom {customFieldCount === 1 ? "field" : "fields"}
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
+function ImportPreviewSection({
+  children,
+  description,
+  id,
+  title
+}: {
+  children: ReactNode;
+  description: string;
+  id: string;
+  title: string;
+}) {
+  return (
+    <section className="panel" id={id}>
+      <PanelTitleRow description={description} title={title} />
+      {children}
+    </section>
   );
 }

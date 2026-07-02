@@ -22,9 +22,11 @@ model User {
   ownedPeople              Person[]                @relation("PersonOwner")
   ownedOrganizations       Organization[]          @relation("OrganizationOwner")
   ownedActivities          Activity[]              @relation("ActivityOwner")
+  ownedContractSteps       DealContractStep[]      @relation("DealContractStepOwner")
   authoredNotes            Note[]                  @relation("NoteAuthor")
   createdEmailLogs         EmailLog[]              @relation("EmailLogCreator")
   createdEmailConnections  EmailConnection[]       @relation("EmailConnectionCreator")
+  createdMeetingIntakes    MeetingIntake[]         @relation("MeetingIntakeCreator")
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
   auditLogs                AuditLog[]
   createdAt                DateTime                @default(now())
@@ -74,6 +76,7 @@ model Workspace {
   organizations          Organization[]
   products               Product[]
   dealLineItems          DealLineItem[]
+  contractSteps          DealContractStep[]
   quotes                 Quote[]
   quoteItems             QuoteItem[]
   quotePublicLinks       QuotePublicLink[]
@@ -88,6 +91,7 @@ model Workspace {
   savedViews             SavedView[]
   goals                  Goal[]
   jobs                   Job[]
+  meetingIntakes         MeetingIntake[]
   auditLogs              AuditLog[]
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -181,6 +185,7 @@ model Deal {
   person          Person?        @relation(fields: [personId], references: [id])
   organization    Organization?  @relation(fields: [organizationId], references: [id])
   lineItems       DealLineItem[]
+  contractSteps   DealContractStep[]
   quotes          Quote[]
   activities      Activity[]
   notes           Note[]
@@ -195,6 +200,31 @@ model Deal {
   @@index([workspaceId, organizationId])
   @@index([workspaceId, wonAt])
   @@index([workspaceId, lostAt])
+}
+
+model DealContractStep {
+  id                String             @id @default(cuid())
+  workspaceId       String
+  dealId            String
+  ownerId           String?
+  type              ContractStepType
+  status            ContractStepStatus @default(NOT_STARTED)
+  dueAt             DateTime?
+  sentAt            DateTime?
+  signedAt          DateTime?
+  notes             String?
+  externalReference String?
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id])
+  deal              Deal               @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  owner             User?              @relation("DealContractStepOwner", fields: [ownerId], references: [id])
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  deletedAt         DateTime?
+
+  @@unique([workspaceId, dealId, type])
+  @@index([workspaceId, dealId])
+  @@index([workspaceId, ownerId])
+  @@index([workspaceId, status])
 }
 
 model Product {
@@ -615,6 +645,32 @@ model Job {
   @@index([type, dedupeKey, status])
 }
 
+model MeetingIntake {
+  id               String                  @id @default(cuid())
+  workspaceId      String
+  createdById      String?
+  sourceType       MeetingIntakeSourceType
+  originalFilename String?
+  originalMimeType String?
+  contextText      String?
+  rawText          String?
+  markdownText     String?
+  status           MeetingIntakeStatus     @default(DRAFT)
+  analysisJson     Json?
+  proposedChangesJson Json?
+  applyResultJson  Json?
+  errorMessage     String?
+  appliedAt        DateTime?
+  workspace        Workspace               @relation(fields: [workspaceId], references: [id])
+  createdBy        User?                   @relation("MeetingIntakeCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+  @@index([createdById])
+}
+
 model AuditLog {
   id          String    @id @default(cuid())
   workspaceId String
@@ -661,6 +717,28 @@ enum JobStatus {
   DEAD
 }
 
+enum MeetingIntakeSourceType {
+  PASTED_TEXT
+  MARKDOWN
+  TEXT_FILE
+  PDF
+  DOCX
+  IMAGE
+  AUDIO
+  VIDEO
+  UNSUPPORTED
+}
+
+enum MeetingIntakeStatus {
+  DRAFT
+  EXTRACTING
+  EXTRACTED
+  ANALYZING
+  READY_FOR_REVIEW
+  APPLIED
+  FAILED
+}
+
 enum QuoteStatus {
   DRAFT
   SENT
@@ -672,6 +750,21 @@ enum QuoteAdjustmentType {
   NONE
   PERCENT
   FIXED
+}
+
+enum ContractStepType {
+  NDA
+  MSA
+  SOW
+}
+
+enum ContractStepStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SENT
+  SIGNED
+  BLOCKED
+  SKIPPED
 }
 
 enum LeadStatus {

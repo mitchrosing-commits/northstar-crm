@@ -1,8 +1,13 @@
 import { redirect } from "next/navigation";
+import type { Route } from "next";
 
+import { AuthPanel } from "@/components/auth-panel";
+import { sanitizeAuthNextPath } from "@/lib/auth/next-path";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { resolveAuthMode } from "@/lib/auth/session";
 import { LoginForm } from "./login-form";
+
+export const dynamic = "force-dynamic";
 
 type LoginPageProps = {
   searchParams: Promise<{ next?: string }>;
@@ -10,22 +15,23 @@ type LoginPageProps = {
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const { next = "/dashboard" } = await searchParams;
-  const isContinuation = next !== "/dashboard";
+  const nextPath = sanitizeAuthNextPath(next);
+  const isContinuation = nextPath !== "/dashboard";
   const isAuthenticated = await hasCurrentUser();
-  if (isAuthenticated) redirect("/dashboard");
+  if (isAuthenticated) redirect(nextPath as Route);
 
   return (
-    <main className="login-page">
-      <section className="login-panel">
-        <p className="page-kicker">Northstar CRM</p>
-        <h1 className="page-title">Sign in</h1>
-        <p className="empty-copy">
+    <AuthPanel
+      description={
+        <>
           {isContinuation ? "Please sign in to continue. " : null}
           Use a local workspace account. SSO and external email delivery are not part of this MVP.
-        </p>
-        <LoginForm nextPath={next} />
-      </section>
-    </main>
+        </>
+      }
+      title="Sign in"
+    >
+      <LoginForm nextPath={nextPath} />
+    </AuthPanel>
   );
 }
 

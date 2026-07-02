@@ -4,6 +4,8 @@ import { classifyDealAttention } from "@/lib/deal-attention";
 import { prisma } from "@/lib/db/prisma";
 import type { DealListFilters } from "./deal-service";
 import { listDeals } from "./deal-service";
+import { activityAttachmentRelationsWhere } from "./record-guards";
+import { scopeWorkspaceRelation } from "./relation-scope";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
 import { userDisplaySelect } from "./user-select";
 
@@ -21,6 +23,11 @@ export type DealForecastInput = {
 
 export async function getDealReport(actor: WorkspaceActor, filters: DealListFilters = {}) {
   await ensureWorkspaceAccess(actor);
+  const scopedActivityWhere = {
+    workspaceId: actor.workspaceId,
+    ...activityAttachmentRelationsWhere(actor.workspaceId),
+    ...activeWhere
+  };
   const [deals, stages] = await Promise.all([
     listDeals(actor, filters),
     prisma.pipelineStage.findMany({
@@ -75,7 +82,7 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
         organization.openValueCents += valueCents;
         topOrganizations.set(organizationKey, organization);
       }
-      if (!deal.personId || !deal.organizationId) openDealsMissingContactOrOrganization += 1;
+      if (!deal.person || !deal.organization) openDealsMissingContactOrOrganization += 1;
       if (!deal.ownerId) openDealsWithoutOwner += 1;
 
       const attention = classifyDealAttention(deal);
@@ -107,11 +114,11 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
   ] = await Promise.all([
     prisma.activity.groupBy({
       by: ["type"],
-      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      where: scopedActivityWhere,
       _count: { _all: true }
     }),
-    prisma.activity.count({ where: { workspaceId: actor.workspaceId, completedAt: null, ...activeWhere } }),
-    prisma.activity.count({ where: { workspaceId: actor.workspaceId, completedAt: { not: null }, ...activeWhere } }),
+    prisma.activity.count({ where: { ...scopedActivityWhere, completedAt: null } }),
+    prisma.activity.count({ where: { ...scopedActivityWhere, completedAt: { not: null } } }),
     prisma.quote.groupBy({
       by: ["status"],
       where: { workspaceId: actor.workspaceId, deal: { workspaceId: actor.workspaceId, ...activeWhere } },
@@ -140,7 +147,7 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
       }
     }),
     prisma.organization.count({
-      where: { workspaceId: actor.workspaceId, people: { none: activeWhere }, ...activeWhere }
+      where: { workspaceId: actor.workspaceId, people: { none: { workspaceId: actor.workspaceId, ...activeWhere } }, ...activeWhere }
     })
   ]);
 
@@ -166,15 +173,20 @@ export async function getDealReport(actor: WorkspaceActor, filters: DealListFilt
       count: quoteStatusSummary[status].count,
       totalCents: quoteStatusSummary[status].totalCents
     })),
-    topOpenDeals: topOpenDeals.map((deal) => ({
-      id: deal.id,
-      title: deal.title,
-      valueCents: deal.valueCents ?? 0,
-      currency: deal.currency,
-      stageName: deal.stage.name,
-      organization: deal.organization ? { id: deal.organization.id, name: deal.organization.name } : null,
-      ownerName: deal.owner?.name ?? deal.owner?.email ?? "Unassigned"
-    })),
+    topOpenDeals: topOpenDeals.map((deal) => {
+      const organization = scopeWorkspaceRelation(deal.workspaceId, deal.organization);
+      const stage = scopeWorkspaceRelation(deal.workspaceId, deal.stage);
+
+      return {
+        id: deal.id,
+        title: deal.title,
+        valueCents: deal.valueCents ?? 0,
+        currency: deal.currency,
+        stageName: stage?.name ?? "Unknown stage",
+        organization: organization ? { id: organization.id, name: organization.name } : null,
+        ownerName: deal.owner?.name ?? deal.owner?.email ?? "Unassigned"
+      };
+    }),
     topOrganizations: Array.from(topOrganizations.values())
       .sort((a, b) => b.openValueCents - a.openValueCents || a.organizationName.localeCompare(b.organizationName))
       .slice(0, 5),

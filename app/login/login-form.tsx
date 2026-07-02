@@ -3,7 +3,10 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useActionState } from "react";
-import { useFormStatus } from "react-dom";
+
+import { AuthSubmitButton } from "@/components/auth-submit-button";
+import { AuthTextField } from "@/components/auth-text-field";
+import { FormErrorMessage } from "@/components/form-error-message";
 
 import { loginAction, type LoginActionState } from "./actions";
 
@@ -22,31 +25,25 @@ export function LoginForm({ nextPath }: LoginFormProps) {
   return (
     <form action={formAction} className="login-form">
       <input type="hidden" name="next" value={nextPath} />
-      <label className="form-label" htmlFor="email">
-        Email
-      </label>
-      <input
+      <AuthTextField
         autoComplete="email"
-        className="text-input"
         defaultValue={state.email}
         id="email"
+        label="Email"
         name="email"
         required
         type="email"
       />
-      <label className="form-label" htmlFor="password">
-        Password
-      </label>
-      <input
+      <AuthTextField
         autoComplete="current-password"
-        className="text-input"
         id="password"
+        label="Password"
         name="password"
         required
         type="password"
       />
-      {state.error ? <p className="form-error">{state.error}</p> : null}
-      <LoginSubmitButton />
+      {state.error ? <FormErrorMessage>{state.error}</FormErrorMessage> : null}
+      <AuthSubmitButton pendingLabel="Signing in..." submitLabel="Sign in" />
       <p className="empty-copy">
         <Link href="/forgot-password">Forgot your password?</Link>
       </p>
@@ -54,15 +51,5 @@ export function LoginForm({ nextPath }: LoginFormProps) {
         New to Northstar? <Link href={signupHref as Route}>Create an account</Link>
       </p>
     </form>
-  );
-}
-
-function LoginSubmitButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <button className="button-primary" disabled={pending} type="submit">
-      {pending ? "Signing in..." : "Sign in"}
-    </button>
   );
 }

@@ -3,6 +3,12 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { Badge } from "@/components/badge";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { PanelTitleRow } from "@/components/panel-title-row";
+
 type AdjustmentType = "NONE" | "PERCENT" | "FIXED";
 
 type QuoteAdjustmentsFormProps = {
@@ -65,15 +71,13 @@ export function QuoteAdjustmentsForm({
   }
 
   return (
-    <section className="data-card" style={{ marginTop: 14 }}>
-      <div className="panel-title-row">
-        <h2 className="panel-title">Quote Adjustments</h2>
-        <span className="badge">Draft only</span>
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 14 }}>
-        Apply one quote-level discount and one quote-level tax while this quote is DRAFT. Percent tax is calculated after discount. Line item snapshots stay unchanged.
-      </p>
-      {error ? <div className="form-error">{error}</div> : null}
+    <section className="data-card section-spaced">
+      <PanelTitleRow
+        actions={<Badge label="Quote adjustments are available for draft quotes only">Draft only</Badge>}
+        description="Apply one quote-level discount and one quote-level tax while this quote is DRAFT. Percent tax is calculated after discount. Line item snapshots stay unchanged."
+        title="Quote Adjustments"
+      />
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       <form className="inline-form" onSubmit={onSubmit}>
         <div className="form-grid">
           <AdjustmentFields
@@ -97,11 +101,7 @@ export function QuoteAdjustmentsForm({
             value={taxValue}
           />
         </div>
-        <div className="form-actions">
-          <button className="button-primary button-compact" disabled={isSaving} type="submit">
-            {isSaving ? "Saving..." : "Save adjustments"}
-          </button>
-        </div>
+        <FormActionBar isSaving={isSaving} submitLabel="Save adjustments" />
       </form>
     </section>
   );
@@ -123,7 +123,7 @@ function AdjustmentFields({
   return (
     <>
       <label className="form-field">
-        <span>{label} type</span>
+        <FormFieldLabel>{label} type</FormFieldLabel>
         <select onChange={(event) => onTypeChange(event.target.value as AdjustmentType)} value={type}>
           <option value="NONE">None</option>
           <option value="PERCENT">Percent</option>
@@ -131,7 +131,7 @@ function AdjustmentFields({
         </select>
       </label>
       <label className="form-field">
-        <span>{label} value</span>
+        <FormFieldLabel>{label} value</FormFieldLabel>
         <input
           disabled={type === "NONE"}
           inputMode="decimal"

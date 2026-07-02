@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
+import { EmptyState } from "@/components/empty-state";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+
 type StageOption = {
   id: string;
   name: string;
@@ -60,14 +65,20 @@ export function DealStageMoveForm({
   }
 
   if (!hasStages) {
-    return <p className="empty-copy">No stages are available in this pipeline.</p>;
+    return (
+      <EmptyState
+        className="empty-state-compact empty-state-panel deal-stage-empty"
+        title="No stages available"
+        description="No stages are available in this pipeline."
+      />
+    );
   }
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       <label className="form-field">
-        <span>Move to stage</span>
+        <FormFieldLabel required>Move to stage</FormFieldLabel>
         <select onChange={(event) => setStageId(event.target.value)} value={stageId}>
           {stages.map((stage) => (
             <option key={stage.id} value={stage.id}>
@@ -76,9 +87,13 @@ export function DealStageMoveForm({
           ))}
         </select>
       </label>
-      <button className="button-primary" disabled={isSaving || stageId === currentStageId} type="submit">
-        {isSaving ? "Moving..." : "Move deal"}
-      </button>
+      <FormActionBar
+        disabledHint="Choose a different stage before moving this deal."
+        isSaving={isSaving}
+        pendingLabel="Moving..."
+        submitDisabled={stageId === currentStageId}
+        submitLabel="Move deal"
+      />
     </form>
   );
 }

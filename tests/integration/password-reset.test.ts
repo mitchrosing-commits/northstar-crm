@@ -2,6 +2,7 @@ import { JobStatus } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  getPasswordResetTokenStatus,
   hashPasswordResetToken,
   invalidPasswordResetTokenMessage,
   passwordResetGenericMessage,
@@ -56,8 +57,13 @@ describe("password reset token lifecycle", () => {
       env: { NODE_ENV: "test" },
       now: new Date("2030-01-01T00:00:00.000Z")
     });
+    const malformedEmailResult = await requestPasswordReset({ email: fx.userA.email } as unknown as string, {
+      env: { NODE_ENV: "test" },
+      now: new Date("2030-01-01T00:01:00.000Z")
+    });
 
     expect(result).toEqual({ message: passwordResetGenericMessage });
+    expect(malformedEmailResult).toEqual({ message: passwordResetGenericMessage });
     await expect(fx.prisma.passwordResetToken.count({ where: { userId: fx.userA.id } })).resolves.toBe(0);
     await expect(fx.prisma.job.count({ where: { type: passwordResetEmailJobType } })).resolves.toBe(0);
   });
@@ -138,6 +144,85 @@ describe("password reset token lifecycle", () => {
     expect(missingAppBaseUrl).toEqual({ message: passwordResetGenericMessage });
     expect(missingWebhook).toEqual({ message: passwordResetGenericMessage });
     await expect(fx.prisma.job.count({ where: { type: passwordResetEmailJobType } })).resolves.toBe(1);
+  });
+
+  it("does not queue production reset email jobs with unsafe app base URLs", async () => {
+    const fx = currentFixture();
+    const localhost = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "http://localhost:3000",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:00:00.000Z")
+    });
+    const insecurePublicUrl = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "http://crm.example.test",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:01:00.000Z")
+    });
+    const privateNetworkUrl = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "https://192.168.1.10",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:02:00.000Z")
+    });
+    const uniqueLocalIpv6Url = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "https://[fd00::1]",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:03:00.000Z")
+    });
+    const mappedPrivateIpv6Url = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "https://[::ffff:192.168.1.10]",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:04:00.000Z")
+    });
+    const compatiblePrivateIpv6Url = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "https://[::192.168.1.10]",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:05:00.000Z")
+    });
+    const nat64PrivateIpv6Url = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "https://[64:ff9b::192.168.1.10]",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:06:00.000Z")
+    });
+    const credentialedPublicUrl = await requestPasswordReset(fx.userA.email, {
+      env: {
+        APP_BASE_URL: "https://preview:secret@crm.example.test",
+        AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+        NODE_ENV: "production"
+      },
+      now: new Date("2030-01-01T00:07:00.000Z")
+    });
+
+    expect(localhost).toEqual({ message: passwordResetGenericMessage });
+    expect(insecurePublicUrl).toEqual({ message: passwordResetGenericMessage });
+    expect(privateNetworkUrl).toEqual({ message: passwordResetGenericMessage });
+    expect(uniqueLocalIpv6Url).toEqual({ message: passwordResetGenericMessage });
+    expect(mappedPrivateIpv6Url).toEqual({ message: passwordResetGenericMessage });
+    expect(compatiblePrivateIpv6Url).toEqual({ message: passwordResetGenericMessage });
+    expect(nat64PrivateIpv6Url).toEqual({ message: passwordResetGenericMessage });
+    expect(credentialedPublicUrl).toEqual({ message: passwordResetGenericMessage });
+    await expect(fx.prisma.job.count({ where: { type: passwordResetEmailJobType } })).resolves.toBe(0);
+    await expect(fx.prisma.passwordResetToken.count({ where: { userId: fx.userA.id } })).resolves.toBe(8);
   });
 
   it("does not expose account existence or reset links in production responses", async () => {
@@ -246,6 +331,38 @@ describe("password reset token lifecycle", () => {
     });
   });
 
+  it("invalidates outstanding reset tokens when a user is deactivated", async () => {
+    const fx = currentFixture();
+    const oldPasswordHash = hashPassword("old-password");
+    await fx.prisma.user.update({
+      where: { id: fx.userA.id },
+      data: { passwordHash: oldPasswordHash }
+    });
+    const result = await requestPasswordReset(fx.userA.email, {
+      env: { NODE_ENV: "test" },
+      now: new Date("2030-01-01T00:00:00.000Z")
+    });
+
+    await fx.prisma.user.update({
+      where: { id: fx.userA.id },
+      data: { deletedAt: new Date("2030-01-01T00:05:00.000Z") }
+    });
+
+    await expect(getPasswordResetTokenStatus(result.resetToken ?? "", new Date("2030-01-01T00:06:00.000Z"))).resolves.toBe(
+      "invalid"
+    );
+    await expect(
+      resetPasswordWithToken(result.resetToken ?? "", "new-password", new Date("2030-01-01T00:06:00.000Z"))
+    ).rejects.toMatchObject({
+      code: "INVALID_RESET_TOKEN",
+      message: invalidPasswordResetTokenMessage,
+      status: 400
+    });
+    await expect(fx.prisma.user.findUniqueOrThrow({ where: { id: fx.userA.id } })).resolves.toMatchObject({
+      passwordHash: oldPasswordHash
+    });
+  });
+
   it("fails safely for consumed, expired, invalid, and short-password attempts", async () => {
     const fx = currentFixture();
     const expiredToken = "expired-token";
@@ -257,6 +374,19 @@ describe("password reset token lifecycle", () => {
       }
     });
 
+    await expect(getPasswordResetTokenStatus({ token: expiredToken } as unknown as string)).resolves.toBe("invalid");
+    await expect(
+      resetPasswordWithToken({ token: expiredToken } as unknown as string, "new-password")
+    ).rejects.toMatchObject({
+      code: "INVALID_RESET_TOKEN",
+      message: invalidPasswordResetTokenMessage,
+      status: 400
+    });
+    await expect(resetPasswordWithToken(expiredToken, { password: "new-password" } as unknown as string)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Password must be at least 8 characters.",
+      status: 422
+    });
     await expect(resetPasswordWithToken("not-a-token", "new-password")).rejects.toMatchObject({
       code: "INVALID_RESET_TOKEN",
       message: invalidPasswordResetTokenMessage,

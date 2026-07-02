@@ -1,9 +1,11 @@
 import { AppShell } from "@/components/app-shell";
+import { EmptyState } from "@/components/empty-state";
 import { formatMoney } from "@/components/format";
+import { ListPageHeaderActions } from "@/components/list-page-header-actions";
+import { PageHeader } from "@/components/page-header";
 import { PipelineBoard } from "@/components/pipeline-board";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { listCustomFieldSummaries, listPipelines } from "@/lib/services/crm";
-import Link from "next/link";
+import { listCustomFieldSummaries, listDealContractStepsForDeals, listPipelines } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -12,8 +14,15 @@ export default async function PipelinePage() {
   const actor = { workspaceId: workspace.id, actorUserId };
   const pipelines = await listPipelines(actor);
   const basePipeline = pipelines[0];
+  const dealExportCount = pipelines.reduce(
+    (count, pipeline) => count + pipeline.stages.reduce((stageCount, stage) => stageCount + stage.deals.length, 0),
+    0
+  );
   const dealIds = basePipeline?.stages.flatMap((stage) => stage.deals.map((deal) => deal.id)) ?? [];
-  const customFieldSummaries = await listCustomFieldSummaries(actor, "DEAL", dealIds);
+  const [customFieldSummaries, contractStepSummaries] = await Promise.all([
+    listCustomFieldSummaries(actor, "DEAL", dealIds),
+    listDealContractStepsForDeals(actor, dealIds)
+  ]);
   const pipeline = basePipeline
     ? {
         ...basePipeline,
@@ -21,7 +30,8 @@ export default async function PipelinePage() {
           ...stage,
           deals: stage.deals.map((deal) => ({
             ...deal,
-            contractFields: customFieldSummaries.get(deal.id) ?? []
+            contractFields: customFieldSummaries.get(deal.id) ?? [],
+            contractSteps: contractStepSummaries.get(deal.id) ?? []
           }))
         }))
       }
@@ -29,30 +39,35 @@ export default async function PipelinePage() {
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Pipeline</p>
-          <h1 className="page-title">{pipeline?.name ?? "Pipeline"}</h1>
-          {pipeline ? (
-            <p className="page-subtitle">Open a deal to update stage, activities, notes, and quotes, or use Move on a card.</p>
-          ) : null}
-        </div>
-        {pipeline ? (
-          <Link className="button-primary" href="/deals/new">
-            New deal
-          </Link>
-        ) : null}
-      </header>
+      <PageHeader
+        actions={
+          pipeline ? (
+            <ListPageHeaderActions
+              createHref="/deals/new"
+              createLabel="New deal"
+              importHref="/settings/import-export#deals-import"
+              matchingCount={dealExportCount}
+              resource="deals"
+              searchParams={{}}
+              workspaceId={workspace.id}
+            />
+          ) : null
+        }
+        eyebrow="Pipeline"
+        subtitle={pipeline ? "Open a deal to update stage, activities, notes, and quotes, or use Move on a card." : undefined}
+        title={pipeline?.name ?? "Pipeline"}
+      />
       {pipeline ? (
         <>
           <PipelineSummary pipeline={pipeline} />
           <PipelineBoard pipeline={pipeline} workspaceId={workspace.id} />
         </>
       ) : (
-        <div className="empty-state">
-          <h2>No pipeline yet</h2>
-          <p>New workspaces include a default sales pipeline. Ask a workspace admin to restore or create one before adding deals.</p>
-        </div>
+        <EmptyState
+          description="New workspaces include a default sales pipeline. Ask a workspace admin to restore or create one before adding deals."
+          title="No pipeline yet"
+          titleLevel="h2"
+        />
       )}
     </AppShell>
   );

@@ -1,5 +1,6 @@
 export type ActivityQuickLinkFilter = {
-  due?: "overdue" | "today" | "upcoming";
+  completed?: "recent";
+  due?: "overdue" | "today" | "upcoming" | "unscheduled";
   ownerId?: string;
   status?: "open" | "completed";
 };
@@ -12,6 +13,7 @@ export type ActivityQuickLink = {
 export function activityQuickLinkHref(filters: ActivityQuickLinkFilter) {
   const params = new URLSearchParams();
   if (filters.status) params.set("status", filters.status);
+  if (filters.completed) params.set("completed", filters.completed);
   if (filters.due) params.set("due", filters.due);
   if (filters.ownerId) params.set("ownerId", filters.ownerId);
 
@@ -22,9 +24,10 @@ export function activityQuickLinkHref(filters: ActivityQuickLinkFilter) {
 export function buildActivityQuickLinks(actorUserId: string): ActivityQuickLink[] {
   return [
     { label: "My open", href: activityQuickLinkHref({ status: "open", ownerId: actorUserId }) },
-    { label: "Overdue", href: activityQuickLinkHref({ due: "overdue" }) },
-    { label: "Due today", href: activityQuickLinkHref({ due: "today" }) },
-    { label: "Upcoming", href: activityQuickLinkHref({ due: "upcoming" }) },
-    { label: "Completed", href: activityQuickLinkHref({ status: "completed" }) }
+    { label: "Overdue", href: activityQuickLinkHref({ status: "open", due: "overdue" }) },
+    { label: "Due today", href: activityQuickLinkHref({ status: "open", due: "today" }) },
+    { label: "Upcoming", href: activityQuickLinkHref({ status: "open", due: "upcoming" }) },
+    { label: "No due date", href: activityQuickLinkHref({ status: "open", due: "unscheduled" }) },
+    { label: "Completed recently", href: activityQuickLinkHref({ status: "completed", completed: "recent" }) }
   ];
 }

@@ -1,9 +1,15 @@
 "use client";
 
 import type { Route } from "next";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+
+import { ActivityDueDateShortcuts } from "@/components/activity-due-date-shortcuts";
+import { ActivityDueDateHint, ActivityManualFollowUpHint } from "@/components/activity-form-guidance";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type ActivityType = "CALL" | "EMAIL" | "MEETING" | "TASK";
 
@@ -29,6 +35,8 @@ type ActivityFormProps = {
   attachmentOptions?: ActivityAttachmentOption[];
   owners: EntityOption[];
   redirectTo?: Route;
+  cancelHref?: Route;
+  cancelLabel?: string;
   defaultOwnerId?: string;
   initialAttachmentValue?: string;
   initialDescription?: string;
@@ -44,6 +52,8 @@ export function ActivityForm({
   attachmentOptions = [],
   owners,
   redirectTo,
+  cancelHref,
+  cancelLabel,
   defaultOwnerId = "",
   initialAttachmentValue = "",
   initialDescription = "",
@@ -121,16 +131,16 @@ export function ActivityForm({
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
-      <p className="form-hint">Manual follow-up only. Due dates help sort work; they do not send reminders.</p>
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      <ActivityManualFollowUpHint />
       <div className="form-grid">
         <label className="form-field form-field-wide">
-          <span>Title</span>
+          <FormFieldLabel required>Title</FormFieldLabel>
           <input onChange={(event) => setTitle(event.target.value)} required value={title} />
         </label>
 
         <label className="form-field">
-          <span>Type</span>
+          <FormFieldLabel>Type</FormFieldLabel>
           <select onChange={(event) => setType(event.target.value as ActivityType)} value={type}>
             <option value="TASK">Task</option>
             <option value="CALL">Call</option>
@@ -140,13 +150,14 @@ export function ActivityForm({
         </label>
 
         <label className="form-field">
-          <span>Due date</span>
+          <FormFieldLabel>Due date</FormFieldLabel>
           <input onChange={(event) => setDueAt(event.target.value)} type="date" value={dueAt} />
-          <small className="form-hint">Used for work-queue order, not calendar reminders.</small>
+          <ActivityDueDateShortcuts onSelect={setDueAt} />
+          <ActivityDueDateHint />
         </label>
 
         <label className="form-field">
-          <span>Assigned to</span>
+          <FormFieldLabel>Assigned to</FormFieldLabel>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
             <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
@@ -155,12 +166,12 @@ export function ActivityForm({
               </option>
             ))}
           </select>
-          <OwnerHint owners={owners} />
+          <OwnerAssignmentHint owners={owners} />
         </label>
 
         {!attachment ? (
           <label className="form-field form-field-wide">
-            <span>Related record</span>
+            <FormFieldLabel required>Related record</FormFieldLabel>
             <select
               onChange={(event) => setSelectedAttachment(event.target.value)}
               required
@@ -178,7 +189,7 @@ export function ActivityForm({
         ) : null}
 
         <label className="form-field form-field-wide">
-          <span>Description</span>
+          <FormFieldLabel>Description</FormFieldLabel>
           <textarea onChange={(event) => setDescription(event.target.value)} rows={3} value={description} />
         </label>
 
@@ -188,39 +199,21 @@ export function ActivityForm({
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !title.trim() || (!attachment && !selectedAttachment)} type="submit">
-          {isSaving ? "Adding..." : submitLabel}
-        </button>
-      </div>
+      <FormActionBar
+        cancelHref={cancelHref}
+        cancelLabel={cancelLabel}
+        disabledHint={
+          attachment
+            ? "Add an activity title before saving."
+            : "Add an activity title and choose a related record before saving."
+        }
+        isSaving={isSaving}
+        pendingLabel="Adding..."
+        submitDisabled={!title.trim() || (!attachment && !selectedAttachment)}
+        submitLabel={submitLabel}
+      />
     </form>
   );
-}
-
-function OwnerHint({ owners }: { owners: EntityOption[] }) {
-  if (owners.length === 1) {
-    return (
-      <small className="form-hint">
-        You are the only workspace member right now. Invite teammates later from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  if (owners.length === 0) {
-    return (
-      <small className="form-hint">
-        Save unassigned for now, then manage workspace members from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  return null;
 }
 
 function parseAttachmentValue(value: string): ActivityAttachment | null {

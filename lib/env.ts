@@ -1,5 +1,6 @@
 import { isSafeAuthUserIdHeaderName } from "@/lib/auth/session";
 import { canUseEmailTokenEncryptionKey } from "@/lib/email/token-encryption";
+import { isLocalDevelopmentHost, isPublicHttpsUrl } from "@/lib/public-host";
 
 const databaseProtocols = ["postgresql:", "postgres:"] as const;
 const authModes = ["demo", "trusted-header", "local"] as const;
@@ -54,6 +55,7 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
   const microsoftOauthClientSecret = readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_SECRET) ?? readNonEmpty(env.MICROSOFT_CLIENT_SECRET);
   const microsoftOauthRedirectUri = readNonEmpty(env.MICROSOFT_OAUTH_REDIRECT_URI) ?? readNonEmpty(env.MICROSOFT_REDIRECT_URI);
   const microsoftOauthTenantId = readNonEmpty(env.MICROSOFT_OAUTH_TENANT_ID);
+  const parsedAppBaseUrl = appBaseUrl ? parseUrl(appBaseUrl) : null;
 
   if (!databaseUrl) {
     errors.push("DATABASE_URL is required.");
@@ -73,6 +75,9 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
       protocols: ["http:", "https:"],
       errors
     });
+    if (parsedAppBaseUrl && (parsedAppBaseUrl.username || parsedAppBaseUrl.password)) {
+      errors.push("APP_BASE_URL must not include username or password credentials.");
+    }
   }
 
   if (authEmailWebhookUrl) {
@@ -89,11 +94,17 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
       errors.push("APP_BASE_URL is required when AUTH_EMAIL_WEBHOOK_URL is set.");
     }
 
+    if (authEmailWebhookUrlIsParseable) {
+      const parsedAuthEmailWebhookUrl = new URL(authEmailWebhookUrl);
+      if (parsedAuthEmailWebhookUrl.username || parsedAuthEmailWebhookUrl.password) {
+        errors.push("AUTH_EMAIL_WEBHOOK_URL must not include username or password credentials.");
+      }
+    }
+
     if (
       env.NODE_ENV === "production" &&
-      appBaseUrl &&
-      isParseableUrl(appBaseUrl) &&
-      new URL(appBaseUrl).protocol !== "https:"
+      parsedAppBaseUrl &&
+      parsedAppBaseUrl.protocol !== "https:"
     ) {
       errors.push("APP_BASE_URL must use https: in production when AUTH_EMAIL_WEBHOOK_URL is set.");
     }
@@ -114,9 +125,8 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
 
     if (
       env.NODE_ENV === "production" &&
-      appBaseUrl &&
-      isParseableUrl(appBaseUrl) &&
-      new URL(appBaseUrl).protocol !== "https:"
+      parsedAppBaseUrl &&
+      parsedAppBaseUrl.protocol !== "https:"
     ) {
       errors.push("APP_BASE_URL must use https: in production when RESEND_API_KEY is set.");
     }
@@ -162,6 +172,7 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
     clientId: googleOauthClientId,
     clientSecret: googleOauthClientSecret,
     errors,
+    isProduction: env.NODE_ENV === "production",
     label: "Google OAuth",
     redirectUri: googleOauthRedirectUri,
     redirectUriName: "GOOGLE_OAUTH_REDIRECT_URI"
@@ -170,10 +181,14 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
     clientId: microsoftOauthClientId,
     clientSecret: microsoftOauthClientSecret,
     errors,
+    isProduction: env.NODE_ENV === "production",
     label: "Microsoft OAuth",
     redirectUri: microsoftOauthRedirectUri,
     redirectUriName: "MICROSOFT_OAUTH_REDIRECT_URI"
   });
+  if (microsoftOauthTenantId && !isSafeMicrosoftTenantId(microsoftOauthTenantId)) {
+    errors.push("MICROSOFT_OAUTH_TENANT_ID must be a tenant id, domain, or one of: common, organizations, consumers.");
+  }
 
   if (emailTokenEncryptionKey && !canUseEmailTokenEncryptionKey(env)) {
     errors.push("EMAIL_TOKEN_ENCRYPTION_KEY must decode to at least 32 bytes when set.");
@@ -196,6 +211,17 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
   }
 
   const hasPasswordResetDelivery = Boolean(authEmailWebhookUrl || (resendApiKey && authEmailFrom));
+  if (
+    env.NODE_ENV === "production" &&
+    hasPasswordResetDelivery &&
+    parsedAppBaseUrl &&
+    !parsedAppBaseUrl.username &&
+    !parsedAppBaseUrl.password &&
+    !isPublicHttpsUrl(parsedAppBaseUrl)
+  ) {
+    errors.push("APP_BASE_URL must be a public https URL in production when password reset email delivery is configured.");
+  }
+
   if (env.NODE_ENV === "production" && !hasPasswordResetDelivery) {
     warnings.push("Password reset email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL.");
   }
@@ -245,11 +271,14 @@ function readNonEmpty(value: string | undefined) {
 }
 
 function isParseableUrl(value: string) {
+  return Boolean(parseUrl(value));
+}
+
+function parseUrl(value: string) {
   try {
-    new URL(value);
-    return true;
+    return new URL(value);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -281,6 +310,7 @@ function validateOauthProviderEnv({
   clientId,
   clientSecret,
   errors,
+  isProduction,
   label,
   redirectUri,
   redirectUriName
@@ -288,6 +318,7 @@ function validateOauthProviderEnv({
   clientId?: string;
   clientSecret?: string;
   errors: string[];
+  isProduction: boolean;
   label: string;
   redirectUri?: string;
   redirectUriName: string;
@@ -298,11 +329,39 @@ function validateOauthProviderEnv({
     errors.push(`${label} requires client id, client secret, and redirect URI when any provider env var is set.`);
   }
   if (redirectUri) {
+    const redirectUriIsParseable = isParseableUrl(redirectUri);
     validateUrl({
       value: redirectUri,
       name: redirectUriName,
       protocols: ["http:", "https:"],
       errors
     });
+
+    if (redirectUriIsParseable) {
+      const parsedRedirectUri = new URL(redirectUri);
+      if (parsedRedirectUri.username || parsedRedirectUri.password) {
+        errors.push(`${redirectUriName} must not include username or password credentials.`);
+      }
+      if (isProduction && !isLocalHttpUrl(parsedRedirectUri) && parsedRedirectUri.protocol !== "https:") {
+        errors.push(`${redirectUriName} must use https: in production.`);
+      }
+      if (
+        isProduction &&
+        parsedRedirectUri.protocol === "https:" &&
+        !parsedRedirectUri.username &&
+        !parsedRedirectUri.password &&
+        !isPublicHttpsUrl(parsedRedirectUri)
+      ) {
+        errors.push(`${redirectUriName} must be a public https URL in production.`);
+      }
+    }
   }
+}
+
+function isLocalHttpUrl(url: URL) {
+  return url.protocol === "http:" && isLocalDevelopmentHost(url.hostname);
+}
+
+function isSafeMicrosoftTenantId(value: string) {
+  return /^[A-Za-z0-9.-]+$/.test(value);
 }

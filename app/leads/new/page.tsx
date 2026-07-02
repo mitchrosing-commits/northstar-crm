@@ -1,6 +1,9 @@
 import { AppShell } from "@/components/app-shell";
+import { FormHeaderActions } from "@/components/form-header-actions";
 import { LeadForm } from "@/components/lead-form";
+import { PageHeader } from "@/components/page-header";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { formatPersonName } from "@/lib/person-name";
 import { getWorkspace, listOrganizations, listPeople } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -22,31 +25,36 @@ export default async function NewLeadPage({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
   }));
+  const defaultSource = firstSearchParam(resolvedSearchParams?.source);
+  const defaultTitle = firstSearchParam(resolvedSearchParams?.title);
+  const hasPrefill = Boolean(defaultSource || defaultTitle);
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Leads</p>
-          <h1 className="page-title">New Lead</h1>
-        </div>
-      </header>
+      <PageHeader
+        actions={<FormHeaderActions backHref="/leads" backLabel="Back to leads" />}
+        eyebrow="Leads"
+        subtitle="Capture an early opportunity before it is qualified into the active deal pipeline."
+        title="New lead"
+      />
       <LeadForm
+        cancelHref="/leads"
         defaultOwnerId={actorUserId}
-        defaultSource={firstSearchParam(resolvedSearchParams?.source)}
-        defaultTitle={firstSearchParam(resolvedSearchParams?.title)}
+        defaultSource={defaultSource}
+        defaultTitle={defaultTitle}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         owners={owners}
-        people={people.map((person) => ({ id: person.id, name: formatPersonName(person) }))}
+        people={people.map((person) => ({ id: person.id, name: formatPersonName(person) ?? "Unnamed contact" }))}
+        prefillNotice={
+          hasPrefill
+            ? "We prefilled this lead from your search shortcut. Review the details, then capture the opportunity."
+            : undefined
+        }
         workspaceId={workspace.id}
       />
     </AppShell>
   );
-}
-
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }
 
 function firstSearchParam(value: string | string[] | undefined) {

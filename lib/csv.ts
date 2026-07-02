@@ -146,7 +146,14 @@ function normalizeCsvValue(value: unknown) {
 }
 
 function escapeCsvCell(value: string) {
-  const needsEscaping = /[",\r\n]/.test(value);
-  const escaped = value.replace(/"/g, "\"\"");
+  const safeValue = neutralizeSpreadsheetFormula(value);
+  const needsEscaping = /[",\r\n]/.test(safeValue);
+  const escaped = safeValue.replace(/"/g, "\"\"");
   return needsEscaping ? `"${escaped}"` : escaped;
+}
+
+function neutralizeSpreadsheetFormula(value: string) {
+  const trimmedStart = value.trimStart();
+  if (!trimmedStart) return value;
+  return /^[\t\r\n]/.test(value) || /^[=+\-@]/.test(trimmedStart) ? `'${value}` : value;
 }

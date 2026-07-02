@@ -11,16 +11,16 @@ Northstar CRM is a multi-tenant sales CRM MVP built with Next.js App Router, Typ
 - Product Catalog, Deal Line Items, and Quotes with snapshot pricing, quote-level discounts/taxes, status tracking, browser print views, authenticated PDF downloads, public quote links with sent-quote acceptance, and manual accepted-quote deal value sync.
 - Lead list/detail/create/edit plus lead-to-deal conversion.
 - Contact and organization list/detail/create/edit pages.
-- Activity creation from deals, contacts, organizations, and leads.
+- Activity creation from open deals, contacts, organizations, and unconverted leads.
 - Activity completion and open-activity edit/reschedule.
 - Note creation from deals, contacts, organizations, and unconverted leads.
-- Manual email logging from core record detail pages plus workspace email templates for reusable subject/body text.
-- Deal, Contact, Organization, Lead, Activity, and Quote CSV export plus conservative, preview-first CSV import for Deals, Contacts, Organizations, and Leads.
+- Manual email logging from open deal, contact, organization, and unconverted lead detail pages plus workspace email templates for reusable subject/body text.
+- Deal, Contact, Organization, Lead, Activity, Product, and Quote CSV export plus conservative, preview-first CSV import for Deals, Contacts, Organizations, and Leads.
 - Deal Reporting v1, Forecasting v1, and Goals v1 on Reports, using current deal values, open-deal forecast inputs, and monthly same-currency won-revenue goal progress.
 - Password Reset MVP for existing local-login users, with hashed reset tokens, expiry, one-time use, password-reset-only Resend or webhook email delivery when configured, and dev/test-only reset link display.
 - Account Settings MVP for signed-in users to view account name/email and update display name only.
-- Basic global workspace search across deals, leads, contacts, organizations, activities, and notes.
-- Deal, Contact, Organization, and Lead custom field admin plus detail value editing for text, number, date, and boolean fields.
+- Basic global workspace search across deals, leads, contacts, organizations, activities, notes, quotes, and email logs.
+- Deal, Contact, Organization, and Lead custom field admin plus detail value editing for text, number, date, boolean, and select fields.
 - Seed data for a demo workspace, users, pipeline, stages, deals, leads, contacts, organizations, activities, notes, custom fields, and audit logs.
 
 ## Getting Started
@@ -210,7 +210,7 @@ MICROSOFT_OAUTH_REDIRECT_URI
 MICROSOFT_OAUTH_TENANT_ID
 ```
 
-The documented `GOOGLE_OAUTH_*` names take precedence over the shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` when both are present. The documented `MICROSOFT_OAUTH_*` names take precedence over the shorter Microsoft aliases `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` when both are present. Microsoft uses the `common` tenant unless `MICROSOFT_OAUTH_TENANT_ID` is set.
+The documented `GOOGLE_OAUTH_*` names take precedence over the shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` when both are present. The documented `MICROSOFT_OAUTH_*` names take precedence over the shorter Microsoft aliases `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` when both are present. Hosted OAuth redirect URIs must not include embedded username/password credentials. Microsoft uses the `common` tenant unless `MICROSOFT_OAUTH_TENANT_ID` is set to a safe tenant id/domain such as `organizations`, `consumers`, a tenant GUID, or `contoso.onmicrosoft.com`.
 
 Optional password-reset email variables:
 
@@ -221,7 +221,7 @@ AUTH_EMAIL_FROM
 RESEND_API_KEY
 ```
 
-Production password reset email delivery also needs a worker process (`npm run jobs:work`) or scheduled one-off processing (`npm run jobs:run-once`). The core CRM demo and signup path do not require a worker today unless password reset email delivery must be live.
+Production password reset email delivery also needs `APP_BASE_URL` set to the public HTTPS app URL without embedded username/password credentials, not localhost, loopback, private-network, link-local, or unspecified IP hosts, plus a worker process (`npm run jobs:work`) or scheduled one-off processing (`npm run jobs:run-once`). Webhook delivery URLs must not include embedded username/password credentials; use `AUTH_EMAIL_WEBHOOK_TOKEN` for bearer authentication. The core CRM demo and signup path do not require a worker today unless password reset email delivery must be live.
 
 Do not commit `.env` or real secrets. Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived OAuth authorization codes should not be retained in application, proxy, CDN, or platform logs.
 
@@ -267,7 +267,7 @@ alex@example.test
 northstar-demo
 ```
 
-Use `SEED_LOGIN_PASSWORD` before seeding to choose a different local/demo password. Local login is intentionally limited to existing users; signup, email change, password change, account deletion, SSO, OAuth, and 2FA are not included. Expired local sessions are rejected and old expired session rows are pruned during login.
+Use `SEED_LOGIN_PASSWORD` before seeding to choose a different local/demo password. Local auth also supports signup-created users and clean first workspaces; email change, password change from Settings, account deletion, SSO, OAuth, and 2FA are not included. Expired local sessions are rejected and old expired session rows are pruned during login.
 
 Password reset is available for existing local-login users at:
 
@@ -275,7 +275,7 @@ Password reset is available for existing local-login users at:
 http://localhost:3000/forgot-password
 ```
 
-Reset requests always show the same generic response so unknown emails are not revealed. The app stores only hashed reset tokens and accepts each token once before expiry. Development and test environments display a reset link after a successful request for an existing active user and do not require delivery config. Production never displays reset links; it queues password-reset email delivery when `APP_BASE_URL` and either direct Resend delivery (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or webhook delivery (`AUTH_EMAIL_WEBHOOK_URL`) are configured. Run `npm run jobs:work` as a separate worker process for continuous processing, or `npm run jobs:run-once` to process one due batch manually. Missing config, queued delivery delay, or delivery failure keeps the same generic response.
+Reset requests always show the same generic response so unknown emails are not revealed. The app stores only hashed reset tokens and accepts each token once before expiry. Development and test environments display a reset link after a successful request for an existing active user and do not require delivery config. Production never displays reset links; it queues password-reset email delivery when `APP_BASE_URL` can build an absolute reset URL from a public HTTPS origin. The worker then needs either direct Resend delivery (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or webhook delivery (`AUTH_EMAIL_WEBHOOK_URL`) to send the queued email. Run `npm run jobs:work` as a separate worker process for continuous processing, or `npm run jobs:run-once` to process one due batch manually. Missing config, queued delivery delay, or delivery failure keeps the same generic response.
 
 Signed-in users can view their account name/email and update only their display name from Settings. Users with more than one workspace membership can switch the active workspace from the app shell. The selection is stored in an httpOnly cookie and revalidated against current memberships; it does not grant access to workspaces where the user is not a member. Signed-in users can also create a workspace from Settings; the creator becomes owner, duplicate display names are allowed, and the new workspace becomes active immediately. Workspace owners/admins can invite teammates by email and remove non-admin members from Settings. Invitees who do not have an account yet can sign up with the invited email, then accept the same invite link. Invitation email delivery is not implemented; accept links are shown for manual sharing. Accepted invitation links are idempotent only while the accepted membership still exists; removed members cannot rejoin with an old accepted link.
 
@@ -321,6 +321,9 @@ MICROSOFT_OAUTH_CLIENT_ID
 MICROSOFT_OAUTH_CLIENT_SECRET
 MICROSOFT_OAUTH_TENANT_ID
 MICROSOFT_OAUTH_REDIRECT_URI
+MICROSOFT_CLIENT_ID
+MICROSOFT_CLIENT_SECRET
+MICROSOFT_REDIRECT_URI
 DEV_ACTOR_EMAIL
 DEV_WORKSPACE_SLUG
 SEED_LOGIN_PASSWORD
@@ -367,9 +370,9 @@ npm run jobs:work
 npm run jobs:cleanup
 ```
 
-- `jobs:status` prints aggregate queue counts only.
+- `jobs:status` prints aggregate queue counts only, with registered-safe job types named and any other job types collapsed under `unregistered`.
 - `jobs:run-once` processes one due batch and exits.
-- `jobs:work` runs a continuous worker and recovers stale running jobs after the configured timeout.
+- `jobs:work` runs a continuous worker, recovers retryable stale running jobs after the configured timeout, dead-letters stale jobs that already reached `maxAttempts`, and marks expired or no-longer-current password-reset email jobs complete without sending dead reset links.
 - `jobs:cleanup` deletes old terminal succeeded/dead rows according to retention settings.
 
 Production password reset email delivery needs `APP_BASE_URL`, either Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or `AUTH_EMAIL_WEBHOOK_URL`, and either a continuous `npm run jobs:work` process or scheduled `npm run jobs:run-once`.
@@ -391,10 +394,14 @@ npm run typecheck
 npm run lint
 npm run test
 npm run test:integration
-npm run test:browser
 npm run build
+npm run test:browser
 git diff --check
 ```
+
+`npm run prisma` is kept as a short alias for `npm run prisma:validate`; use either command for schema validation.
+
+Run these checks serially when they share the same workspace. In particular, do not run `npm run build` at the same time as `npm run typecheck` or an active dev server; Next can regenerate `.next/types` during build, which may cause false missing-file typecheck failures or unstable browser smoke runs. The `test:browser` script starts `next start` on port `3100`, so run `npm run build` first and rebuild after deleting stale `.next` output if Playwright reports missing production manifests or vendor chunks. The `typecheck` script disables TypeScript incremental cache reads so stale generated route-type references do not mask the current source state.
 
 Manual and lightweight automated browser smoke QA are documented in `docs/browser-smoke-qa.md`.
 Deployment and readiness notes are documented in `docs/deployment-readiness.md`.
@@ -431,7 +438,7 @@ TEST_DATABASE_URL="postgresql://crm:crm@localhost:5432/crm_mvp_test?schema=publi
 
 - Docker and Docker Compose are not currently included. The supported downloadable path is local Node.js plus PostgreSQL using the commands above.
 - Local login and signup are available, but SSO, OAuth providers, 2FA, email change, account deletion, and billing are not implemented.
-- Password reset email delivery is queued, Resend-or-webhook, and password-reset-only. `npm run jobs:work` can process queued jobs continuously and recover stale `RUNNING` jobs after a timeout, `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored sent-email table, general SMTP sending, or Gmail/Outlook background sync.
+- Password reset email delivery is queued, Resend-or-webhook, and password-reset-only. `npm run jobs:work` can process queued jobs continuously, recover retryable stale `RUNNING` jobs after a timeout, and dead-letter stale jobs that already reached `maxAttempts`; `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored sent-email table, general SMTP sending, or Gmail/Outlook background sync.
 - Gmail / Google Workspace, Microsoft 365 / Outlook, and IMAP / SMTP cards are visible in Email and Settings. Gmail / Google Workspace and Microsoft 365 / Outlook can connect through OAuth when provider env vars and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured, and OAuth tokens are stored only as encrypted payloads. Connected accounts can run manual recent metadata sync that imports only matched known-contact messages as conservative email logs. IMAP / SMTP remains planned/disabled, and there is no whole-mailbox sync.
 - Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived authorization codes should not be retained in application, proxy, CDN, or platform logs.
 - Workspace switching only supports existing memberships plus workspaces the signed-in user creates or accepts by invitation. Invitation email delivery, advanced role policy, workspace deletion, and billing are not implemented.
@@ -441,10 +448,10 @@ TEST_DATABASE_URL="postgresql://crm:crm@localhost:5432/crm_mvp_test?schema=publi
 - Deal line item totals do not overwrite deal value or reporting totals.
 - Workspace roles are modeled but not used for advanced permissions.
 - Fast tests are mostly source-level checks; database-backed integration tests cover a small set of high-risk service workflows.
-- Custom fields currently support Deals, Contacts/People, Organizations, and Leads in the UI; seeded `SELECT` fields are display-only/read-only for now.
+- Custom fields currently support Deals, Contacts/People, Organizations, and Leads in the UI for text, number, date, boolean, and single-select values.
 - Converted leads display custom fields read-only and reject custom field value updates.
-- Custom field list filtering is limited to one supported custom field at a time with exact-value matching. Richer custom field filter operators and custom field reporting beyond Deal Reporting's existing Deals-query-state support are not implemented yet.
+- Custom field list filtering is limited to one supported custom field at a time with `equals`, text-only `contains`, `is_empty`, and `is_not_empty` operators. Multiple custom-field filters, number/date comparisons, select filtering, and custom field reporting beyond Deal Reporting's existing Deals-query-state support are not implemented yet.
 - Forecasting v1 and Goals v1 are lightweight Reports features only. Forecasting has no history/snapshots/charts, Goals are workspace-level monthly won-revenue only, and neither feature includes owner/team targets, quarterly/activity goals, dashboard widgets, FX conversion, saved reports, or scheduled reports.
-- CSV import is limited to Deals, Contacts, Organizations, and Leads using pasted CSV text. Custom field import, Activities/Notes/Quotes import, file upload/storage, and background import jobs are not implemented.
+- CSV import is limited to Deals, Contacts, Organizations, and Leads using pasted CSV text. Custom field import, Activities/Notes/Products/Quotes import, file upload/storage, and background import jobs are not implemented.
 - Email/calendar sync, automations, webhooks, API keys, and broader product background jobs are not implemented. The current background job runtime is limited to internal worker mechanics and queued password-reset email delivery.
 - OpenAPI is an MVP reference document, not a generated contract.

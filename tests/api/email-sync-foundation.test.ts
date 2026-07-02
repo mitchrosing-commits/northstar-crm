@@ -17,6 +17,7 @@ const envExample = readFileSync(join(process.cwd(), ".env.example"), "utf8");
 const seed = readFileSync(join(process.cwd(), "prisma/seed.ts"), "utf8");
 const fixture = readFileSync(join(process.cwd(), "tests/integration/fixtures.ts"), "utf8");
 const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
+const deploymentReadiness = readFileSync(join(process.cwd(), "docs/deployment-readiness.md"), "utf8");
 
 describe("email sync provider foundation", () => {
   it("adds non-sensitive EmailConnection metadata without OAuth token storage", () => {
@@ -46,6 +47,10 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("isTokenEncryptionConfigured");
     expect(emailConnectionService).toContain("Not configured");
     expect(emailConnectionService).toContain("Token encryption required");
+    expect(emailConnectionService).toContain("lastError: safeProviderLastError(connection?.lastError)");
+    expect(emailConnectionService).toContain("function safeProviderLastError");
+    expect(emailConnectionService).toContain("redactSensitiveText(value ?? undefined)");
+    expect(emailConnectionService).toContain("connection.lastError ? \"Sync issue\" : \"Connected\"");
     expect(emailConnectionService).toContain("microsoftProviderCard");
     expect(emailConnectionService).toContain("Connect Microsoft");
     expect(emailConnectionService).toContain("href: \"/api/email-connections/microsoft/connect\"");
@@ -86,6 +91,18 @@ describe("email sync provider foundation", () => {
     expect(
       validateRuntimeEnv({
         DATABASE_URL: "postgresql://crm:crm@localhost:5432/crm_mvp",
+        MICROSOFT_OAUTH_TENANT_ID: "common/oauth2/v2.0",
+        MICROSOFT_OAUTH_CLIENT_ID: "microsoft-client",
+        MICROSOFT_OAUTH_CLIENT_SECRET: "microsoft-secret",
+        MICROSOFT_OAUTH_REDIRECT_URI: "https://crm.example.test/api/email/microsoft/callback"
+      })
+    ).toEqual({
+      ok: false,
+      errors: ["MICROSOFT_OAUTH_TENANT_ID must be a tenant id, domain, or one of: common, organizations, consumers."]
+    });
+    expect(
+      validateRuntimeEnv({
+        DATABASE_URL: "postgresql://crm:crm@localhost:5432/crm_mvp",
         GOOGLE_OAUTH_CLIENT_ID: "google-client",
         GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
         GOOGLE_OAUTH_REDIRECT_URI: "https://crm.example.test/api/email/google/callback"
@@ -94,6 +111,14 @@ describe("email sync provider foundation", () => {
       ok: true,
       warnings: ["Email OAuth env is configured, but EMAIL_TOKEN_ENCRYPTION_KEY is not set; provider connection buttons stay disabled."]
     });
+    expect(deploymentReadiness).toContain("MICROSOFT_OAUTH_TENANT_ID");
+    expect(deploymentReadiness).toContain("not a path-like value");
+  });
+
+  it("keeps Settings admin readiness aligned with the real token encryption validator", () => {
+    expect(settingsPage).toContain("isTokenEncryptionConfigured");
+    expect(settingsPage).toContain("const hasEmailEncryption = isTokenEncryptionConfigured(process.env)");
+    expect(settingsPage).not.toContain("const hasEmailEncryption = Boolean(process.env.EMAIL_TOKEN_ENCRYPTION_KEY?.trim())");
   });
 
   it("keeps seed and integration cleanup explicit without fake connected providers", () => {

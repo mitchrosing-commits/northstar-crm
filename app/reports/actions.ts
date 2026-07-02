@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { goalTargetCentsMax } from "@/lib/product-limits";
+import { redactSensitiveText } from "@/lib/security/redaction";
 import { createOrUpdateMonthlyWonRevenueGoal } from "@/lib/services/crm";
 
 export async function saveMonthlyWonRevenueGoalAction(formData: FormData) {
@@ -27,7 +29,7 @@ export async function saveMonthlyWonRevenueGoalAction(formData: FormData) {
     revalidatePath("/reports");
     params.set("goalSaved", "1");
   } catch (error) {
-    params.set("goalError", error instanceof ApiError ? error.message : "Goal target could not be saved.");
+    params.set("goalError", error instanceof ApiError ? redactSensitiveText(error.message) : "Goal target could not be saved.");
   }
 
   redirect(`/reports?${params.toString()}`);
@@ -43,6 +45,9 @@ function parseMoneyToCents(value: string) {
   const amountCents = Number.parseInt(dollars, 10) * 100 + Number.parseInt(cents.padEnd(2, "0"), 10);
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
     throw new ApiError("VALIDATION_ERROR", "Goal target must be a positive currency amount.", 422);
+  }
+  if (!Number.isSafeInteger(amountCents) || amountCents > goalTargetCentsMax) {
+    throw new ApiError("VALIDATION_ERROR", "Goal target is too large.", 422);
   }
   return amountCents;
 }

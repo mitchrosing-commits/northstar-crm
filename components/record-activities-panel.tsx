@@ -1,5 +1,9 @@
 import { ActivityForm } from "@/components/activity-form";
+import { activityManualFollowUpCopy } from "@/components/activity-form-guidance";
 import { ActivityList } from "@/components/activity-list";
+import { EmptyState } from "@/components/empty-state";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
+import { PanelTitleRow } from "@/components/panel-title-row";
 
 type ActivityAttachment =
   | { dealId: string }
@@ -16,6 +20,7 @@ type Activity = Parameters<typeof ActivityList>[0]["activities"][number];
 
 type ActivitySection = {
   activities: Activity[];
+  description?: string;
   emptyMessage: string;
   showCompleteAction?: boolean;
   title: string;
@@ -25,6 +30,7 @@ type RecordActivitiesPanelProps = {
   attachment: ActivityAttachment;
   defaultOwnerId?: string;
   formId?: string;
+  id?: string;
   lockedMessage?: string;
   owners: OwnerOption[];
   sections: ActivitySection[];
@@ -36,16 +42,23 @@ export function RecordActivitiesPanel({
   attachment,
   defaultOwnerId,
   formId,
+  id = "activities",
   lockedMessage,
   owners,
   sections,
   showForm = true,
   workspaceId
 }: RecordActivitiesPanelProps) {
+  const addActivityHref = showForm && formId ? `#${formId}` : undefined;
+  const addActivityLabel = "Add activity from this record";
+
   return (
     <>
-      <section className="data-card" id={formId} style={{ marginTop: 14 }}>
-        <h2 className="panel-title">Add Activity</h2>
+      <section className="data-card section-spaced" id={formId}>
+        <PanelTitleRow
+          description={activityManualFollowUpCopy}
+          title="Add Activity"
+        />
         {showForm ? (
           <ActivityForm
             attachment={attachment}
@@ -54,20 +67,31 @@ export function RecordActivitiesPanel({
             workspaceId={workspaceId}
           />
         ) : (
-          <p className="empty-copy">{lockedMessage}</p>
+          <LockedPanelNotice>{lockedMessage ?? "Activity creation is locked for this record."}</LockedPanelNotice>
         )}
       </section>
 
       {sections.length > 1 ? (
-        <section className="detail-grid" style={{ marginTop: 14 }}>
+        <section className="detail-grid section-spaced" id={id}>
           {sections.map((section) => (
-            <ActivitySectionCard key={section.title} section={section} workspaceId={workspaceId} />
+            <ActivitySectionCard
+              addActivityHref={addActivityHref}
+              addActivityLabel={addActivityLabel}
+              key={section.title}
+              section={section}
+              workspaceId={workspaceId}
+            />
           ))}
         </section>
       ) : (
         sections.map((section) => (
-          <section className="data-card" key={section.title} style={{ marginTop: 14 }}>
-            <ActivitySectionContent section={section} workspaceId={workspaceId} />
+          <section className="data-card section-spaced" id={id} key={section.title}>
+            <ActivitySectionContent
+              addActivityHref={addActivityHref}
+              addActivityLabel={addActivityLabel}
+              section={section}
+              workspaceId={workspaceId}
+            />
           </section>
         ))
       )}
@@ -75,18 +99,56 @@ export function RecordActivitiesPanel({
   );
 }
 
-function ActivitySectionCard({ section, workspaceId }: { section: ActivitySection; workspaceId: string }) {
+function ActivitySectionCard({
+  addActivityHref,
+  addActivityLabel,
+  section,
+  workspaceId
+}: {
+  addActivityHref?: string;
+  addActivityLabel: string;
+  section: ActivitySection;
+  workspaceId: string;
+}) {
   return (
     <div className="data-card">
-      <ActivitySectionContent section={section} workspaceId={workspaceId} />
+      <ActivitySectionContent
+        addActivityHref={addActivityHref}
+        addActivityLabel={addActivityLabel}
+        section={section}
+        workspaceId={workspaceId}
+      />
     </div>
   );
 }
 
-function ActivitySectionContent({ section, workspaceId }: { section: ActivitySection; workspaceId: string }) {
+function ActivitySectionContent({
+  addActivityHref,
+  addActivityLabel,
+  section,
+  workspaceId
+}: {
+  addActivityHref?: string;
+  addActivityLabel: string;
+  section: ActivitySection;
+  workspaceId: string;
+}) {
+  const activityCountLabel = `${section.activities.length} ${section.title.toLowerCase()} ${
+    section.activities.length === 1 ? "activity" : "activities"
+  }`;
+
   return (
     <>
-      <h2 className="panel-title">{section.title}</h2>
+      <PanelTitleRow
+        actions={
+          <span aria-label={activityCountLabel} className="count-badge" title={activityCountLabel}>
+            {section.activities.length}
+          </span>
+        }
+        actionsLabel={`${section.title} activity count`}
+        description={section.description ? <span className="record-activity-section-hint">{section.description}</span> : null}
+        title={section.title}
+      />
       {section.activities.length > 0 ? (
         <ActivityList
           activities={section.activities}
@@ -94,7 +156,22 @@ function ActivitySectionContent({ section, workspaceId }: { section: ActivitySec
           workspaceId={workspaceId}
         />
       ) : (
-        <p className="empty-copy">{section.emptyMessage}</p>
+        <EmptyState
+          actions={
+            addActivityHref ? (
+              <a
+                aria-label={addActivityLabel}
+                className="button-secondary button-compact"
+                href={addActivityHref}
+                title={addActivityLabel}
+              >
+                Add follow-up
+              </a>
+            ) : null
+          }
+          className="empty-state-compact empty-state-panel"
+          title={section.emptyMessage}
+        />
       )}
     </>
   );

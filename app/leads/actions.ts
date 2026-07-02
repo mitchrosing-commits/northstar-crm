@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { leadListStateOptions } from "@/lib/lead-list-state";
 import { parseListViewState, type ListSearchParams } from "@/lib/list-page-query";
+import { ignoreMissingSavedView } from "@/lib/saved-view-action-utils";
 import { createAutomationTemplateActivity, createLeadSavedView, deleteLeadSavedView } from "@/lib/services/crm";
 
 export async function createLeadSavedViewAction(formData: FormData) {
@@ -23,7 +24,7 @@ export async function deleteLeadSavedViewAction(formData: FormData) {
   const savedViewId = String(formData.get("savedViewId") ?? "");
   const { actor } = await getCurrentWorkspaceContext();
 
-  await deleteLeadSavedView(actor, savedViewId);
+  await ignoreMissingSavedView(() => deleteLeadSavedView(actor, savedViewId));
   revalidatePath("/leads");
 }
 

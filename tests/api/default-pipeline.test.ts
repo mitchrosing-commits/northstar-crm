@@ -29,16 +29,24 @@ describe("default new-workspace pipeline", () => {
   it("applies the default pipeline to signup-created and manually-created workspaces", () => {
     expect(workspaceService).toContain("import { ensureDefaultPipelineForWorkspace } from \"./pipeline-service\"");
     expect(workspaceService).toContain("await ensureDefaultPipelineForWorkspace(workspace.id)");
-    expect(signupActions).toContain("createWorkspaceFromName(result.user.id, workspaceName)");
+    expect(signupActions).toContain("createWorkspaceFromName(result.user.id, normalizedWorkspaceName)");
     expect(workspaceActions).toContain("createWorkspaceFromName(actorUserId, name)");
   });
 
   it("keeps empty pipeline and deal states demo-friendly", () => {
     expect(pipelinePage).not.toContain("Run the seed script");
+    expect(pipelinePage).toContain("EmptyState");
+    expect(pipelinePage).toContain("title=\"No pipeline yet\"");
+    expect(pipelinePage).toContain("titleLevel=\"h2\"");
+    expect(pipelinePage).not.toContain("<div className=\"empty-state\">");
     expect(pipelinePage).toContain("New workspaces include a default sales pipeline.");
     expect(dealsPage).toContain("No pipeline stages yet");
     expect(dealsPage).toContain("Add or restore pipeline stages before creating deals.");
     expect(dealForm).not.toContain("seed a pipeline");
+    expect(dealForm).toContain("EmptyState");
+    expect(dealForm).toContain("title=\"No stages available\"");
+    expect(dealForm).toContain("titleLevel=\"h2\"");
+    expect(dealForm).not.toContain("<div className=\"empty-state\">");
     expect(dealForm).toContain("Add or restore an active pipeline stage before creating deals.");
   });
 });

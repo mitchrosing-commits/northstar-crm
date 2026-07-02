@@ -1,7 +1,9 @@
-import { DealStatus, GoalType, type Goal } from "@prisma/client";
+import { DealStatus, GoalType, Prisma, type Goal } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
+import { goalTargetCentsMax } from "@/lib/product-limits";
+import { canManageWorkspaceSettings } from "@/lib/workspace-roles";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
 
 const wonRevenueGoalType: GoalType = "WON_REVENUE";
@@ -31,32 +33,51 @@ export async function createOrUpdateMonthlyWonRevenueGoal(
   actor: WorkspaceActor,
   input: MonthlyWonRevenueGoalInput
 ) {
-  await ensureWorkspaceAccess(actor);
+  const membership = await ensureWorkspaceAccess(actor);
+  if (!canManageWorkspaceSettings(membership.role)) {
+    throw new ApiError("FORBIDDEN", "Only workspace admins and owners can manage workspace goals.", 403);
+  }
   const { periodStart, periodEnd } = monthBounds(input.month);
   const currency = normalizeGoalCurrency(input.currency);
   const targetCents = normalizeGoalTargetCents(input.targetCents);
-
-  return prisma.goal.upsert({
-    where: {
-      workspaceId_type_currency_periodStart: {
-        workspaceId: actor.workspaceId,
-        type: wonRevenueGoalType,
-        currency,
-        periodStart
-      }
-    },
-    create: {
+  const uniqueWhere = {
+    workspaceId_type_currency_periodStart: {
       workspaceId: actor.workspaceId,
       type: wonRevenueGoalType,
-      periodStart,
-      periodEnd,
       currency,
-      targetCents
-    },
-    update: {
-      periodEnd,
-      targetCents
+      periodStart
     }
+  };
+  const existing = await prisma.goal.findUnique({ where: uniqueWhere });
+
+  if (existing) return updateMonthlyGoalIfChanged(existing, { periodEnd, targetCents });
+
+  try {
+    return await prisma.goal.create({
+      data: {
+        workspaceId: actor.workspaceId,
+        type: wonRevenueGoalType,
+        periodEnd,
+        currency,
+        periodStart,
+        targetCents
+      }
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const concurrentGoal = await prisma.goal.findUniqueOrThrow({ where: uniqueWhere });
+    return updateMonthlyGoalIfChanged(concurrentGoal, { periodEnd, targetCents });
+  }
+}
+
+async function updateMonthlyGoalIfChanged(existing: Goal, input: { periodEnd: Date; targetCents: number }) {
+  if (existing.periodEnd.getTime() === input.periodEnd.getTime() && existing.targetCents === input.targetCents) {
+    return existing;
+  }
+
+  return prisma.goal.update({
+    where: { id: existing.id },
+    data: input
   });
 }
 
@@ -120,6 +141,9 @@ export function monthBounds(input: GoalMonthInput) {
 }
 
 export function normalizeGoalCurrency(value: string) {
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Goal currency must be a three-letter ISO code.", 422);
+  }
   const currency = value.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) {
     throw new ApiError("VALIDATION_ERROR", "Goal currency must be a three-letter ISO code.", 422);
@@ -131,6 +155,9 @@ export function normalizeGoalTargetCents(value: number) {
   if (!Number.isInteger(value) || value <= 0) {
     throw new ApiError("VALIDATION_ERROR", "Goal target must be a positive amount in cents.", 422);
   }
+  if (!Number.isSafeInteger(value) || value > goalTargetCentsMax) {
+    throw new ApiError("VALIDATION_ERROR", "Goal target is too large.", 422);
+  }
   return value;
 }
 
@@ -138,6 +165,10 @@ function parseGoalMonth(input: GoalMonthInput) {
   if (input instanceof Date) {
     assertValidDate(input);
     return input;
+  }
+
+  if (typeof input !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Goal month must be a valid date or YYYY-MM value.", 422);
   }
 
   const trimmed = input.trim();
@@ -164,4 +195,8 @@ function assertValidDate(value: Date) {
 
 function roundPercent(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }

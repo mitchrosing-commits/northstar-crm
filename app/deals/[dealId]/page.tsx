@@ -1,28 +1,46 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import type { Route } from "next";
 
 import { ApiError } from "@/lib/api/responses";
 import { ActivityDueBadge } from "@/components/activity-due-badge";
 import { AppShell } from "@/components/app-shell";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
+import { DealCommercialSummaryPanel } from "@/components/commercial-workflow-panel";
 import { ContractWorkflowPanel, ContractWorkflowQuickLink } from "@/components/contract-workflow-panel";
-import { DealCustomFieldsForm } from "@/components/record-custom-fields-form";
+import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DealCloseActions } from "@/components/deal-close-actions";
 import { DealLineItemsPanel } from "@/components/deal-line-items-panel";
 import { DealStageMoveForm } from "@/components/deal-stage-move-form";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
+import { EmptyState } from "@/components/empty-state";
+import { FormIntroCallout } from "@/components/form-intro-callout";
 import { formatActivityType, formatDate, formatMoney } from "@/components/format";
+import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
 import { NotesPanel } from "@/components/notes-panel";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
 import { QuoteDraftsPanel } from "@/components/quote-drafts-panel";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { RecordNextActivitySummary } from "@/components/record-next-activity-summary";
+import { RecordHeaderActions } from "@/components/record-header-actions";
+import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
+import { RecordSummary, type RecordSummaryTone } from "@/components/record-summary";
 import { RecordTimeline } from "@/components/record-timeline";
 import { StatusBadge } from "@/components/status-badge";
 import { createDealAutomationActivityAction } from "@/app/deals/actions";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { compareActivitiesForNextStep } from "@/lib/activity-workflow";
+import { summarizeDealCommercialReadiness } from "@/lib/commercial-workflow";
 import { classifyDealAttention, dealAttentionLabel, type DealAttentionBucket } from "@/lib/deal-attention";
+import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
+import { closedDealLockedLabel, closedDealLockMessage } from "@/lib/record-lock-copy";
+import { formatPersonName } from "@/lib/person-name";
+import { recordSubtitle } from "@/lib/record-subtitle";
 import { buildDealAttentionBadges, type DealAttentionBadge } from "@/lib/sales-assistant";
-import { getDeal, getRecordTimeline, getWorkspace, listDealCustomFields, listEmailLogsForRecord, listEmailTemplates, listProducts, listStages, type AutomationTemplateId } from "@/lib/services/crm";
+import { getDeal, getRecordTimeline, getWorkspace, listDealContractSteps, listDealCustomFields, listEmailLogsForRecord, listEmailTemplates, listProducts, listStages, type AutomationTemplateId } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -38,10 +56,11 @@ export default async function DealDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [stages, workspaceDetail, customFields, timelineItems, products, emailTemplates, emailLogs] = await Promise.all([
+  const [stages, workspaceDetail, customFields, contractSteps, timelineItems, products, emailTemplates, emailLogs] = await Promise.all([
     listStages(actor, deal.pipelineId),
     getWorkspace(actor),
     listDealCustomFields(actor, deal.id),
+    listDealContractSteps(actor, deal.id),
     getRecordTimeline(actor, { type: "DEAL", id: deal.id }),
     listProducts(actor),
     listEmailTemplates(actor, { activeOnly: true }),
@@ -51,8 +70,10 @@ export default async function DealDetailPage({ params }: PageProps) {
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
   }));
-  const openActivities = deal.activities.filter((activity) => !activity.completedAt).sort(compareOpenActivities);
+  const openActivities = deal.activities.filter((activity) => !activity.completedAt).sort(compareActivitiesForNextStep);
   const completedActivities = deal.activities.filter((activity) => activity.completedAt).sort(compareCompletedActivities);
+  const openActivityCopy = recordActivitySectionCopy("dealOpen");
+  const completedActivityCopy = recordActivitySectionCopy("dealCompleted");
   const nextActivity = openActivities[0];
   const attention = classifyDealAttention({ activities: nextActivity ? [nextActivity] : [] });
   const contractFields = customFields.map((field) => ({
@@ -60,56 +81,132 @@ export default async function DealDetailPage({ params }: PageProps) {
     name: field.name,
     value: field.values[0]?.value ?? null
   }));
+  const contractAttentionFields =
+    contractSteps.length > 0
+      ? contractSteps.map((step) => ({
+          key: `${step.type.toLowerCase()}_status`,
+          name: `${step.type} Status`,
+          value: contractStatusForAttention(step.status)
+        }))
+      : contractFields;
   const attentionBadges = buildDealAttentionBadges({
     ...deal,
     activities: openActivities,
-    contractFields,
+    contractFields: contractAttentionFields,
     emailLogs,
     notes: deal.notes,
     quotes: deal.quotes
   });
   const automationSuggestions = buildDealAutomationSuggestions({
-    contractFields,
+    contractFields: contractAttentionFields,
+    contractSteps,
     deal,
     hasNextActivity: Boolean(nextActivity)
+  });
+  const commercialSummary = summarizeDealCommercialReadiness({
+    ...deal,
+    contractSteps
   });
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Deal</p>
-          <h1 className="page-title">{deal.title}</h1>
-          <p className="page-subtitle">
-            {[deal.stage.name, formatMoney(deal.valueCents, deal.currency), deal.organization?.name ?? formatPersonNameOrNull(deal.person)]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-        </div>
-        <div className="header-actions">
-          <ContractWorkflowQuickLink fields={contractFields} />
-          <StatusBadge status={deal.status} />
-          {deal.status === "OPEN" ? (
-            <>
-              <Link className="button-secondary" href="#add-activity">
-                Add next activity
+      <PageHeader
+        actions={
+          <RecordHeaderActions
+            addHref={"#add-activity" as Route}
+            addLabel="Add next activity"
+            addLockedLabel="Activity locked"
+            backHref="/deals"
+            backLabel="Back to deals"
+            customFieldsHref={"#custom-fields" as Route}
+            editHref={deal.status === "OPEN" ? (`/deals/${deal.id}/edit` as Route) : undefined}
+            editLabel="Edit deal"
+            lockedLabel={closedDealLockedLabel}
+            noteHref={"#notes" as Route}
+            noteLockedLabel="Notes locked"
+            leadingActions={
+              <>
+                <ContractWorkflowQuickLink alwaysShow fields={contractFields} steps={contractSteps} />
+                <StatusBadge status={deal.status} />
+              </>
+            }
+            locked={deal.status !== "OPEN"}
+            recordTitle={deal.title}
+          />
+        }
+        eyebrow="Deal"
+        subtitle={recordSubtitle([deal.stage.name, formatMoney(deal.valueCents, deal.currency), deal.organization?.name ?? formatPersonName(deal.person)])}
+        title={deal.title}
+      />
+
+      <RecordSummary
+        actions={
+          <RecordPanelJumpNav
+            counts={{
+              activities: deal.activities.length,
+              auditHistory: deal.auditLogs.length,
+              customFields: customFields.length,
+              emailLog: emailLogs.length,
+              notes: deal.notes.length,
+              timeline: timelineItems.length
+            }}
+            extraJumps={[
+              {
+                href: "#contract-workflow" as Route,
+                label: "Contract",
+                count: contractSteps.length,
+                countLabel: { singular: "contract step", plural: "contract steps" }
+              },
+              {
+                href: "#line-items" as Route,
+                label: "Line items",
+                count: deal.lineItems.length,
+                countLabel: { singular: "line item", plural: "line items" }
+              },
+              {
+                href: "#quotes" as Route,
+                label: "Quotes",
+                count: deal.quotes.length,
+                countLabel: { singular: "quote", plural: "quotes" }
+              }
+            ]}
+          />
+        }
+        description={`${deal.pipeline.name} pipeline · Expected close ${formatDate(deal.expectedCloseAt)}`}
+        eyebrow="Deal snapshot"
+        items={[
+          { label: "Status", value: <StatusBadge status={deal.status} />, tone: getDealStatusTone(deal.status) },
+          { label: "Value", value: formatMoney(deal.valueCents, deal.currency) },
+          { label: "Stage", value: deal.stage.name },
+          {
+            label: "Next follow-up",
+            value: <RecordNextActivitySummary activity={nextActivity} emptyLabel="No open deal follow-up" />,
+            tone: nextActivity ? "default" : "warning"
+          },
+          {
+            label: "Customer",
+            value: deal.organization ? (
+              <Link className="inline-link" href={`/organizations/${deal.organization.id}`}>
+                {deal.organization.name}
               </Link>
-              <Link className="button-secondary" href={`/deals/${deal.id}/edit`}>
-                Edit deal
+            ) : deal.person ? (
+              <Link className="inline-link" href={`/contacts/${deal.person.id}`}>
+                {formatPersonName(deal.person) ?? "Unnamed contact"}
               </Link>
-            </>
-          ) : (
-            <button className="button-secondary" disabled type="button">
-              Editing locked
-            </button>
-          )}
-        </div>
-      </header>
+            ) : (
+              <InlineEmptyStateText>No customer linked</InlineEmptyStateText>
+            ),
+            tone: deal.organization || deal.person ? "default" : "muted"
+          },
+          { label: "Owner", value: deal.owner?.name ?? deal.owner?.email ?? "Unassigned", tone: deal.owner ? "default" : "muted" }
+        ]}
+        title="Deal workspace"
+      />
 
       <section className="deal-context-grid">
-        <DealNextStepCard activity={nextActivity} attention={attention} badges={attentionBadges} />
+        <DealNextStepCard activity={nextActivity} attention={attention} badges={attentionBadges} dealTitle={deal.title} />
         <div className="data-card">
-          <h2 className="panel-title">History Snapshot</h2>
+          <PanelTitleRow title="History Snapshot" />
           <div className="deal-context-metrics">
             <div>
               <span>Open activities</span>
@@ -140,31 +237,33 @@ export default async function DealDetailPage({ params }: PageProps) {
             { label: "Expected close", value: formatDate(deal.expectedCloseAt) },
             { label: "Pipeline", value: deal.pipeline.name },
             { label: "Stage", value: deal.stage.name },
-            { label: "Owner", value: deal.owner?.name ?? "Unassigned" },
+            { label: "Owner", value: deal.owner?.name ?? deal.owner?.email ?? "Unassigned" },
             {
+              emptyLabel: "No contact",
               label: "Contact",
               value: deal.person ? (
                 <Link className="inline-link" href={`/contacts/${deal.person.id}`}>
-                  {formatPersonName(deal.person)}
+                  {formatPersonName(deal.person) ?? "Unnamed contact"}
                 </Link>
               ) : (
-                "None"
+                null
               )
             },
             {
+              emptyLabel: "No organization",
               label: "Organization",
               value: deal.organization ? (
                 <Link className="inline-link" href={`/organizations/${deal.organization.id}`}>
                   {deal.organization.name}
                 </Link>
               ) : (
-                "None"
+                null
               )
             }
           ]}
         />
         <div className="data-card">
-          <h2 className="panel-title">Stage Movement</h2>
+          <PanelTitleRow title="Stage Movement" />
           {deal.status === "OPEN" ? (
             <DealStageMoveForm
               currentStageId={deal.stageId}
@@ -174,14 +273,25 @@ export default async function DealDetailPage({ params }: PageProps) {
               workspaceId={workspace.id}
             />
           ) : (
-            <p className="empty-copy">Stage movement is locked after a deal is closed.</p>
+            <LockedPanelNotice title="Stage locked">{closedDealLockMessage("stage")}</LockedPanelNotice>
           )}
         </div>
       </section>
 
-      <ContractWorkflowPanel dealId={deal.id} fields={contractFields} />
+      <DealCommercialSummaryPanel dealId={deal.id} summary={commercialSummary} />
+
+      <ContractWorkflowPanel
+        dealId={deal.id}
+        fields={contractFields}
+        lockedMessage={closedDealLockMessage("contractWorkflow")}
+        owners={owners}
+        readOnly={deal.status !== "OPEN"}
+        steps={contractSteps}
+        workspaceId={workspace.id}
+      />
 
       <DealLineItemsPanel
+        canEdit={deal.status === "OPEN"}
         dealId={deal.id}
         lineItems={deal.lineItems}
         products={products.filter((product) => product.active)}
@@ -189,31 +299,25 @@ export default async function DealDetailPage({ params }: PageProps) {
       />
 
       <QuoteDraftsPanel
-        canCreate={deal.lineItems.length > 0}
+        canCreate={deal.status === "OPEN" && deal.lineItems.length > 0}
         dealId={deal.id}
+        disabledReason={deal.status === "OPEN" ? undefined : closedDealLockMessage("quoteDrafts")}
         quotes={deal.quotes}
         workspaceId={workspace.id}
       />
 
-      <section className="data-card" style={{ marginTop: 14 }}>
-        <h2 className="panel-title">Custom Fields</h2>
-        <DealCustomFieldsForm
-          dealId={deal.id}
-          fields={customFields.map((field) => ({
-            id: field.id,
-            name: field.name,
-            key: field.key,
-            fieldType: field.fieldType,
-            options: field.options,
-            required: field.required,
-            value: field.values[0]?.value ?? null
-          }))}
-          workspaceId={workspace.id}
-        />
-      </section>
+      <RecordCustomFieldsPanel
+        emptyMessage="No deal custom fields have been created yet."
+        entityId={deal.id}
+        entityType="DEAL"
+        fields={customFields}
+        lockedMessage={closedDealLockMessage("customFields")}
+        readOnly={deal.status !== "OPEN"}
+        workspaceId={workspace.id}
+      />
 
-      <section className="data-card" style={{ marginTop: 14 }}>
-        <h2 className="panel-title">Deal Outcome</h2>
+      <section className="data-card section-spaced">
+        <PanelTitleRow title="Deal Outcome" />
         <DealCloseActions dealId={deal.id} status={deal.status} workspaceId={workspace.id} />
       </section>
 
@@ -221,32 +325,41 @@ export default async function DealDetailPage({ params }: PageProps) {
         attachment={{ dealId: deal.id }}
         defaultOwnerId={actorUserId}
         formId="add-activity"
+        lockedMessage={closedDealLockMessage("activities")}
         owners={owners}
         sections={[
           {
             activities: openActivities,
-            emptyMessage: "No open activities are attached to this deal.",
-            showCompleteAction: true,
-            title: "Open Next Steps"
+            description: openActivityCopy.description,
+            emptyMessage: openActivityCopy.emptyMessage,
+            showCompleteAction: deal.status === "OPEN",
+            title: openActivityCopy.title
           },
           {
             activities: completedActivities,
-            emptyMessage: "Completed activities will appear here.",
-            title: "Completed Activity History"
+            description: completedActivityCopy.description,
+            emptyMessage: completedActivityCopy.emptyMessage,
+            title: completedActivityCopy.title
           }
         ]}
+        showForm={deal.status === "OPEN"}
         workspaceId={workspace.id}
       />
 
       <NotesPanel
         attachment={{ dealId: deal.id }}
         emptyMessage="No notes have been added to this deal."
+        lockedMessage={closedDealLockMessage("notes")}
         notes={deal.notes}
+        showDeleteActions={deal.status === "OPEN"}
+        showForm={deal.status === "OPEN"}
         workspaceId={workspace.id}
       />
 
       <ManualEmailLogPanel
         attachment={{ dealId: deal.id }}
+        lockedMessage={closedDealLockMessage("emailLogs")}
+        showForm={deal.status === "OPEN"}
         templates={emailTemplates}
         workspaceId={workspace.id}
       />
@@ -261,12 +374,10 @@ export default async function DealDetailPage({ params }: PageProps) {
   );
 }
 
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
-}
-
-function formatPersonNameOrNull(person?: { firstName: string; lastName: string | null } | null) {
-  return person ? formatPersonName(person) : null;
+function getDealStatusTone(status: string): RecordSummaryTone {
+  if (status === "WON") return "success";
+  if (status === "LOST") return "danger";
+  return "default";
 }
 
 type DealAutomationSuggestion = {
@@ -286,31 +397,38 @@ function DealAutomationTemplatesPanel({
   if (suggestions.length === 0) return null;
 
   return (
-    <section className="data-card automation-template-panel" style={{ marginBottom: 14 }}>
-      <div className="panel-title-row">
-        <div>
-          <p className="page-kicker">Suggested Automations</p>
-          <h2 className="panel-title">One-click next actions</h2>
-        </div>
-        <span className="badge">Creates activities</span>
-      </div>
-      <p className="empty-copy">
+    <section className="data-card automation-template-panel section-separated">
+      <PanelTitleRow
+        actions={<span className="badge">Creates activities</span>}
+        eyebrow="Suggested Automations"
+        title="One-click next actions"
+      />
+      <FormIntroCallout title="Suggested next steps">
         These templates create follow-up activities now. They are not background automations or a rule builder.
-      </p>
+      </FormIntroCallout>
       <div className="automation-template-list">
-        {suggestions.map((suggestion) => (
-          <form action={createDealAutomationActivityAction} className="automation-template-item" key={suggestion.templateId}>
-            <input name="dealId" type="hidden" value={dealId} />
-            <input name="templateId" type="hidden" value={suggestion.templateId} />
-            <div>
-              <strong>{suggestion.title}</strong>
-              <p>{suggestion.description}</p>
-            </div>
-            <button className="button-secondary button-compact" type="submit">
-              {suggestion.actionLabel}
-            </button>
-          </form>
-        ))}
+        {suggestions.map((suggestion) => {
+          const automationActionLabel = `${suggestion.actionLabel}: create ${suggestion.title.toLowerCase()} activity`;
+
+          return (
+            <form action={createDealAutomationActivityAction} className="automation-template-item" key={suggestion.templateId}>
+              <input name="dealId" type="hidden" value={dealId} />
+              <input name="templateId" type="hidden" value={suggestion.templateId} />
+              <div>
+                <strong>{suggestion.title}</strong>
+                <p>{suggestion.description}</p>
+              </div>
+              <button
+                aria-label={automationActionLabel}
+                className="button-secondary button-compact"
+                title={automationActionLabel}
+                type="submit"
+              >
+                {suggestion.actionLabel}
+              </button>
+            </form>
+          );
+        })}
       </div>
     </section>
   );
@@ -318,10 +436,12 @@ function DealAutomationTemplatesPanel({
 
 function buildDealAutomationSuggestions({
   contractFields,
+  contractSteps,
   deal,
   hasNextActivity
 }: {
   contractFields: Array<{ key: string; name: string; value: unknown }>;
+  contractSteps: Array<{ status: string }>;
   deal: {
     status: string;
     stage: { name: string };
@@ -330,9 +450,11 @@ function buildDealAutomationSuggestions({
   hasNextActivity: boolean;
 }): DealAutomationSuggestion[] {
   const suggestions: DealAutomationSuggestion[] = [];
-  const hasContractAttention = contractFields.some((field) =>
-    ["sent", "in review", "blocked"].includes(String(field.value ?? "").trim().toLowerCase())
-  );
+  const hasContractAttention =
+    contractSteps.some((step) => ["SENT", "IN_PROGRESS", "BLOCKED"].includes(step.status)) ||
+    contractFields.some((field) =>
+      ["sent", "in review", "in progress", "blocked"].includes(String(field.value ?? "").trim().toLowerCase())
+    );
 
   if (deal.status === "OPEN" && !hasNextActivity) {
     suggestions.push({
@@ -386,10 +508,20 @@ function buildDealAutomationSuggestions({
   return suggestions;
 }
 
+function contractStatusForAttention(status: string) {
+  if (status === "IN_PROGRESS") return "In progress";
+  if (status === "SENT") return "Sent";
+  if (status === "BLOCKED") return "Blocked";
+  if (status === "SIGNED") return "Signed";
+  if (status === "SKIPPED") return "Skipped";
+  return "Not started";
+}
+
 function DealNextStepCard({
   activity,
   attention,
-  badges
+  badges,
+  dealTitle
 }: {
   activity?: {
     id: string;
@@ -401,14 +533,16 @@ function DealNextStepCard({
   };
   attention: DealAttentionBucket;
   badges: DealAttentionBadge[];
+  dealTitle: string;
 }) {
   const supportingBadges = badges.filter((badge) => badge.kind !== "overdue" && badge.kind !== "no-next-activity").slice(0, 4);
+  const addNextActivityActionLabel = `Add next activity for ${dealTitle}`;
   return (
     <div className="data-card deal-next-step-card">
-      <div className="deal-context-heading">
-        <h2 className="panel-title">Next Step</h2>
-        <span className={`deal-attention deal-attention-${attention}`}>{dealAttentionLabel(attention)}</span>
-      </div>
+      <PanelTitleRow
+        actions={<span className={`deal-attention deal-attention-${attention}`}>{dealAttentionLabel(attention)}</span>}
+        title="Next Step"
+      />
       {activity ? (
         <>
           <strong>{activity.title}</strong>
@@ -422,12 +556,20 @@ function DealNextStepCard({
           </Link>
         </>
       ) : (
-        <>
-          <p className="empty-copy">No open activity is attached to this deal.</p>
-          <Link className="button-secondary button-compact" href="#add-activity">
-            Add next activity
-          </Link>
-        </>
+        <EmptyState
+          actions={
+            <Link
+              aria-label={addNextActivityActionLabel}
+              className="button-secondary button-compact"
+              href="#add-activity"
+              title={addNextActivityActionLabel}
+            >
+              Add next activity
+            </Link>
+          }
+          className="empty-state-compact empty-state-panel deal-next-step-empty"
+          title="No open activity is attached to this deal."
+        />
       )}
       {supportingBadges.length > 0 ? (
         <div className="deal-next-step-cues">
@@ -439,10 +581,14 @@ function DealNextStepCard({
         </div>
       ) : null}
       {supportingBadges.some((badge) => badge.kind === "email-follow-up") ? (
-        <p className="empty-copy">A recent inbound email is linked to this deal. Add a follow-up so it does not get buried.</p>
+        <FormIntroCallout className="deal-next-step-cue" title="Email follow-up">
+          A recent inbound email is linked to this deal. Add a follow-up so it does not get buried.
+        </FormIntroCallout>
       ) : null}
       {supportingBadges.some((badge) => badge.kind === "quote-waiting") ? (
-        <p className="empty-copy">A sent quote is waiting for a response. Review the quote or schedule a follow-up.</p>
+        <FormIntroCallout className="deal-next-step-cue" title="Quote follow-up">
+          A sent quote is waiting for a response. Review the quote or schedule a follow-up.
+        </FormIntroCallout>
       ) : null}
       {supportingBadges.some((badge) => badge.kind === "contract-blocked") ? (
         <Link className="inline-link" href="#contract-workflow">
@@ -451,16 +597,6 @@ function DealNextStepCard({
       ) : null}
     </div>
   );
-}
-
-function compareOpenActivities(
-  a: { dueAt: Date | string | null; createdAt: Date | string },
-  b: { dueAt: Date | string | null; createdAt: Date | string }
-) {
-  const aDue = toTime(a.dueAt);
-  const bDue = toTime(b.dueAt);
-  if (aDue !== bDue) return aDue - bDue;
-  return toTime(a.createdAt) - toTime(b.createdAt);
 }
 
 function compareCompletedActivities(

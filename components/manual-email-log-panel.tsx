@@ -5,6 +5,12 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
+import { PanelTitleRow } from "@/components/panel-title-row";
+
 type EmailLogAttachment =
   | { dealId: string }
   | { leadId: string }
@@ -21,6 +27,7 @@ type EmailTemplateOption = {
 
 type ManualEmailLogPanelProps = {
   attachment: EmailLogAttachment;
+  id?: string;
   lockedMessage?: string;
   showForm?: boolean;
   templates: EmailTemplateOption[];
@@ -29,6 +36,7 @@ type ManualEmailLogPanelProps = {
 
 export function ManualEmailLogPanel({
   attachment,
+  id = "email-log",
   lockedMessage,
   showForm = true,
   templates,
@@ -45,6 +53,7 @@ export function ManualEmailLogPanel({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const activeTemplates = templates.filter((template) => template.active !== false);
+  const emailWorkspaceLabel = "Open Email workspace to connect or sync email";
 
   function applyTemplate(templateId: string) {
     const template = activeTemplates.find((item) => item.id === templateId);
@@ -93,22 +102,28 @@ export function ManualEmailLogPanel({
   }
 
   return (
-    <section className="data-card" style={{ marginTop: 14 }}>
-      <div className="panel-title-row">
-        <h2 className="panel-title">Log Manual Email</h2>
-        <span className="badge">Manual</span>
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 14 }}>
-        Save a plain-text record of an email that was already sent or received. This does not send email, sync an
-        inbox, or create background jobs. Use <Link className="inline-link" href={"/email" as Route}>Email</Link> to
-        connect Gmail or sync recent matched messages from known contacts.
-      </p>
+    <section className="data-card section-spaced" id={id}>
+      <PanelTitleRow
+        actions={<span className="badge">Manual</span>}
+        description={
+          <>
+            Save a plain-text record of an email that was already sent or received. This does not send email, sync an
+            inbox, or create background jobs. Use{" "}
+            <Link aria-label={emailWorkspaceLabel} className="inline-link" href={"/email" as Route} title={emailWorkspaceLabel}>
+              Email
+            </Link>{" "}
+            to
+            connect Gmail or sync recent matched messages from known contacts.
+          </>
+        }
+        title="Log Manual Email"
+      />
       {showForm ? (
         <form className="inline-form" onSubmit={onSubmit}>
-          {error ? <div className="form-error">{error}</div> : null}
+          {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
           {activeTemplates.length > 0 ? (
             <label className="form-field">
-              <span>Template</span>
+              <FormFieldLabel>Template</FormFieldLabel>
               <select defaultValue="" onChange={(event) => applyTemplate(event.target.value)}>
                 <option value="">No template</option>
                 {activeTemplates.map((template) => (
@@ -122,47 +137,49 @@ export function ManualEmailLogPanel({
           ) : null}
           <div className="form-grid">
             <label className="form-field">
-              <span>Direction</span>
+              <FormFieldLabel required>Direction</FormFieldLabel>
               <select onChange={(event) => setDirection(event.target.value as "INBOUND" | "OUTBOUND")} value={direction}>
                 <option value="OUTBOUND">Outbound - already sent</option>
                 <option value="INBOUND">Inbound - received</option>
               </select>
             </label>
             <label className="form-field">
-              <span>Email date</span>
+              <FormFieldLabel required>Email date</FormFieldLabel>
               <input onChange={(event) => setOccurredAt(event.target.value)} required type="datetime-local" value={occurredAt} />
             </label>
           </div>
           <div className="form-grid">
             <label className="form-field">
-              <span>From</span>
+              <FormFieldLabel>From</FormFieldLabel>
               <input onChange={(event) => setFromText(event.target.value)} value={fromText} />
             </label>
             <label className="form-field">
-              <span>To</span>
+              <FormFieldLabel>To</FormFieldLabel>
               <input onChange={(event) => setToText(event.target.value)} value={toText} />
             </label>
           </div>
           <label className="form-field">
-            <span>Cc</span>
+            <FormFieldLabel>Cc</FormFieldLabel>
             <input onChange={(event) => setCcText(event.target.value)} value={ccText} />
           </label>
           <label className="form-field">
-            <span>Subject</span>
+            <FormFieldLabel required>Subject</FormFieldLabel>
             <input onChange={(event) => setSubject(event.target.value)} required value={subject} />
           </label>
           <label className="form-field">
-            <span>Body</span>
+            <FormFieldLabel required>Body</FormFieldLabel>
             <textarea onChange={(event) => setBody(event.target.value)} required rows={5} value={body} />
           </label>
-          <div className="form-actions">
-            <button className="button-primary" disabled={isSaving || !subject.trim() || !body.trim()} type="submit">
-              {isSaving ? "Saving log..." : "Save email log"}
-            </button>
-          </div>
+          <FormActionBar
+            disabledHint="Add a subject and body before saving this email log."
+            isSaving={isSaving}
+            pendingLabel="Saving log..."
+            submitDisabled={!subject.trim() || !body.trim()}
+            submitLabel="Save email log"
+          />
         </form>
       ) : (
-        <p className="empty-copy">{lockedMessage ?? "Email logging is locked for this record."}</p>
+        <LockedPanelNotice>{lockedMessage ?? "Email logging is locked for this record."}</LockedPanelNotice>
       )}
     </section>
   );

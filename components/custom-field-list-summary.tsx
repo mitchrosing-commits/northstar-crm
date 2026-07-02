@@ -1,4 +1,12 @@
-import { customFieldDisplayValue, hasCustomFieldDisplayValue, isSupportedCustomFieldType } from "@/lib/custom-field-display";
+import { Badge } from "@/components/badge";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
+import {
+  customFieldDisplayValue,
+  hasCustomFieldDisplayValue,
+  isEditableCustomFieldType,
+  isFilterableCustomFieldType
+} from "@/lib/custom-field-display";
 import { getSearchParam, type ListSearchParams } from "@/lib/list-page-query";
 
 type CustomFieldListField = {
@@ -14,27 +22,40 @@ type CustomFieldDefinitionOption = {
   fieldType: string;
 };
 
-export function CustomFieldSummaryCell({ fields }: { fields: CustomFieldListField[] }) {
-  if (fields.length === 0) return <span className="muted">None configured</span>;
+type CustomFieldSummaryCellProps = {
+  emptyConfiguredLabel?: string;
+  emptyFilledLabel?: string;
+  fields: CustomFieldListField[];
+};
+
+export function CustomFieldSummaryCell({
+  emptyConfiguredLabel = "None configured",
+  emptyFilledLabel = "None filled",
+  fields
+}: CustomFieldSummaryCellProps) {
+  if (fields.length === 0) return <InlineEmptyStateText>{emptyConfiguredLabel}</InlineEmptyStateText>;
 
   const filledFields = fields.filter((field) => hasCustomFieldDisplayValue(field.value));
-  if (filledFields.length === 0) return <span className="muted">None filled</span>;
+  if (filledFields.length === 0) return <InlineEmptyStateText>{emptyFilledLabel}</InlineEmptyStateText>;
 
   const previewFields = filledFields.slice(0, 2);
   const extraCount = filledFields.length - previewFields.length;
+  const previewSummary = `${previewFields.map(summaryText).join(" · ")}${extraCount > 0 ? ` +${extraCount}` : ""}`;
+  const filledCountLabel = `${filledFields.length}/${fields.length} filled`;
+  const summaryLabel = `Custom field summary: ${previewSummary}. ${filledFields.length} of ${fields.length} custom fields filled.`;
 
   return (
-    <details className="custom-field-summary">
-      <summary>
-        {previewFields.map(summaryText).join(" · ")}
-        {extraCount > 0 ? ` +${extraCount}` : ""}
+    <details aria-label={summaryLabel} className="custom-field-summary" title={summaryLabel}>
+      <summary title={summaryLabel}>
+        <span>{previewSummary}</span>
+        <span className="custom-field-summary-count">{filledCountLabel}</span>
       </summary>
-      <dl className="custom-field-summary-list">
+      <dl aria-label="Custom field values" className="custom-field-summary-list">
         {fields.map((field) => (
           <div className="custom-field-summary-item" key={field.id}>
             <dt>
               {field.name}
-              {!isSupportedCustomFieldType(field.fieldType) ? <span className="badge">Read-only</span> : null}
+              {!isEditableCustomFieldType(field.fieldType) ? <Badge label={`${field.name} is read-only`}>Read-only</Badge> : null}
             </dt>
             <dd>{customFieldDisplayValue(field.value)}</dd>
           </div>
@@ -51,7 +72,7 @@ export function CustomFieldFilterControls({
   fields: CustomFieldDefinitionOption[];
   params: ListSearchParams;
 }) {
-  const supportedFields = fields.filter((field) => isSupportedCustomFieldType(field.fieldType));
+  const supportedFields = fields.filter((field) => isFilterableCustomFieldType(field.fieldType));
   const selectedOperator = selectedCustomFieldOperator(params);
 
   if (supportedFields.length === 0) return null;
@@ -59,7 +80,7 @@ export function CustomFieldFilterControls({
   return (
     <>
       <label className="form-field">
-        <span>Custom field</span>
+        <FormFieldLabel>Custom field</FormFieldLabel>
         <select name="customFieldId" defaultValue={getSearchParam(params, "customFieldId")}>
           <option value="">Any custom field</option>
           {supportedFields.map((field) => (
@@ -70,7 +91,7 @@ export function CustomFieldFilterControls({
         </select>
       </label>
       <label className="form-field">
-        <span>Custom operator</span>
+        <FormFieldLabel>Custom operator</FormFieldLabel>
         <select name="customFieldOperator" defaultValue={selectedOperator}>
           <option value="">Equals</option>
           <option value="contains">Contains text</option>
@@ -79,7 +100,7 @@ export function CustomFieldFilterControls({
         </select>
       </label>
       <label className="form-field">
-        <span>Custom value</span>
+        <FormFieldLabel>Custom value</FormFieldLabel>
         <input
           name="customFieldValue"
           placeholder="Value"
@@ -94,7 +115,7 @@ export function CustomFieldFilterControls({
 }
 
 function summaryText(field: CustomFieldListField) {
-  const readOnlySuffix = isSupportedCustomFieldType(field.fieldType) ? "" : " (read-only)";
+  const readOnlySuffix = isEditableCustomFieldType(field.fieldType) ? "" : " (read-only)";
   return `${field.name}: ${customFieldDisplayValue(field.value)}${readOnlySuffix}`;
 }
 

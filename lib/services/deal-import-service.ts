@@ -1,18 +1,28 @@
 import type { DealStatus } from "@prisma/client";
 
-import { parseCsv } from "@/lib/csv";
 import { prisma } from "@/lib/db/prisma";
+import { dealValueCentsMax } from "@/lib/product-limits";
 import {
   buildImportAuditMetadata,
+  countNonBlankImportRows,
   countImportPreviewRows,
+  createEmptyImportPreview,
   createImportResultCounts,
   firstImportHeaderIndex,
+  groupImportOwnersByEmail,
+  groupImportPeopleByDisplayName,
+  groupImportPeopleByEmail,
   groupImportRecordsByName,
+  isValidImportEmail,
+  listDuplicateImportColumnMessages,
   listUnsupportedImportColumns,
-  normalizeImportEmailKey,
-  normalizeImportHeader,
   normalizeImportNameKey,
-  stripCsvBom,
+  parseImportCsvPreviewInput,
+  recordImportCreateFailure,
+  resolveImportOwnerId,
+  resolveImportPersonReference,
+  type ImportFailedRow,
+  type ImportPersonRecord,
   type ImportPreviewStatus
 } from "./import-utils";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
@@ -58,31 +68,36 @@ export type DealImportResult = {
   skippedDuplicateCount: number;
   skippedInvalidCount: number;
   errorCount: number;
+  failedRows: ImportFailedRow[];
   createdDeals: Array<{ id: string; title: string; status: DealStatus }>;
 };
 
-type PersonImportRecord = {
-  id: string;
-  firstName: string;
-  lastName: string | null;
-  email: string | null;
-};
+type PersonImportRecord = ImportPersonRecord;
 
 const supportedDealColumns = new Set([
   "title",
+  "deal title",
   "name",
   "pipeline",
   "pipelinename",
+  "pipeline name",
   "stage",
   "stagename",
+  "stage name",
   "status",
   "value",
   "currency",
   "expectedcloseat",
+  "expected close at",
   "contactemail",
+  "contact email",
   "contactname",
+  "contact name",
+  "organization",
   "organizationname",
-  "owneremail"
+  "organization name",
+  "owneremail",
+  "owner email"
 ]);
 const supportedDealStatuses = new Set<DealStatus>(["OPEN", "WON", "LOST"]);
 const dealImportMessages = {
@@ -94,13 +109,13 @@ const dealImportMessages = {
   pipelineAmbiguous: "Pipeline name matches multiple pipelines in this workspace.",
   stageNotFound: "Stage must already exist in the resolved pipeline; stages from other pipelines are not used.",
   stageAmbiguous: "Stage name matches multiple stages in the resolved pipeline.",
-  ownerNotFound: "Owner email must match an active user who belongs to this workspace.",
   contactNotFound: "Contact must already exist in this workspace; contacts are not auto-created.",
   contactAmbiguous: "Contact reference matches multiple contacts in this workspace.",
+  invalidContactEmail: "Contact email must be a valid email address.",
   organizationNotFound: "Organization must already exist in this workspace; organizations are not auto-created.",
   organizationAmbiguous: "Organization name matches multiple organizations in this workspace.",
   invalidStatus: "Deal status must be OPEN, WON, or LOST.",
-  invalidValue: "Deal value must be a non-negative amount with at most two decimal places.",
+  invalidValue: "Deal value must be a non-negative amount with at most two decimal places and fit current storage limits.",
   invalidCurrency: "Currency must be a 3-letter code.",
   invalidExpectedCloseAt: "Expected close date must be a valid ISO datetime or YYYY-MM-DD date.",
   closedStatusCaveat:
@@ -111,41 +126,46 @@ const dealImportMessages = {
     "Duplicate skipped: another CSV row has the same title, pipeline, stage, contact, and organization."
 } as const;
 
-export async function previewDealImport(actor: WorkspaceActor, csvText: string): Promise<DealImportPreview> {
+export async function previewDealImport(actor: WorkspaceActor, csvText: unknown): Promise<DealImportPreview> {
   await ensureWorkspaceAccess(actor);
 
-  const text = csvText.trim();
-  if (!text) return emptyPreview(["CSV text is required."]);
-
-  let parsed: ReturnType<typeof parseCsv>;
-  try {
-    parsed = parseCsv(text);
-  } catch (error) {
-    return emptyPreview([error instanceof Error ? error.message : "CSV could not be parsed."]);
-  }
-
-  const headers = parsed.headers.map((header, index) => normalizeImportHeader(index === 0 ? stripCsvBom(header) : header));
-  const titleIndex = firstImportHeaderIndex(headers, ["title", "name"]);
-  const pipelineIndex = firstImportHeaderIndex(headers, ["pipeline", "pipelinename"]);
-  const stageIndex = firstImportHeaderIndex(headers, ["stage", "stagename"]);
+  const input = parseImportCsvPreviewInput(csvText);
+  if ("parseErrors" in input) return createEmptyImportPreview<DealImportPreviewRow>(input.parseErrors);
+  const { parsed, headers } = input;
+  const titleIndex = firstImportHeaderIndex(headers, ["title", "deal title", "name"]);
+  const pipelineIndex = firstImportHeaderIndex(headers, ["pipeline", "pipelinename", "pipeline name"]);
+  const stageIndex = firstImportHeaderIndex(headers, ["stage", "stagename", "stage name"]);
   const statusIndex = firstImportHeaderIndex(headers, ["status"]);
   const valueIndex = firstImportHeaderIndex(headers, ["value"]);
   const currencyIndex = firstImportHeaderIndex(headers, ["currency"]);
-  const expectedCloseAtIndex = firstImportHeaderIndex(headers, ["expectedcloseat"]);
-  const contactEmailIndex = firstImportHeaderIndex(headers, ["contactemail"]);
-  const contactNameIndex = firstImportHeaderIndex(headers, ["contactname"]);
-  const organizationNameIndex = firstImportHeaderIndex(headers, ["organizationname"]);
-  const ownerEmailIndex = firstImportHeaderIndex(headers, ["owneremail"]);
+  const expectedCloseAtIndex = firstImportHeaderIndex(headers, ["expectedcloseat", "expected close at"]);
+  const contactEmailIndex = firstImportHeaderIndex(headers, ["contactemail", "contact email"]);
+  const contactNameIndex = firstImportHeaderIndex(headers, ["contactname", "contact name"]);
+  const organizationNameIndex = firstImportHeaderIndex(headers, ["organization", "organizationname", "organization name"]);
+  const ownerEmailIndex = firstImportHeaderIndex(headers, ["owneremail", "owner email"]);
   const unsupportedColumns = listUnsupportedImportColumns(parsed.headers, headers, supportedDealColumns);
+  const duplicateColumnErrors = listDuplicateImportColumnMessages(headers, [
+    { label: "deal title", candidates: ["title", "deal title", "name"] },
+    { label: "pipeline", candidates: ["pipeline", "pipelinename", "pipeline name"] },
+    { label: "stage", candidates: ["stage", "stagename", "stage name"] },
+    { label: "status", candidates: ["status"] },
+    { label: "value", candidates: ["value"] },
+    { label: "currency", candidates: ["currency"] },
+    { label: "expected close date", candidates: ["expectedcloseat", "expected close at"] },
+    { label: "contact email", candidates: ["contactemail", "contact email"] },
+    { label: "contact name", candidates: ["contactname", "contact name"] },
+    { label: "organization name", candidates: ["organization", "organizationname", "organization name"] },
+    { label: "owner email", candidates: ["owneremail", "owner email"] }
+  ]);
 
-  const missingHeaders: string[] = [];
-  if (titleIndex === -1) missingHeaders.push("CSV must include a deal title or name column.");
-  if (pipelineIndex === -1) missingHeaders.push("CSV must include a pipeline or pipelineName column.");
-  if (stageIndex === -1) missingHeaders.push("CSV must include a stage or stageName column.");
-  if (missingHeaders.length > 0) {
+  const headerErrors = [...duplicateColumnErrors];
+  if (titleIndex === -1) headerErrors.push("CSV must include a deal title, title, or name column.");
+  if (pipelineIndex === -1) headerErrors.push("CSV must include a pipeline, pipelineName, or pipeline name column.");
+  if (stageIndex === -1) headerErrors.push("CSV must include a stage, stageName, or stage name column.");
+  if (headerErrors.length > 0) {
     return {
-      ...emptyPreview(missingHeaders),
-      totalRows: parsed.rows.length,
+      ...createEmptyImportPreview<DealImportPreviewRow>(headerErrors),
+      totalRows: countNonBlankImportRows(parsed.rows),
       unsupportedColumns
     };
   }
@@ -153,7 +173,7 @@ export async function previewDealImport(actor: WorkspaceActor, csvText: string):
   const [pipelines, organizations, people, owners, existingDeals] = await Promise.all([
     prisma.pipeline.findMany({
       where: { workspaceId: actor.workspaceId, ...activeWhere },
-      include: { stages: { where: activeWhere, orderBy: [{ name: "asc" }, { id: "asc" }] } },
+      include: { stages: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: [{ name: "asc" }, { id: "asc" }] } },
       orderBy: [{ name: "asc" }, { id: "asc" }]
     }),
     prisma.organization.findMany({
@@ -178,9 +198,9 @@ export async function previewDealImport(actor: WorkspaceActor, csvText: string):
   ]);
   const pipelinesByName = groupImportRecordsByName(pipelines);
   const organizationsByName = groupImportRecordsByName(organizations);
-  const peopleByEmail = groupPeopleByEmail(people);
-  const peopleByName = groupPeopleByDisplayName(people);
-  const ownersByEmail = new Map(owners.map((owner) => [normalizeImportEmailKey(owner.email), owner.id]));
+  const peopleByEmail = groupImportPeopleByEmail(people);
+  const peopleByName = groupImportPeopleByDisplayName(people);
+  const ownersByEmail = groupImportOwnersByEmail(owners);
   const existingDealKeys = new Set(
     existingDeals.map((deal) =>
       dealDuplicateKey(deal.title, deal.pipelineId, deal.stageId, deal.personId ?? null, deal.organizationId ?? null)
@@ -223,10 +243,14 @@ export async function previewDealImport(actor: WorkspaceActor, csvText: string):
       if (stageMatches.length > 1) addIssue(errors, skipReasons, dealImportMessages.stageAmbiguous);
       const stage = stageMatches.length === 1 ? stageMatches[0] : null;
 
-      const ownerId = ownerEmail ? ownersByEmail.get(normalizeImportEmailKey(ownerEmail)) ?? null : null;
-      if (ownerEmail && !ownerId) addIssue(errors, skipReasons, dealImportMessages.ownerNotFound);
+      const validContactEmail = !contactEmail || isValidImportEmail(contactEmail);
+      if (!validContactEmail) addIssue(errors, skipReasons, dealImportMessages.invalidContactEmail);
+      const ownerResolution = resolveImportOwnerId(ownersByEmail, ownerEmail);
+      if (ownerResolution.error) addIssue(errors, skipReasons, ownerResolution.error);
 
-      const personResolution = resolvePersonReference(peopleByEmail, peopleByName, contactEmail, contactName);
+      const personResolution = validContactEmail
+        ? resolvePersonReference(peopleByEmail, peopleByName, contactEmail, contactName)
+        : { personId: null, error: null };
       if (personResolution.error) addIssue(errors, skipReasons, personResolution.error);
 
       const organizationMatches = organizationName ? organizationsByName.get(normalizeImportNameKey(organizationName)) ?? [] : [];
@@ -248,7 +272,9 @@ export async function previewDealImport(actor: WorkspaceActor, csvText: string):
           : null;
       const duplicatesExisting = errors.length === 0 && duplicateKey ? existingDealKeys.has(duplicateKey) : false;
       const duplicatesImport = errors.length === 0 && duplicateKey ? seenImportDealKeys.has(duplicateKey) : false;
-      if (errors.length === 0 && duplicateKey) seenImportDealKeys.add(duplicateKey);
+      if (errors.length === 0 && duplicateKey && !duplicatesExisting && !duplicatesImport) {
+        seenImportDealKeys.add(duplicateKey);
+      }
 
       if (duplicatesExisting) {
         warnings.push(dealImportMessages.duplicateExistingDeal);
@@ -277,7 +303,7 @@ export async function previewDealImport(actor: WorkspaceActor, csvText: string):
         organizationName,
         organizationId,
         ownerEmail,
-        ownerId,
+        ownerId: ownerResolution.ownerId,
         status: errors.length > 0 ? "invalid" : duplicatesExisting || duplicatesImport ? "duplicate" : "valid",
         skipReasons,
         errors,
@@ -297,7 +323,7 @@ export async function previewDealImport(actor: WorkspaceActor, csvText: string):
   };
 }
 
-export async function importDealsFromCsv(actor: WorkspaceActor, csvText: string): Promise<DealImportResult> {
+export async function importDealsFromCsv(actor: WorkspaceActor, csvText: unknown): Promise<DealImportResult> {
   const preview = await previewDealImport(actor, csvText);
   const result: DealImportResult = {
     preview,
@@ -310,7 +336,7 @@ export async function importDealsFromCsv(actor: WorkspaceActor, csvText: string)
   for (const row of preview.rows) {
     if (row.status !== "valid") continue;
     if (!row.pipelineId || !row.stageId) {
-      result.errorCount += 1;
+      recordImportCreateFailure(result, row.rowNumber);
       continue;
     }
 
@@ -348,48 +374,16 @@ export async function importDealsFromCsv(actor: WorkspaceActor, csvText: string)
       result.createdDeals.push(deal);
       result.createdCount += 1;
     } catch {
-      result.errorCount += 1;
+      recordImportCreateFailure(result, row.rowNumber);
     }
   }
 
   return result;
 }
 
-function emptyPreview(parseErrors: string[]): DealImportPreview {
-  return {
-    totalRows: 0,
-    validRows: 0,
-    duplicateRows: 0,
-    invalidRows: 0,
-    unsupportedColumns: [],
-    parseErrors,
-    rows: []
-  };
-}
-
 function addIssue(errors: string[], skipReasons: string[], message: string) {
   errors.push(message);
   skipReasons.push(message);
-}
-
-function groupPeopleByEmail(people: PersonImportRecord[]) {
-  const groups = new Map<string, PersonImportRecord[]>();
-  for (const person of people) {
-    const key = normalizeImportEmailKey(person.email);
-    if (!key) continue;
-    groups.set(key, [...(groups.get(key) ?? []), person]);
-  }
-  return groups;
-}
-
-function groupPeopleByDisplayName(people: PersonImportRecord[]) {
-  const groups = new Map<string, PersonImportRecord[]>();
-  for (const person of people) {
-    const key = normalizeImportNameKey(personDisplayName(person));
-    if (!key) continue;
-    groups.set(key, [...(groups.get(key) ?? []), person]);
-  }
-  return groups;
 }
 
 function resolvePersonReference(
@@ -398,27 +392,10 @@ function resolvePersonReference(
   contactEmail: string,
   contactName: string
 ) {
-  const emailKey = normalizeImportEmailKey(contactEmail);
-  if (emailKey) {
-    const matches = peopleByEmail.get(emailKey) ?? [];
-    if (matches.length === 0) return { personId: null, error: dealImportMessages.contactNotFound };
-    if (matches.length > 1) return { personId: null, error: dealImportMessages.contactAmbiguous };
-    return { personId: matches[0].id, error: null };
-  }
-
-  const nameKey = normalizeImportNameKey(contactName);
-  if (nameKey) {
-    const matches = peopleByName.get(nameKey) ?? [];
-    if (matches.length === 0) return { personId: null, error: dealImportMessages.contactNotFound };
-    if (matches.length > 1) return { personId: null, error: dealImportMessages.contactAmbiguous };
-    return { personId: matches[0].id, error: null };
-  }
-
-  return { personId: null, error: null };
-}
-
-function personDisplayName(person: PersonImportRecord) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
+  return resolveImportPersonReference(peopleByEmail, peopleByName, contactEmail, contactName, {
+    ambiguous: dealImportMessages.contactAmbiguous,
+    notFound: dealImportMessages.contactNotFound
+  });
 }
 
 function parseImportValueCents(value: string) {
@@ -428,14 +405,27 @@ function parseImportValueCents(value: string) {
   const [dollars, cents = ""] = value.split(".");
   const amountCents = Number(dollars) * 100 + Number(cents.padEnd(2, "0"));
   if (!Number.isSafeInteger(amountCents)) return undefined;
+  if (amountCents > dealValueCentsMax) return undefined;
   return amountCents;
 }
 
 function parseImportDate(value: string) {
   if (!value) return null;
+  const calendarDate = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T)/);
+  if (calendarDate && !isValidCalendarDate(calendarDate)) return undefined;
+
   const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
   if (Number.isNaN(date.getTime())) return undefined;
   return date;
+}
+
+function isValidCalendarDate(match: RegExpMatchArray) {
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
 function dealDuplicateKey(

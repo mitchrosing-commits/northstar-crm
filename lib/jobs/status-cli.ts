@@ -1,5 +1,6 @@
 import { JobStatus } from "@prisma/client";
 
+import { internalNoopJobType, passwordResetEmailJobType } from "./handlers";
 import type { JobQueueStatus } from "@/lib/services/job-service";
 
 const statusOrder = [
@@ -9,7 +10,7 @@ const statusOrder = [
   JobStatus.FAILED,
   JobStatus.DEAD
 ] as const;
-const safeJobTypes = ["auth.password_reset_email", "internal.noop"] as const;
+const safeJobTypes = [passwordResetEmailJobType, internalNoopJobType] as const;
 
 export function formatJobQueueStatus(status: JobQueueStatus) {
   const lines = [

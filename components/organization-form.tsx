@@ -1,9 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormPrefillNotice } from "@/components/form-prefill-notice";
+import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type EntityOption = {
   id: string;
@@ -21,21 +27,27 @@ type OrganizationFormProps = {
   mode: "create" | "edit";
   workspaceId: string;
   owners: EntityOption[];
+  defaultName?: string;
   defaultOwnerId?: string;
+  prefillNotice?: string;
   initialOrganization?: OrganizationFormInitial;
+  cancelHref: Route;
 };
 
 export function OrganizationForm({
   mode,
   workspaceId,
   owners,
+  defaultName,
   defaultOwnerId,
-  initialOrganization
+  prefillNotice,
+  initialOrganization,
+  cancelHref
 }: OrganizationFormProps) {
   const router = useRouter();
   const defaultCreateOwnerId =
     mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
-  const [name, setName] = useState(initialOrganization?.name ?? "");
+  const [name, setName] = useState(initialOrganization?.name ?? defaultName ?? "");
   const [domain, setDomain] = useState(initialOrganization?.domain ?? "");
   const [ownerId, setOwnerId] = useState(initialOrganization?.ownerId ?? defaultCreateOwnerId);
   const [error, setError] = useState<string | null>(null);
@@ -83,20 +95,28 @@ export function OrganizationForm({
 
   return (
     <form className="form-card" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {mode === "create" ? (
+        <FormIntroCallout>
+          Create the account or company record first, then attach people, deals, activities, and notes to it.
+        </FormIntroCallout>
+      ) : null}
+      {mode === "create" && prefillNotice ? (
+        <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
+      ) : null}
       <div className="form-grid">
         <label className="form-field form-field-wide">
-          <span>Name</span>
+          <FormFieldLabel required>Name</FormFieldLabel>
           <input onChange={(event) => setName(event.target.value)} required value={name} />
         </label>
 
         <label className="form-field">
-          <span>Domain</span>
+          <FormFieldLabel>Domain</FormFieldLabel>
           <input onChange={(event) => setDomain(event.target.value)} placeholder="example.com" value={domain} />
         </label>
 
         <label className="form-field">
-          <span>Assigned to</span>
+          <FormFieldLabel>Assigned to</FormFieldLabel>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
             <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
@@ -105,44 +125,18 @@ export function OrganizationForm({
               </option>
             ))}
           </select>
-          <OwnerHint owners={owners} />
+          <OwnerAssignmentHint owners={owners} />
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !name.trim()} type="submit">
-          {isSaving ? "Saving..." : mode === "create" ? "Create organization" : "Save changes"}
-        </button>
-        <button className="button-secondary" onClick={() => router.back()} type="button">
-          Cancel
-        </button>
-      </div>
+      <FormActionBar
+        cancelHref={cancelHref}
+        cancelLabel={mode === "create" ? "Back to organizations" : "Back to organization"}
+        disabledHint="Add an organization name before saving."
+        isSaving={isSaving}
+        submitDisabled={!name.trim()}
+        submitLabel={mode === "create" ? "Create organization" : "Save changes"}
+      />
     </form>
   );
-}
-
-function OwnerHint({ owners }: { owners: EntityOption[] }) {
-  if (owners.length === 1) {
-    return (
-      <small className="form-hint">
-        You are the only workspace member right now. Invite teammates later from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  if (owners.length === 0) {
-    return (
-      <small className="form-hint">
-        Save unassigned for now, then manage workspace members from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  return null;
 }

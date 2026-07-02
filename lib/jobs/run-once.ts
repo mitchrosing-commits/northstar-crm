@@ -53,7 +53,7 @@ async function processClaimedJob(
   const handler = handlers[job.type];
 
   try {
-    if (!handler) throw new Error(`No job handler registered for type: ${job.type}`);
+    if (!handler) throw new Error("No job handler registered.");
     await handler({
       job: {
         attempts: job.attempts,
@@ -62,6 +62,7 @@ async function processClaimedJob(
         type: job.type,
         workspaceId: job.workspaceId
       },
+      now,
       payload: job.payload
     });
     await markJobSucceeded(job.id, now);

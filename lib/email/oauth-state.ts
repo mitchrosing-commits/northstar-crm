@@ -50,7 +50,13 @@ export function verifyEmailOAuthState(state: string | null | undefined, env: Env
     throw new ApiError("EMAIL_OAUTH_STATE_INVALID", "Email connection state is invalid.", 400);
   }
 
-  if (!isEmailOAuthProvider(payload.provider) || !payload.workspaceId || !payload.actorUserId) {
+  if (
+    !isEmailOAuthProvider(payload.provider) ||
+    !isNonEmptyString(payload.workspaceId) ||
+    !isNonEmptyString(payload.actorUserId) ||
+    typeof payload.expiresAt !== "number" ||
+    !Number.isFinite(payload.expiresAt)
+  ) {
     throw new ApiError("EMAIL_OAUTH_STATE_INVALID", "Email connection state is invalid.", 400);
   }
 
@@ -63,6 +69,10 @@ export function verifyEmailOAuthState(state: string | null | undefined, env: Env
 
 function isEmailOAuthProvider(provider: unknown): provider is EmailOAuthProvider {
   return provider === "GOOGLE_WORKSPACE" || provider === "MICROSOFT_365";
+}
+
+function isNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function signState(encodedPayload: string, env: EnvInput) {

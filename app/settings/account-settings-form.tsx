@@ -6,6 +6,10 @@ import {
   updateAccountDisplayNameAction,
   type AccountSettingsActionState
 } from "@/app/settings/account-actions";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSuccessMessage } from "@/components/form-success-message";
 
 type AccountSettingsFormProps = {
   currentName: string | null;
@@ -24,7 +28,7 @@ export function AccountSettingsForm({ currentName, email, workspaceName, roleLab
     <form action={formAction} className="inline-form">
       <div className="form-grid">
         <label className="form-field" htmlFor="account-display-name">
-          <span>Display name</span>
+          <FormFieldLabel required>Display name</FormFieldLabel>
           <input
             aria-describedby={state.error ? "account-settings-error" : undefined}
             autoComplete="name"
@@ -39,26 +43,24 @@ export function AccountSettingsForm({ currentName, email, workspaceName, roleLab
           <span>Email</span>
           <input id="account-email" readOnly type="email" value={email} />
         </label>
-        <div className="form-field">
-          <span>Current workspace</span>
-          <strong>{workspaceName}</strong>
-        </div>
-        <div className="form-field">
-          <span>Workspace role</span>
-          <strong>{roleLabel}</strong>
-        </div>
       </div>
+      <dl className="field-grid account-context-grid">
+        <div>
+          <dt className="field-label">Current workspace</dt>
+          <dd className="field-value">{workspaceName}</dd>
+        </div>
+        <div>
+          <dt className="field-label">Workspace role</dt>
+          <dd className="field-value">{roleLabel}</dd>
+        </div>
+      </dl>
       {state.error ? (
-        <p className="form-error" id="account-settings-error" role="alert">
+        <FormErrorMessage id="account-settings-error">
           {state.error}
-        </p>
+        </FormErrorMessage>
       ) : null}
-      {state.message ? <p className="form-success">{state.message}</p> : null}
-      <div className="form-actions">
-        <button className="button-primary" disabled={pending} type="submit">
-          {pending ? "Saving..." : "Save display name"}
-        </button>
-      </div>
+      {state.message ? <FormSuccessMessage>{state.message}</FormSuccessMessage> : null}
+      <FormActionBar isSaving={pending} submitLabel="Save display name" />
     </form>
   );
 }

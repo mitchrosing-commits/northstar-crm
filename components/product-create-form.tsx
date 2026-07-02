@@ -3,6 +3,10 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+
 type ProductCreateFormProps = {
   workspaceId: string;
   mode?: "create" | "edit";
@@ -72,14 +76,14 @@ export function ProductCreateForm({ workspaceId, mode = "create", variant = "car
 
   return (
     <form className={variant === "compact" ? "inline-form product-edit-form" : "form-card"} onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       <div className="form-grid">
         <label className="form-field">
-          <span>Name</span>
+          <FormFieldLabel required>Name</FormFieldLabel>
           <input onChange={(event) => setName(event.target.value)} required value={name} />
         </label>
         <label className="form-field">
-          <span>Unit price</span>
+          <FormFieldLabel required>Unit price</FormFieldLabel>
           <input
             inputMode="decimal"
             min="0"
@@ -92,7 +96,7 @@ export function ProductCreateForm({ workspaceId, mode = "create", variant = "car
           />
         </label>
         <label className="form-field">
-          <span>Currency</span>
+          <FormFieldLabel required>Currency</FormFieldLabel>
           <input
             maxLength={3}
             onChange={(event) => setCurrency(event.target.value.toUpperCase())}
@@ -102,15 +106,17 @@ export function ProductCreateForm({ workspaceId, mode = "create", variant = "car
           />
         </label>
         <label className="form-field">
-          <span>Description</span>
+          <FormFieldLabel>Description</FormFieldLabel>
           <input onChange={(event) => setDescription(event.target.value)} value={description} />
         </label>
       </div>
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !name.trim() || !unitPrice.trim()} type="submit">
-          {isSaving ? "Saving..." : mode === "create" ? "Create product" : "Save product"}
-        </button>
-      </div>
+      <FormActionBar
+        compact={variant === "compact"}
+        disabledHint="Add a product name and unit price before saving."
+        isSaving={isSaving}
+        submitDisabled={!name.trim() || !unitPrice.trim()}
+        submitLabel={mode === "create" ? "Create product" : "Save product"}
+      />
     </form>
   );
 }

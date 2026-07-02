@@ -19,6 +19,7 @@ const editPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/edit/page.
 const closeActions = readFileSync(join(process.cwd(), "components/deal-close-actions.tsx"), "utf8");
 const dealForm = readFileSync(join(process.cwd(), "components/deal-form.tsx"), "utf8");
 const pipelineBoard = readFileSync(join(process.cwd(), "components/pipeline-board.tsx"), "utf8");
+const recordHeaderActions = readFileSync(join(process.cwd(), "components/record-header-actions.tsx"), "utf8");
 
 describe("deal close behavior", () => {
   it("routes deal close actions through a validated workspace endpoint", () => {
@@ -51,8 +52,12 @@ describe("deal close behavior", () => {
 
   it("sets outcome timestamps on close and clears them on reopen", () => {
     expect(service).toContain("const outcomeAt = new Date()");
-    expect(service).toContain("{ status: data.status, wonAt: outcomeAt, lostAt: null }");
-    expect(service).toContain("{ status: data.status, wonAt: null, lostAt: outcomeAt }");
+    expect(service).toContain("const status = normalizeCloseDealStatus(data.status)");
+    expect(service).toContain("const lostReason = normalizeCloseDealLostReason(data.lostReason, status)");
+    expect(service).toContain("Deal close status must be WON or LOST.");
+    expect(service).toContain("Deal lost reason must be text.");
+    expect(service).toContain("{ status, wonAt: outcomeAt, lostAt: null }");
+    expect(service).toContain("{ status, wonAt: null, lostAt: outcomeAt }");
     expect(service).toContain("data: { status: \"OPEN\", wonAt: null, lostAt: null }");
   });
 
@@ -66,13 +71,34 @@ describe("deal close behavior", () => {
     expect(closeActions).toContain("/api/v1/workspaces/${workspaceId}/deals/${dealId}/reopen");
     expect(closeActions).toContain("Reopen deal");
     expect(closeActions).toContain("window.confirm");
+    expect(closeActions).toContain("import { ActionGroup }");
+    expect(closeActions).toContain('const closedDealActionsLabel = "Closed deal actions";');
+    expect(closeActions).toContain('const reopenDealActionLabel = "Reopen deal for editing and stage movement";');
+    expect(closeActions).toContain('<ActionGroup className="form-actions" label={closedDealActionsLabel}>');
+    expect(closeActions).toContain("aria-label={reopenDealActionLabel}");
+    expect(closeActions).toContain("title={reopenDealActionLabel}");
+    expect(closeActions).toContain("button-primary button-compact");
   });
 
   it("shows reopen only for closed deals while preserving normal open close actions", () => {
     expect(closeActions).toContain("if (status !== \"OPEN\")");
+    expect(closeActions).toContain("LockedPanelNotice");
+    expect(closeActions).toContain("title=\"Deal closed\"");
     expect(closeActions).toContain("Reopen it to edit the deal or move it between stages.");
+    expect(closeActions).not.toContain("<p className=\"empty-copy\">This deal is closed. Reopen it to edit the deal or move it between stages.</p>");
     expect(closeActions).toContain("Mark won");
     expect(closeActions).toContain("Mark lost");
+    expect(closeActions).toContain('const markWonActionsLabel = "Mark deal won";');
+    expect(closeActions).toContain('const markLostActionsLabel = "Mark deal lost";');
+    expect(closeActions).toContain('const markWonActionLabel = "Mark deal as won";');
+    expect(closeActions).toContain('const markLostActionLabel = "Mark deal as lost";');
+    expect(closeActions).toContain('<ActionGroup className="form-actions" label={markWonActionsLabel}>');
+    expect(closeActions).toContain('<ActionGroup className="form-actions" label={markLostActionsLabel}>');
+    expect(closeActions).toContain("aria-label={markWonActionLabel}");
+    expect(closeActions).toContain("title={markWonActionLabel}");
+    expect(closeActions).toContain("aria-label={markLostActionLabel}");
+    expect(closeActions).toContain("title={markLostActionLabel}");
+    expect(closeActions).toContain("button-secondary button-compact");
   });
 
   it("stores lost reason in audit metadata instead of the Deal model", () => {
@@ -93,8 +119,14 @@ describe("deal close behavior", () => {
   it("locks unsafe edits and stage movement after close", () => {
     expect(service).toContain("DEAL_CLOSED");
     expect(service).toContain("USE_DEAL_CLOSE_FLOW");
-    expect(detailPage).toContain("Stage movement is locked after a deal is closed.");
-    expect(detailPage).toContain("Editing locked");
+    expect(service).toContain("export async function softDeleteDeal");
+    expect(detailPage).toContain('closedDealLockMessage("stage")');
+    expect(detailPage).toContain("locked={deal.status !== \"OPEN\"}");
+    expect(recordHeaderActions).toContain("lockedLabel = \"Editing locked\"");
+    expect(recordHeaderActions).not.toContain("aria-label={`Edit unavailable: ${lockedLabel}`}");
+    expect(recordHeaderActions).toContain("const editLockedActionLabel = lockedRecordActionLabel(editLabel, lockedLabel, recordTitle)");
+    expect(recordHeaderActions).toContain("aria-label={editLockedActionLabel}");
+    expect(recordHeaderActions).toContain("title={editLockedActionLabel}");
     expect(editPage).toContain("Closed deals are locked");
     expect(dealForm).not.toContain("<span>Status</span>");
   });

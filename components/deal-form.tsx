@@ -1,9 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
+
+import { EmptyState } from "@/components/empty-state";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormPrefillNotice } from "@/components/form-prefill-notice";
+import { FormRelatedRecordCallout } from "@/components/form-related-record-callout";
+import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type StageOption = {
   id: string;
@@ -38,7 +46,12 @@ type DealFormProps = {
   organizations: EntityOption[];
   owners: EntityOption[];
   defaultOwnerId?: string;
+  defaultOrganizationId?: string;
+  defaultPersonId?: string;
+  defaultTitle?: string;
+  prefillNotice?: string;
   initialDeal?: DealFormInitial;
+  cancelHref: Route;
 };
 
 export function DealForm({
@@ -49,18 +62,23 @@ export function DealForm({
   organizations,
   owners,
   defaultOwnerId,
-  initialDeal
+  defaultOrganizationId,
+  defaultPersonId,
+  defaultTitle,
+  prefillNotice,
+  initialDeal,
+  cancelHref
 }: DealFormProps) {
   const router = useRouter();
   const defaultStage = initialDeal?.stageId ?? stages[0]?.id ?? "";
   const defaultCreateOwnerId =
     mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
-  const [title, setTitle] = useState(initialDeal?.title ?? "");
+  const [title, setTitle] = useState(initialDeal?.title ?? defaultTitle ?? "");
   const [value, setValue] = useState(initialDeal?.valueCents == null ? "" : String(initialDeal.valueCents / 100));
   const [currency, setCurrency] = useState(initialDeal?.currency ?? "USD");
   const [stageId, setStageId] = useState(defaultStage);
-  const [personId, setPersonId] = useState(initialDeal?.personId ?? "");
-  const [organizationId, setOrganizationId] = useState(initialDeal?.organizationId ?? "");
+  const [personId, setPersonId] = useState(initialDeal?.personId ?? defaultPersonId ?? "");
+  const [organizationId, setOrganizationId] = useState(initialDeal?.organizationId ?? defaultOrganizationId ?? "");
   const [ownerId, setOwnerId] = useState(initialDeal?.ownerId ?? defaultCreateOwnerId);
   const [expectedCloseAt, setExpectedCloseAt] = useState(formatDateInput(initialDeal?.expectedCloseAt));
   const [error, setError] = useState<string | null>(null);
@@ -124,56 +142,45 @@ export function DealForm({
 
   if (stages.length === 0) {
     return (
-      <div className="empty-state">
-        <h2>No stages available</h2>
-        <p>Add or restore an active pipeline stage before creating deals.</p>
-      </div>
+      <EmptyState
+        description="Add or restore an active pipeline stage before creating deals."
+        title="No stages available"
+        titleLevel="h2"
+      />
     );
   }
 
   return (
     <form className="form-card" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       {mode === "create" ? (
-        <div className="empty-copy" style={{ marginBottom: 14 }}>
+        <FormIntroCallout>
           Create a deal now, even if the buyer or company is not in Northstar yet. You can link a contact or
           organization later, or add them first from the shortcuts below.
-        </div>
+        </FormIntroCallout>
+      ) : null}
+      {mode === "create" && prefillNotice ? (
+        <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
       ) : null}
       {mode === "create" && (people.length === 0 || organizations.length === 0) ? (
-        <div className="data-card" style={{ marginBottom: 14 }}>
-          <div className="panel-title-row">
-            <h2 className="panel-title">Missing related records?</h2>
-          </div>
-          <p className="empty-copy" style={{ marginBottom: 12 }}>
-            Deals can be created without a contact or organization for now. Add related records first if you want the
-            deal linked from day one, or import contacts from a CSV.
-          </p>
-          <div className="filter-actions">
-            {people.length === 0 ? (
-              <Link className="button-secondary button-compact" href={"/contacts/new" as Route}>
-                Add a contact
-              </Link>
-            ) : null}
-            {organizations.length === 0 ? (
-              <Link className="button-secondary button-compact" href={"/organizations/new" as Route}>
-                Add an organization
-              </Link>
-            ) : null}
-            <Link className="button-secondary button-compact" href={"/settings/import-export" as Route}>
-              Import contacts
-            </Link>
-          </div>
-        </div>
+        <FormRelatedRecordCallout
+          showContactAction={people.length === 0}
+          showImportContactsAction
+          showOrganizationAction={organizations.length === 0}
+          title="Missing related records?"
+        >
+          Deals can be created without a contact or organization for now. Add related records first if you want the deal
+          linked from day one, or import contacts from a CSV.
+        </FormRelatedRecordCallout>
       ) : null}
       <div className="form-grid">
         <label className="form-field form-field-wide">
-          <span>Title</span>
+          <FormFieldLabel required>Title</FormFieldLabel>
           <input value={title} onChange={(event) => setTitle(event.target.value)} required />
         </label>
 
         <label className="form-field">
-          <span>Value</span>
+          <FormFieldLabel>Value</FormFieldLabel>
           <input
             inputMode="decimal"
             min="0"
@@ -186,7 +193,7 @@ export function DealForm({
         </label>
 
         <label className="form-field">
-          <span>Currency</span>
+          <FormFieldLabel required>Currency</FormFieldLabel>
           <input
             maxLength={3}
             onChange={(event) => setCurrency(event.target.value.toUpperCase())}
@@ -196,7 +203,7 @@ export function DealForm({
         </label>
 
         <label className="form-field">
-          <span>Stage</span>
+          <FormFieldLabel required>Stage</FormFieldLabel>
           <select onChange={(event) => setStageId(event.target.value)} required value={stageId}>
             {stages.map((stage) => (
               <option key={stage.id} value={stage.id}>
@@ -207,7 +214,7 @@ export function DealForm({
         </label>
 
         <label className="form-field">
-          <span>Person</span>
+          <FormFieldLabel>Person</FormFieldLabel>
           <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
             <option value="">{people.length === 0 ? "No contacts yet - create deal without contact" : "None"}</option>
             {people.map((person) => (
@@ -220,7 +227,7 @@ export function DealForm({
         </label>
 
         <label className="form-field">
-          <span>Organization</span>
+          <FormFieldLabel>Organization</FormFieldLabel>
           <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
             <option value="">{organizations.length === 0 ? "No organizations yet - create deal without one" : "None"}</option>
             {organizations.map((organization) => (
@@ -233,7 +240,7 @@ export function DealForm({
         </label>
 
         <label className="form-field">
-          <span>Deal owner</span>
+          <FormFieldLabel>Deal owner</FormFieldLabel>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
             <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
@@ -242,51 +249,25 @@ export function DealForm({
               </option>
             ))}
           </select>
-          <OwnerHint owners={owners} />
+          <OwnerAssignmentHint owners={owners} />
         </label>
 
         <label className="form-field">
-          <span>Expected close</span>
+          <FormFieldLabel>Expected close</FormFieldLabel>
           <input onChange={(event) => setExpectedCloseAt(event.target.value)} type="date" value={expectedCloseAt} />
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="button-primary" disabled={!canSubmit || isSaving} type="submit">
-          {isSaving ? "Saving..." : mode === "create" ? "Create deal" : "Save changes"}
-        </button>
-        <button className="button-secondary" onClick={() => router.back()} type="button">
-          Cancel
-        </button>
-      </div>
+      <FormActionBar
+        cancelHref={cancelHref}
+        cancelLabel={mode === "create" ? "Back to deals" : "Back to deal"}
+        disabledHint="Add a deal title and choose a valid stage before saving."
+        isSaving={isSaving}
+        submitDisabled={!canSubmit}
+        submitLabel={mode === "create" ? "Create deal" : "Save changes"}
+      />
     </form>
   );
-}
-
-function OwnerHint({ owners }: { owners: EntityOption[] }) {
-  if (owners.length === 1) {
-    return (
-      <small className="form-hint">
-        You are the only workspace member right now. Invite teammates later from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  if (owners.length === 0) {
-    return (
-      <small className="form-hint">
-        Save unassigned for now, then manage workspace members from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  return null;
 }
 
 function parseValueCents(value: string) {

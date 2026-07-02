@@ -6,6 +6,10 @@ import {
   createWorkspaceInvitationAction,
   type CreateWorkspaceInvitationActionState
 } from "@/app/workspaces/actions";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSuccessMessage } from "@/components/form-success-message";
 
 const initialState: CreateWorkspaceInvitationActionState = {
   email: "",
@@ -19,7 +23,7 @@ export function WorkspaceInviteForm() {
     <form action={formAction} className="inline-form">
       <div className="form-grid">
         <label className="form-field" htmlFor="invite-email">
-          <span>Email</span>
+          <FormFieldLabel required>Email</FormFieldLabel>
           <input
             aria-describedby={state.error ? "workspace-invite-error" : state.message ? "workspace-invite-message" : undefined}
             autoComplete="email"
@@ -31,7 +35,7 @@ export function WorkspaceInviteForm() {
           />
         </label>
         <label className="form-field" htmlFor="invite-role">
-          <span>Role</span>
+          <FormFieldLabel required>Role</FormFieldLabel>
           <select defaultValue={state.role} id="invite-role" name="role">
             <option value="MEMBER">Member</option>
             <option value="ADMIN">Admin</option>
@@ -39,20 +43,16 @@ export function WorkspaceInviteForm() {
         </label>
       </div>
       {state.error ? (
-        <p className="form-error" id="workspace-invite-error" role="alert">
+        <FormErrorMessage id="workspace-invite-error">
           {state.error}
-        </p>
+        </FormErrorMessage>
       ) : null}
       {state.message ? (
-        <p className="compact-success" id="workspace-invite-message" role="status">
+        <FormSuccessMessage compact id="workspace-invite-message">
           {state.message}
-        </p>
+        </FormSuccessMessage>
       ) : null}
-      <div className="form-actions">
-        <button className="button-primary" disabled={pending} type="submit">
-          Create invitation
-        </button>
-      </div>
+      <FormActionBar isSaving={pending} pendingLabel="Create invitation" submitLabel="Create invitation" />
     </form>
   );
 }

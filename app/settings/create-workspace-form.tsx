@@ -3,6 +3,10 @@
 import { useActionState } from "react";
 
 import { createWorkspaceAction, type CreateWorkspaceActionState } from "@/app/workspaces/actions";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { workspaceNameMaxLength } from "@/lib/workspace-validation";
 
 const initialState: CreateWorkspaceActionState = {
   name: ""
@@ -14,26 +18,23 @@ export function CreateWorkspaceForm() {
   return (
     <form action={formAction} className="inline-form">
       <label className="form-field" htmlFor="workspace-name">
-        <span>Workspace name</span>
+        <FormFieldLabel required>Workspace name</FormFieldLabel>
         <input
           aria-describedby={state.error ? "workspace-create-error" : undefined}
           autoComplete="organization"
           defaultValue={state.name}
           id="workspace-name"
+          maxLength={workspaceNameMaxLength}
           name="name"
           required
         />
       </label>
       {state.error ? (
-        <p className="form-error" id="workspace-create-error" role="alert">
+        <FormErrorMessage id="workspace-create-error">
           {state.error}
-        </p>
+        </FormErrorMessage>
       ) : null}
-      <div className="form-actions">
-        <button className="button-primary" disabled={pending} type="submit">
-          Create workspace
-        </button>
-      </div>
+      <FormActionBar isSaving={pending} pendingLabel="Create workspace" submitLabel="Create workspace" />
     </form>
   );
 }

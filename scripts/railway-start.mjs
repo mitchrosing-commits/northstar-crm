@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 
-const role = (process.env.RAILWAY_SERVICE_ROLE ?? process.env.SERVICE_ROLE ?? "web").trim().toLowerCase();
+const role = resolveServiceRole();
 const isWorkerRole = ["worker", "jobs", "job-worker"].includes(role);
 const child = isWorkerRole ? runCommand("npm", ["run", "jobs:work"]) : runCommand("npm", ["run", "start"]);
 const healthServer = isWorkerRole ? startWorkerHealthServer() : null;
@@ -35,18 +35,27 @@ function runCommand(command, args) {
   });
 }
 
+function resolveServiceRole() {
+  for (const value of [process.env.RAILWAY_SERVICE_ROLE, process.env.SERVICE_ROLE]) {
+    const role = value?.trim().toLowerCase();
+    if (role) return role;
+  }
+
+  return "web";
+}
+
 function startWorkerHealthServer() {
   const port = Number.parseInt(process.env.PORT ?? "", 10);
   if (!Number.isInteger(port) || port <= 0) return null;
 
   const server = createServer((request, response) => {
     if ((request.url ?? "").split("?")[0] !== "/api/health") {
-      response.writeHead(404, { "content-type": "application/json" });
+      response.writeHead(404, workerHealthHeaders());
       response.end(JSON.stringify({ status: "not_found" }));
       return;
     }
 
-    response.writeHead(200, { "content-type": "application/json" });
+    response.writeHead(200, workerHealthHeaders());
     response.end(JSON.stringify({ service: "northstar-crm-worker", status: "ok" }));
   });
 
@@ -55,4 +64,12 @@ function startWorkerHealthServer() {
   });
 
   return server;
+}
+
+function workerHealthHeaders() {
+  return {
+    "cache-control": "no-store, max-age=0",
+    "content-type": "application/json",
+    "x-content-type-options": "nosniff"
+  };
 }

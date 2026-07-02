@@ -2,10 +2,12 @@ import { NextRequest } from "next/server";
 
 import { created, handleApiError, json, noContent, ApiError } from "@/lib/api/responses";
 import { getWorkspaceRequestContext } from "@/lib/auth/request-context";
+import { searchParamsToListSearchParams } from "@/lib/list-page-query";
 import {
   createActivity,
   createCustomField,
   createDeal,
+  createDealContractStep,
   createEmailLog,
   createEmailTemplate,
   createLead,
@@ -28,10 +30,12 @@ import {
   listActivities,
   listAuditLogs,
   listCustomFields,
+  listDealContractSteps,
   listDeals,
   listEmailLogs,
   listEmailTemplates,
   listLeads,
+  listMeetingIntakes,
   listNotes,
   listOrganizations,
   listPeople,
@@ -41,6 +45,9 @@ import {
   removeDealLineItem,
   reopenDeal,
   revokeQuotePublicLink,
+  applyMeetingIntake,
+  createMeetingIntake,
+  getMeetingIntake,
   setProductActive,
   setEmailTemplateActive,
   softDeleteActivity,
@@ -54,6 +61,7 @@ import {
   updateQuoteAdjustments,
   updateActivity,
   updateDeal,
+  updateDealContractStep,
   updateEmailTemplate,
   updateLead,
   upsertCustomFieldValues,
@@ -68,6 +76,7 @@ import {
   createActivitySchema,
   createCustomFieldSchema,
   createDealSchema,
+  createDealContractStepSchema,
   createEmailLogSchema,
   createEmailTemplateSchema,
   createLeadSchema,
@@ -82,6 +91,7 @@ import {
   convertLeadSchema,
   updateActivitySchema,
   updateDealSchema,
+  updateDealContractStepSchema,
   updateEmailTemplateSchema,
   updateLeadSchema,
   upsertCustomFieldValuesSchema,
@@ -120,14 +130,18 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
   try {
     const { workspaceId, segments = [] } = await context.params;
     const { actor } = await getWorkspaceRequestContext(workspaceId);
-    const [resource, idOrNested, nestedResource] = segments;
+    const [resource, idOrNested, nestedResource, extraSegment] = segments;
 
     if (!resource) {
       throw new ApiError("NOT_FOUND", "Route was not found.", 404);
     }
 
     if (resource === "exports" && idOrNested && !nestedResource && method === "GET") {
-      const result = await exportWorkspaceCsv(actor, idOrNested);
+      const result = await exportWorkspaceCsv(
+        actor,
+        idOrNested,
+        searchParamsToListSearchParams(new URL(request.url).searchParams)
+      );
       return csv(result.csv, result.filename);
     }
 
@@ -144,12 +158,12 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       }
     }
 
-    if (resource === "pipelines" && idOrNested && nestedResource === "stages") {
+    if (resource === "pipelines" && idOrNested && nestedResource === "stages" && !extraSegment) {
       if (method === "GET") return json(await listStages(actor, idOrNested));
       if (method === "POST") return created(await createStage(actor, idOrNested, createStageSchema.parse(await body(request))));
     }
 
-    if (resource === "stages" && idOrNested) {
+    if (resource === "stages" && idOrNested && !nestedResource) {
       if (method === "PATCH") return json(await updateStage(actor, idOrNested, updateStageSchema.parse(await body(request))));
       if (method === "DELETE") {
         await softDeleteStage(actor, idOrNested);
@@ -162,22 +176,27 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createDeal(actor, createDealSchema.parse(await body(request))));
     }
 
-    if (resource === "deals" && idOrNested && nestedResource === "close") {
+    if (resource === "deals" && idOrNested && nestedResource === "close" && !extraSegment) {
       if (method === "POST") return json(await closeDeal(actor, idOrNested, closeDealSchema.parse(await body(request))));
     }
 
-    if (resource === "deals" && idOrNested && nestedResource === "reopen") {
+    if (resource === "deals" && idOrNested && nestedResource === "reopen" && !extraSegment) {
       if (method === "POST") return json(await reopenDeal(actor, idOrNested));
     }
 
-    if (resource === "deals" && idOrNested && nestedResource === "line-items") {
+    if (resource === "deals" && idOrNested && nestedResource === "line-items" && !extraSegment) {
       if (method === "POST") {
         const payload = createDealLineItemSchema.parse(await body(request));
         return created(await createDealLineItem(actor, { dealId: idOrNested, ...payload }));
       }
     }
 
-    if (resource === "deals" && idOrNested && nestedResource === "quotes") {
+    if (resource === "deals" && idOrNested && nestedResource === "contracts" && !extraSegment) {
+      if (method === "GET") return json(await listDealContractSteps(actor, idOrNested));
+      if (method === "POST") return created(await createDealContractStep(actor, idOrNested, createDealContractStepSchema.parse(await body(request))));
+    }
+
+    if (resource === "deals" && idOrNested && nestedResource === "quotes" && !extraSegment) {
       if (method === "POST") return created(await createQuoteFromDeal(actor, idOrNested));
     }
 
@@ -197,27 +216,31 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       }
     }
 
-    if (resource === "quotes" && idOrNested && nestedResource === "mark-sent") {
+    if (resource === "contract-steps" && idOrNested && !nestedResource) {
+      if (method === "PATCH") return json(await updateDealContractStep(actor, idOrNested, updateDealContractStepSchema.parse(await body(request))));
+    }
+
+    if (resource === "quotes" && idOrNested && nestedResource === "mark-sent" && !extraSegment) {
       if (method === "POST") return json(await updateQuoteStatus(actor, idOrNested, "SENT"));
     }
 
-    if (resource === "quotes" && idOrNested && nestedResource === "accept") {
+    if (resource === "quotes" && idOrNested && nestedResource === "accept" && !extraSegment) {
       if (method === "POST") return json(await updateQuoteStatus(actor, idOrNested, "ACCEPTED"));
     }
 
-    if (resource === "quotes" && idOrNested && nestedResource === "decline") {
+    if (resource === "quotes" && idOrNested && nestedResource === "decline" && !extraSegment) {
       if (method === "POST") return json(await updateQuoteStatus(actor, idOrNested, "DECLINED"));
     }
 
-    if (resource === "quotes" && idOrNested && nestedResource === "sync-deal-value") {
+    if (resource === "quotes" && idOrNested && nestedResource === "sync-deal-value" && !extraSegment) {
       if (method === "POST") return json(await syncAcceptedQuoteToDealValue(actor, idOrNested));
     }
 
-    if (resource === "quotes" && idOrNested && nestedResource === "adjustments") {
+    if (resource === "quotes" && idOrNested && nestedResource === "adjustments" && !extraSegment) {
       if (method === "PATCH") return json(await updateQuoteAdjustments(actor, idOrNested, updateQuoteAdjustmentsSchema.parse(await body(request))));
     }
 
-    if (resource === "quotes" && idOrNested && nestedResource === "public-link") {
+    if (resource === "quotes" && idOrNested && nestedResource === "public-link" && !extraSegment) {
       if (method === "POST") return created(await createQuotePublicLink(actor, idOrNested));
       if (method === "DELETE") return json(await revokeQuotePublicLink(actor, idOrNested));
     }
@@ -227,11 +250,11 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createProduct(actor, createProductSchema.parse(await body(request))));
     }
 
-    if (resource === "products" && idOrNested && nestedResource === "deactivate") {
+    if (resource === "products" && idOrNested && nestedResource === "deactivate" && !extraSegment) {
       if (method === "POST") return json(await setProductActive(actor, idOrNested, false));
     }
 
-    if (resource === "products" && idOrNested && nestedResource === "activate") {
+    if (resource === "products" && idOrNested && nestedResource === "activate" && !extraSegment) {
       if (method === "POST") return json(await setProductActive(actor, idOrNested, true));
     }
 
@@ -244,7 +267,7 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createLead(actor, createLeadSchema.parse(await body(request))));
     }
 
-    if (resource === "leads" && idOrNested && nestedResource === "convert") {
+    if (resource === "leads" && idOrNested && nestedResource === "convert" && !extraSegment) {
       if (method === "POST") return created(await convertLeadToDeal(actor, idOrNested, convertLeadSchema.parse(await body(request))));
     }
 
@@ -258,7 +281,7 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createPerson(actor, createPersonSchema.parse(await body(request))));
     }
 
-    if (resource === "people" && idOrNested) {
+    if (resource === "people" && idOrNested && !nestedResource) {
       if (method === "GET") return json(await getPerson(actor, idOrNested));
       if (method === "PATCH") return json(await updatePerson(actor, idOrNested, updatePersonSchema.parse(await body(request))));
       if (method === "DELETE") {
@@ -272,7 +295,7 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createOrganization(actor, createOrganizationSchema.parse(await body(request))));
     }
 
-    if (resource === "organizations" && idOrNested) {
+    if (resource === "organizations" && idOrNested && !nestedResource) {
       if (method === "GET") return json(await getOrganization(actor, idOrNested));
       if (method === "PATCH") return json(await updateOrganization(actor, idOrNested, updateOrganizationSchema.parse(await body(request))));
       if (method === "DELETE") {
@@ -286,7 +309,7 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createActivity(actor, createActivitySchema.parse(await body(request))));
     }
 
-    if (resource === "activities" && idOrNested) {
+    if (resource === "activities" && idOrNested && !nestedResource) {
       if (method === "PATCH") return json(await updateActivity(actor, idOrNested, updateActivitySchema.parse(await body(request))));
       if (method === "DELETE") {
         await softDeleteActivity(actor, idOrNested);
@@ -306,6 +329,19 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       }
     }
 
+    if (resource === "meeting-intakes" && !idOrNested) {
+      if (method === "GET") return json(await listMeetingIntakes(actor));
+      if (method === "POST") return created(await createMeetingIntake(actor, await body(request)));
+    }
+
+    if (resource === "meeting-intakes" && idOrNested && !nestedResource) {
+      if (method === "GET") return json(await getMeetingIntake(actor, idOrNested));
+    }
+
+    if (resource === "meeting-intakes" && idOrNested && nestedResource === "apply" && !extraSegment) {
+      if (method === "POST") return json(await applyMeetingIntake(actor, idOrNested, await body(request)));
+    }
+
     if (resource === "email-logs" && !idOrNested) {
       if (method === "GET") return json(await listEmailLogs(actor));
       if (method === "POST") return created(await createEmailLog(actor, createEmailLogSchema.parse(await body(request))));
@@ -316,11 +352,11 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return created(await createEmailTemplate(actor, createEmailTemplateSchema.parse(await body(request))));
     }
 
-    if (resource === "email-templates" && idOrNested && nestedResource === "deactivate") {
+    if (resource === "email-templates" && idOrNested && nestedResource === "deactivate" && !extraSegment) {
       if (method === "POST") return json(await setEmailTemplateActive(actor, idOrNested, false));
     }
 
-    if (resource === "email-templates" && idOrNested && nestedResource === "activate") {
+    if (resource === "email-templates" && idOrNested && nestedResource === "activate" && !extraSegment) {
       if (method === "POST") return json(await setEmailTemplateActive(actor, idOrNested, true));
     }
 
@@ -362,6 +398,9 @@ async function body(request: NextRequest) {
   try {
     return await request.json();
   } catch {
+    if (request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+      throw new ApiError("VALIDATION_ERROR", "The request payload is invalid.", 422);
+    }
     return {};
   }
 }
@@ -370,8 +409,10 @@ function csv(data: string, filename: string) {
   return new Response(data, {
     status: 200,
     headers: {
+      "cache-control": "private, no-store, max-age=0",
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${filename}"`
+      "content-disposition": `attachment; filename="${filename}"`,
+      "x-content-type-options": "nosniff"
     }
   });
 }

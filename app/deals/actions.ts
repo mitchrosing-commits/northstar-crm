@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { dealListStateOptions } from "@/lib/deal-list-state";
 import { parseListViewState, type ListSearchParams } from "@/lib/list-page-query";
+import { ignoreMissingSavedView } from "@/lib/saved-view-action-utils";
 import { createAutomationTemplateActivity, createDealSavedView, deleteDealSavedView, type AutomationTemplateId } from "@/lib/services/crm";
 
 export async function createDealSavedViewAction(formData: FormData) {
@@ -23,7 +24,7 @@ export async function deleteDealSavedViewAction(formData: FormData) {
   const savedViewId = String(formData.get("savedViewId") ?? "");
   const { actor } = await getCurrentWorkspaceContext();
 
-  await deleteDealSavedView(actor, savedViewId);
+  await ignoreMissingSavedView(() => deleteDealSavedView(actor, savedViewId));
   revalidatePath("/deals");
 }
 

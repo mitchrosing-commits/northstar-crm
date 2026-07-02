@@ -1,12 +1,22 @@
 import Link from "next/link";
 import type { Route } from "next";
+import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 
+import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { CompactTitleRow } from "@/components/compact-title-row";
+import { EmptyState } from "@/components/empty-state";
 import { EmailDraftPanel } from "@/components/email-draft-panel";
 import { formatDate } from "@/components/format";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { StatCard } from "@/components/stat-card";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import { formatPersonName } from "@/lib/person-name";
 import { listEmailConnectionProviderCards, listEmailLogs, listEmailTemplates } from "@/lib/services/crm";
 import type { EmailSyncPreview } from "@/lib/services/email-connection-service";
 import { syncRecentGmailFromEmailPageAction, syncRecentMicrosoftFromEmailPageAction } from "./actions";
@@ -49,131 +59,140 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     subject: template.subject
   }));
   const attentionLogs = recentEmailLogs.filter((emailLog) => emailNeedsAttention(emailLog)).slice(0, 6);
+  const emailSettingsLabel = "Open email connection settings";
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Communication</p>
-          <h1 className="page-title">Email</h1>
-        </div>
-        <div className="header-actions">
-          <Link className="button-secondary" href="/settings#email-connections">
+      <PageHeader
+        actions={
+          <Link
+            aria-label={emailSettingsLabel}
+            className="button-secondary"
+            href="/settings#email-connections"
+            title={emailSettingsLabel}
+          >
             Email settings
           </Link>
-        </div>
-      </header>
+        }
+        eyebrow="Communication"
+        subtitle="Review provider status, sync results, and CRM-linked email activity."
+        title="Email"
+      />
 
-      <section className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-title-row">
-          <h2 className="panel-title">Email Providers</h2>
-          <span className="badge">{gmailProvider?.status ?? "Not configured"}</span>
-        </div>
-        <p className="empty-copy" style={{ marginBottom: 12 }}>
+      <section className="panel section-separated">
+        <PanelTitleRow actions={<span className="badge">{gmailProvider?.status ?? "Not configured"}</span>} title="Email Providers" />
+        <EmailScopeCallout title="Sync boundaries">
           Northstar syncs recent email metadata/snippets from connected providers and logs matched emails to known
           contacts. It does not import full inboxes, attachments, full message bodies, or send email yet. Unmatched
           messages are skipped.
-        </p>
+        </EmailScopeCallout>
         {!gmailProvider?.syncAvailable ? (
-          <div className="empty-state" style={{ marginBottom: 14 }}>
-            <h3>No email connected yet</h3>
-            <p>Connect Gmail / Google Workspace when OAuth is configured, or keep logging email manually from CRM records.</p>
-          </div>
+          <EmptyState
+            className="email-provider-empty"
+            description="Connect Gmail / Google Workspace when OAuth is configured, or keep logging email manually from CRM records."
+            title="No email connected yet"
+          />
         ) : null}
-        {statusCopy ? <p className="empty-copy">{statusCopy}</p> : null}
-        <div className="provider-card-grid" style={{ marginTop: 14 }}>
-          {majorProviderCards.map((provider) => (
-            <div className="provider-card" key={provider.name}>
-              <div>
-                <h3>{provider.name}</h3>
-                <span className="badge">{provider.status}</span>
-              </div>
-              <p>{provider.detail}</p>
-              {provider.accountEmail ? <p>Connected account: {provider.accountEmail}</p> : null}
-              {provider.lastSyncAt ? <p>Last sync: {formatDate(provider.lastSyncAt)}</p> : null}
-              {provider.scopes.length > 0 ? <p>Scopes: {provider.scopes.join(", ")}</p> : null}
-              {provider.disabled || !provider.href ? (
-                <button className="button-secondary button-compact" disabled type="button">
-                  {provider.actionLabel}
-                </button>
-              ) : (
-                <div className="filter-actions">
-                  <Link className="button-primary button-compact" href={provider.href as Route}>
+        {statusCopy ? (
+          <FormIntroCallout className="email-status-callout" title="Provider status">
+            {statusCopy}
+          </FormIntroCallout>
+        ) : null}
+        <div className="provider-card-grid section-spaced">
+          {majorProviderCards.map((provider) => {
+            const providerActionsLabel = `${provider.name} provider actions`;
+            const providerPrimaryActionLabel = `${provider.actionLabel}: ${provider.name} provider setup`;
+            const providerSyncLabel = provider.syncLabel ?? "Sync recent Gmail";
+            const providerSyncActionLabel = `${providerSyncLabel}: import recent matched ${provider.name} messages`;
+            return (
+              <div className="provider-card" key={provider.name}>
+                <CompactTitleRow actions={<span className="badge">{provider.status}</span>} title={provider.name} />
+                <p>{provider.detail}</p>
+                {provider.accountEmail ? <p>Connected account: {provider.accountEmail}</p> : null}
+                {provider.lastSyncAt ? <p>Last sync: {formatDate(provider.lastSyncAt)}</p> : null}
+                {provider.lastError ? <p>Last sync issue: {provider.lastError}</p> : null}
+                {provider.scopes.length > 0 ? <p>Scopes: {provider.scopes.join(", ")}</p> : null}
+                {provider.disabled || !provider.href ? (
+                  <button
+                    aria-label={providerPrimaryActionLabel}
+                    className="button-secondary button-compact"
+                    disabled
+                    title={providerPrimaryActionLabel}
+                    type="button"
+                  >
                     {provider.actionLabel}
-                  </Link>
-                  {provider.syncAvailable ? (
-                    <form
-                      action={
-                        provider.provider === "MICROSOFT_365"
-                          ? syncRecentMicrosoftFromEmailPageAction
-                          : syncRecentGmailFromEmailPageAction
-                      }
+                  </button>
+                ) : (
+                  <ActionGroup className="filter-actions" label={providerActionsLabel}>
+                    <Link
+                      aria-label={providerPrimaryActionLabel}
+                      className="button-primary button-compact"
+                      href={provider.href as Route}
+                      title={providerPrimaryActionLabel}
                     >
-                      <button className="button-secondary button-compact" type="submit">
-                        {provider.syncLabel ?? "Sync recent Gmail"}
-                      </button>
-                    </form>
-                  ) : null}
-                </div>
-              )}
-            </div>
-          ))}
+                      {provider.actionLabel}
+                    </Link>
+                    {provider.syncAvailable ? (
+                      <form
+                        action={
+                          provider.provider === "MICROSOFT_365"
+                            ? syncRecentMicrosoftFromEmailPageAction
+                            : syncRecentGmailFromEmailPageAction
+                        }
+                      >
+                        <button
+                          aria-label={providerSyncActionLabel}
+                          className="button-secondary button-compact"
+                          title={providerSyncActionLabel}
+                          type="submit"
+                        >
+                          {providerSyncLabel}
+                        </button>
+                      </form>
+                    ) : null}
+                  </ActionGroup>
+                )}
+              </div>
+            );
+          })}
         </div>
         {imapProvider ? (
-          <p className="empty-copy" style={{ marginTop: 12 }}>
+          <EmailScopeCallout title="Provider roadmap">
             IMAP/SMTP is planned as a fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, custom domains, and
             hosting-provider email. It is not live yet.
-          </p>
+          </EmailScopeCallout>
         ) : null}
       </section>
 
       {syncSummary ? (
-        <section className="data-card" style={{ marginBottom: 16 }}>
-          <div className="panel-title-row">
-            <h2 className="panel-title">Latest Sync Result</h2>
-            <span className="badge">{syncSummary.provider}</span>
+        <section className="data-card section-separated">
+          <PanelTitleRow actions={<span className="badge">{syncSummary.provider}</span>} title="Latest Sync Result" />
+          <div className="stat-grid stat-grid-compact email-sync-metrics">
+            <StatCard label="Fetched" value={syncSummary.totalFetched} />
+            <StatCard label="Logged" value={syncSummary.created} />
+            <StatCard label="Duplicates" value={syncSummary.duplicates} />
+            <StatCard label="Unmatched" value={syncSummary.skipped} />
           </div>
-          <div className="stat-grid stat-grid-compact" style={{ marginBottom: 12 }}>
-            <div className="stat-card">
-              <p className="stat-label">Fetched</p>
-              <p className="stat-value">{syncSummary.totalFetched}</p>
-            </div>
-            <div className="stat-card">
-              <p className="stat-label">Logged</p>
-              <p className="stat-value">{syncSummary.created}</p>
-            </div>
-            <div className="stat-card">
-              <p className="stat-label">Duplicates</p>
-              <p className="stat-value">{syncSummary.duplicates}</p>
-            </div>
-            <div className="stat-card">
-              <p className="stat-label">Unmatched</p>
-              <p className="stat-value">{syncSummary.skipped}</p>
-            </div>
-          </div>
-          <p className="empty-copy">
+          <FormIntroCallout className="email-status-callout" title="Sync scope">
             Last sync: {syncSummary.lastSyncAt ? formatDate(syncSummary.lastSyncAt) : "Just now"}. Synced emails are
             logged only when they match known CRM contacts. Unmatched previews below are temporary and not stored as CRM
             history.
-          </p>
+          </FormIntroCallout>
           {syncSummary.totalFetched > 0 && syncSummary.created === 0 ? (
-            <p className="empty-copy" style={{ marginTop: 8 }}>
+            <FormIntroCallout className="email-status-callout email-sync-followup" title="Next step">
               No matches yet — add contacts or create them from email so future syncs can link messages to CRM timelines.
-            </p>
+            </FormIntroCallout>
           ) : null}
         </section>
       ) : null}
 
       {latestSyncReview?.unmatchedPreviews.length ? (
-        <section className="data-card" style={{ marginBottom: 16 }}>
-          <div className="panel-title-row">
-            <h2 className="panel-title">Unmatched Email Review</h2>
-            <span className="badge">Temporary</span>
-          </div>
-          <p className="empty-copy" style={{ marginBottom: 12 }}>
+        <section className="data-card section-separated">
+          <PanelTitleRow actions={<span className="badge">Temporary</span>} title="Unmatched Email Review" />
+          <EmailScopeCallout title="Review scope">
             These recent messages did not match existing contacts. Create a contact or lead, or ignore them for now.
             Northstar is not storing unmatched inbox history.
-          </p>
+          </EmailScopeCallout>
           <div className="email-command-list">
             {latestSyncReview.unmatchedPreviews.map((preview) => (
               <EmailPreviewCard
@@ -187,11 +206,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
       ) : null}
 
       {attentionLogs.length > 0 ? (
-        <section className="data-card" style={{ marginBottom: 16 }}>
-          <div className="panel-title-row">
-            <h2 className="panel-title">Suggested Follow-ups</h2>
-            <span className="badge">{attentionLogs.length} need attention</span>
-          </div>
+        <section className="data-card section-separated">
+          <PanelTitleRow actions={<span className="badge">{attentionLogs.length} need attention</span>} title="Suggested Follow-ups" />
           <div className="email-command-list">
             {attentionLogs.map((emailLog) => (
               <EmailLogCard draftTemplates={draftTemplates} emailLog={emailLog} key={emailLog.id} />
@@ -201,10 +217,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
       ) : null}
 
       <section className="data-card">
-        <div className="panel-title-row">
-          <h2 className="panel-title">Synced Emails</h2>
-          <span className="badge">{recentEmailLogs.length} shown</span>
-        </div>
+        <PanelTitleRow actions={<span className="badge">{recentEmailLogs.length} shown</span>} title="Synced Emails" />
         {recentEmailLogs.length > 0 ? (
           <div className="email-command-list">
             {recentEmailLogs.map((emailLog) => (
@@ -212,17 +225,21 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             ))}
           </div>
         ) : (
-          <div className="empty-state">
-            <h3>No email activity yet</h3>
-            <p>
-              Log an email manually from a deal, contact, organization, or lead. After Gmail is connected, manual sync
-              will add recent matched messages from known contacts here. No matches yet? Create contacts from unmatched
-              emails after your next sync.
-            </p>
-          </div>
+          <EmptyState
+            description="Log an email manually from a deal, contact, organization, or lead. After Gmail is connected, manual sync will add recent matched messages from known contacts here. No matches yet? Create contacts from unmatched emails after your next sync."
+            title="No email activity yet"
+          />
         )}
       </section>
     </AppShell>
+  );
+}
+
+function EmailScopeCallout({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <FormIntroCallout className="email-scope-callout" title={title}>
+      {children}
+    </FormIntroCallout>
   );
 }
 
@@ -293,13 +310,13 @@ function buildMajorProviderCards({
 
 function gmailActionLabel(provider: ProviderCard, label: "Gmail" | "Google Workspace") {
   if (provider.disabled) return provider.actionLabel;
-  if (provider.status === "Connected") return `Reconnect ${label}`;
+  if (provider.syncAvailable) return `Reconnect ${label}`;
   return `Connect ${label}`;
 }
 
 function microsoftActionLabel(provider: ProviderCard, label: "Microsoft 365" | "Outlook") {
   if (provider.disabled) return provider.actionLabel;
-  if (provider.status === "Connected") return `Reconnect ${label}`;
+  if (provider.syncAvailable) return `Reconnect ${label}`;
   return `Connect ${label}`;
 }
 
@@ -360,35 +377,50 @@ type DraftTemplate = {
 function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTemplate[]; emailLog: EmailLog }) {
   const recipientEmail = primaryEmailForDraft(emailLog.direction, emailLog.fromText, emailLog.toText);
   const followUpHref = emailLogFollowUpHref(emailLog);
+  const emailStatusLabel = `${emailLog.subject} email status`;
+  const emailActionsLabel = `${emailLog.subject} email actions`;
+  const addFollowUpLabel = `Add follow-up for email ${emailLog.subject}`;
+  const createDealFromEmailLabel = `Create deal from email ${emailLog.subject}`;
   return (
     <article className="email-command-card">
-      <div className="email-command-card-header">
-        <div>
-          <h3>{emailLog.subject}</h3>
-          <p className="muted">
-            {emailLog.direction === "INBOUND" ? "From" : "To"} {emailLog.direction === "INBOUND" ? emailLog.fromText ?? "Not recorded" : emailLog.toText ?? "Not recorded"} ·{" "}
+      <CompactTitleRow
+        actions={<span className="badge">{formatEmailProvider(emailLog.provider)}</span>}
+        description={
+          <>
+            {emailLog.direction === "INBOUND" ? "From" : "To"}{" "}
+            {emailLog.direction === "INBOUND" ? emailLog.fromText ?? "Not recorded" : emailLog.toText ?? "Not recorded"} ·{" "}
             {formatDate(emailLog.occurredAt)}
-          </p>
-        </div>
-        <span className="badge">{formatEmailProvider(emailLog.provider)}</span>
-      </div>
-      <div className="filter-actions">
+          </>
+        }
+        title={emailLog.subject}
+      />
+      <ActionGroup className="filter-actions" label={emailStatusLabel}>
         {emailStatusBadges(emailLog).map((badge) => (
           <span className="badge" key={badge}>
             {badge}
           </span>
         ))}
-      </div>
+      </ActionGroup>
       <p className="email-preview">{formatEmailPreview(emailLog.body)}</p>
       <EmailLogLinks emailLog={emailLog} />
-      <div className="filter-actions">
+      <ActionGroup className="filter-actions" label={emailActionsLabel}>
         {followUpHref ? (
-          <Link className="button-secondary button-compact" href={followUpHref}>
+          <Link
+            aria-label={addFollowUpLabel}
+            className="button-secondary button-compact"
+            href={followUpHref}
+            title={addFollowUpLabel}
+          >
             Add follow-up
           </Link>
         ) : null}
         {emailLog.person ? (
-          <Link className="button-secondary button-compact" href={"/deals/new" as Route}>
+          <Link
+            aria-label={createDealFromEmailLabel}
+            className="button-secondary button-compact"
+            href={"/deals/new" as Route}
+            title={createDealFromEmailLabel}
+          >
             Create deal
           </Link>
         ) : null}
@@ -402,7 +434,7 @@ function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTempl
             subject: template.subject
           }))}
         />
-      </div>
+      </ActionGroup>
     </article>
   );
 }
@@ -411,33 +443,48 @@ function EmailPreviewCard({ draftTemplates, preview }: { draftTemplates: DraftTe
   const name = displayNameFromParticipant(preview.direction === "INBOUND" ? preview.fromText : preview.toText);
   const contactHref = buildContactHref(preview.email, name);
   const leadHref = buildLeadHref(preview.email, preview.subject);
+  const previewStatusLabel = `${preview.subject} unmatched email status`;
+  const previewActionsLabel = `${preview.subject} unmatched email actions`;
+  const createContactFromPreviewLabel = `Create contact from unmatched email ${preview.subject}`;
+  const createLeadFromPreviewLabel = `Create lead from unmatched email ${preview.subject}`;
   return (
     <article className="email-command-card email-command-card-unmatched">
-      <div className="email-command-card-header">
-        <div>
-          <h3>{preview.subject}</h3>
-          <p className="muted">
-            {preview.direction === "INBOUND" ? "From" : "To"} {preview.direction === "INBOUND" ? preview.fromText ?? preview.email ?? "Unknown" : preview.toText ?? preview.email ?? "Unknown"} ·{" "}
+      <CompactTitleRow
+        actions={<span className="badge">{formatEmailProvider(preview.provider)}</span>}
+        description={
+          <>
+            {preview.direction === "INBOUND" ? "From" : "To"}{" "}
+            {preview.direction === "INBOUND" ? preview.fromText ?? preview.email ?? "Unknown" : preview.toText ?? preview.email ?? "Unknown"} ·{" "}
             {formatDate(preview.occurredAt)}
-          </p>
-        </div>
-        <span className="badge">{formatEmailProvider(preview.provider)}</span>
-      </div>
-      <div className="filter-actions">
+          </>
+        }
+        title={preview.subject}
+      />
+      <ActionGroup className="filter-actions" label={previewStatusLabel}>
         <span className="badge">Unmatched</span>
         <span className="badge">Possible new contact</span>
         {preview.direction === "INBOUND" ? <span className="badge">Follow-up suggested</span> : null}
-      </div>
+      </ActionGroup>
       {preview.snippet ? <p className="email-preview">{preview.snippet}</p> : null}
-      <div className="filter-actions">
-        <Link className="button-secondary button-compact" href={contactHref}>
+      <ActionGroup className="filter-actions" label={previewActionsLabel}>
+        <Link
+          aria-label={createContactFromPreviewLabel}
+          className="button-secondary button-compact"
+          href={contactHref}
+          title={createContactFromPreviewLabel}
+        >
           Create contact
         </Link>
-        <Link className="button-secondary button-compact" href={leadHref}>
+        <Link
+          aria-label={createLeadFromPreviewLabel}
+          className="button-secondary button-compact"
+          href={leadHref}
+          title={createLeadFromPreviewLabel}
+        >
           Create lead
         </Link>
         <span className="muted">Ignore for now</span>
-      </div>
+      </ActionGroup>
       <EmailDraftPanel
         recipientEmail={preview.email}
         subject={preview.subject}
@@ -467,17 +514,18 @@ function emailStatusBadges(emailLog: EmailLog) {
 function emailLogFollowUpHref(emailLog: EmailLog) {
   const title = emailLog.subject ? `Follow up: ${emailLog.subject}` : "Email follow-up";
   if (emailLog.deal) {
-    return buildActivityFollowUpHref({ related: { type: "deal", id: emailLog.deal.id }, title, type: "EMAIL" });
+    return buildActivityFollowUpHref({ related: { type: "deal", id: emailLog.deal.id }, returnTo: "/email", title, type: "EMAIL" });
   }
   if (emailLog.lead) {
-    return buildActivityFollowUpHref({ related: { type: "lead", id: emailLog.lead.id }, title, type: "EMAIL" });
+    return buildActivityFollowUpHref({ related: { type: "lead", id: emailLog.lead.id }, returnTo: "/email", title, type: "EMAIL" });
   }
   if (emailLog.person) {
-    return buildActivityFollowUpHref({ related: { type: "person", id: emailLog.person.id }, title, type: "EMAIL" });
+    return buildActivityFollowUpHref({ related: { type: "person", id: emailLog.person.id }, returnTo: "/email", title, type: "EMAIL" });
   }
   if (emailLog.organization) {
     return buildActivityFollowUpHref({
       related: { type: "organization", id: emailLog.organization.id },
+      returnTo: "/email",
       title,
       type: "EMAIL"
     });
@@ -553,38 +601,55 @@ function EmailLogLinks({
     emailLog.person
       ? {
           href: `/contacts/${emailLog.person.id}` as Route,
-          label: [emailLog.person.firstName, emailLog.person.lastName].filter(Boolean).join(" ")
+          label: formatPersonName(emailLog.person) ?? "Unnamed contact",
+          type: "contact"
         }
       : null,
     emailLog.organization
       ? {
           href: `/organizations/${emailLog.organization.id}` as Route,
-          label: emailLog.organization.name
+          label: emailLog.organization.name,
+          type: "account"
         }
       : null,
     emailLog.deal
       ? {
           href: `/deals/${emailLog.deal.id}` as Route,
-          label: emailLog.deal.title
+          label: emailLog.deal.title,
+          type: "deal"
         }
       : null,
     emailLog.lead
       ? {
           href: `/leads/${emailLog.lead.id}` as Route,
-          label: emailLog.lead.title
+          label: emailLog.lead.title,
+          type: "lead"
         }
       : null
-  ].filter((link): link is { href: Route; label: string } => Boolean(link));
+  ].filter((link): link is { href: Route; label: string; type: "account" | "contact" | "deal" | "lead" } =>
+    Boolean(link)
+  );
 
-  if (links.length === 0) return <span className="muted">No linked CRM record</span>;
+  if (links.length === 0) return <InlineEmptyStateText>No linked CRM record</InlineEmptyStateText>;
+
+  const linkedRecordsLabel = "Linked CRM records";
 
   return (
-    <div className="filter-actions">
-      {links.map((link) => (
-        <Link className="inline-link" href={link.href} key={`${link.href}-${link.label}`}>
-          {link.label}
-        </Link>
-      ))}
-    </div>
+    <ActionGroup className="filter-actions" label={linkedRecordsLabel}>
+      {links.map((link) => {
+        const linkedRecordActionLabel = `Open linked ${link.type} ${link.label} from email ${emailLog.subject}`;
+        return (
+          <Link
+            aria-label={linkedRecordActionLabel}
+            className="inline-link"
+            href={link.href}
+            key={`${link.href}-${link.label}`}
+            title={linkedRecordActionLabel}
+          >
+            {link.label}
+          </Link>
+        );
+      })}
+    </ActionGroup>
   );
 }

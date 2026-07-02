@@ -3,12 +3,15 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { dealListStateOptions } from "@/lib/deal-list-state";
+import { parseListViewState, serializeListViewState } from "@/lib/list-page-query";
 import {
   contactSavedViewHref,
   dealSavedViewHref,
   leadSavedViewHref,
   organizationSavedViewHref
 } from "@/lib/services/saved-view-service";
+import { savedViewNameMaxLength } from "@/lib/saved-view-validation";
 
 const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
 const migration = readFileSync(join(process.cwd(), "prisma/migrations/0002_saved_views/migration.sql"), "utf8");
@@ -23,7 +26,9 @@ const contactsPage = readFileSync(join(process.cwd(), "app/contacts/page.tsx"), 
 const dealsPage = readFileSync(join(process.cwd(), "app/deals/page.tsx"), "utf8");
 const leadsPage = readFileSync(join(process.cwd(), "app/leads/page.tsx"), "utf8");
 const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
+const savedViewsPanel = readFileSync(join(process.cwd(), "components/saved-views-panel.tsx"), "utf8");
 const dealSavedViewsPanel = readFileSync(join(process.cwd(), "components/deal-saved-views-panel.tsx"), "utf8");
+const listViewStatus = readFileSync(join(process.cwd(), "components/list-view-status.tsx"), "utf8");
 const contactActions = readFileSync(join(process.cwd(), "app/contacts/actions.ts"), "utf8");
 const dealActions = readFileSync(join(process.cwd(), "app/deals/actions.ts"), "utf8");
 const leadActions = readFileSync(join(process.cwd(), "app/leads/actions.ts"), "utf8");
@@ -55,6 +60,31 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(listQuery).toContain("export function serializedListViewStateToSearchParams");
     expect(listQuery).toContain("params.set(\"sortBy\", state.sortBy)");
     expect(listQuery).toContain("params.set(\"pageSize\", String(state.pageSize))");
+  });
+
+  it("serializes current list state for saved views without carrying the active page", () => {
+    const state = parseListViewState(
+      {
+        q: "Needle",
+        status: "OPEN",
+        sortBy: "title",
+        sortDirection: "asc",
+        page: "9",
+        pageSize: "25"
+      },
+      dealListStateOptions
+    );
+
+    expect(state.pagination).toEqual({ page: 9, pageSize: 25 });
+    expect(serializeListViewState(state)).toEqual({
+      q: "Needle",
+      filters: { status: "OPEN" },
+      sortBy: "title",
+      sortDirection: "asc",
+      pageSize: 25
+    });
+    expect(serializeListViewState(state)).not.toHaveProperty("page");
+    expect(serializeListViewState(state)).not.toHaveProperty("pagination");
   });
 
   it("builds Deal saved-view hrefs from persisted list state without preserving transient page numbers", () => {
@@ -97,6 +127,37 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
         pageSize: 10
       })
     ).toBe("/deals?customFieldId=field_123&customFieldValue=High&sortBy=updatedAt&sortDirection=desc&pageSize=10");
+    expect(
+      dealSavedViewHref({
+        filters: {
+          commercial: "maybe",
+          customFieldId: "field_123",
+          customFieldOperator: "before",
+          customFieldValue: "High",
+          stageId: "stage_123",
+          status: "PARKED"
+        },
+        sortBy: "unsupported" as never,
+        sortDirection: "sideways" as never,
+        pageSize: 999
+      })
+    ).toBe("/deals?stageId=stage_123&sortBy=updatedAt&sortDirection=desc&pageSize=50");
+    expect(
+      dealSavedViewHref({
+        filters: {},
+        sortBy: "updatedAt",
+        sortDirection: "desc",
+        pageSize: "25abc" as never
+      })
+    ).toBe("/deals?sortBy=updatedAt&sortDirection=desc&pageSize=10");
+    expect(
+      dealSavedViewHref({
+        filters: {},
+        sortBy: "updatedAt",
+        sortDirection: "desc",
+        pageSize: "1e2" as never
+      })
+    ).toBe("/deals?sortBy=updatedAt&sortDirection=desc&pageSize=10");
   });
 
   it("keeps saved view services deal-first and workspace-scoped", () => {
@@ -121,21 +182,33 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(service).toContain("function createSavedView");
     expect(service).toContain("function deleteSavedView");
     expect(service).toContain("ensureWorkspaceAccess(actor)");
+    expect(service).toContain("const savedViewInput = objectInput(input)");
+    expect(service).toContain("validateSavedViewName(savedViewInput.name)");
+    expect(service).toContain("serializeSavedViewInputState(savedViewInput.state)");
+    expect(service).toContain("Saved view state is required.");
     expect(service).toContain("recordType: \"DEAL\"");
     expect(service).toContain("recordType: \"LEAD\"");
     expect(service).toContain("recordType: \"PERSON\"");
     expect(service).toContain("recordType: \"ORGANIZATION\"");
     expect(service).toContain("workspaceId: actor.workspaceId");
     expect(service).toContain("normalizeSavedViewState");
+    expect(service).toContain("const normalizedState = normalizeSavedViewState(state as unknown as Prisma.JsonValue, config)");
     expect(service).toContain("type SerializedDealListState");
     expect(service).toContain("type SerializedLeadListState");
     expect(service).toContain("type SerializedContactListState");
     expect(service).toContain("type SerializedOrganizationListState");
     expect(service).toContain("const q = typeof value.q === \"string\" && value.q.trim() ? value.q.trim() : undefined");
     expect(service).toContain("stringIn(value.sortBy, config.sortByValues) ?? config.defaultState.sortBy");
-    expect(service).toContain("boundedPositiveInt(value.pageSize, config.defaultState.pageSize, 1, 50)");
-    expect(service).toContain("for (const key of filterKeys)");
+    expect(service).toContain("const pagination = isJsonObject(value.pagination) ? value.pagination : {}");
+    expect(service).toContain("boundedPositiveInt(value.pageSize ?? pagination.pageSize, config.defaultState.pageSize, 1, 50)");
+    expect(service).toContain("filterValueOptions");
+    expect(service).toContain("for (const key of config.filterKeys)");
+    expect(service).toContain("normalizeCustomFieldFilterGroup");
+    expect(service).toContain("delete filters[customFieldValueKey]");
+    expect(service).toContain("const customFieldOperator = filters[customFieldOperatorKey] ?? \"equals\"");
+    expect(service).toContain("if (!filters[customFieldValueKey])");
     expect(dealListState).toContain("export const dealListStateOptions");
+    expect(dealListState).toContain("\"commercial\"");
     expect(dealListState).toContain("\"customFieldOperator\"");
     expect(dealListState).toContain("export type DealListFilterKey");
     expect(dealListState).toContain("export type DealListSort");
@@ -172,7 +245,7 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
         pageSize: 25
       })
     ).toBe(
-      "/leads?q=Needle&status=QUALIFIED&source=Referral&ownerId=user_123&customFieldId=field_123&customFieldOperator=is_not_empty&customFieldValue=High&sortBy=title&sortDirection=asc&pageSize=25"
+      "/leads?q=Needle&status=QUALIFIED&source=Referral&ownerId=user_123&customFieldId=field_123&customFieldOperator=is_not_empty&sortBy=title&sortDirection=asc&pageSize=25"
     );
     expect(
       leadSavedViewHref({
@@ -287,26 +360,65 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(leadsPage).toContain("LeadSavedViewsPanel");
     expect(leadsPage).toContain("listLeadSavedViews(actor)");
     expect(leadsPage).toContain("<LeadSavedViewsPanel listState={listState} savedViews={savedViews} />");
-    expect(dealSavedViewsPanel).toContain("createDealSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("deleteDealSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("createContactSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("deleteContactSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("createOrganizationSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("deleteOrganizationSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("createLeadSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("deleteLeadSavedViewAction");
-    expect(dealSavedViewsPanel).toContain("serializeListViewState(listState)");
-    expect(dealSavedViewsPanel).toContain("href={view.href as Route}");
-    expect(dealSavedViewsPanel).toContain("Delete view");
-    expect(dealSavedViewsPanel).toContain("Saved contact views");
-    expect(dealSavedViewsPanel).toContain("Saved deal views");
-    expect(dealSavedViewsPanel).toContain("Saved lead views");
-    expect(dealSavedViewsPanel).toContain("Saved organization views");
-    expect(dealSavedViewsPanel).toContain("No contact views saved yet.");
-    expect(dealSavedViewsPanel).toContain("No deal views saved yet.");
-    expect(dealSavedViewsPanel).toContain("No lead views saved yet.");
-    expect(dealSavedViewsPanel).toContain("No organization views saved yet.");
-    expect(dealSavedViewsPanel).not.toContain("Saved views are available for Deals and Leads");
+    for (const page of [contactsPage, organizationsPage, dealsPage, leadsPage]) {
+      expect(page).toContain("@/components/saved-views-panel");
+      expect(page).not.toContain("@/components/deal-saved-views-panel");
+    }
+    expect(savedViewsPanel).toContain("createDealSavedViewAction");
+    expect(savedViewsPanel).toContain("deleteDealSavedViewAction");
+    expect(savedViewsPanel).toContain("createContactSavedViewAction");
+    expect(savedViewsPanel).toContain("deleteContactSavedViewAction");
+    expect(savedViewsPanel).toContain("createOrganizationSavedViewAction");
+    expect(savedViewsPanel).toContain("deleteOrganizationSavedViewAction");
+    expect(savedViewsPanel).toContain("createLeadSavedViewAction");
+    expect(savedViewsPanel).toContain("deleteLeadSavedViewAction");
+    expect(savedViewsPanel).toContain("PanelTitleRow");
+    expect(savedViewsPanel).toContain("import { EmptyState }");
+    expect(savedViewsPanel).toContain("Save the current search, filters, and sort as a reusable workspace view.");
+    expect(savedViewsPanel).toContain("serializeListViewState(listState)");
+    expect(savedViewsPanel).toContain("maxLength={savedViewNameMaxLength}");
+    expect(savedViewsPanel).toContain("const saveActionLabel = `${title}: save current view`");
+    expect(savedViewsPanel).toContain("const headingId = `${inputId}-title`");
+    expect(savedViewsPanel).toContain("<section aria-labelledby={headingId} className=\"panel saved-views-panel\">");
+    expect(savedViewsPanel).toContain("titleId={headingId}");
+    expect(savedViewsPanel).toContain("aria-label={saveActionLabel}");
+    expect(savedViewsPanel).toContain("title={saveActionLabel}");
+    expect(savedViewsPanel).toContain("aria-label={`${title} list`}");
+    expect(savedViewsPanel).toContain("href={view.href as Route}");
+    expect(savedViewsPanel).toContain("const openActionLabel = `Open saved view ${view.name}`");
+    expect(savedViewsPanel).toContain("aria-label={openActionLabel}");
+    expect(savedViewsPanel).toContain("title={openActionLabel}");
+    expect(savedViewsPanel).toContain("Delete view");
+    expect(savedViewsPanel).toContain("const deleteActionLabel = `Delete saved view ${view.name}`");
+    expect(savedViewsPanel).toContain("aria-label={deleteActionLabel}");
+    expect(savedViewsPanel).toContain("title={deleteActionLabel}");
+    expect(savedViewsPanel).toContain("Saved contact views");
+    expect(savedViewsPanel).toContain("Saved deal views");
+    expect(savedViewsPanel).toContain("Saved lead views");
+    expect(savedViewsPanel).toContain("Saved organization views");
+    expect(savedViewsPanel).toContain("No contact views saved yet.");
+    expect(savedViewsPanel).toContain("No deal views saved yet.");
+    expect(savedViewsPanel).toContain("No lead views saved yet.");
+    expect(savedViewsPanel).toContain("No organization views saved yet.");
+    expect(savedViewsPanel).toContain("<EmptyState className=\"empty-state-compact empty-state-panel saved-view-empty\" title={emptyCopy} />");
+    expect(savedViewsPanel).not.toContain("<p className=\"empty-copy\">{emptyCopy}</p>");
+    expect(savedViewsPanel).not.toContain("Saved views are available for Deals and Leads");
+    expect(savedViewsPanel).not.toContain("saved-views-header");
+    expect(dealSavedViewsPanel).toContain("from \"@/components/saved-views-panel\"");
+    expect(listViewStatus).toContain("Saved view: ${savedViewName}");
+    expect(listViewStatus).toContain("Clear saved view");
+    expect(listViewStatus).toContain("const statusAnnouncement = `${statusLabel}. ${resolvedResetLabel} available.`");
+    expect(listViewStatus).toContain("role=\"status\"");
+    expect(listViewStatus).toContain("aria-atomic=\"true\"");
+    expect(listViewStatus).toContain('import { Badge } from "@/components/badge"');
+    expect(listViewStatus).toContain("<Badge label={statusLabel}>{statusLabel}</Badge>");
+    expect(listViewStatus).toContain("hasActiveListViewFilters(listState)");
+    expect(listViewStatus).toContain("serializedListViewStateToSearchParams(serializeListViewState(listState))");
+    for (const page of [contactsPage, organizationsPage, dealsPage, leadsPage]) {
+      expect(page).toContain("ListViewStatusForState");
+      expect(page).toContain("resetHref=");
+      expect(page).toContain("searchParams={params}");
+    }
     expect(contactActions).toContain("\"use server\"");
     expect(contactActions).toContain("parseListViewState(formDataToSearchParams(formData)");
     expect(contactActions).toContain("contactListStateOptions");
@@ -332,5 +444,15 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(leadActions).toContain("createLeadSavedView(actor");
     expect(leadActions).toContain("const { actor } = await getCurrentWorkspaceContext()");
     expect(leadActions).toContain("deleteLeadSavedView(actor, savedViewId)");
+  });
+
+  it("keeps saved-view names bounded for service and form validation", () => {
+    const validation = readFileSync(join(process.cwd(), "lib/saved-view-validation.ts"), "utf8");
+
+    expect(savedViewNameMaxLength).toBe(120);
+    expect(validation).toContain("normalizeSavedViewName");
+    expect(validation).toContain("typeof value !== \"string\"");
+    expect(validation).toContain("Saved view name is required.");
+    expect(validation).toContain("Saved view name must be ${savedViewNameMaxLength} characters or fewer.");
   });
 });

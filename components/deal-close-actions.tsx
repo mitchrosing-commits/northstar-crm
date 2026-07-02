@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ActionGroup } from "@/components/action-group";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
+
 type DealCloseActionsProps = {
   workspaceId: string;
   dealId: string;
@@ -61,36 +66,67 @@ export function DealCloseActions({ workspaceId, dealId, status }: DealCloseActio
   }
 
   if (status !== "OPEN") {
+    const closedDealActionsLabel = "Closed deal actions";
+    const reopenDealActionLabel = "Reopen deal for editing and stage movement";
+
     return (
       <div className="inline-form">
-        {error ? <div className="form-error">{error}</div> : null}
-        <p className="empty-copy">This deal is closed. Reopen it to edit the deal or move it between stages.</p>
-        <div className="form-actions">
-          <button className="button-primary" disabled={Boolean(isSaving)} onClick={reopenDeal} type="button">
+        {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+        <LockedPanelNotice title="Deal closed">
+          This deal is closed. Reopen it to edit the deal or move it between stages.
+        </LockedPanelNotice>
+        <ActionGroup className="form-actions" label={closedDealActionsLabel}>
+          <button
+            aria-label={reopenDealActionLabel}
+            className="button-primary button-compact"
+            disabled={Boolean(isSaving)}
+            onClick={reopenDeal}
+            title={reopenDealActionLabel}
+            type="button"
+          >
             {isSaving === "REOPEN" ? "Reopening..." : "Reopen deal"}
           </button>
-        </div>
+        </ActionGroup>
       </div>
     );
   }
 
+  const markWonActionsLabel = "Mark deal won";
+  const markLostActionsLabel = "Mark deal lost";
+  const markWonActionLabel = "Mark deal as won";
+  const markLostActionLabel = "Mark deal as lost";
+
   return (
     <div className="inline-form">
-      {error ? <div className="form-error">{error}</div> : null}
-      <div className="form-actions">
-        <button className="button-primary" disabled={Boolean(isSaving)} onClick={() => closeDeal("WON")} type="button">
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      <ActionGroup className="form-actions" label={markWonActionsLabel}>
+        <button
+          aria-label={markWonActionLabel}
+          className="button-primary button-compact"
+          disabled={Boolean(isSaving)}
+          onClick={() => closeDeal("WON")}
+          title={markWonActionLabel}
+          type="button"
+        >
           {isSaving === "WON" ? "Marking won..." : "Mark won"}
         </button>
-      </div>
+      </ActionGroup>
       <label className="form-field">
-        <span>Lost reason</span>
+        <FormFieldLabel>Lost reason</FormFieldLabel>
         <textarea onChange={(event) => setLostReason(event.target.value)} rows={3} value={lostReason} />
       </label>
-      <div className="form-actions">
-        <button className="button-secondary" disabled={Boolean(isSaving)} onClick={() => closeDeal("LOST")} type="button">
+      <ActionGroup className="form-actions" label={markLostActionsLabel}>
+        <button
+          aria-label={markLostActionLabel}
+          className="button-secondary button-compact"
+          disabled={Boolean(isSaving)}
+          onClick={() => closeDeal("LOST")}
+          title={markLostActionLabel}
+          type="button"
+        >
           {isSaving === "LOST" ? "Marking lost..." : "Mark lost"}
         </button>
-      </div>
+      </ActionGroup>
     </div>
   );
 }

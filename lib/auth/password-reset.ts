@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { enqueuePasswordResetEmailJob } from "@/lib/jobs/handlers";
+import { isPublicHttpsUrl } from "@/lib/public-host";
 import { hashPassword } from "./password";
 
 export const passwordResetTokenTtlMs = 1000 * 60 * 30;
@@ -24,7 +25,7 @@ export async function requestPasswordReset(
   email: string,
   options: { env?: EnvInput; now?: Date } = {}
 ): Promise<PasswordResetRequestResult> {
-  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedEmail = normalizePasswordResetEmail(email);
   const now = options.now ?? new Date();
 
   if (!normalizedEmail) {
@@ -83,7 +84,7 @@ export async function requestPasswordReset(
 }
 
 export async function getPasswordResetTokenStatus(token: string, now = new Date()) {
-  const normalizedToken = token.trim();
+  const normalizedToken = normalizePasswordResetToken(token);
   if (normalizedToken.length < minimumPasswordResetTokenLength) return "invalid" as const;
 
   const resetToken = await prisma.passwordResetToken.findUnique({
@@ -103,7 +104,7 @@ export async function getPasswordResetTokenStatus(token: string, now = new Date(
 }
 
 export async function resetPasswordWithToken(token: string, password: string, now = new Date()) {
-  const normalizedToken = token.trim();
+  const normalizedToken = normalizePasswordResetToken(token);
   validateResetPassword(password);
 
   if (normalizedToken.length < minimumPasswordResetTokenLength) {
@@ -159,7 +160,9 @@ export function buildPasswordResetUrl(resetToken: string, env: EnvInput = proces
   if (!appBaseUrl) return null;
 
   try {
-    return new URL(`/reset-password?token=${encodeURIComponent(resetToken)}`, appBaseUrl).toString();
+    const resetUrl = new URL(`/reset-password?token=${encodeURIComponent(resetToken)}`, appBaseUrl);
+    if (env.NODE_ENV === "production" && !isPublicHttpsUrl(resetUrl)) return null;
+    return resetUrl.toString();
   } catch {
     return null;
   }
@@ -190,8 +193,16 @@ function generatePasswordResetToken() {
   return randomBytes(32).toString("base64url");
 }
 
-function validateResetPassword(password: string) {
-  if (password.length < minimumResetPasswordLength) {
+function normalizePasswordResetEmail(email: unknown) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
+}
+
+function normalizePasswordResetToken(token: unknown) {
+  return typeof token === "string" ? token.trim() : "";
+}
+
+function validateResetPassword(password: unknown): asserts password is string {
+  if (typeof password !== "string" || password.length < minimumResetPasswordLength) {
     throw new ApiError(
       "VALIDATION_ERROR",
       `Password must be at least ${minimumResetPasswordLength} characters.`,

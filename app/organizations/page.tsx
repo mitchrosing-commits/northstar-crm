@@ -1,13 +1,29 @@
-import Link from "next/link";
-
 import { AppShell } from "@/components/app-shell";
 import { CustomFieldFilterControls, CustomFieldSummaryCell } from "@/components/custom-field-list-summary";
-import { OrganizationSavedViewsPanel } from "@/components/deal-saved-views-panel";
+import { OrganizationSavedViewsPanel } from "@/components/saved-views-panel";
+import { EmptyState } from "@/components/empty-state";
 import { FilterPanel } from "@/components/filter-panel";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { ListEmptyStateActions } from "@/components/list-empty-state-actions";
+import { ListNextActivitySummary } from "@/components/list-next-activity-summary";
+import { ListPageHeaderActions } from "@/components/list-page-header-actions";
+import { ListQuickLinksPanel } from "@/components/list-quick-links-panel";
+import { ListResultsSummary } from "@/components/list-results-summary";
+import { ListRowActions } from "@/components/list-row-actions";
+import { ListSortControls } from "@/components/list-sort-controls";
+import { ListViewStatusForState } from "@/components/list-view-status";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
+import { TableScroll } from "@/components/table-scroll";
+import { TableOwnerCell } from "@/components/table-owner-cell";
+import { TableOptionalValueCell } from "@/components/table-optional-value-cell";
+import { TablePrimaryRecordCell } from "@/components/table-primary-record-cell";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { hasActiveListViewFilters, parseListViewState, type ListSearchParams, type ListViewState } from "@/lib/list-page-query";
-import { organizationListStateOptions, type OrganizationListSort } from "@/lib/organization-list-state";
+import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import { hasActiveListViewFilters, listPageHref, parseListViewState, type ListSearchParams } from "@/lib/list-page-query";
+import { listResourceSearchPlaceholder } from "@/lib/list-resource-labels";
+import { organizationListStateOptions } from "@/lib/organization-list-state";
+import { prefillCreateHref } from "@/lib/search-create-actions";
 import { getWorkspace, listCustomFields, listCustomFieldSummaries, listOrganizationSavedViews, listOrganizationsPage } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +31,12 @@ export const dynamic = "force-dynamic";
 type PageProps = {
   searchParams: Promise<ListSearchParams>;
 };
+
+const organizationSortOptions = [
+  { value: "name", label: "Name" },
+  { value: "createdAt", label: "Created date" },
+  { value: "updatedAt", label: "Updated date" }
+] as const;
 
 export default async function OrganizationsPage({ searchParams }: PageProps) {
   const params = await searchParams;
@@ -42,27 +64,44 @@ export default async function OrganizationsPage({ searchParams }: PageProps) {
     organizations.map((organization) => organization.id)
   );
   const hasActiveFilters = hasActiveListViewFilters(listState);
+  const createFromQueryHref = listState.q ? prefillCreateHref("/organizations/new", "name", listState.q) : undefined;
 
   return (
-    <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Companies</p>
-          <h1 className="page-title">Organizations</h1>
-        </div>
-        <Link className="button-primary" href="/organizations/new">
-          New organization
-        </Link>
-      </header>
+    <AppShell globalSearchDefaultValue={listState.q} workspace={workspace}>
+      <PageHeader
+        actions={
+          <ListPageHeaderActions
+            createHref="/organizations/new"
+            createLabel="New organization"
+            importHref="/settings/import-export#organizations-import"
+            matchingCount={organizationPage.total}
+            resource="organizations"
+            searchParams={params}
+            workspaceId={workspace.id}
+          />
+        }
+        eyebrow="Companies"
+        subtitle="Accounts that group people, deals, activities, notes, and history."
+        title="Organizations"
+      >
+        <ListViewStatusForState
+          label="Filtered organizations view active"
+          listState={listState}
+          resetHref="/organizations"
+          searchParams={params}
+          savedViews={savedViews}
+        />
+      </PageHeader>
       <OrganizationSavedViewsPanel listState={listState} savedViews={savedViews} />
+      <OrganizationQuickFilters actorUserId={actorUserId} searchParams={params} />
 
-      <FilterPanel action="/organizations" pageSize={listState.pagination.pageSize} resetHref="/organizations">
+      <FilterPanel action="/organizations" legend="Organization filters" pageSize={listState.pagination.pageSize} resetHref="/organizations">
           <label className="form-field">
-            <span>Search</span>
-            <input name="q" placeholder="Search organizations" defaultValue={listState.q ?? ""} />
+            <FormFieldLabel>Search</FormFieldLabel>
+            <input name="q" placeholder={listResourceSearchPlaceholder("organizations")} defaultValue={listState.q ?? ""} />
           </label>
           <label className="form-field">
-            <span>Owner</span>
+            <FormFieldLabel>Owner</FormFieldLabel>
             <select name="ownerId" defaultValue={listState.filters.ownerId ?? ""}>
               <option value="">All owners</option>
               {workspaceRecord.memberships.map((membership) => (
@@ -73,73 +112,129 @@ export default async function OrganizationsPage({ searchParams }: PageProps) {
             </select>
           </label>
           <CustomFieldFilterControls fields={customFieldDefinitions} params={params} />
-          <SortControls listState={listState} />
+          <ListSortControls
+            direction={listState.sortDirection}
+            directionOptions={["asc", "desc"]}
+            options={[...organizationSortOptions]}
+            sortBy={listState.sortBy}
+          />
       </FilterPanel>
       {organizations.length > 0 ? (
         <section className="panel">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Domain</th>
-                <th>People</th>
-                <th>Deals</th>
-                <th>Owner</th>
-                <th>Custom fields</th>
-              </tr>
-            </thead>
-            <tbody>
-              {organizations.map((organization) => (
-                <tr key={organization.id}>
-                  <td>
-                    <Link className="inline-link" href={`/organizations/${organization.id}`}>
-                      {organization.name}
-                    </Link>
-                  </td>
-                  <td>{organization.domain ?? "None"}</td>
-                  <td>{organization._count.people}</td>
-                  <td>{organization._count.deals}</td>
-                  <td>{organization.owner?.name ?? "Unassigned"}</td>
-                  <td>
-                    <CustomFieldSummaryCell fields={customFieldSummaries.get(organization.id) ?? []} />
-                  </td>
+          <ListResultsSummary activeFilters={hasActiveFilters} label="organizations" pageInfo={organizationPage} />
+          <TableScroll aria-label="Organizations list table">
+            <table className="table crm-list-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Domain</th>
+                  <th>People</th>
+                  <th>Deals</th>
+                  <th>Owner</th>
+                  <th>Next activity</th>
+                  <th>Custom fields</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {organizations.map((organization) => (
+                  <tr key={organization.id}>
+                    <td data-label="Name">
+                      <TablePrimaryRecordCell
+                        href={`/organizations/${organization.id}`}
+                        linkLabel={`Open organization ${organization.name}`}
+                        secondary={organization.domain ?? "No domain recorded"}
+                        title={organization.name}
+                      />
+                    </td>
+                    <td data-label="Domain">
+                      <TableOptionalValueCell emptyLabel="No domain" value={organization.domain} />
+                    </td>
+                    <td data-label="People">{organization._count.people}</td>
+                    <td data-label="Deals">{organization._count.deals}</td>
+                    <td data-label="Owner">
+                      <TableOwnerCell owner={organization.owner} />
+                    </td>
+                    <td data-label="Next activity">
+                      <ListNextActivitySummary activity={organization.activities[0]} emptyLabel="No organization follow-up" />
+                    </td>
+                    <td data-label="Custom fields">
+                      <CustomFieldSummaryCell
+                        emptyConfiguredLabel="No organization fields"
+                        emptyFilledLabel="No organization values"
+                        fields={customFieldSummaries.get(organization.id) ?? []}
+                      />
+                    </td>
+                    <td className="table-actions-cell" data-label="Actions">
+                      <ListRowActions
+                        aria-label={`${organization.name} organization row actions`}
+                        actions={[
+                          { href: `/organizations/${organization.id}`, label: "Open account", ariaLabel: `Open organization ${organization.name}` },
+                          {
+                            href: buildActivityFollowUpHref({
+                              related: { type: "organization", id: organization.id },
+                              returnTo: listPageHref("/organizations", params),
+                              title: `Follow up: ${organization.name}`
+                            }),
+                            label: "Add activity",
+                            ariaLabel: `Add activity for organization ${organization.name}`
+                          },
+                          { href: `/organizations/${organization.id}/edit`, label: "Edit", ariaLabel: `Edit organization ${organization.name}` }
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
           <PaginationControls basePath="/organizations" pageInfo={organizationPage} searchParams={params} />
         </section>
       ) : (
-        <section className="empty-state">
-          <h2>{hasActiveFilters ? "No organizations match these filters" : "No organizations yet"}</h2>
-          <p>{hasActiveFilters ? "Adjust or reset the active filters to see more organizations." : "Create a company or account to group contacts, deals, activities, and notes."}</p>
-          <Link className="text-link" href="/organizations/new">
-            Create organization
-          </Link>
-        </section>
+        <EmptyState
+          actions={
+            <ListEmptyStateActions
+              clearHref="/organizations"
+              createFromQueryHref={createFromQueryHref}
+              createFromQueryLabel="Create organization from search"
+              createHref="/organizations/new"
+              createLabel="Create organization"
+              hasActiveFilters={hasActiveFilters}
+              resultLabel="organizations"
+            />
+          }
+          as="section"
+          titleId="organizations-empty-title"
+          description={
+            hasActiveFilters
+              ? "Adjust or reset the active filters to see more organizations."
+              : "Create a company or account to group contacts, deals, activities, and notes."
+          }
+          title={hasActiveFilters ? "No organizations match these filters" : "No organizations yet"}
+          titleLevel="h2"
+        />
       )}
     </AppShell>
   );
 }
 
-function SortControls({ listState }: { listState: ListViewState<OrganizationListSort> }) {
+function OrganizationQuickFilters({ actorUserId, searchParams }: { actorUserId: string; searchParams: ListSearchParams }) {
+  const links = [
+    { href: `/organizations?ownerId=${actorUserId}`, label: "My organizations" },
+    { href: "/organizations?sortBy=updatedAt&sortDirection=desc", label: "Recently updated" },
+    { href: "/organizations?sortBy=createdAt&sortDirection=desc", label: "Recently created" },
+    { href: "/organizations?sortBy=name&sortDirection=asc", label: "A-Z organizations" }
+  ] as const;
+
   return (
-    <>
-      <label className="form-field">
-        <span>Sort by</span>
-        <select name="sortBy" defaultValue={listState.sortBy}>
-          <option value="name">Name</option>
-          <option value="createdAt">Created date</option>
-          <option value="updatedAt">Updated date</option>
-        </select>
-      </label>
-      <label className="form-field">
-        <span>Direction</span>
-        <select name="sortDirection" defaultValue={listState.sortDirection}>
-          <option value="asc">Ascending</option>
-          <option value="desc">Descending</option>
-        </select>
-      </label>
-    </>
+    <ListQuickLinksPanel
+      ariaLabel="Organization quick filters"
+      currentPath="/organizations"
+      headingId="organization-quick-filters-title"
+      hint="Jump to common account ownership and recency views without building a saved view first."
+      links={links}
+      searchParams={searchParams}
+      title="Quick organization filters"
+    />
   );
 }

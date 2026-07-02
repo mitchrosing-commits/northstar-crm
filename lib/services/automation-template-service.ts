@@ -2,6 +2,7 @@ import { ActivityType, DealStatus, LeadStatus } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
+import { activityAttachmentRelationsWhere } from "./record-guards";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 
 export type AutomationTemplateId =
@@ -27,17 +28,41 @@ type ActivitySuggestion = {
   dueAt: Date;
 };
 
+const openDealAutomationTemplateIds = [
+  "deal-proposal-follow-up",
+  "quote-follow-up",
+  "contract-follow-up",
+  "deal-next-activity"
+] satisfies AutomationTemplateId[];
+
+const automationTemplateIds = [
+  "lead-first-outreach",
+  "deal-proposal-follow-up",
+  "quote-follow-up",
+  "contract-follow-up",
+  "post-sale-handoff",
+  "deal-next-activity",
+  "lost-reengagement"
+] satisfies AutomationTemplateId[];
+
 export async function createAutomationTemplateActivity(
   actor: WorkspaceActor,
   input: { templateId: AutomationTemplateId; dealId?: string; leadId?: string },
   now = new Date()
 ): Promise<AutomationTemplateResult> {
   await ensureWorkspaceAccess(actor);
-  const suggestion = await resolveAutomationTemplate(actor, input, now);
+  const templateId = normalizeAutomationTemplateId(input.templateId);
+  const normalizedInput = {
+    templateId,
+    dealId: normalizeAutomationTargetId(input.dealId),
+    leadId: normalizeAutomationTargetId(input.leadId)
+  };
+  const suggestion = await resolveAutomationTemplate(actor, normalizedInput, normalizeAutomationTimestamp(now));
 
   const existing = await prisma.activity.findFirst({
     where: {
       workspaceId: actor.workspaceId,
+      ...activityAttachmentRelationsWhere(actor.workspaceId),
       completedAt: null,
       deletedAt: null,
       title: suggestion.title,
@@ -63,7 +88,7 @@ export async function createAutomationTemplateActivity(
   });
 
   await writeAuditLog(actor, "automation_template.activity_created", "Activity", activity.id, {
-    templateId: input.templateId,
+    templateId,
     dealId: suggestion.dealId,
     leadId: suggestion.leadId
   });
@@ -101,6 +126,9 @@ async function resolveAutomationTemplate(
     include: { stage: true }
   });
   if (!deal) throw new ApiError("NOT_FOUND", "Deal was not found.", 404);
+  if (isOpenDealAutomationTemplate(input.templateId) && deal.status !== DealStatus.OPEN) {
+    throw new ApiError("DEAL_CLOSED", "Open-deal automation templates cannot run after a deal is closed.", 409);
+  }
 
   if (input.templateId === "deal-proposal-follow-up") {
     return dealSuggestion(deal.id, ActivityType.EMAIL, `Proposal follow-up: ${deal.title}`, "Automation template: follow up after proposal review.", addDays(now, 3));
@@ -135,6 +163,34 @@ function dealSuggestion(dealId: string, type: ActivityType, title: string, descr
     description,
     dueAt
   };
+}
+
+function isOpenDealAutomationTemplate(templateId: AutomationTemplateId) {
+  return (openDealAutomationTemplateIds as readonly AutomationTemplateId[]).includes(templateId);
+}
+
+function normalizeAutomationTemplateId(templateId: unknown): AutomationTemplateId {
+  if ((automationTemplateIds as readonly unknown[]).includes(templateId)) {
+    return templateId as AutomationTemplateId;
+  }
+  throw new ApiError("VALIDATION_ERROR", "Automation template is not available.", 422);
+}
+
+function normalizeAutomationTargetId(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new ApiError("VALIDATION_ERROR", "Automation target ids must be text.", 422);
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeAutomationTimestamp(value: unknown) {
+  const date = value instanceof Date ? value : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    throw new ApiError("VALIDATION_ERROR", "Automation template timestamp is invalid.", 422);
+  }
+  return date;
 }
 
 function addDays(value: Date, days: number) {

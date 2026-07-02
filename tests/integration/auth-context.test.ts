@@ -10,7 +10,8 @@ import {
   deleteExpiredLocalSessions,
   hashSessionToken,
   loginWithEmailAndPassword,
-  revokeLocalSessionToken
+  revokeLocalSessionToken,
+  signupWithEmailAndPassword
 } from "@/lib/auth/local-auth";
 import { hashPassword } from "@/lib/auth/password";
 import {
@@ -25,6 +26,7 @@ import {
   getDealReport,
   createWorkspaceFromName,
   listPendingWorkspaceInvitations,
+  listWorkspaces,
   listWorkspaceMembershipOptions,
   listActivities,
   listCustomFields,
@@ -37,6 +39,7 @@ import {
   transferWorkspaceOwnership,
   updateWorkspaceMemberRole
 } from "@/lib/services/crm";
+import { workspaceNameMaxLength } from "@/lib/workspace-validation";
 import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
 
 type Fixture = Awaited<ReturnType<typeof createIntegrationFixture>>;
@@ -214,6 +217,20 @@ describe("current auth and workspace context", () => {
       message: "Invalid email or password.",
       status: 401
     });
+    await expect(
+      loginWithEmailAndPassword({ email: fx.userA.email } as unknown as string, "correct-password")
+    ).rejects.toMatchObject({
+      code: "INVALID_CREDENTIALS",
+      message: "Invalid email or password.",
+      status: 401
+    });
+    await expect(
+      loginWithEmailAndPassword(fx.userA.email, { password: "correct-password" } as unknown as string)
+    ).rejects.toMatchObject({
+      code: "INVALID_CREDENTIALS",
+      message: "Invalid email or password.",
+      status: 401
+    });
     await expect(loginWithEmailAndPassword(fx.userA.email, "wrong-password")).rejects.toMatchObject({
       code: "INVALID_CREDENTIALS",
       message: "Invalid email or password.",
@@ -230,6 +247,38 @@ describe("current auth and workspace context", () => {
       message: "Invalid email or password.",
       status: 401
     });
+  });
+
+  it("rejects malformed local signup inputs without creating users or sessions", async () => {
+    const fx = currentFixture();
+    const userCountBefore = await fx.prisma.user.count();
+    const sessionCountBefore = await fx.prisma.session.count();
+
+    await expect(
+      signupWithEmailAndPassword({
+        email: { value: `signup-${fx.workspaceA.id}@example.test` } as unknown as string,
+        name: "Malformed Email",
+        password: "correct-password"
+      })
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Email is required.",
+      status: 422
+    });
+    await expect(
+      signupWithEmailAndPassword({
+        email: `signup-${fx.workspaceA.id}@example.test`,
+        name: { value: "Ignored Name Object" } as unknown as string,
+        password: { value: "correct-password" } as unknown as string
+      })
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Password must be at least 8 characters.",
+      status: 422
+    });
+
+    await expect(fx.prisma.user.count()).resolves.toBe(userCountBefore);
+    await expect(fx.prisma.session.count()).resolves.toBe(sessionCountBefore);
   });
 
   it("rejects workspace context when the actor is not a member", async () => {
@@ -300,6 +349,51 @@ describe("current auth and workspace context", () => {
     expect(staleSelectionContext.workspace.id).toBe(fx.workspaceA.id);
   });
 
+  it("excludes deactivated users from workspace listing and context resolution", async () => {
+    const fx = currentFixture();
+    const deletedUser = await fx.prisma.user.create({
+      data: {
+        email: `deleted-context-${fx.workspaceA.id}@example.test`,
+        name: "Deleted Context User",
+        deletedAt: new Date("2030-03-01T00:00:00.000Z")
+      }
+    });
+    await fx.prisma.workspaceMembership.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        userId: deletedUser.id,
+        role: MembershipRole.ADMIN
+      }
+    });
+
+    try {
+      await expect(listWorkspaces(deletedUser.id)).resolves.toEqual([]);
+      await expect(listWorkspaceMembershipOptions(deletedUser.id)).resolves.toEqual([]);
+      await expect(
+        resolveCurrentWorkspaceContext({
+          actorUserId: deletedUser.id,
+          workspaceId: fx.workspaceA.id
+        })
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        status: 403
+      });
+      await expect(
+        resolveCurrentWorkspaceSelectionContext({
+          actorUserId: deletedUser.id,
+          selectedWorkspaceId: fx.workspaceA.id,
+          fallbackWorkspaceSlug: fx.workspaceA.slug
+        })
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        status: 403
+      });
+    } finally {
+      await fx.prisma.workspaceMembership.deleteMany({ where: { userId: deletedUser.id } });
+      await fx.prisma.user.deleteMany({ where: { id: deletedUser.id } });
+    }
+  });
+
   it("creates owned workspaces and makes them available for active workspace selection", async () => {
     const fx = currentFixture();
     const createdWorkspaceIds: string[] = [];
@@ -346,6 +440,12 @@ describe("current auth and workspace context", () => {
       await expect(listDeals(selectedWorkspaceContext.actor)).resolves.toEqual([]);
       await expect(createWorkspaceFromName(fx.userA.id, "   ")).rejects.toMatchObject({
         code: "VALIDATION_ERROR",
+        message: "Workspace name is required.",
+        status: 422
+      });
+      await expect(createWorkspaceFromName(fx.userA.id, "x".repeat(workspaceNameMaxLength + 1))).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: `Workspace name must be ${workspaceNameMaxLength} characters or fewer.`,
         status: 422
       });
     } finally {
@@ -386,6 +486,42 @@ describe("current auth and workspace context", () => {
         message: "A pending invitation already exists for this email.",
         status: 422
       });
+      const invitationCountBeforeMalformedCreate = await fx.prisma.workspaceInvitation.count({
+        where: { workspaceId: fx.workspaceA.id }
+      });
+      await expect(
+        createWorkspaceInvitation(fx.actorA, {
+          email: { address: userC.email } as unknown as string,
+          role: "MEMBER"
+        })
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "Invitee email is required.",
+        status: 422
+      });
+      await expect(
+        createWorkspaceInvitation(fx.actorA, {
+          email: userC.email,
+          role: "ADMINISTRATOR" as unknown as MembershipRole
+        })
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "Workspace invitation role must be Admin or Member.",
+        status: 422
+      });
+      await expect(
+        createWorkspaceInvitation(fx.actorA, {
+          email: userC.email,
+          role: "OWNER"
+        })
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "Workspace invitations cannot grant owner access.",
+        status: 422
+      });
+      expect(await fx.prisma.workspaceInvitation.count({ where: { workspaceId: fx.workspaceA.id } })).toBe(
+        invitationCountBeforeMalformedCreate
+      );
 
       const futureUserInvitation = await createWorkspaceInvitation(fx.actorA, {
         email: futureUserEmail,
@@ -405,6 +541,58 @@ describe("current auth and workspace context", () => {
           }
         }
       });
+      const deletedInviteWorkspace = await fx.prisma.workspace.create({
+        data: {
+          name: `Deleted Invite Workspace ${fx.workspaceA.id}`,
+          slug: `deleted-invite-${fx.workspaceA.id}`,
+          memberships: {
+            create: {
+              userId: fx.userA.id,
+              role: "OWNER"
+            }
+          }
+        }
+      });
+      createdWorkspaceIds.push(deletedInviteWorkspace.id);
+      const deletedWorkspaceInvitation = await createWorkspaceInvitation(
+        { workspaceId: deletedInviteWorkspace.id, actorUserId: fx.userA.id },
+        {
+          email: fx.userB.email,
+          role: "MEMBER"
+        }
+      );
+      await fx.prisma.workspace.update({
+        where: { id: deletedInviteWorkspace.id },
+        data: { deletedAt: new Date("2030-03-01T00:00:00.000Z") }
+      });
+      await expect(getWorkspaceInvitationForAcceptance(fx.userB.id, deletedWorkspaceInvitation.id)).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        message: "Workspace invitation was not found.",
+        status: 404
+      });
+      await expect(acceptWorkspaceInvitation(fx.userB.id, deletedWorkspaceInvitation.id)).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        message: "Workspace invitation was not found.",
+        status: 404
+      });
+      await expect(
+        fx.prisma.workspaceMembership.count({
+          where: {
+            workspaceId: deletedInviteWorkspace.id,
+            userId: fx.userB.id
+          }
+        })
+      ).resolves.toBe(0);
+      await expect(
+        fx.prisma.auditLog.count({
+          where: {
+            workspaceId: deletedInviteWorkspace.id,
+            entityType: "WorkspaceInvitation",
+            entityId: deletedWorkspaceInvitation.id,
+            action: "workspace_invitation.accepted"
+          }
+        })
+      ).resolves.toBe(0);
 
       const userCInvitation = await createWorkspaceInvitation(fx.actorA, {
         email: userC.email,
@@ -423,6 +611,32 @@ describe("current auth and workspace context", () => {
         code: "NOT_FOUND",
         status: 404
       });
+      const malformedOwnerInvitation = await fx.prisma.workspaceInvitation.create({
+        data: {
+          workspaceId: fx.workspaceA.id,
+          email: userC.email,
+          role: "OWNER",
+          invitedById: fx.userA.id
+        }
+      });
+      await expect(getWorkspaceInvitationForAcceptance(userC.id, malformedOwnerInvitation.id)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "Workspace invitations cannot grant owner access.",
+        status: 422
+      });
+      await expect(acceptWorkspaceInvitation(userC.id, malformedOwnerInvitation.id)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "Workspace invitations cannot grant owner access.",
+        status: 422
+      });
+      await expect(
+        fx.prisma.workspaceMembership.count({
+          where: {
+            workspaceId: fx.workspaceA.id,
+            userId: userC.id
+          }
+        })
+      ).resolves.toBe(0);
       const adminOnlyWorkspace = await fx.prisma.workspace.create({
         data: {
           name: `Admin Only ${fx.workspaceA.id}`,
@@ -600,6 +814,85 @@ describe("current auth and workspace context", () => {
     }
   });
 
+  it("accepts workspace invitations idempotently under concurrent submissions", async () => {
+    const fx = currentFixture();
+    const invitation = await createWorkspaceInvitation(fx.actorA, {
+      email: fx.userB.email,
+      role: "MEMBER"
+    });
+
+    const results = await Promise.all([
+      acceptWorkspaceInvitation(fx.userB.id, invitation.id),
+      acceptWorkspaceInvitation(fx.userB.id, invitation.id)
+    ]);
+    const [membershipCount, acceptedInvitation, acceptedAuditCount] = await Promise.all([
+      fx.prisma.workspaceMembership.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          userId: fx.userB.id
+        }
+      }),
+      fx.prisma.workspaceInvitation.findUniqueOrThrow({ where: { id: invitation.id } }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "WorkspaceInvitation",
+          entityId: invitation.id,
+          action: "workspace_invitation.accepted"
+        }
+      })
+    ]);
+
+    expect(results.map((workspace) => workspace.id)).toEqual([fx.workspaceA.id, fx.workspaceA.id]);
+    expect(membershipCount).toBe(1);
+    expect(acceptedInvitation.status).toBe("ACCEPTED");
+    expect(acceptedAuditCount).toBe(1);
+  });
+
+  it("returns a validation error for concurrent duplicate workspace invitation creates", async () => {
+    const fx = currentFixture();
+    const inviteEmail = `concurrent-invite-${fx.workspaceA.id}@example.test`;
+
+    const results = await Promise.allSettled([
+      createWorkspaceInvitation(fx.actorA, { email: inviteEmail, role: "MEMBER" }),
+      createWorkspaceInvitation(fx.actorA, { email: inviteEmail.toUpperCase(), role: "ADMIN" })
+    ]);
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof createWorkspaceInvitation>>> =>
+        result.status === "fulfilled"
+    );
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    const [pendingInvitationCount, createdAuditCount] = await Promise.all([
+      fx.prisma.workspaceInvitation.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          email: inviteEmail,
+          status: "PENDING"
+        }
+      }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          action: "workspace_invitation.created",
+          entityType: "WorkspaceInvitation"
+        }
+      })
+    ]);
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "A pending invitation already exists for this email.",
+      status: 422
+    });
+    expect(fulfilled[0]?.value).toMatchObject({ email: inviteEmail });
+    expect(pendingInvitationCount).toBe(1);
+    expect(createdAuditCount).toBe(1);
+  });
+
   it("exposes workspace membership role capability without opening member-only settings management", async () => {
     const fx = currentFixture();
     await fx.prisma.workspaceMembership.create({
@@ -637,6 +930,100 @@ describe("current auth and workspace context", () => {
     expect(adminSummary.currentMembership.role).toBe("ADMIN");
     expect(adminSummary.currentMembership.canManageWorkspaceSettings).toBe(true);
     expect(adminSummary.members.map((member) => member.role)).toEqual(["OWNER", "ADMIN"]);
+  });
+
+  it("ignores deactivated users when summarizing and enforcing workspace admin membership", async () => {
+    const fx = currentFixture();
+    const activeAdmin = await fx.prisma.user.create({
+      data: { email: `active-admin-${fx.workspaceA.id}@example.test`, name: "Active Admin" }
+    });
+    const deletedAdmin = await fx.prisma.user.create({
+      data: {
+        email: `deleted-admin-${fx.workspaceA.id}@example.test`,
+        name: "Deleted Admin",
+        deletedAt: new Date("2030-03-01T00:00:00.000Z")
+      }
+    });
+    const deletedTransferTarget = await fx.prisma.user.create({
+      data: {
+        email: `deleted-owner-target-${fx.workspaceA.id}@example.test`,
+        name: "Deleted Owner Target",
+        deletedAt: new Date("2030-03-01T00:00:00.000Z")
+      }
+    });
+    const adminOnlyWorkspace = await fx.prisma.workspace.create({
+      data: {
+        name: `Active Admin Only ${fx.workspaceA.id}`,
+        slug: `active-admin-only-${fx.workspaceA.id}`,
+        memberships: {
+          create: [
+            {
+              userId: activeAdmin.id,
+              role: "ADMIN"
+            },
+            {
+              userId: deletedAdmin.id,
+              role: "ADMIN"
+            }
+          ]
+        }
+      }
+    });
+    const activeAdminMembership = await fx.prisma.workspaceMembership.findUniqueOrThrow({
+      where: {
+        workspaceId_userId: {
+          workspaceId: adminOnlyWorkspace.id,
+          userId: activeAdmin.id
+        }
+      }
+    });
+    const deletedTransferMembership = await fx.prisma.workspaceMembership.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        userId: deletedTransferTarget.id,
+        role: "MEMBER"
+      }
+    });
+
+    try {
+      const summary = await getWorkspaceMembershipSummary({
+        workspaceId: adminOnlyWorkspace.id,
+        actorUserId: activeAdmin.id
+      });
+
+      expect(summary.members.map((member) => member.email)).toEqual([activeAdmin.email]);
+      await expect(
+        removeWorkspaceMember(
+          { workspaceId: adminOnlyWorkspace.id, actorUserId: activeAdmin.id },
+          activeAdminMembership.id
+        )
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "You cannot remove yourself as the last workspace admin.",
+        status: 422
+      });
+      await expect(transferWorkspaceOwnership(fx.actorA, deletedTransferMembership.id)).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        status: 404
+      });
+    } finally {
+      await fx.prisma.auditLog.deleteMany({ where: { workspaceId: adminOnlyWorkspace.id } });
+      await fx.prisma.workspaceMembership.deleteMany({ where: { workspaceId: adminOnlyWorkspace.id } });
+      await fx.prisma.workspaceMembership.deleteMany({
+        where: { workspaceId: fx.workspaceA.id, userId: deletedTransferTarget.id }
+      });
+      await fx.prisma.workspaceMembership.updateMany({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          userId: fx.userA.id
+        },
+        data: { role: MembershipRole.OWNER }
+      });
+      await fx.prisma.workspace.deleteMany({ where: { id: adminOnlyWorkspace.id } });
+      await fx.prisma.user.deleteMany({
+        where: { id: { in: [activeAdmin.id, deletedAdmin.id, deletedTransferTarget.id] } }
+      });
+    }
   });
 
   it("edits workspace roles and transfers ownership through owner-scoped member management", async () => {
@@ -722,6 +1109,23 @@ describe("current auth and workspace context", () => {
       });
       const promoted = await updateWorkspaceMemberRole(fx.actorA, memberMembership.id, "ADMIN");
       const demoted = await updateWorkspaceMemberRole(fx.actorA, memberMembership.id, "MEMBER");
+      const roleUpdateAuditCountBeforeDuplicate = await fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "WorkspaceMembership",
+          entityId: memberMembership.id,
+          action: "workspace_member.role_updated"
+        }
+      });
+      const duplicateDemotion = await updateWorkspaceMemberRole(fx.actorA, memberMembership.id, "MEMBER");
+      const roleUpdateAuditCountAfterDuplicate = await fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "WorkspaceMembership",
+          entityId: memberMembership.id,
+          action: "workspace_member.role_updated"
+        }
+      });
 
       await expect(
         updateWorkspaceMemberRole({ workspaceId: fx.workspaceA.id, actorUserId: userC.id }, memberMembership.id, "ADMIN")
@@ -813,6 +1217,13 @@ describe("current auth and workspace context", () => {
 
       expect(promoted.role).toBe("ADMIN");
       expect(demoted.role).toBe("MEMBER");
+      expect(duplicateDemotion).toMatchObject({
+        id: memberMembership.id,
+        role: "MEMBER",
+        roleLabel: "Member"
+      });
+      expect(roleUpdateAuditCountBeforeDuplicate).toBe(2);
+      expect(roleUpdateAuditCountAfterDuplicate).toBe(roleUpdateAuditCountBeforeDuplicate);
       expect(adminRemovedMember.email).toBe(userD.email);
       expect(removedMemberCount).toBe(0);
       expect(newOwner).toMatchObject({
@@ -857,6 +1268,80 @@ describe("current auth and workspace context", () => {
         data: { role: MembershipRole.OWNER }
       });
       await fx.prisma.user.deleteMany({ where: { id: { in: [userC.id, userD.id] } } });
+    }
+  });
+
+  it("serializes concurrent workspace ownership transfers to a single owner", async () => {
+    const fx = currentFixture();
+    const userC = await fx.prisma.user.create({
+      data: { email: `ownership-race-c-${fx.workspaceA.id}@example.test`, name: "Ownership Race C" }
+    });
+
+    try {
+      const memberMembership = await fx.prisma.workspaceMembership.create({
+        data: {
+          workspaceId: fx.workspaceA.id,
+          userId: fx.userB.id,
+          role: MembershipRole.MEMBER
+        }
+      });
+      const secondMemberMembership = await fx.prisma.workspaceMembership.create({
+        data: {
+          workspaceId: fx.workspaceA.id,
+          userId: userC.id,
+          role: MembershipRole.MEMBER
+        }
+      });
+
+      const results = await Promise.allSettled([
+        transferWorkspaceOwnership(fx.actorA, memberMembership.id),
+        transferWorkspaceOwnership(fx.actorA, secondMemberMembership.id)
+      ]);
+      const fulfilled = results.filter(
+        (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof transferWorkspaceOwnership>>> =>
+          result.status === "fulfilled"
+      );
+      const rejected = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      const ownerMemberships = await fx.prisma.workspaceMembership.findMany({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          role: MembershipRole.OWNER
+        },
+        orderBy: { userId: "asc" }
+      });
+      const transferAuditCount = await fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          action: "workspace_member.ownership_transferred",
+          entityType: "WorkspaceMembership"
+        }
+      });
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.reason).toMatchObject({
+        code: "FORBIDDEN",
+        message: "Only the workspace owner can transfer ownership.",
+        status: 403
+      });
+      expect(ownerMemberships).toHaveLength(1);
+      expect(ownerMemberships[0]?.userId).toBe(fulfilled[0]?.value.userId);
+      expect(transferAuditCount).toBe(1);
+    } finally {
+      await fx.prisma.workspaceMembership.deleteMany({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          userId: { in: [fx.userB.id, userC.id] }
+        }
+      });
+      await fx.prisma.workspaceMembership.updateMany({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          userId: fx.userA.id
+        },
+        data: { role: MembershipRole.OWNER }
+      });
+      await fx.prisma.user.delete({ where: { id: userC.id } });
     }
   });
 

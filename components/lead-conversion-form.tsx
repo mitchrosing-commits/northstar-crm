@@ -3,6 +3,12 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { EmptyState } from "@/components/empty-state";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
+
 type PipelineOption = {
   id: string;
   name: string;
@@ -75,22 +81,34 @@ export function LeadConversionForm({
   }
 
   if (leadStatus === "CONVERTED") {
-    return <p className="empty-copy">This lead has already been converted.</p>;
+    return <LockedPanelNotice title="Lead converted">This lead has already been converted.</LockedPanelNotice>;
   }
 
   if (pipelines.length === 0) {
-    return <p className="empty-copy">Create or seed a pipeline before converting leads.</p>;
+    return (
+      <EmptyState
+        className="empty-state-compact empty-state-panel lead-conversion-empty"
+        title="No pipeline available"
+        description="Create or seed a pipeline before converting leads."
+      />
+    );
   }
 
   if (!selectedPipeline || selectedPipeline.stages.length === 0) {
-    return <p className="empty-copy">Choose a pipeline with at least one stage before converting this lead.</p>;
+    return (
+      <EmptyState
+        className="empty-state-compact empty-state-panel lead-conversion-empty"
+        title="No stage available"
+        description="Choose a pipeline with at least one stage before converting this lead."
+      />
+    );
   }
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       <label className="form-field">
-        <span>Pipeline</span>
+        <FormFieldLabel required>Pipeline</FormFieldLabel>
         <select onChange={(event) => setPipelineId(event.target.value)} value={pipelineId}>
           {pipelines.map((pipeline) => (
             <option key={pipeline.id} value={pipeline.id}>
@@ -100,7 +118,7 @@ export function LeadConversionForm({
         </select>
       </label>
       <label className="form-field">
-        <span>Stage</span>
+        <FormFieldLabel required>Stage</FormFieldLabel>
         <select onChange={(event) => setStageId(event.target.value)} value={stageId}>
           {selectedPipeline.stages.map((stage) => (
             <option key={stage.id} value={stage.id}>
@@ -110,18 +128,20 @@ export function LeadConversionForm({
         </select>
       </label>
       <label className="form-field">
-        <span>Deal title</span>
+        <FormFieldLabel>Deal title</FormFieldLabel>
         <input
           onChange={(event) => setTitle(event.target.value)}
           placeholder={leadTitle}
           value={title}
         />
       </label>
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !pipelineId || !stageId} type="submit">
-          {isSaving ? "Converting..." : "Convert to deal"}
-        </button>
-      </div>
+      <FormActionBar
+        disabledHint="Choose a pipeline and stage before converting this lead."
+        isSaving={isSaving}
+        pendingLabel="Converting..."
+        submitDisabled={!pipelineId || !stageId}
+        submitLabel="Convert to deal"
+      />
     </form>
   );
 }

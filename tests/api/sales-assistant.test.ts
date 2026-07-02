@@ -88,8 +88,11 @@ describe("Sales Assistant / Needs Attention v1", () => {
     expect(dealDetailPage).toContain("listEmailLogsForRecord(actor, { type: \"DEAL\", id: deal.id })");
     expect(dealDetailPage).toContain("buildDealAttentionBadges");
     expect(dealDetailPage).toContain("deal-next-step-cues");
+    expect(dealDetailPage).toContain("deal-next-step-cue");
+    expect(dealDetailPage).toContain("title=\"Email follow-up\"");
     expect(dealDetailPage).toContain("A recent inbound email is linked to this deal");
     expect(dealDetailPage).toContain("Review contract workflow");
+    expect(dealDetailPage).toContain("title=\"Quote follow-up\"");
     expect(dealDetailPage).toContain("A sent quote is waiting for a response");
   });
 });

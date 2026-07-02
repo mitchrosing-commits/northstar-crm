@@ -1,0 +1,19 @@
+import type { ReactNode } from "react";
+
+type FormFieldLabelProps = {
+  children: ReactNode;
+  required?: boolean;
+};
+
+export function FormFieldLabel({ children, required = false }: FormFieldLabelProps) {
+  const requirementLabel = required ? "Required field" : "Optional field";
+
+  return (
+    <span className="form-field-label">
+      <span>{children}</span>
+      <span aria-label={requirementLabel} className="badge" title={requirementLabel}>
+        {required ? "Required" : "Optional"}
+      </span>
+    </span>
+  );
+}

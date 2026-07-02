@@ -6,11 +6,13 @@ import type { Route } from "next";
 
 import { ApiError } from "@/lib/api/responses";
 import { loginWithEmailAndPassword } from "@/lib/auth/local-auth";
+import { sanitizeAuthNextPath } from "@/lib/auth/next-path";
 import {
   localSessionCookieName,
   resolveAuthMode,
   serializeLocalSessionCookieValue
 } from "@/lib/auth/session";
+import { redactSensitiveText } from "@/lib/security/redaction";
 
 export type LoginActionState = {
   email: string;
@@ -20,7 +22,7 @@ export type LoginActionState = {
 export async function loginAction(_previousState: LoginActionState, formData: FormData): Promise<LoginActionState> {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
-  const nextPath = sanitizeNextPath(String(formData.get("next") ?? ""));
+  const nextPath = sanitizeAuthNextPath(String(formData.get("next") ?? ""));
   let session: Awaited<ReturnType<typeof loginWithEmailAndPassword>>["session"];
 
   try {
@@ -43,15 +45,9 @@ export async function loginAction(_previousState: LoginActionState, formData: Fo
   } catch (error) {
     return {
       email,
-      error: error instanceof ApiError ? error.message : "Sign in failed."
+      error: error instanceof ApiError ? redactSensitiveText(error.message) : "Sign in failed."
     };
   }
 
   redirect(nextPath as Route);
-}
-
-function sanitizeNextPath(nextPath: string) {
-  if (!nextPath.startsWith("/") || nextPath.startsWith("//")) return "/dashboard";
-  if (nextPath.startsWith("/login")) return "/dashboard";
-  return nextPath;
 }

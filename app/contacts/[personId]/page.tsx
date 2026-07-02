@@ -1,19 +1,27 @@
 import Link from "next/link";
+import type { Route } from "next";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
-import { RecordCustomFieldsForm } from "@/components/record-custom-fields-form";
+import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
-import { formatDate, formatMoney } from "@/components/format";
+import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
 import { NotesPanel } from "@/components/notes-panel";
+import { PageHeader } from "@/components/page-header";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { getNextOpenActivity, RecordNextActivitySummary } from "@/components/record-next-activity-summary";
+import { RecordHeaderActions } from "@/components/record-header-actions";
+import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
+import { RelatedDealsTable, RelatedRecordsPanel } from "@/components/related-records-table";
+import { RecordSummary } from "@/components/record-summary";
 import { RecordTimeline } from "@/components/record-timeline";
-import { StatusBadge } from "@/components/status-badge";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import { formatPersonName } from "@/lib/person-name";
+import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
+import { recordSubtitle } from "@/lib/record-subtitle";
 import { getPerson, getRecordTimeline, getWorkspace, listEmailTemplates, listPersonCustomFields } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -36,53 +44,98 @@ export default async function ContactDetailPage({ params }: PageProps) {
     listPersonCustomFields(actor, person.id),
     listEmailTemplates(actor, { activeOnly: true })
   ]);
-  const personName = formatPersonName(person);
+  const personName = formatPersonName(person) ?? person.email ?? "Unnamed contact";
+  const nextActivity = getNextOpenActivity(person.activities);
+  const activityCopy = recordActivitySectionCopy("contact");
+  const emailLogCount = timelineItems.filter((item) => item.type === "email").length;
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
   }));
+  const createLinkedDealActionLabel = `Create deal linked to ${personName}`;
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Contact</p>
-          <h1 className="page-title">{personName}</h1>
-        </div>
-        <div className="header-actions">
-          <Link
-            className="button-secondary"
-            href={buildActivityFollowUpHref({
-              related: { type: "person", id: person.id },
-              title: `Follow up with ${personName}`,
-              type: "TASK"
-            })}
-          >
-            Add follow-up
-          </Link>
-          <Link className="button-secondary" href="/contacts">
-            Back to contacts
-          </Link>
-          <Link className="button-primary" href={`/contacts/${person.id}/edit`}>
-            Edit contact
-          </Link>
-        </div>
-      </header>
+      <PageHeader
+        actions={
+          <RecordHeaderActions
+            addHref={"#add-activity" as Route}
+            backHref="/contacts"
+            backLabel="Back to contacts"
+            customFieldsHref={"#custom-fields" as Route}
+            editHref={`/contacts/${person.id}/edit` as Route}
+            editLabel="Edit contact"
+            noteHref={"#notes" as Route}
+            recordTitle={personName}
+          />
+        }
+        eyebrow="Contact"
+        subtitle={recordSubtitle([person.organization?.name, person.email, person.owner?.name ?? person.owner?.email])}
+        title={personName}
+      />
+
+      <RecordSummary
+        actions={
+          <RecordPanelJumpNav
+            counts={{
+              activities: person.activities.length,
+              auditHistory: person.auditLogs.length,
+              customFields: customFields.length,
+              emailLog: emailLogCount,
+              notes: person.notes.length,
+              timeline: timelineItems.length
+            }}
+            extraJumps={[
+              {
+                href: "#related-deals" as Route,
+                label: "Deals",
+                count: person.deals.length,
+                countLabel: { singular: "deal", plural: "deals" }
+              }
+            ]}
+          />
+        }
+        eyebrow="Relationship snapshot"
+        items={[
+          { label: "Linked deals", value: person.deals.length },
+          { label: "Activities", value: person.activities.length, tone: person.activities.length > 0 ? "default" : "warning" },
+          { label: "Owner", value: person.owner?.name ?? person.owner?.email ?? "Unassigned", tone: person.owner ? "default" : "muted" },
+          {
+            label: "Next follow-up",
+            value: <RecordNextActivitySummary activity={nextActivity} />,
+            tone: nextActivity ? "default" : "warning"
+          },
+          { label: "Notes", value: person.notes.length },
+          {
+            label: "Organization",
+            value: person.organization ? (
+              <Link className="inline-link" href={`/organizations/${person.organization.id}`}>
+                {person.organization.name}
+              </Link>
+            ) : (
+              <InlineEmptyStateText>No organization linked</InlineEmptyStateText>
+            ),
+            tone: person.organization ? "default" : "muted"
+          }
+        ]}
+        title="Contact workspace"
+      />
 
       <section className="detail-grid">
         <DetailFieldGrid
           fields={[
-            { label: "Email", value: person.email ?? "None" },
-            { label: "Phone", value: person.phone ?? "None" },
+            { emptyLabel: "No email", label: "Email", value: person.email },
+            { emptyLabel: "No phone", label: "Phone", value: person.phone },
             { label: "Owner", value: person.owner?.name ?? person.owner?.email ?? "Unassigned" },
             {
+              emptyLabel: "No organization",
               label: "Organization",
               value: person.organization ? (
                 <Link className="inline-link" href={`/organizations/${person.organization.id}`}>
                   {person.organization.name}
                 </Link>
               ) : (
-                "None"
+                null
               )
             }
           ]}
@@ -96,69 +149,43 @@ export default async function ContactDetailPage({ params }: PageProps) {
         />
       </section>
 
-      <section className="data-card" style={{ marginTop: 14 }}>
-        <h2 className="panel-title">Custom Fields</h2>
-        <RecordCustomFieldsForm
-          emptyMessage="No contact custom fields have been created yet."
-          entityId={person.id}
-          entityType="PERSON"
-          fields={customFields.map((field) => ({
-            id: field.id,
-            name: field.name,
-            key: field.key,
-            fieldType: field.fieldType,
-            options: field.options,
-            required: field.required,
-            value: field.values[0]?.value ?? null
-          }))}
-          workspaceId={workspace.id}
-        />
-      </section>
+      <RecordCustomFieldsPanel
+        emptyMessage="No contact custom fields have been created yet."
+        entityId={person.id}
+        entityType="PERSON"
+        fields={customFields}
+        workspaceId={workspace.id}
+      />
 
-      <section className="data-card" style={{ marginTop: 14 }}>
-        <h2 className="panel-title">Linked Deals</h2>
-        {person.deals.length > 0 ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Deal</th>
-                <th>Value</th>
-                <th>Status</th>
-                <th>Expected close</th>
-              </tr>
-            </thead>
-            <tbody>
-              {person.deals.map((deal) => (
-                <tr key={deal.id}>
-                  <td>
-                    <Link className="inline-link" href={`/deals/${deal.id}`}>
-                      {deal.title}
-                    </Link>
-                  </td>
-                  <td>{formatMoney(deal.valueCents, deal.currency)}</td>
-                  <td>
-                    <StatusBadge status={deal.status} />
-                  </td>
-                  <td>{formatDate(deal.expectedCloseAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="empty-copy">No deals are linked to this contact.</p>
-        )}
-      </section>
+      <RelatedRecordsPanel count={person.deals.length} id="related-deals" title="Linked Deals">
+        <RelatedDealsTable
+          deals={person.deals}
+          emptyAction={
+            <Link
+              aria-label={createLinkedDealActionLabel}
+              className="button-secondary button-compact"
+              href={`/deals/new?personId=${person.id}` as Route}
+              title={createLinkedDealActionLabel}
+            >
+              Create linked deal
+            </Link>
+          }
+          emptyMessage="No deals are linked to this contact."
+        />
+      </RelatedRecordsPanel>
 
       <RecordActivitiesPanel
         attachment={{ personId: person.id }}
         defaultOwnerId={actorUserId}
+        formId="add-activity"
         owners={owners}
         sections={[
           {
             activities: person.activities,
-            emptyMessage: "No activities are linked to this contact.",
+            description: activityCopy.description,
+            emptyMessage: activityCopy.emptyMessage,
             showCompleteAction: true,
-            title: "Activities"
+            title: activityCopy.title
           }
         ]}
         workspaceId={workspace.id}
@@ -178,8 +205,4 @@ export default async function ContactDetailPage({ params }: PageProps) {
       />
     </AppShell>
   );
-}
-
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }

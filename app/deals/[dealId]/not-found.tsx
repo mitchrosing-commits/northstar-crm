@@ -1,15 +1,19 @@
 import Link from "next/link";
 
+import { RouteStatusState } from "@/components/route-status-state";
+
 export default function DealNotFound() {
+  const backToPipelineLabel = "Back to pipeline from missing deal";
+
   return (
-    <main className="main">
-      <div className="empty-state">
-        <h1>Deal not found</h1>
-        <p>This deal may have been deleted or may not belong to the current workspace.</p>
-        <Link className="text-link" href="/pipeline">
+    <RouteStatusState
+      actions={
+        <Link aria-label={backToPipelineLabel} className="button-secondary" href="/pipeline" title={backToPipelineLabel}>
           Back to pipeline
         </Link>
-      </div>
-    </main>
+      }
+      description="This deal may have been deleted or may not belong to the current workspace."
+      title="Deal not found"
+    />
   );
 }

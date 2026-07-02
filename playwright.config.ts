@@ -11,10 +11,10 @@ export default defineConfig({
     trace: "retain-on-failure"
   },
   webServer: {
-    command: "npm run dev -- --hostname 127.0.0.1 --port 3100",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    url: "http://127.0.0.1:3100/dashboard"
+    command: "npm run start -- --hostname 127.0.0.1 --port 3100",
+    reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === "1",
+    timeout: 180_000,
+    url: "http://127.0.0.1:3100/api/health"
   },
   projects: [
     {

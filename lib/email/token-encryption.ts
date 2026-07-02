@@ -20,8 +20,8 @@ export class EmailTokenDecryptionError extends Error {
   }
 }
 
-export function encryptEmailToken(plaintext: string, env: EnvInput = process.env) {
-  if (!plaintext) {
+export function encryptEmailToken(plaintext: unknown, env: EnvInput = process.env) {
+  if (typeof plaintext !== "string" || !plaintext) {
     throw new Error("Cannot encrypt an empty email token.");
   }
 
@@ -35,7 +35,10 @@ export function encryptEmailToken(plaintext: string, env: EnvInput = process.env
   return [tokenPayloadVersion, iv.toString("base64url"), tag.toString("base64url"), ciphertext.toString("base64url")].join(".");
 }
 
-export function decryptEmailToken(payload: string, env: EnvInput = process.env) {
+export function decryptEmailToken(payload: unknown, env: EnvInput = process.env) {
+  if (typeof payload !== "string") {
+    throw new EmailTokenDecryptionError("Encrypted email token payload is malformed.");
+  }
   const parts = payload.split(".");
   if (parts.length !== 4 || parts[0] !== tokenPayloadVersion) {
     throw new EmailTokenDecryptionError("Encrypted email token payload is malformed.");

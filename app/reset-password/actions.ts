@@ -2,6 +2,7 @@
 
 import { ApiError } from "@/lib/api/responses";
 import { resetPasswordWithToken } from "@/lib/auth/password-reset";
+import { redactSensitiveText } from "@/lib/security/redaction";
 
 export type ResetPasswordActionState = {
   error?: string;
@@ -24,7 +25,7 @@ export async function resetPasswordAction(
     await resetPasswordWithToken(token, password);
   } catch (error) {
     return {
-      error: error instanceof ApiError ? error.message : "Password reset failed."
+      error: error instanceof ApiError ? redactSensitiveText(error.message) : "Password reset failed."
     };
   }
 

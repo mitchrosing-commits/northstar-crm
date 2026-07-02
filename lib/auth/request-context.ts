@@ -114,12 +114,11 @@ export async function resolveCurrentWorkspaceContext(input: {
     throw new ApiError("WORKSPACE_NOT_FOUND", "Workspace was not found.", 404);
   }
 
-  const membership = await prisma.workspaceMembership.findUnique({
+  const membership = await prisma.workspaceMembership.findFirst({
     where: {
-      workspaceId_userId: {
-        workspaceId: workspace.id,
-        userId: input.actorUserId
-      }
+      workspaceId: workspace.id,
+      userId: input.actorUserId,
+      user: { deletedAt: null }
     },
     select: { id: true, role: true }
   });
@@ -157,6 +156,7 @@ export async function resolveCurrentWorkspaceSelectionContext(input: {
   const memberships = await prisma.workspaceMembership.findMany({
     where: {
       userId: input.actorUserId,
+      user: { deletedAt: null },
       workspace: { deletedAt: null }
     },
     select: {

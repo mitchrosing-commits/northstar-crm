@@ -1,9 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormPrefillNotice } from "@/components/form-prefill-notice";
+import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
+import { formatPersonName } from "@/lib/person-name";
 
 type EntityOption = {
   id: string;
@@ -28,7 +35,10 @@ type ContactFormProps = {
   defaultOwnerId?: string;
   defaultEmail?: string;
   defaultName?: string;
+  defaultOrganizationId?: string;
+  prefillNotice?: string;
   initialContact?: ContactFormInitial;
+  cancelHref: Route;
 };
 
 export function ContactForm({
@@ -39,7 +49,10 @@ export function ContactForm({
   defaultOwnerId,
   defaultEmail,
   defaultName,
-  initialContact
+  defaultOrganizationId,
+  prefillNotice,
+  initialContact,
+  cancelHref
 }: ContactFormProps) {
   const router = useRouter();
   const defaultCreateOwnerId =
@@ -47,7 +60,7 @@ export function ContactForm({
   const [name, setName] = useState(formatNameInput(initialContact) || defaultName || "");
   const [email, setEmail] = useState(initialContact?.email ?? defaultEmail ?? "");
   const [phone, setPhone] = useState(initialContact?.phone ?? "");
-  const [organizationId, setOrganizationId] = useState(initialContact?.organizationId ?? "");
+  const [organizationId, setOrganizationId] = useState(initialContact?.organizationId ?? defaultOrganizationId ?? "");
   const [ownerId, setOwnerId] = useState(initialContact?.ownerId ?? defaultCreateOwnerId);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -98,37 +111,46 @@ export function ContactForm({
 
   return (
     <form className="form-card" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {mode === "create" ? (
+        <FormIntroCallout>
+          Add the person first, then link them to deals, activities, notes, and an organization as the relationship develops.
+        </FormIntroCallout>
+      ) : null}
+      {mode === "create" && prefillNotice ? (
+        <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
+      ) : null}
       <div className="form-grid">
         <label className="form-field form-field-wide">
-          <span>Name</span>
+          <FormFieldLabel required>Name</FormFieldLabel>
           <input onChange={(event) => setName(event.target.value)} required value={name} />
         </label>
 
         <label className="form-field">
-          <span>Email</span>
+          <FormFieldLabel>Email</FormFieldLabel>
           <input onChange={(event) => setEmail(event.target.value)} type="email" value={email} />
         </label>
 
         <label className="form-field">
-          <span>Phone</span>
+          <FormFieldLabel>Phone</FormFieldLabel>
           <input onChange={(event) => setPhone(event.target.value)} value={phone} />
         </label>
 
         <label className="form-field">
-          <span>Organization</span>
+          <FormFieldLabel>Organization</FormFieldLabel>
           <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-            <option value="">None</option>
+            <option value="">{organizations.length === 0 ? "No organizations yet - save without one" : "None"}</option>
             {organizations.map((organization) => (
               <option key={organization.id} value={organization.id}>
                 {organization.name}
               </option>
             ))}
           </select>
+          {organizations.length === 0 ? <small className="form-hint">You can create or import organizations later.</small> : null}
         </label>
 
         <label className="form-field">
-          <span>Assigned to</span>
+          <FormFieldLabel>Assigned to</FormFieldLabel>
           <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
             <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
             {owners.map((owner) => (
@@ -137,25 +159,25 @@ export function ContactForm({
               </option>
             ))}
           </select>
-          <OwnerHint owners={owners} />
+          <OwnerAssignmentHint owners={owners} />
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !name.trim()} type="submit">
-          {isSaving ? "Saving..." : mode === "create" ? "Create contact" : "Save changes"}
-        </button>
-        <button className="button-secondary" onClick={() => router.back()} type="button">
-          Cancel
-        </button>
-      </div>
+      <FormActionBar
+        cancelHref={cancelHref}
+        cancelLabel={mode === "create" ? "Back to contacts" : "Back to contact"}
+        disabledHint="Add a contact name before saving."
+        isSaving={isSaving}
+        submitDisabled={!name.trim()}
+        submitLabel={mode === "create" ? "Create contact" : "Save changes"}
+      />
     </form>
   );
 }
 
 function formatNameInput(contact?: ContactFormInitial) {
   if (!contact) return "";
-  return [contact.firstName, contact.lastName].filter(Boolean).join(" ");
+  return formatPersonName(contact) ?? "";
 }
 
 function parseName(value: string) {
@@ -166,30 +188,4 @@ function parseName(value: string) {
     firstName,
     lastName: rest.length > 0 ? rest.join(" ") : null
   };
-}
-
-function OwnerHint({ owners }: { owners: EntityOption[] }) {
-  if (owners.length === 1) {
-    return (
-      <small className="form-hint">
-        You are the only workspace member right now. Invite teammates later from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  if (owners.length === 0) {
-    return (
-      <small className="form-hint">
-        Save unassigned for now, then manage workspace members from{" "}
-        <Link className="inline-link" href={"/settings" as Route}>
-          Settings
-        </Link>
-        .
-      </small>
-    );
-  }
-  return null;
 }

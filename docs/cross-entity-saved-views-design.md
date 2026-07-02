@@ -28,6 +28,7 @@ Current Deals behavior:
 - Existing saved views without `customFieldOperator` remain backward-compatible because missing operator defaults to exact `equals` behavior.
 - Saved views are workspace-wide. There is no per-user ownership, private/shared view distinction, pinning, ordering, permissions model, or role-specific visibility.
 - Creating and deleting saved views goes through server actions on `/deals`; the service enforces workspace access and `recordType: "DEAL"`.
+- Saved-view names are normalized, required, and capped at 120 characters by the service; forms also expose that cap through `maxLength`.
 
 Current Leads behavior:
 
@@ -168,9 +169,10 @@ Defer Activities:
 Save current view:
 
 - Each supported list should show the same compact saved-view panel pattern as Deals.
+- Supported list page headers should surface when a filtered or matching saved view is active, with a clear action that resets to the base list.
 - The save form should serialize the current normalized list state.
 - Page number must remain excluded.
-- Empty names should be rejected.
+- Empty names and names over 120 characters should be rejected.
 
 Apply saved view:
 
@@ -208,6 +210,7 @@ Implemented tests cover:
 - Contacts saved-view create/apply/delete behavior.
 - Organizations saved-view create/apply/delete behavior.
 - Page number exclusion.
+- Saved-view name normalization and length validation.
 - `customFieldOperator` persistence.
 - Existing saved views without `customFieldOperator`.
 - Invalid saved payload shape normalizes to safe defaults.

@@ -1,3 +1,5 @@
+import { isPublicHttpsUrl } from "@/lib/public-host";
+
 type EnvInput = Record<string, string | undefined>;
 
 export type PasswordResetEmailInput = {
@@ -11,14 +13,33 @@ export type PasswordResetEmailSender = (input: PasswordResetEmailInput) => Promi
 type FetchLike = typeof fetch;
 
 export function passwordResetEmailReadiness(env: EnvInput = process.env) {
-  const resendConfigured = Boolean(readNonEmpty(env.RESEND_API_KEY) && readNonEmpty(env.AUTH_EMAIL_FROM));
-  const webhookConfigured = Boolean(readNonEmpty(env.AUTH_EMAIL_WEBHOOK_URL));
-  const configured = resendConfigured || webhookConfigured;
+  const appBaseUrl = readNonEmpty(env.APP_BASE_URL);
+  const authEmailWebhookUrl = readNonEmpty(env.AUTH_EMAIL_WEBHOOK_URL);
+  const hasUsableAppBaseUrl = isUsablePasswordResetAppBaseUrl(appBaseUrl, env);
+  const hasResendApiKey = Boolean(readNonEmpty(env.RESEND_API_KEY));
+  const hasAuthEmailFrom = Boolean(readNonEmpty(env.AUTH_EMAIL_FROM));
+  const resendConfigured = hasResendApiKey && hasAuthEmailFrom;
+  const webhookConfigured = Boolean(authEmailWebhookUrl);
+  const webhookUsable = isUsableAuthEmailWebhookUrl(authEmailWebhookUrl, env);
+  const hasDeliveryBackend = resendConfigured || webhookUsable;
+  const configured = hasUsableAppBaseUrl && hasDeliveryBackend;
+  const missingEnvNames = [];
+
+  if (!hasUsableAppBaseUrl) missingEnvNames.push("APP_BASE_URL");
+  if (!hasDeliveryBackend) {
+    if (hasResendApiKey && !hasAuthEmailFrom) {
+      missingEnvNames.push("AUTH_EMAIL_FROM");
+    } else if (webhookConfigured && !webhookUsable) {
+      missingEnvNames.push("AUTH_EMAIL_WEBHOOK_URL");
+    } else {
+      missingEnvNames.push("RESEND_API_KEY", "AUTH_EMAIL_FROM", "AUTH_EMAIL_WEBHOOK_URL");
+    }
+  }
 
   return {
     configured,
     deliveryMethod: resendConfigured ? "resend" : webhookConfigured ? "webhook" : "none",
-    missingEnvNames: configured ? [] : ["RESEND_API_KEY", "AUTH_EMAIL_FROM", "AUTH_EMAIL_WEBHOOK_URL"],
+    missingEnvNames: configured ? [] : missingEnvNames,
     optionalEnvNames: ["AUTH_EMAIL_WEBHOOK_TOKEN"],
     workerRequired: true
   };
@@ -29,9 +50,10 @@ export function isPasswordResetEmailConfigured(env: EnvInput = process.env) {
 }
 
 export async function sendPasswordResetEmail(
-  input: PasswordResetEmailInput,
+  input: unknown,
   options: { env?: EnvInput; fetchImpl?: FetchLike } = {}
 ) {
+  const emailInput = normalizePasswordResetEmailInput(input);
   const env = options.env ?? process.env;
   const resendApiKey = readNonEmpty(env.RESEND_API_KEY);
   const from = readNonEmpty(env.AUTH_EMAIL_FROM);
@@ -39,11 +61,14 @@ export async function sendPasswordResetEmail(
   const fetchImpl = options.fetchImpl ?? fetch;
 
   if (resendApiKey && from) {
-    await sendPasswordResetEmailWithResend(input, { fetchImpl, from, resendApiKey });
+    await sendPasswordResetEmailWithResend(emailInput, { fetchImpl, from, resendApiKey });
     return;
   }
 
   if (!webhookUrl) return;
+  if (!isUsableAuthEmailWebhookUrl(webhookUrl, env)) {
+    throw new Error("Password reset email webhook URL is invalid.");
+  }
 
   const token = readNonEmpty(env.AUTH_EMAIL_WEBHOOK_TOKEN);
   const headers: Record<string, string> = {
@@ -59,10 +84,10 @@ export async function sendPasswordResetEmail(
     headers,
     body: JSON.stringify({
       type: "password_reset",
-      to: input.to,
+      to: emailInput.to,
       from,
-      resetUrl: input.resetUrl,
-      expiresAt: input.expiresAt.toISOString()
+      resetUrl: emailInput.resetUrl,
+      expiresAt: emailInput.expiresAt.toISOString()
     })
   });
 
@@ -131,7 +156,76 @@ function escapeHtml(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function readNonEmpty(value: string | undefined) {
-  const trimmed = value?.trim();
+function normalizePasswordResetEmailInput(input: unknown): PasswordResetEmailInput {
+  if (!isRecord(input)) throw invalidPasswordResetEmailInput();
+
+  const to = readNonEmpty(input.to);
+  const resetUrl = readNonEmpty(input.resetUrl);
+  const expiresAt = input.expiresAt instanceof Date ? input.expiresAt : null;
+
+  if (!to || !isValidRecipientEmail(to) || !resetUrl || !isValidResetUrl(resetUrl) || !expiresAt || Number.isNaN(expiresAt.getTime())) {
+    throw invalidPasswordResetEmailInput();
+  }
+
+  return { expiresAt, resetUrl, to };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidRecipientEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isValidResetUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      !url.username &&
+      !url.password &&
+      url.pathname === "/reset-password" &&
+      Boolean(readNonEmpty(url.searchParams.get("token")))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isUsablePasswordResetAppBaseUrl(value: string | undefined, env: EnvInput) {
+  if (!value) return false;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (env.NODE_ENV !== "production") return true;
+    return isPublicHttpsUrl(url);
+  } catch {
+    return false;
+  }
+}
+
+function isUsableAuthEmailWebhookUrl(value: string | undefined, env: EnvInput) {
+  if (!value) return false;
+
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return false;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (env.NODE_ENV === "production" && url.protocol !== "https:") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function invalidPasswordResetEmailInput() {
+  return new Error("Invalid password reset email input.");
+}
+
+function readNonEmpty(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
 }

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { contactListStateOptions } from "@/lib/contact-list-state";
 import { parseListViewState, type ListSearchParams } from "@/lib/list-page-query";
+import { ignoreMissingSavedView } from "@/lib/saved-view-action-utils";
 import { createContactSavedView, deleteContactSavedView } from "@/lib/services/crm";
 
 export async function createContactSavedViewAction(formData: FormData) {
@@ -22,7 +23,7 @@ export async function deleteContactSavedViewAction(formData: FormData) {
   const savedViewId = String(formData.get("savedViewId") ?? "");
   const { actor } = await getCurrentWorkspaceContext();
 
-  await deleteContactSavedView(actor, savedViewId);
+  await ignoreMissingSavedView(() => deleteContactSavedView(actor, savedViewId));
   revalidatePath("/contacts");
 }
 

@@ -1,4 +1,5 @@
 import { classifyActivityDue, type ActivityDueBucket } from "@/lib/activity-due";
+import { Badge } from "@/components/badge";
 import { formatDate } from "@/components/format";
 
 type ActivityDueBadgeProps = {
@@ -10,11 +11,17 @@ type ActivityDueBadgeProps = {
 
 export function ActivityDueBadge({ activity }: ActivityDueBadgeProps) {
   const bucket = classifyActivityDue(activity);
+  const label = formatActivityDueBadgeLabel(bucket, activity);
+  const accessibleLabel = `Due status: ${label}`;
 
-  return <span className={`activity-due activity-due-${bucket}`}>{activityDueText(bucket, activity)}</span>;
+  return (
+    <Badge className={`activity-due activity-due-${bucket}`} label={accessibleLabel}>
+      {label}
+    </Badge>
+  );
 }
 
-function activityDueText(
+export function formatActivityDueBadgeLabel(
   bucket: ActivityDueBucket,
   activity: { dueAt?: Date | string | null; completedAt?: Date | string | null }
 ) {

@@ -1,8 +1,14 @@
 import { Prisma } from "@prisma/client";
 
+import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
-import { assertRecordInWorkspace } from "./record-guards";
+import {
+  activityAttachmentRelationsWhere,
+  assertRecordInWorkspace,
+  emailLogAttachmentRelationsWhere,
+  noteAttachmentRelationsWhere
+} from "./record-guards";
 import type { AuditDisplayEntry } from "@/lib/audit-format";
 import { userDisplaySelect } from "./user-select";
 
@@ -19,6 +25,7 @@ export type RecordTimelineItem =
   | {
       id: string;
       type: "activity";
+      activityId: string;
       timestamp: Date | string;
       activityType: string;
       completedAt: Date | string | null;
@@ -93,11 +100,12 @@ export async function getRecordTimeline(
   record: { type: TimelineRecordType; id: string }
 ) {
   await ensureWorkspaceAccess(actor);
-  await assertRecordInWorkspace(recordModel(record.type), actor.workspaceId, record.id);
+  const recordType = normalizeTimelineRecordType(record.type);
+  await assertRecordInWorkspace(recordModel(recordType), actor.workspaceId, record.id);
 
-  const noteWhere = attachmentWhere<Prisma.NoteWhereInput>(record.type, actor.workspaceId, record.id);
-  const activityWhere = attachmentWhere<Prisma.ActivityWhereInput>(record.type, actor.workspaceId, record.id);
-  const emailLogWhere = emailLogAttachmentWhere(record.type, actor.workspaceId, record.id);
+  const noteWhere = timelineNoteWhere(recordType, actor.workspaceId, record.id);
+  const activityWhere = timelineActivityWhere(recordType, actor.workspaceId, record.id);
+  const emailLogWhere = timelineEmailLogWhere(recordType, actor.workspaceId, record.id);
 
   const [notes, activities, emailLogs, auditLogs] = await prisma.$transaction([
     prisma.note.findMany({
@@ -116,7 +124,7 @@ export async function getRecordTimeline(
       orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }]
     }),
     prisma.auditLog.findMany({
-      where: { workspaceId: actor.workspaceId, entityType: auditEntityType(record.type), entityId: record.id },
+      where: { workspaceId: actor.workspaceId, entityType: auditEntityType(recordType), entityId: record.id },
       include: { actor: { select: userDisplaySelect } },
       orderBy: { createdAt: "desc" },
       take: 50
@@ -138,6 +146,7 @@ export function buildRecordTimeline({ notes, activities, emailLogs, auditLogs }:
     ...activities.map((activity) => ({
       id: `activity-${activity.id}`,
       type: "activity" as const,
+      activityId: activity.id,
       timestamp: activity.completedAt ?? activity.createdAt,
       activityType: activity.type,
       completedAt: activity.completedAt,
@@ -177,23 +186,35 @@ export function buildRecordTimeline({ notes, activities, emailLogs, auditLogs }:
   });
 }
 
-function attachmentWhere<T extends Prisma.NoteWhereInput | Prisma.ActivityWhereInput>(
-  type: TimelineRecordType,
-  workspaceId: string,
-  id: string
-) {
+function timelineNoteWhere(type: TimelineRecordType, workspaceId: string, id: string): Prisma.NoteWhereInput {
   return {
     workspaceId,
     ...activeWhere,
-    [attachmentField(type)]: id
-  } as T;
-}
-
-function emailLogAttachmentWhere(type: TimelineRecordType, workspaceId: string, id: string): Prisma.EmailLogWhereInput {
-  return {
-    workspaceId,
+    ...noteAttachmentRelationsWhere(workspaceId),
     [attachmentField(type)]: id
   };
+}
+
+function timelineActivityWhere(type: TimelineRecordType, workspaceId: string, id: string): Prisma.ActivityWhereInput {
+  return {
+    workspaceId,
+    ...activeWhere,
+    ...activityAttachmentRelationsWhere(workspaceId),
+    [attachmentField(type)]: id
+  };
+}
+
+function timelineEmailLogWhere(type: TimelineRecordType, workspaceId: string, id: string): Prisma.EmailLogWhereInput {
+  return {
+    workspaceId,
+    ...emailLogAttachmentRelationsWhere(workspaceId),
+    [attachmentField(type)]: id
+  };
+}
+
+function normalizeTimelineRecordType(value: unknown): TimelineRecordType {
+  if (value === "DEAL" || value === "LEAD" || value === "PERSON" || value === "ORGANIZATION") return value;
+  throw new ApiError("VALIDATION_ERROR", "Timeline record type must be DEAL, LEAD, PERSON, or ORGANIZATION.", 422);
 }
 
 function attachmentField(type: TimelineRecordType) {

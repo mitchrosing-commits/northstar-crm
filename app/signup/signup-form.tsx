@@ -3,7 +3,11 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useActionState } from "react";
-import { useFormStatus } from "react-dom";
+
+import { AuthSubmitButton } from "@/components/auth-submit-button";
+import { AuthTextField } from "@/components/auth-text-field";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { workspaceNameMaxLength } from "@/lib/workspace-validation";
 
 import { signupAction, type SignupActionState } from "./actions";
 
@@ -19,68 +23,47 @@ export function SignupForm({ nextPath }: { nextPath: string }) {
   return (
     <form action={formAction} className="login-form">
       <input type="hidden" name="next" value={nextPath} />
-      <label className="form-label" htmlFor="name">
-        Name
-      </label>
-      <input
+      <AuthTextField
         autoComplete="name"
-        className="text-input"
         defaultValue={state.name}
         id="name"
+        label="Name"
         name="name"
         type="text"
       />
-      <label className="form-label" htmlFor="email">
-        Email
-      </label>
-      <input
+      <AuthTextField
         autoComplete="email"
-        className="text-input"
         defaultValue={state.email}
         id="email"
+        label="Email"
         name="email"
         required
         type="email"
       />
-      <label className="form-label" htmlFor="password">
-        Password
-      </label>
-      <input
+      <AuthTextField
         autoComplete="new-password"
-        className="text-input"
         id="password"
+        label="Password"
         minLength={8}
         name="password"
         required
         type="password"
       />
-      <label className="form-label" htmlFor="workspaceName">
-        Workspace name
-      </label>
-      <input
+      <AuthTextField
         autoComplete="organization"
-        className="text-input"
         defaultValue={state.workspaceName}
         id="workspaceName"
+        label="Workspace name"
+        maxLength={workspaceNameMaxLength}
         name="workspaceName"
         required
         type="text"
       />
-      {state.error ? <p className="form-error">{state.error}</p> : null}
-      <SignupSubmitButton />
+      {state.error ? <FormErrorMessage>{state.error}</FormErrorMessage> : null}
+      <AuthSubmitButton pendingLabel="Creating account..." submitLabel="Create account" />
       <p className="empty-copy">
         Already have an account? <Link href={"/login" as Route}>Sign in</Link>
       </p>
     </form>
-  );
-}
-
-function SignupSubmitButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <button className="button-primary" disabled={pending} type="submit">
-      {pending ? "Creating account..." : "Create account"}
-    </button>
   );
 }

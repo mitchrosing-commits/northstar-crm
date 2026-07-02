@@ -1,9 +1,13 @@
 import { redirect } from "next/navigation";
 import type { Route } from "next";
 
+import { AuthPanel } from "@/components/auth-panel";
+import { sanitizeAuthNextPath } from "@/lib/auth/next-path";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { resolveAuthMode } from "@/lib/auth/session";
 import { SignupForm } from "./signup-form";
+
+export const dynamic = "force-dynamic";
 
 type SignupPageProps = {
   searchParams?: Promise<{ next?: string }>;
@@ -11,21 +15,17 @@ type SignupPageProps = {
 
 export default async function SignupPage({ searchParams }: SignupPageProps) {
   const { next = "/dashboard" } = (await searchParams) ?? {};
-  const nextPath = sanitizeNextPath(next);
+  const nextPath = sanitizeAuthNextPath(next);
   const isAuthenticated = await hasCurrentUser();
   if (isAuthenticated) redirect(nextPath as Route);
 
   return (
-    <main className="login-page">
-      <section className="login-panel">
-        <p className="page-kicker">Northstar CRM</p>
-        <h1 className="page-title">Create account</h1>
-        <p className="empty-copy">
-          Start a local workspace account for a demo or self-hosted Northstar CRM setup.
-        </p>
-        <SignupForm nextPath={nextPath} />
-      </section>
-    </main>
+    <AuthPanel
+      description="Start a local workspace account for a demo or self-hosted Northstar CRM setup."
+      title="Create account"
+    >
+      <SignupForm nextPath={nextPath} />
+    </AuthPanel>
   );
 }
 
@@ -38,10 +38,4 @@ async function hasCurrentUser() {
   } catch {
     return false;
   }
-}
-
-function sanitizeNextPath(nextPath: string) {
-  if (!nextPath.startsWith("/") || nextPath.startsWith("//")) return "/dashboard";
-  if (nextPath.startsWith("/login") || nextPath.startsWith("/signup")) return "/dashboard";
-  return nextPath;
 }

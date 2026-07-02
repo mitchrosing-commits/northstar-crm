@@ -1,9 +1,11 @@
 import Link from "next/link";
 
+import { CompactTitleRow } from "@/components/compact-title-row";
 import { ContractWorkflowSummary } from "@/components/contract-workflow-panel";
 import { formatDate, formatMoney } from "@/components/format";
 import { PipelineStageMoveControl } from "@/components/pipeline-stage-move-control";
 import { StatusBadge } from "@/components/status-badge";
+import { formatPersonName } from "@/lib/person-name";
 import { buildDealAttentionBadges } from "@/lib/sales-assistant";
 
 type Pipeline = {
@@ -41,7 +43,10 @@ type Pipeline = {
         occurredAt: Date | string | null;
       }>;
       quotes?: Array<{
+        number?: string;
         status: string;
+        totalCents?: number;
+        currency?: string;
         createdAt: Date | string | null;
         updatedAt: Date | string | null;
       }>;
@@ -50,6 +55,18 @@ type Pipeline = {
         name: string;
         value: unknown;
       }>;
+      contractSteps?: Array<{
+        id: string;
+        type: "NDA" | "MSA" | "SOW";
+        status: "NOT_STARTED" | "IN_PROGRESS" | "SENT" | "SIGNED" | "BLOCKED" | "SKIPPED";
+        ownerId: string | null;
+        owner?: { name: string | null; email: string } | null;
+        dueAt: Date | string | null;
+        sentAt: Date | string | null;
+        signedAt: Date | string | null;
+        notes: string | null;
+        externalReference: string | null;
+      }>;
     }>;
   }>;
 };
@@ -57,6 +74,7 @@ type Pipeline = {
 export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; workspaceId: string }) {
   const stages = pipeline.stages.map((stage) => ({ id: stage.id, name: stage.name }));
   const dealCount = pipeline.stages.reduce((sum, stage) => sum + stage.deals.length, 0);
+  const createDealLabel = "Create the first pipeline deal";
 
   return (
     <>
@@ -64,7 +82,12 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
         <div className="pipeline-ready-panel">
           <strong>Your stages are ready.</strong>
           <span>Create your first deal to start moving opportunities through this board.</span>
-          <Link className="button-secondary button-compact" href="/deals/new">
+          <Link
+            aria-label={createDealLabel}
+            className="button-secondary button-compact"
+            href="/deals/new"
+            title={createDealLabel}
+          >
             Create deal
           </Link>
         </div>
@@ -88,20 +111,24 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
                 {stage.deals.map((deal) => {
                   const isClosed = deal.status !== "OPEN";
                   const attentionBadges = buildDealAttentionBadges(deal).slice(0, 3);
+                  const openDealLabel = `Open deal ${deal.title}`;
+                  const attentionSignalsLabel = `${deal.title} attention signals`;
                   return (
                     <article className={isClosed ? "deal-card deal-card-closed" : "deal-card"} key={deal.id}>
-                      <Link aria-label={`Open deal ${deal.title}`} className="deal-card-link" href={`/deals/${deal.id}`}>
-                        <div className="deal-card-header">
-                          <p className="deal-card-title">{deal.title}</p>
-                          <StatusBadge status={deal.status} />
-                        </div>
+                      <Link
+                        aria-label={openDealLabel}
+                        className="deal-card-link"
+                        href={`/deals/${deal.id}`}
+                        title={openDealLabel}
+                      >
+                        <CompactTitleRow actions={<StatusBadge status={deal.status} />} title={deal.title} />
                         <div className="deal-meta">
                           <span>{formatMoney(deal.valueCents, deal.currency)}</span>
                           {deal.organization ? <span>{deal.organization.name}</span> : null}
-                          {deal.person ? <span>{formatPersonName(deal.person)}</span> : null}
+                          {deal.person ? <span>{formatPersonName(deal.person) ?? "Unnamed contact"}</span> : null}
                         </div>
                         {attentionBadges.length > 0 ? (
-                          <div className="deal-card-badges" aria-label="Deal needs attention">
+                          <div className="deal-card-badges" aria-label={attentionSignalsLabel} title={attentionSignalsLabel}>
                             {attentionBadges.map((badge) => (
                               <span className={`deal-attention-badge deal-attention-badge-${badge.kind}`} key={badge.kind}>
                                 {badge.label}
@@ -109,7 +136,7 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
                             ))}
                           </div>
                         ) : null}
-                        <ContractWorkflowSummary fields={deal.contractFields ?? []} />
+                        <ContractWorkflowSummary fields={deal.contractFields ?? []} steps={deal.contractSteps ?? []} />
                         <div className="deal-card-detail">
                           <span>Owner</span>
                           <strong>{deal.owner?.name ?? deal.owner?.email ?? "Unassigned"}</strong>
@@ -118,6 +145,12 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
                           <span>Next</span>
                           <strong>{isClosed ? "Closed" : formatNextActivity(deal.activities?.[0])}</strong>
                         </div>
+                        {deal.quotes?.[0] ? (
+                          <div className="deal-card-detail">
+                            <span>Quote</span>
+                            <strong>{formatQuoteSignal(deal.quotes[0])}</strong>
+                          </div>
+                        ) : null}
                         <span className="deal-card-open">Open deal</span>
                       </Link>
                       <PipelineStageMoveControl
@@ -142,11 +175,12 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
   );
 }
 
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
-}
-
 function formatNextActivity(activity?: { title: string; type: string; dueAt: Date | string | null }) {
   if (!activity) return "No activity";
   return `${activity.title} · ${formatDate(activity.dueAt)}`;
+}
+
+function formatQuoteSignal(quote: { number?: string; status: string; totalCents?: number; currency?: string }) {
+  const total = quote.totalCents == null ? "" : ` · ${formatMoney(quote.totalCents, quote.currency)}`;
+  return `${quote.number ?? quote.status}${total}`;
 }

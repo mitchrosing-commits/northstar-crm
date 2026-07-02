@@ -1,10 +1,5 @@
+import { RouteStatusState } from "@/components/route-status-state";
+
 export default function DealLoading() {
-  return (
-    <main className="main">
-      <div className="empty-state">
-        <h1>Loading deal</h1>
-        <p>Fetching deal details, activities, and notes.</p>
-      </div>
-    </main>
-  );
+  return <RouteStatusState description="Fetching deal details, activities, and notes." title="Loading deal" />;
 }

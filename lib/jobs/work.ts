@@ -46,6 +46,7 @@ export async function runJobsWorker(options: RunJobsWorkerOptions = {}): Promise
 
   while (!signal?.aborted) {
     const recovery = await recoverStaleRunningJobs({ now: options.now, staleAfterMs });
+    result.dead += recovery.dead;
     result.recovered += recovery.recovered;
     options.onRecoveryResult?.(recovery);
 
@@ -109,7 +110,7 @@ export function formatRunJobsWorkerBatchSummary(result: RunJobsOnceResult) {
 }
 
 export function formatStaleRecoverySummary(result: RecoverStaleRunningJobsResult) {
-  return `Recovered stale running jobs: recovered=${result.recovered}`;
+  return `Recovered stale running jobs: recovered=${result.recovered} dead=${result.dead}`;
 }
 
 function sleepWithAbort(ms: number, signal?: AbortSignal) {

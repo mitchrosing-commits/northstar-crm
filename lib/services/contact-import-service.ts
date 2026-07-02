@@ -1,16 +1,22 @@
-import { parseCsv } from "@/lib/csv";
 import { prisma } from "@/lib/db/prisma";
 import {
   buildImportAuditMetadata,
+  countNonBlankImportRows,
   countImportPreviewRows,
+  createEmptyImportPreview,
   createImportResultCounts,
   firstImportHeaderIndex,
+  groupImportOwnersByEmail,
   groupImportRecordsByName,
+  isValidImportEmail,
+  listDuplicateImportColumnMessages,
   listUnsupportedImportColumns,
   normalizeImportEmailKey,
-  normalizeImportHeader,
   normalizeImportNameKey,
-  stripCsvBom,
+  parseImportCsvPreviewInput,
+  recordImportCreateFailure,
+  resolveImportOwnerId,
+  type ImportFailedRow,
   type ImportPreviewStatus
 } from "./import-utils";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
@@ -24,6 +30,8 @@ export type ContactImportPreviewRow = {
   phone: string;
   organizationName: string;
   organizationId: string | null;
+  ownerEmail: string;
+  ownerId: string | null;
   status: ImportPreviewStatus;
   skipReasons: string[];
   errors: string[];
@@ -46,6 +54,7 @@ export type ContactImportResult = {
   skippedDuplicateCount: number;
   skippedInvalidCount: number;
   errorCount: number;
+  failedRows: ImportFailedRow[];
   createdContacts: Array<{ id: string; name: string; email: string | null }>;
 };
 
@@ -61,48 +70,55 @@ const supportedContactColumns = new Set([
   "phone",
   "organization",
   "organization name",
-  "organizationname"
+  "organizationname",
+  "owneremail",
+  "owner email"
 ]);
 const contactImportMessages = {
   missingName: "Contact name is required.",
   unsupportedColumns: "Unsupported columns will be ignored.",
+  invalidEmail: "Contact email must be a valid email address.",
   duplicateExistingEmail: "Duplicate contact email in this workspace.",
   duplicateImportEmail: "Duplicate contact email in this CSV.",
   organizationNotFound: "Organization name was not found in this workspace.",
   organizationAmbiguous: "Organization name matches multiple organizations in this workspace."
 } as const;
 
-export async function previewContactImport(actor: WorkspaceActor, csvText: string): Promise<ContactImportPreview> {
+export async function previewContactImport(actor: WorkspaceActor, csvText: unknown): Promise<ContactImportPreview> {
   await ensureWorkspaceAccess(actor);
 
-  const text = csvText.trim();
-  if (!text) return emptyPreview(["CSV text is required."]);
-
-  let parsed: ReturnType<typeof parseCsv>;
-  try {
-    parsed = parseCsv(text);
-  } catch (error) {
-    return emptyPreview([error instanceof Error ? error.message : "CSV could not be parsed."]);
-  }
-
-  const headers = parsed.headers.map((header, index) => normalizeImportHeader(index === 0 ? stripCsvBom(header) : header));
+  const input = parseImportCsvPreviewInput(csvText);
+  if ("parseErrors" in input) return createEmptyImportPreview<ContactImportPreviewRow>(input.parseErrors);
+  const { parsed, headers } = input;
   const nameIndex = firstImportHeaderIndex(headers, ["name", "contact name", "full name"]);
   const firstNameIndex = firstImportHeaderIndex(headers, ["first name", "firstname"]);
   const lastNameIndex = firstImportHeaderIndex(headers, ["last name", "lastname"]);
   const emailIndex = firstImportHeaderIndex(headers, ["email"]);
   const phoneIndex = firstImportHeaderIndex(headers, ["phone"]);
   const organizationNameIndex = firstImportHeaderIndex(headers, ["organization", "organization name", "organizationname"]);
+  const ownerEmailIndex = firstImportHeaderIndex(headers, ["owneremail", "owner email"]);
   const unsupportedColumns = listUnsupportedImportColumns(parsed.headers, headers, supportedContactColumns);
+  const duplicateColumnErrors = listDuplicateImportColumnMessages(headers, [
+    { label: "contact name", candidates: ["name", "contact name", "full name"] },
+    { label: "first name", candidates: ["first name", "firstname"] },
+    { label: "last name", candidates: ["last name", "lastname"] },
+    { label: "email", candidates: ["email"] },
+    { label: "phone", candidates: ["phone"] },
+    { label: "organization name", candidates: ["organization", "organization name", "organizationname"] },
+    { label: "owner email", candidates: ["owneremail", "owner email"] }
+  ]);
 
-  if (nameIndex === -1 && firstNameIndex === -1) {
+  const headerErrors = [...duplicateColumnErrors];
+  if (nameIndex === -1 && firstNameIndex === -1) headerErrors.push("CSV must include a contact name or firstName column.");
+  if (headerErrors.length > 0) {
     return {
-      ...emptyPreview(["CSV must include a contact name or firstName column."]),
-      totalRows: parsed.rows.length,
+      ...createEmptyImportPreview<ContactImportPreviewRow>(headerErrors),
+      totalRows: countNonBlankImportRows(parsed.rows),
       unsupportedColumns
     };
   }
 
-  const [existingContacts, organizations] = await Promise.all([
+  const [existingContacts, organizations, owners] = await Promise.all([
     prisma.person.findMany({
       where: { workspaceId: actor.workspaceId, ...activeWhere, email: { not: null } },
       select: { email: true }
@@ -111,10 +127,16 @@ export async function previewContactImport(actor: WorkspaceActor, csvText: strin
       where: { workspaceId: actor.workspaceId, ...activeWhere },
       select: { id: true, name: true },
       orderBy: [{ name: "asc" }, { id: "asc" }]
+    }),
+    prisma.user.findMany({
+      where: { deletedAt: null, memberships: { some: { workspaceId: actor.workspaceId } } },
+      select: { id: true, email: true },
+      orderBy: [{ email: "asc" }, { id: "asc" }]
     })
   ]);
   const existingEmails = new Set(existingContacts.map((contact) => normalizeImportEmailKey(contact.email)).filter(Boolean));
   const organizationsByName = groupImportRecordsByName(organizations);
+  const ownersByEmail = groupImportOwnersByEmail(owners);
   const seenImportEmails = new Set<string>();
 
   const rows = parsed.rows
@@ -129,9 +151,11 @@ export async function previewContactImport(actor: WorkspaceActor, csvText: strin
       const email = emailIndex === -1 ? "" : (row[emailIndex] ?? "").trim();
       const phone = phoneIndex === -1 ? "" : (row[phoneIndex] ?? "").trim();
       const organizationName = organizationNameIndex === -1 ? "" : (row[organizationNameIndex] ?? "").trim();
+      const ownerEmail = ownerEmailIndex === -1 ? "" : (row[ownerEmailIndex] ?? "").trim();
       const normalizedEmail = normalizeImportEmailKey(email);
       const normalizedOrganizationName = normalizeImportNameKey(organizationName);
       const organizationMatches = normalizedOrganizationName ? organizationsByName.get(normalizedOrganizationName) ?? [] : [];
+      const ownerResolution = resolveImportOwnerId(ownersByEmail, ownerEmail);
       const errors: string[] = [];
       const warnings: string[] = [];
       const skipReasons: string[] = [];
@@ -140,20 +164,12 @@ export async function previewContactImport(actor: WorkspaceActor, csvText: strin
         errors.push(contactImportMessages.missingName);
         skipReasons.push(contactImportMessages.missingName);
       }
+      const validEmail = !email || isValidImportEmail(email);
+      if (!validEmail) {
+        errors.push(contactImportMessages.invalidEmail);
+        skipReasons.push(contactImportMessages.invalidEmail);
+      }
       if (unsupportedColumns.length > 0) warnings.push(contactImportMessages.unsupportedColumns);
-
-      const duplicatesExistingEmail = normalizedEmail ? existingEmails.has(normalizedEmail) : false;
-      const duplicatesImportEmail = normalizedEmail ? seenImportEmails.has(normalizedEmail) : false;
-      if (normalizedEmail) seenImportEmails.add(normalizedEmail);
-
-      if (duplicatesExistingEmail) {
-        warnings.push(contactImportMessages.duplicateExistingEmail);
-        skipReasons.push(contactImportMessages.duplicateExistingEmail);
-      }
-      if (duplicatesImportEmail) {
-        warnings.push(contactImportMessages.duplicateImportEmail);
-        skipReasons.push(contactImportMessages.duplicateImportEmail);
-      }
 
       if (normalizedOrganizationName && organizationMatches.length === 0) {
         errors.push(contactImportMessages.organizationNotFound);
@@ -162,6 +178,28 @@ export async function previewContactImport(actor: WorkspaceActor, csvText: strin
       if (organizationMatches.length > 1) {
         errors.push(contactImportMessages.organizationAmbiguous);
         skipReasons.push(contactImportMessages.organizationAmbiguous);
+      }
+      if (ownerResolution.error) {
+        errors.push(ownerResolution.error);
+        skipReasons.push(ownerResolution.error);
+      }
+      const duplicatesExistingEmail =
+        errors.length === 0 && validEmail && normalizedEmail ? existingEmails.has(normalizedEmail) : false;
+      const duplicatesImportEmail =
+        errors.length === 0 && validEmail && normalizedEmail && !duplicatesExistingEmail
+          ? seenImportEmails.has(normalizedEmail)
+          : false;
+      if (errors.length === 0 && validEmail && normalizedEmail && !duplicatesExistingEmail && !duplicatesImportEmail) {
+        seenImportEmails.add(normalizedEmail);
+      }
+
+      if (duplicatesExistingEmail) {
+        warnings.push(contactImportMessages.duplicateExistingEmail);
+        skipReasons.push(contactImportMessages.duplicateExistingEmail);
+      }
+      if (duplicatesImportEmail) {
+        warnings.push(contactImportMessages.duplicateImportEmail);
+        skipReasons.push(contactImportMessages.duplicateImportEmail);
       }
 
       return {
@@ -173,6 +211,8 @@ export async function previewContactImport(actor: WorkspaceActor, csvText: strin
         phone,
         organizationName,
         organizationId: organizationMatches.length === 1 ? organizationMatches[0].id : null,
+        ownerEmail,
+        ownerId: ownerResolution.ownerId,
         status: errors.length > 0 ? "invalid" : duplicatesExistingEmail || duplicatesImportEmail ? "duplicate" : "valid",
         skipReasons,
         errors,
@@ -192,7 +232,7 @@ export async function previewContactImport(actor: WorkspaceActor, csvText: strin
   };
 }
 
-export async function importContactsFromCsv(actor: WorkspaceActor, csvText: string): Promise<ContactImportResult> {
+export async function importContactsFromCsv(actor: WorkspaceActor, csvText: unknown): Promise<ContactImportResult> {
   const preview = await previewContactImport(actor, csvText);
   const result: ContactImportResult = {
     preview,
@@ -213,7 +253,8 @@ export async function importContactsFromCsv(actor: WorkspaceActor, csvText: stri
           lastName: row.lastName || null,
           email: row.email || null,
           phone: row.phone || null,
-          organizationId: row.organizationId
+          organizationId: row.organizationId,
+          ownerId: row.ownerId
         },
         select: { id: true, firstName: true, lastName: true, email: true }
       });
@@ -228,23 +269,11 @@ export async function importContactsFromCsv(actor: WorkspaceActor, csvText: stri
       result.createdContacts.push({ id: contact.id, name, email: contact.email });
       result.createdCount += 1;
     } catch {
-      result.errorCount += 1;
+      recordImportCreateFailure(result, row.rowNumber);
     }
   }
 
   return result;
-}
-
-function emptyPreview(parseErrors: string[]): ContactImportPreview {
-  return {
-    totalRows: 0,
-    validRows: 0,
-    duplicateRows: 0,
-    invalidRows: 0,
-    unsupportedColumns: [],
-    parseErrors,
-    rows: []
-  };
 }
 
 function parseContactName(fullName: string, firstName: string, lastName: string) {

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { createStage, listStages, syncRecentGmailMessages, syncRecentMicrosoftMessages, updatePipeline, updateStage } from "@/lib/services/crm";
+import { applySupplyChainVerticalPresets, createStage, listStages, syncRecentGmailMessages, syncRecentMicrosoftMessages, updatePipeline, updateStage } from "@/lib/services/crm";
 
 export async function syncRecentGmailAction() {
   const { actor } = await getCurrentWorkspaceContext();
@@ -75,6 +75,24 @@ export async function createPipelineStageSettingsAction(formData: FormData) {
   revalidatePath("/settings");
   revalidatePath("/pipeline");
   redirect("/settings?pipelineSettings=saved#pipeline-settings");
+}
+
+export async function applySupplyChainVerticalSetupAction() {
+  const { actor } = await getCurrentWorkspaceContext();
+
+  try {
+    await applySupplyChainVerticalPresets(actor);
+  } catch {
+    redirect("/settings?supplyChainSetup=error#supply-chain-vertical-title");
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/custom-fields");
+  revalidatePath("/deals");
+  revalidatePath("/leads");
+  revalidatePath("/organizations");
+  revalidatePath("/products");
+  redirect("/settings?supplyChainSetup=applied#supply-chain-vertical-title");
 }
 
 function normalizeName(value: FormDataEntryValue | null) {

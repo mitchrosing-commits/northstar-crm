@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { useFormStatus } from "react-dom";
+
+import { AuthSubmitButton } from "@/components/auth-submit-button";
+import { AuthTextField } from "@/components/auth-text-field";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormSuccessMessage } from "@/components/form-success-message";
 
 import { resetPasswordAction, type ResetPasswordActionState } from "./actions";
 
@@ -19,7 +23,7 @@ export function ResetPasswordForm({ minimumPasswordLength, token }: ResetPasswor
   if (state.success) {
     return (
       <div className="login-form">
-        <p className="form-success">Password reset. You can sign in with your new password.</p>
+        <FormSuccessMessage>Password reset. You can sign in with your new password.</FormSuccessMessage>
         <Link className="button-primary" href="/login">
           Back to sign in
         </Link>
@@ -30,42 +34,26 @@ export function ResetPasswordForm({ minimumPasswordLength, token }: ResetPasswor
   return (
     <form action={formAction} className="login-form">
       <input name="token" type="hidden" value={token} />
-      <label className="form-label" htmlFor="password">
-        New password
-      </label>
-      <input
+      <AuthTextField
         autoComplete="new-password"
-        className="text-input"
         id="password"
+        label="New password"
         minLength={minimumPasswordLength}
         name="password"
         required
         type="password"
       />
-      <label className="form-label" htmlFor="confirmPassword">
-        Confirm new password
-      </label>
-      <input
+      <AuthTextField
         autoComplete="new-password"
-        className="text-input"
         id="confirmPassword"
+        label="Confirm new password"
         minLength={minimumPasswordLength}
         name="confirmPassword"
         required
         type="password"
       />
-      {state.error ? <p className="form-error">{state.error}</p> : null}
-      <ResetPasswordSubmitButton />
+      {state.error ? <FormErrorMessage>{state.error}</FormErrorMessage> : null}
+      <AuthSubmitButton pendingLabel="Resetting..." submitLabel="Reset password" />
     </form>
-  );
-}
-
-function ResetPasswordSubmitButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <button className="button-primary" disabled={pending} type="submit">
-      {pending ? "Resetting..." : "Reset password"}
-    </button>
   );
 }

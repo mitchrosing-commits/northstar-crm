@@ -1,5 +1,11 @@
+import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { CompactTitleRow } from "@/components/compact-title-row";
+import { EmptyState } from "@/components/empty-state";
 import { formatDate, formatMoney } from "@/components/format";
+import { ListExportLink } from "@/components/list-export-link";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { ProductCreateForm } from "@/components/product-create-form";
 import { ProductStatusButton } from "@/components/product-status-button";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
@@ -14,70 +20,92 @@ export default async function ProductsPage() {
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Catalog</p>
-          <h1 className="page-title">Products</h1>
-        </div>
-      </header>
+      <PageHeader
+        actions={
+          <ListExportLink
+            label="Export products"
+            matchingCount={products.length}
+            resource="products"
+            searchParams={{}}
+            workspaceId={workspace.id}
+          />
+        }
+        eyebrow="Catalog"
+        subtitle="Manage reusable pricing inputs for deal line items without rewriting historical quotes."
+        title="Products"
+      />
 
-      <section className="panel" style={{ marginBottom: 16 }}>
-        <h2 className="panel-title">Create Product</h2>
-        <p className="empty-copy" style={{ marginBottom: 16 }}>
-          Products provide snapshot pricing for deal line items. Product changes do not rewrite existing deal line items.
-        </p>
+      <section className="panel section-separated">
+        <PanelTitleRow
+          description="Products provide snapshot pricing for deal line items. Product changes do not rewrite existing deal line items."
+          title="Create Product"
+        />
         <ProductCreateForm workspaceId={workspace.id} />
       </section>
 
       <section className="panel">
-        <div className="panel-title-row">
-          <h2 className="panel-title">Product Catalog</h2>
-          <span className="badge">{products.length} total</span>
-        </div>
+        <PanelTitleRow
+          actions={<span className="badge">{products.length} total</span>}
+          title="Product Catalog"
+        />
         {products.length > 0 ? (
           <div className="product-catalog-grid">
-            {products.map((product) => (
-              <article className="product-catalog-card" key={product.id}>
-                <div className="panel-title-row">
-                  <div>
-                    <h3 className="compact-title">{product.name}</h3>
-                    <p className="empty-copy">{product.description ?? "No description"}</p>
+            {products.map((product) => {
+              const productActionsLabel = `${product.name} product actions`;
+
+              return (
+                <article className="product-catalog-card" key={product.id}>
+                  <CompactTitleRow
+                    actions={
+                      <span className="badge">
+                        {product.active ? "Active" : "Inactive"}
+                      </span>
+                    }
+                    description={product.description ?? "No description"}
+                    title={product.name}
+                  />
+                  <div className="deal-context-metrics">
+                    <div>
+                      <span>Unit price</span>
+                      <strong>
+                        {formatMoney(product.unitPriceCents, product.currency)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Created</span>
+                      <strong>{formatDate(product.createdAt)}</strong>
+                    </div>
                   </div>
-                  <span className="badge">{product.active ? "Active" : "Inactive"}</span>
-                </div>
-                <div className="deal-context-metrics">
-                  <div>
-                    <span>Unit price</span>
-                    <strong>{formatMoney(product.unitPriceCents, product.currency)}</strong>
-                  </div>
-                  <div>
-                    <span>Created</span>
-                    <strong>{formatDate(product.createdAt)}</strong>
-                  </div>
-                </div>
-                <ProductCreateForm
-                  initialProduct={{
-                    id: product.id,
-                    name: product.name,
-                    description: product.description,
-                    unitPriceCents: product.unitPriceCents,
-                    currency: product.currency
-                  }}
-                  mode="edit"
-                  variant="compact"
-                  workspaceId={workspace.id}
-                />
-                <div className="form-actions">
-                  <ProductStatusButton active={product.active} productId={product.id} workspaceId={workspace.id} />
-                </div>
-              </article>
-            ))}
+                  <ProductCreateForm
+                    initialProduct={{
+                      id: product.id,
+                      name: product.name,
+                      description: product.description,
+                      unitPriceCents: product.unitPriceCents,
+                      currency: product.currency,
+                    }}
+                    mode="edit"
+                    variant="compact"
+                    workspaceId={workspace.id}
+                  />
+                  <ActionGroup className="product-card-actions" label={productActionsLabel}>
+                    <ProductStatusButton
+                      active={product.active}
+                      productId={product.id}
+                      productName={product.name}
+                      workspaceId={workspace.id}
+                    />
+                  </ActionGroup>
+                </article>
+              );
+            })}
           </div>
         ) : (
-          <div className="empty-state empty-state-compact">
-            <h3>No products yet</h3>
-            <p>Create a product to add reusable pricing to deal line items and quote drafts.</p>
-          </div>
+          <EmptyState
+            className="empty-state-compact"
+            description="Create a product to add reusable pricing to deal line items and quote drafts."
+            title="No products yet"
+          />
         )}
       </section>
     </AppShell>

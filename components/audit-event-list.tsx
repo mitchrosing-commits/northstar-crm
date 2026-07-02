@@ -1,5 +1,7 @@
 import { formatAuditEvent, type AuditDisplayEntry } from "@/lib/audit-format";
 import { formatDate } from "@/components/format";
+import { TimelineBodyText } from "@/components/timeline-body-text";
+import { TimelineMetaRow } from "@/components/timeline-meta-row";
 
 type AuditEventListProps = {
   entries: (AuditDisplayEntry & {
@@ -15,15 +17,15 @@ export function AuditEventList({ entries, label, showTarget = false }: AuditEven
     <ol className="timeline" aria-label={label}>
       {entries.map((entry) => {
         const event = formatAuditEvent(entry);
-        const context = [showTarget ? event.targetLabel : undefined, event.actorLabel, formatDate(entry.createdAt)]
-          .filter(Boolean)
-          .join(" · ");
 
         return (
-          <li className="timeline-item" key={entry.id}>
+          <li className="timeline-item timeline-item-audit" key={entry.id}>
             <strong>{event.label}</strong>
-            <span>{context}</span>
-            {event.metadataLabel ? <p className="muted">{event.metadataLabel}</p> : null}
+            <TimelineMetaRow
+              ariaLabel={`${event.label} audit event metadata`}
+              items={[showTarget ? event.targetLabel : null, event.actorLabel, formatDate(entry.createdAt)]}
+            />
+            {event.metadataLabel ? <TimelineBodyText>{event.metadataLabel}</TimelineBodyText> : null}
           </li>
         );
       })}

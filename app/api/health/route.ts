@@ -1,6 +1,7 @@
 import { validateRuntimeEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET() {
   const env = validateRuntimeEnv();
@@ -24,6 +25,12 @@ function healthResponse(status: "ok" | "error", httpStatus: 200 | 503) {
       status,
       service: "northstar-crm"
     },
-    { status: httpStatus }
+    {
+      headers: {
+        "cache-control": "no-store, max-age=0",
+        "x-content-type-options": "nosniff"
+      },
+      status: httpStatus
+    }
   );
 }

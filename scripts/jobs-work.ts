@@ -26,7 +26,7 @@ async function main() {
     ...readRunJobsWorkerCliOptions(),
     signal: abortController.signal,
     onRecoveryResult: (recovery) => {
-      if (recovery.recovered > 0) {
+      if (recovery.recovered > 0 || recovery.dead > 0) {
         console.log(formatStaleRecoverySummary(recovery));
       }
     },

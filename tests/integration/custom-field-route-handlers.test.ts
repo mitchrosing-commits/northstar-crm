@@ -86,6 +86,27 @@ describe("database-backed custom field route handlers", () => {
     });
     expect(field.id).toEqual(expect.any(String));
 
+    const duplicateResponse = await invokeWorkspaceApi({
+      method: "POST",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-fields"],
+      body: {
+        entityType: "DEAL",
+        name: "Decision Process Duplicate",
+        key: "decision_process",
+        fieldType: "TEXT",
+        required: false
+      }
+    });
+    const duplicateBody = await readJson<ApiErrorBody>(duplicateResponse);
+
+    expect(duplicateResponse.status).toBe(409);
+    expect(duplicateBody.error).toMatchObject({
+      code: "CUSTOM_FIELD_EXISTS",
+      message: "A custom field with this key already exists for this record type."
+    });
+
     const listResponse = await invokeWorkspaceApi({
       method: "GET",
       workspaceId: fx.workspaceA.id,
@@ -137,6 +158,58 @@ describe("database-backed custom field route handlers", () => {
 
     expect(updateResponse.status).toBe(200);
     expect(valueForField(updatedFields, field.id)).toBe(88);
+  });
+
+  it("treats empty custom field value updates as a read-only refresh without audit noise", async () => {
+    const fx = currentFixture();
+    const field = await createDealCustomField(fx, {
+      name: "Empty Update Guard",
+      key: "empty_update_guard",
+      fieldType: "TEXT"
+    });
+    const auditCountBefore = await fx.prisma.auditLog.count({
+      where: {
+        workspaceId: fx.workspaceA.id,
+        entityType: "Deal",
+        entityId: fx.recordsA.deal.id,
+        action: "custom_field_value.updated"
+      }
+    });
+
+    const response = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: {}
+      }
+    });
+    const fields = await readJson<DealCustomFieldBody[]>(response);
+
+    expect(response.status).toBe(200);
+    expect(valueForField(fields, field.id)).toBeUndefined();
+    await expect(
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Deal",
+          entityId: fx.recordsA.deal.id,
+          action: "custom_field_value.updated"
+        }
+      })
+    ).resolves.toBe(auditCountBefore);
+    await expect(
+      fx.prisma.customFieldValue.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          fieldId: field.id,
+          entityId: fx.recordsA.deal.id
+        }
+      })
+    ).resolves.toBe(0);
   });
 
   it("lists, creates, and sets Contact custom fields through the workspace API", async () => {
@@ -272,10 +345,10 @@ describe("database-backed custom field route handlers", () => {
   });
 
 
-  it("returns validation errors for invalid custom field payloads and values", async () => {
+  it("accepts Select custom fields and returns validation errors for invalid payloads and values", async () => {
     const fx = currentFixture();
 
-    const invalidTypeResponse = await invokeWorkspaceApi({
+    const selectFieldResponse = await invokeWorkspaceApi({
       method: "POST",
       workspaceId: fx.workspaceA.id,
       actorUserId: fx.userA.id,
@@ -284,13 +357,55 @@ describe("database-backed custom field route handlers", () => {
         entityType: "DEAL",
         name: "Selection",
         key: "selection",
-        fieldType: "SELECT"
+        fieldType: "SELECT",
+        options: ["High", "Medium", "Low"]
       }
     });
-    const invalidTypeBody = await readJson<ApiErrorBody>(invalidTypeResponse);
+    const selectField = await readJson<CustomFieldDefinitionBody>(selectFieldResponse);
 
-    expect(invalidTypeResponse.status).toBe(422);
-    expect(invalidTypeBody.error.code).toBe("VALIDATION_ERROR");
+    expect(selectFieldResponse.status).toBe(201);
+    expect(selectField).toMatchObject({
+      workspaceId: fx.workspaceA.id,
+      entityType: "DEAL",
+      name: "Selection",
+      key: "selection",
+      fieldType: "SELECT"
+    });
+
+    const validSelectValueResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [selectField.id]: "High" }
+      }
+    });
+    const validSelectFields = await readJson<RecordCustomFieldBody[]>(validSelectValueResponse);
+
+    expect(validSelectValueResponse.status).toBe(200);
+    expect(valueForField(validSelectFields, selectField.id)).toBe("High");
+
+    const invalidSelectValueResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [selectField.id]: "Not configured" }
+      }
+    });
+    const invalidSelectValueBody = await readJson<ApiErrorBody>(invalidSelectValueResponse);
+
+    expect(invalidSelectValueResponse.status).toBe(422);
+    expect(invalidSelectValueBody.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Selection must be one of the configured options."
+    });
 
     const numberField = await createDealCustomField(fx, {
       name: "Numeric Fit",
@@ -312,6 +427,94 @@ describe("database-backed custom field route handlers", () => {
 
     expect(invalidValueResponse.status).toBe(422);
     expect(invalidValueBody.error.code).toBe("VALIDATION_ERROR");
+
+    const textField = await createDealCustomField(fx, {
+      name: "Atomic Text",
+      key: "atomic_text",
+      fieldType: "TEXT"
+    });
+    const atomicFailureResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: {
+          [textField.id]: "Should not be partially saved",
+          [numberField.id]: "still-not-a-number"
+        }
+      }
+    });
+    const atomicFailureBody = await readJson<ApiErrorBody>(atomicFailureResponse);
+    const partialTextValue = await fx.prisma.customFieldValue.findUnique({
+      where: {
+        fieldId_entityId: {
+          fieldId: textField.id,
+          entityId: fx.recordsA.deal.id
+        }
+      }
+    });
+
+    expect(atomicFailureResponse.status).toBe(422);
+    expect(atomicFailureBody.error.code).toBe("VALIDATION_ERROR");
+    expect(partialTextValue).toBeNull();
+
+    const requiredTextField = await createDealCustomField(fx, {
+      name: "Required Text",
+      key: "required_text",
+      fieldType: "TEXT",
+      required: true
+    });
+    const whitespaceRequiredResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [requiredTextField.id]: "   " }
+      }
+    });
+    const whitespaceRequiredBody = await readJson<ApiErrorBody>(whitespaceRequiredResponse);
+
+    expect(whitespaceRequiredResponse.status).toBe(422);
+    expect(whitespaceRequiredBody.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Required Text is required."
+    });
+
+    const optionalNumberField = await createDealCustomField(fx, {
+      name: "Optional Number",
+      key: "optional_number",
+      fieldType: "NUMBER"
+    });
+    const whitespaceOptionalResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [optionalNumberField.id]: "   " }
+      }
+    });
+    const whitespaceOptionalFields = await readJson<DealCustomFieldBody[]>(whitespaceOptionalResponse);
+    const whitespaceOptionalValue = await fx.prisma.customFieldValue.findUniqueOrThrow({
+      where: {
+        fieldId_entityId: {
+          fieldId: optionalNumberField.id,
+          entityId: fx.recordsA.deal.id
+        }
+      }
+    });
+
+    expect(whitespaceOptionalResponse.status).toBe(200);
+    expect(valueForField(whitespaceOptionalFields, optionalNumberField.id)).toBeNull();
+    expect(whitespaceOptionalValue.value).toBeNull();
   });
 
   it("rejects setting values for records or field definitions outside the workspace", async () => {
@@ -451,6 +654,193 @@ describe("database-backed custom field route handlers", () => {
 
     expect(response.status).toBe(409);
     expect(body.error.code).toBe("LEAD_CONVERTED");
+    await expect(
+      fx.prisma.customFieldValue.findUnique({
+        where: {
+          fieldId_entityId: {
+            fieldId: leadField.id,
+            entityId: fx.recordsA.lead.id
+          }
+        }
+      })
+    ).resolves.toBeNull();
+    await expect(
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityId: fx.recordsA.lead.id,
+          entityType: "Lead",
+          action: "custom_field_value.updated"
+        }
+      })
+    ).resolves.toBe(0);
+  });
+
+  it("rejects setting Deal custom field values on closed deals", async () => {
+    const fx = currentFixture();
+    const dealField = await createDealCustomField(fx, {
+      name: "Closed Deal Lock Field",
+      key: "closed_deal_lock_field",
+      fieldType: "TEXT"
+    });
+
+    const setResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [dealField.id]: "Before close" }
+      }
+    });
+    await invokeWorkspaceApi({
+      method: "POST",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["deals", fx.recordsA.deal.id, "close"],
+      body: { status: "WON" }
+    });
+
+    const response = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [dealField.id]: "After close" }
+      }
+    });
+    const body = await readJson<ApiErrorBody>(response);
+
+    expect(setResponse.status).toBe(200);
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("DEAL_CLOSED");
+    await expect(
+      fx.prisma.customFieldValue.findUnique({
+        where: {
+          fieldId_entityId: {
+            fieldId: dealField.id,
+            entityId: fx.recordsA.deal.id
+          }
+        }
+      })
+    ).resolves.toMatchObject({ value: "Before close" });
+    await expect(
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityId: fx.recordsA.deal.id,
+          entityType: "Deal",
+          action: "custom_field_value.updated"
+        }
+      })
+    ).resolves.toBe(1);
+  });
+
+  it("rejects setting values for records deleted through the workspace API", async () => {
+    const fx = currentFixture();
+    const dealField = await createDealCustomField(fx, {
+      name: "Deleted Deal Field",
+      key: "deleted_deal_field",
+      fieldType: "TEXT"
+    });
+    const personField = await createPersonCustomField(fx, {
+      name: "Deleted Contact Field",
+      key: "deleted_contact_field",
+      fieldType: "TEXT"
+    });
+    const organizationField = await createOrganizationCustomField(fx, {
+      name: "Deleted Organization Field",
+      key: "deleted_organization_field",
+      fieldType: "TEXT"
+    });
+
+    const [dealDeleteResponse, personDeleteResponse, organizationDeleteResponse] = await Promise.all([
+      invokeWorkspaceApi({
+        method: "DELETE",
+        workspaceId: fx.workspaceA.id,
+        actorUserId: fx.userA.id,
+        segments: ["deals", fx.recordsA.deal.id]
+      }),
+      invokeWorkspaceApi({
+        method: "DELETE",
+        workspaceId: fx.workspaceA.id,
+        actorUserId: fx.userA.id,
+        segments: ["people", fx.recordsA.person.id]
+      }),
+      invokeWorkspaceApi({
+        method: "DELETE",
+        workspaceId: fx.workspaceA.id,
+        actorUserId: fx.userA.id,
+        segments: ["organizations", fx.recordsA.organization.id]
+      })
+    ]);
+
+    expect(dealDeleteResponse.status).toBe(204);
+    expect(personDeleteResponse.status).toBe(204);
+    expect(organizationDeleteResponse.status).toBe(204);
+
+    const deletedDealResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [dealField.id]: "Should fail" }
+      }
+    });
+    const deletedPersonResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "PERSON",
+        entityId: fx.recordsA.person.id,
+        values: { [personField.id]: "Should fail" }
+      }
+    });
+    const deletedOrganizationResponse = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "ORGANIZATION",
+        entityId: fx.recordsA.organization.id,
+        values: { [organizationField.id]: "Should fail" }
+      }
+    });
+    const [deletedDealBody, deletedPersonBody, deletedOrganizationBody] = await Promise.all([
+      readJson<ApiErrorBody>(deletedDealResponse),
+      readJson<ApiErrorBody>(deletedPersonResponse),
+      readJson<ApiErrorBody>(deletedOrganizationResponse)
+    ]);
+
+    expect(deletedDealResponse.status).toBe(404);
+    expect(deletedDealBody.error.code).toBe("NOT_FOUND");
+    expect(deletedPersonResponse.status).toBe(404);
+    expect(deletedPersonBody.error.code).toBe("NOT_FOUND");
+    expect(deletedOrganizationResponse.status).toBe(404);
+    expect(deletedOrganizationBody.error.code).toBe("NOT_FOUND");
+    await expect(
+      fx.prisma.customFieldValue.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          OR: [
+            { fieldId: dealField.id, entityId: fx.recordsA.deal.id },
+            { fieldId: personField.id, entityId: fx.recordsA.person.id },
+            { fieldId: organizationField.id, entityId: fx.recordsA.organization.id }
+          ]
+        }
+      })
+    ).resolves.toBe(0);
   });
 
   it("rejects custom field values when the field entity type does not match the target entity type", async () => {
@@ -668,6 +1058,55 @@ describe("database-backed custom field route handlers", () => {
     expect(leadFieldOnOrganizationResponse.status).toBe(404);
     expect(leadFieldOnOrganizationBody.error.code).toBe("NOT_FOUND");
   });
+
+  it("repairs stale custom field value workspace metadata during valid value updates", async () => {
+    const fx = currentFixture();
+    const dealField = await createDealCustomField(fx, {
+      name: "Repairable Field",
+      key: "repairable_field",
+      fieldType: "TEXT"
+    });
+    await fx.prisma.customFieldValue.create({
+      data: {
+        workspaceId: fx.workspaceB.id,
+        fieldId: dealField.id,
+        entityType: "PERSON",
+        entityId: fx.recordsA.deal.id,
+        value: "stale"
+      }
+    });
+
+    const response = await invokeWorkspaceApi({
+      method: "PATCH",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["custom-field-values"],
+      body: {
+        entityType: "DEAL",
+        entityId: fx.recordsA.deal.id,
+        values: { [dealField.id]: "repaired" }
+      }
+    });
+    const fields = await readJson<DealCustomFieldBody[]>(response);
+    const persistedValue = await fx.prisma.customFieldValue.findUniqueOrThrow({
+      where: {
+        fieldId_entityId: {
+          fieldId: dealField.id,
+          entityId: fx.recordsA.deal.id
+        }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(valueForField(fields, dealField.id)).toBe("repaired");
+    expect(persistedValue).toMatchObject({
+      workspaceId: fx.workspaceA.id,
+      entityType: "DEAL",
+      entityId: fx.recordsA.deal.id,
+      fieldId: dealField.id,
+      value: "repaired"
+    });
+  });
 });
 
 function currentFixture() {
@@ -682,6 +1121,7 @@ async function createDealCustomField(
     name: string;
     key: string;
     fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN";
+    required?: boolean;
   }
 ) {
   return createCustomField(fx, { ...input, entityType: "DEAL" });
@@ -694,6 +1134,7 @@ async function createPersonCustomField(
     name: string;
     key: string;
     fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN";
+    required?: boolean;
   }
 ) {
   return createCustomField(fx, { ...input, entityType: "PERSON" });
@@ -706,6 +1147,7 @@ async function createOrganizationCustomField(
     name: string;
     key: string;
     fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN";
+    required?: boolean;
   }
 ) {
   return createCustomField(fx, { ...input, entityType: "ORGANIZATION" });
@@ -718,6 +1160,7 @@ async function createLeadCustomField(
     name: string;
     key: string;
     fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN";
+    required?: boolean;
   }
 ) {
   return createCustomField(fx, { ...input, entityType: "LEAD" });
@@ -731,6 +1174,7 @@ async function createCustomField(
     name: string;
     key: string;
     fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN";
+    required?: boolean;
   }
 ) {
   const workspaceId = input.workspace === "B" ? fx.workspaceB.id : fx.workspaceA.id;
@@ -744,7 +1188,8 @@ async function createCustomField(
       entityType: input.entityType,
       name: input.name,
       key: input.key,
-      fieldType: input.fieldType
+      fieldType: input.fieldType,
+      required: input.required
     }
   });
 

@@ -1,133 +1,146 @@
 "use client";
 
 import { useActionState } from "react";
-import { useFormStatus } from "react-dom";
 
 import {
   previewContactImportAction,
-  type ContactImportPreviewActionState
+  type ContactImportPreviewActionState,
 } from "@/app/settings/import-export/actions";
+import {
+  ImportColumnGuidance,
+  ImportCsvInputGroup,
+  ImportFormShell,
+  ImportPreviewEmptyState,
+  ImportPreviewIssues,
+  ImportPreviewRowNotes,
+  ImportPreviewStatusBadge,
+  ImportPreviewSummary,
+  ImportPreviewTable,
+  isImportReady,
+} from "./import-form-shared";
 
 const initialState: ContactImportPreviewActionState = {
-  csvText: ""
+  csvText: "",
 };
 
 export function ContactImportForm() {
-  const [state, formAction] = useActionState(previewContactImportAction, initialState);
+  const [state, formAction] = useActionState(
+    previewContactImportAction,
+    initialState,
+  );
+  const canImport = isImportReady(state.preview);
 
   return (
-    <form action={formAction} className="import-form">
-      <label className="form-label" htmlFor="contactCsv">
-        Contacts CSV
-      </label>
-      <textarea
-        className="import-textarea"
-        id="contactCsv"
-        name="contactCsv"
-        rows={8}
+    <ImportFormShell
+      action={formAction}
+      canImport={canImport}
+      error={state.error}
+      importButtonLabel="Import valid contacts"
+      importPendingLabel="Importing..."
+      preview={state.preview}
+      previewButtonLabel="Preview contacts"
+      previewContent={
+        state.preview ? <ContactImportPreview state={state} /> : null
+      }
+      previewPendingLabel="Previewing..."
+      recordLabel="contact"
+      recordPluralLabel="contacts"
+      result={state.result}
+    >
+      <ImportCsvInputGroup
         defaultValue={state.csvText}
-        placeholder={"name,email,phone,organizationName\nAvery Stone,avery@example.test,555-0100,Acme Corporation"}
+        id="contactCsv"
+        label="Contacts CSV"
+        name="contactCsv"
+        placeholder={
+          "name,email,phone,organizationName\nAvery Stone,avery@example.test,555-0100,Acme Corporation"
+        }
+        guidance={
+          <ImportColumnGuidance
+            customFieldNote="Contact custom field import is deferred, and custom fields or export-only columns are reported but not imported yet."
+            optionalColumns="lastName, email, phone, and organizationName, plus ownerEmail"
+            recordIntro="Contacts preview and import."
+            requiredColumns="name or firstName"
+            requiredLabel="Required column"
+            workspaceNote="Organization names and owner emails must already exist in this workspace; contacts are only created after import."
+          />
+        }
       />
-      <p className="empty-copy">
-        Contacts preview and import. Required column: name or firstName. Optional columns: lastName, email, phone, and
-        organizationName. Organization names must already exist; contacts are only created after import.
-      </p>
-      <div className="import-actions">
-        <SubmitButton intent="preview" label="Preview contacts" pendingLabel="Previewing..." />
-        {state.preview && state.preview.parseErrors.length === 0 && state.preview.validRows > 0 ? (
-          <SubmitButton intent="import" label="Import valid contacts" pendingLabel="Importing..." />
-        ) : null}
-      </div>
-      {state.error ? <p className="form-error">{state.error}</p> : null}
-      {state.result ? <ContactImportResultSummary result={state.result} /> : null}
-      {state.preview ? <ContactImportPreview state={state} /> : null}
-    </form>
+    </ImportFormShell>
   );
 }
 
-function SubmitButton({ intent, label, pendingLabel }: { intent: string; label: string; pendingLabel: string }) {
-  const { pending } = useFormStatus();
-
-  return (
-    <button className={intent === "import" ? "button-secondary" : "button-primary"} type="submit" name="intent" value={intent} disabled={pending}>
-      {pending ? pendingLabel : label}
-    </button>
-  );
-}
-
-function ContactImportResultSummary({
-  result
+function ContactImportPreview({
+  state,
 }: {
-  result: NonNullable<ContactImportPreviewActionState["result"]>;
+  state: ContactImportPreviewActionState;
 }) {
-  return (
-    <div className="import-preview">
-      <h3>Import results</h3>
-      <div className="import-summary">
-        <span>{result.createdCount} created</span>
-        <span>{result.skippedDuplicateCount} duplicates skipped</span>
-        <span>{result.skippedInvalidCount} invalid rows skipped</span>
-        <span>{result.errorCount} errors</span>
-      </div>
-    </div>
-  );
-}
-
-function ContactImportPreview({ state }: { state: ContactImportPreviewActionState }) {
   const preview = state.preview;
   if (!preview) return null;
 
   if (preview.parseErrors.length > 0) {
-    return (
-      <div className="import-preview">
-        <h3>Preview issues</h3>
-        <ul className="import-message-list">
-          {preview.parseErrors.map((error) => (
-            <li key={error}>{error}</li>
-          ))}
-        </ul>
-      </div>
-    );
+    return <ImportPreviewIssues errors={preview.parseErrors} />;
   }
 
   return (
     <div className="import-preview">
-      <h3>Preview results</h3>
-      <div className="import-summary">
-        <span>{preview.validRows} valid</span>
-        <span>{preview.duplicateRows} duplicates to skip</span>
-        <span>{preview.invalidRows} invalid rows to skip</span>
-      </div>
-      {preview.unsupportedColumns.length > 0 ? (
-        <p className="empty-copy">Ignored columns: {preview.unsupportedColumns.join(", ")}</p>
-      ) : null}
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Row</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Organization</th>
-            <th>Status</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {preview.rows.map((row) => (
-            <tr key={row.rowNumber}>
-              <td>{row.rowNumber}</td>
-              <td>{row.name || "Missing"}</td>
-              <td>{row.email || "-"}</td>
-              <td>{row.organizationName || "-"}</td>
-              <td>
-                <span className="badge">{row.status}</span>
-              </td>
-              <td>{row.skipReasons.length > 0 ? row.skipReasons.join(" ") : row.warnings.join(" ") || "-"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {preview.rows.length === 0 ? <p className="empty-copy">No contact rows found.</p> : null}
+      <ImportPreviewSummary
+        metrics={[
+          { value: preview.totalRows, label: "total rows" },
+          { value: preview.validRows, label: "valid" },
+          { value: preview.duplicateRows, label: "duplicates to skip" },
+          { value: preview.invalidRows, label: "invalid rows to skip" },
+          {
+            value: preview.unsupportedColumns.length,
+            label: "unsupported columns",
+          },
+        ]}
+        unsupportedColumns={preview.unsupportedColumns}
+        unsupportedColumnsMessage="Ignored unsupported columns, not imported:"
+      />
+      {preview.rows.length > 0 ? (
+        <ImportPreviewTable ariaLabel="Contacts import preview table">
+          <table className="table crm-list-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Organization</th>
+                <th>Import status</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.rows.map((row) => (
+                <tr key={row.rowNumber}>
+                  <td data-label="Row">{row.rowNumber}</td>
+                  <td data-label="Name">
+                    <span className="table-primary-cell">
+                      <strong>{row.name || "Missing"}</strong>
+                    </span>
+                  </td>
+                  <td data-label="Email">{row.email || "-"}</td>
+                  <td data-label="Organization">
+                    {row.organizationName || "-"}
+                  </td>
+                  <td data-label="Import status">
+                    <ImportPreviewStatusBadge status={row.status} />
+                  </td>
+                  <td data-label="Notes">
+                    <ImportPreviewRowNotes
+                      skipReasons={row.skipReasons}
+                      warnings={row.warnings}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ImportPreviewTable>
+      ) : (
+        <ImportPreviewEmptyState recordLabel="contact" />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { created, handleApiError, json } from "@/lib/api/responses";
+import { ApiError, created, handleApiError, json } from "@/lib/api/responses";
 import { getRequestContext } from "@/lib/auth/request-context";
 import { createWorkspace, listWorkspaces } from "@/lib/services/crm";
 import { createWorkspaceSchema } from "@/lib/validators/crm";
@@ -17,9 +17,20 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const { actorUserId } = await getRequestContext();
-    const payload = createWorkspaceSchema.parse(await request.json());
+    const payload = createWorkspaceSchema.parse(await body(request));
     return created(await createWorkspace(actorUserId, payload));
   } catch (error) {
     return handleApiError(error);
+  }
+}
+
+async function body(request: NextRequest) {
+  try {
+    return await request.json();
+  } catch {
+    if (request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+      throw new ApiError("VALIDATION_ERROR", "The request payload is invalid.", 422);
+    }
+    return {};
   }
 }

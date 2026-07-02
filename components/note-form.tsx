@@ -3,6 +3,10 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+
 type NoteFormProps = {
   workspaceId: string;
   attachment: NoteAttachment;
@@ -53,9 +57,9 @@ export function NoteForm({ workspaceId, attachment }: NoteFormProps) {
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       <label className="form-field">
-        <span>Internal note</span>
+        <FormFieldLabel required>Internal note</FormFieldLabel>
         <textarea
           onChange={(event) => setBody(event.target.value)}
           placeholder="Add a plain-text note for your team."
@@ -64,11 +68,12 @@ export function NoteForm({ workspaceId, attachment }: NoteFormProps) {
           value={body}
         />
       </label>
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !body.trim()} type="submit">
-          {isSaving ? "Saving..." : "Save note"}
-        </button>
-      </div>
+      <FormActionBar
+        disabledHint="Write a note before saving."
+        isSaving={isSaving}
+        submitDisabled={!body.trim()}
+        submitLabel="Save note"
+      />
     </form>
   );
 }

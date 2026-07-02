@@ -1,8 +1,24 @@
 import Link from "next/link";
 import type { Route } from "next";
+import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app-shell";
-import { formatActivityType, formatDate, formatMoney } from "@/components/format";
+import { EmptyState } from "@/components/empty-state";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormSuccessMessage } from "@/components/form-success-message";
+import {
+  formatActivityType,
+  formatDate,
+  formatMoney,
+} from "@/components/format";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { StatusBadge } from "@/components/status-badge";
+import { StatCard as MetricCard } from "@/components/stat-card";
+import { TableScroll } from "@/components/table-scroll";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { dealListStateOptions, dealStatuses } from "@/lib/deal-list-state";
 import {
@@ -11,9 +27,13 @@ import {
   parseListViewState,
   serializeListViewState,
   serializedListViewStateToSearchParams,
-  type ListSearchParams
+  type ListSearchParams,
 } from "@/lib/list-page-query";
-import { getDealReport, getMonthlyWonRevenueGoalProgress } from "@/lib/services/crm";
+import {
+  getDealReport,
+  getMonthlyWonRevenueGoalProgress,
+} from "@/lib/services/crm";
+import { canManageWorkspaceSettings } from "@/lib/workspace-roles";
 import { saveMonthlyWonRevenueGoalAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -24,11 +44,14 @@ type PageProps = {
 
 export default async function ReportsPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const { workspace, actorUserId } = await getCurrentWorkspaceContext();
+  const { workspace, actorUserId, membership } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
+  const canManageGoals = canManageWorkspaceSettings(membership.role);
   const listState = parseListViewState(params, dealListStateOptions);
   const goalMonth = parseGoalMonthParam(getSearchParam(params, "goalMonth"));
-  const goalCurrency = parseGoalCurrencyParam(getSearchParam(params, "goalCurrency"));
+  const goalCurrency = parseGoalCurrencyParam(
+    getSearchParam(params, "goalCurrency"),
+  );
   const report = await getDealReport(actor, {
     q: listState.q,
     status: enumListViewFilter(listState, "status", dealStatuses),
@@ -39,72 +62,152 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     customFieldId: listState.filters.customFieldId,
     customFieldValue: listState.filters.customFieldValue,
     sortBy: listState.sortBy,
-    sortDirection: listState.sortDirection
+    sortDirection: listState.sortDirection,
   });
   const goalProgress = await getMonthlyWonRevenueGoalProgress(actor, {
     month: goalMonth,
-    currency: goalCurrency
+    currency: goalCurrency,
   });
-  const dealQuery = serializedListViewStateToSearchParams(serializeListViewState(listState)).toString();
+  const dealQuery = serializedListViewStateToSearchParams(
+    serializeListViewState(listState),
+  ).toString();
   const dealsHref = (dealQuery ? `/deals?${dealQuery}` : "/deals") as Route;
+  const openDealsHref = reportMetricDealsHref(dealQuery, "OPEN");
+  const wonDealsHref = reportMetricDealsHref(dealQuery, "WON");
+  const lostDealsHref = reportMetricDealsHref(dealQuery, "LOST");
   const goalSaved = getSearchParam(params, "goalSaved") === "1";
   const goalError = getSearchParam(params, "goalError");
+  const viewDealsLabel = "View deals matching this report";
+  const reviewNeedsAttentionLabel = "Review dashboard needs attention";
+  const viewActivitiesLabel = "View activities from reports";
+  const createFollowUpLabel = "Create follow-up activity from reports";
+  const findQuotesLabel = "Find deals with quotes from reports";
+  const viewOpenDealsLabel = "View open deals from reports";
+  const createDealLabel = "Create deal from reports";
+  const viewOrganizationsLabel = "View organizations from reports";
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Deal Reporting v1</p>
-          <h1 className="page-title">Reports</h1>
-        </div>
-        <Link className="button-secondary" href={dealsHref}>
-          View deals
-        </Link>
-      </header>
+      <PageHeader
+        actions={
+          <Link aria-label={viewDealsLabel} className="button-secondary" href={dealsHref} title={viewDealsLabel}>
+            View deals
+          </Link>
+        }
+        eyebrow="Deal Reporting v1"
+        subtitle="Operating metrics for pipeline value, activity coverage, quote movement, and forecast health."
+        title="Reports"
+      />
 
       <section className="stat-grid">
-        <MetricCard label="Open value" value={formatMoney(report.metrics.openPipelineValueCents)} />
-        <MetricCard label="Open deals" value={report.metrics.openDealsCount} />
-        <MetricCard label="Won value" value={formatMoney(report.metrics.wonDealsValueCents)} />
-        <MetricCard label="Won deals" value={report.metrics.wonDealsCount} />
-        <MetricCard label="Lost value" value={formatMoney(report.metrics.lostDealsValueCents)} />
-        <MetricCard label="Lost deals" value={report.metrics.lostDealsCount} />
+        <MetricCard
+          actionLabel="View open deal value from reports"
+          href={openDealsHref}
+          label="Open value"
+          value={formatMoney(report.metrics.openPipelineValueCents)}
+        />
+        <MetricCard
+          actionLabel="View open deals from reports"
+          href={openDealsHref}
+          label="Open deals"
+          value={report.metrics.openDealsCount}
+        />
+        <MetricCard
+          actionLabel="View won deal value from reports"
+          href={wonDealsHref}
+          label="Won value"
+          value={formatMoney(report.metrics.wonDealsValueCents)}
+        />
+        <MetricCard
+          actionLabel="View won deals from reports"
+          href={wonDealsHref}
+          label="Won deals"
+          value={report.metrics.wonDealsCount}
+        />
+        <MetricCard
+          actionLabel="View lost deal value from reports"
+          href={lostDealsHref}
+          label="Lost value"
+          value={formatMoney(report.metrics.lostDealsValueCents)}
+        />
+        <MetricCard
+          actionLabel="View lost deals from reports"
+          href={lostDealsHref}
+          label="Lost deals"
+          value={report.metrics.lostDealsCount}
+        />
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Pipeline Hygiene</h2>
+        <PanelTitleRow title="Pipeline Hygiene" />
         <div className="stat-grid">
-          <MetricCard href="/dashboard" label="Overdue activity" value={report.metrics.dealsWithOverdueActivities} />
-          <MetricCard href="/activities?due=today" label="Due today" value={report.metrics.dealsDueToday} />
-          <MetricCard href="/deals" label="No next activity" value={report.metrics.dealsWithNoNextActivity} />
+          <MetricCard
+            href="/deals?followUp=overdue"
+            label="Overdue activity"
+            value={report.metrics.dealsWithOverdueActivities}
+          />
+          <MetricCard
+            href="/deals?followUp=today"
+            label="Due today"
+            value={report.metrics.dealsDueToday}
+          />
+          <MetricCard
+            href="/deals?followUp=missing"
+            label="No next activity"
+            value={report.metrics.dealsWithNoNextActivity}
+          />
         </div>
       </section>
 
       <section className="panel">
-        <div className="panel-title-row">
-          <div>
-            <h2 className="panel-title">Data Hygiene</h2>
-            <p className="empty-copy">Quick cleanup signals that make CRM data easier to trust before a pipeline review.</p>
-          </div>
-          <Link className="inline-link" href="/dashboard">
-            Review Needs Attention
-          </Link>
-        </div>
+        <PanelTitleRow
+          actions={
+            <Link aria-label={reviewNeedsAttentionLabel} className="inline-link" href="/dashboard" title={reviewNeedsAttentionLabel}>
+              Review Needs Attention
+            </Link>
+          }
+          description="Quick cleanup signals that make CRM data easier to trust before a pipeline review."
+          title="Data Hygiene"
+        />
         <div className="stat-grid">
-          <MetricCard href="/contacts" label="Contacts missing email" value={report.dataHygiene.contactsMissingEmail} />
-          <MetricCard href="/deals" label="Deals missing contact/org" value={report.dataHygiene.openDealsMissingContactOrOrganization} />
-          <MetricCard href="/deals" label="Deals with no owner" value={report.dataHygiene.openDealsWithoutOwner} />
-          <MetricCard href="/deals" label="Open deals no next activity" value={report.dataHygiene.openDealsWithNoNextActivity} />
-          <MetricCard href="/leads" label="Leads missing source" value={report.dataHygiene.leadsMissingSource} />
-          <MetricCard href="/organizations" label="Organizations with no people" value={report.dataHygiene.organizationsWithoutPeople} />
+          <MetricCard
+            href="/contacts"
+            label="Contacts missing email"
+            value={report.dataHygiene.contactsMissingEmail}
+          />
+          <MetricCard
+            href="/deals?status=OPEN"
+            label="Deals missing contact/org"
+            value={report.dataHygiene.openDealsMissingContactOrOrganization}
+          />
+          <MetricCard
+            href="/deals?status=OPEN"
+            label="Deals with no owner"
+            value={report.dataHygiene.openDealsWithoutOwner}
+          />
+          <MetricCard
+            href="/deals?followUp=missing"
+            label="Open deals no next activity"
+            value={report.dataHygiene.openDealsWithNoNextActivity}
+          />
+          <MetricCard
+            href="/leads"
+            label="Leads missing source"
+            value={report.dataHygiene.leadsMissingSource}
+          />
+          <MetricCard
+            href="/organizations"
+            label="Organizations with no people"
+            value={report.dataHygiene.organizationsWithoutPeople}
+          />
         </div>
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Pipeline By Stage</h2>
+        <PanelTitleRow title="Pipeline By Stage" />
         {report.stageBreakdown.length > 0 ? (
-          <div className="table-scroll" role="region" aria-label="Pipeline by stage table" tabIndex={0}>
-            <table className="table">
+          <TableScroll aria-label="Pipeline by stage table">
+            <table className="table crm-list-table">
               <thead>
                 <tr>
                   <th>Pipeline</th>
@@ -116,224 +219,325 @@ export default async function ReportsPage({ searchParams }: PageProps) {
               <tbody>
                 {report.stageBreakdown.map((stage) => (
                   <tr key={stage.stageId}>
-                    <td>{stage.pipelineName}</td>
-                    <td>{stage.stageName}</td>
-                    <td>{stage.openDealCount}</td>
-                    <td>{formatMoney(stage.openDealValueCents)}</td>
+                    <td data-label="Pipeline">{stage.pipelineName}</td>
+                    <td data-label="Stage">{stage.stageName}</td>
+                    <td data-label="Open deals">{stage.openDealCount}</td>
+                    <td data-label="Open value">
+                      {formatMoney(stage.openDealValueCents)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         ) : (
-          <p className="empty-copy">No pipeline stages match this report view yet.</p>
+          <EmptyState
+            className="empty-state-compact empty-state-panel"
+            description="No pipeline stages match this report view yet."
+            title="No pipeline stage data"
+          />
         )}
       </section>
 
-      <section className="content-grid" style={{ marginTop: 14 }}>
+      <section className="content-grid section-spaced">
         <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Activity Status Summary</h2>
-            <Link className="inline-link" href="/activities">
-              View activities
-            </Link>
-          </div>
-          {report.activitySummary.open + report.activitySummary.completed > 0 ? (
+          <PanelTitleRow
+            actions={
+              <Link aria-label={viewActivitiesLabel} className="inline-link" href="/activities" title={viewActivitiesLabel}>
+                View activities
+              </Link>
+            }
+            title="Activity Status Summary"
+          />
+          {report.activitySummary.open + report.activitySummary.completed >
+          0 ? (
             <>
               <div className="stat-grid stat-grid-compact">
-                <MetricCard href="/activities?status=open" label="Open" value={report.activitySummary.open} />
-                <MetricCard href="/activities?status=completed" label="Completed" value={report.activitySummary.completed} />
+                <MetricCard
+                  href="/activities?status=open"
+                  label="Open"
+                  value={report.activitySummary.open}
+                />
+                <MetricCard
+                  href="/activities?status=completed"
+                  label="Completed"
+                  value={report.activitySummary.completed}
+                />
               </div>
-              <table className="table">
+              <TableScroll aria-label="Activity status summary table">
+                <table className="table crm-list-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Activities</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.activitySummary.byType.map((item) => (
+                      <tr key={item.type}>
+                        <td data-label="Type">
+                          {formatActivityType(item.type)}
+                        </td>
+                        <td data-label="Activities">{item.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableScroll>
+            </>
+          ) : (
+            <EmptyState
+              actions={
+                <Link
+                  aria-label={createFollowUpLabel}
+                  className="button-secondary button-compact"
+                  href="/activities/new"
+                  title={createFollowUpLabel}
+                >
+                  Create follow-up
+                </Link>
+              }
+              className="empty-state-compact empty-state-panel"
+              description="Create a follow-up to start reporting on work queue health."
+              title="No activities yet"
+            />
+          )}
+        </div>
+
+        <div className="panel">
+          <PanelTitleRow
+            actions={
+              <Link aria-label={findQuotesLabel} className="inline-link" href="/deals" title={findQuotesLabel}>
+                Find quotes
+              </Link>
+            }
+            title="Quote Status Summary"
+          />
+          {report.quoteSummary.some((item) => item.count > 0) ? (
+            <TableScroll aria-label="Quote status summary table">
+              <table className="table crm-list-table">
                 <thead>
                   <tr>
-                    <th>Type</th>
-                    <th>Activities</th>
+                    <th>Status</th>
+                    <th>Quotes</th>
+                    <th>Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {report.activitySummary.byType.map((item) => (
-                    <tr key={item.type}>
-                      <td>{formatActivityType(item.type)}</td>
-                      <td>{item.count}</td>
+                  {report.quoteSummary.map((item) => (
+                    <tr key={item.status}>
+                      <td data-label="Status">
+                        <StatusBadge status={item.status} />
+                      </td>
+                      <td data-label="Quotes">{item.count}</td>
+                      <td data-label="Total">
+                        {formatMoney(item.totalCents)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">
-              No activities yet. <Link href="/activities/new">Create a follow-up</Link> to start reporting on work queue health.
-            </p>
-          )}
-        </div>
-
-        <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Quote Status Summary</h2>
-            <Link className="inline-link" href="/deals">
-              Find quotes
-            </Link>
-          </div>
-          {report.quoteSummary.some((item) => item.count > 0) ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Quotes</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.quoteSummary.map((item) => (
-                  <tr key={item.status}>
-                    <td>{item.status}</td>
-                    <td>{item.count}</td>
-                    <td>{formatMoney(item.totalCents)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p className="empty-copy">
-              No quotes yet. Quotes appear after a deal has line items and an internal quote draft.
-            </p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="Quotes appear after a deal has line items and an internal quote draft."
+              title="No quotes yet"
+            />
           )}
         </div>
       </section>
 
-      <section className="content-grid" style={{ marginTop: 14 }}>
+      <section className="content-grid section-spaced">
         <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Top Open Deals</h2>
-            <Link className="inline-link" href="/deals?status=OPEN">
-              View open deals
-            </Link>
-          </div>
+          <PanelTitleRow
+            actions={
+              <Link aria-label={viewOpenDealsLabel} className="inline-link" href="/deals?status=OPEN" title={viewOpenDealsLabel}>
+                View open deals
+              </Link>
+            }
+            title="Top Open Deals"
+          />
           {report.topOpenDeals.length > 0 ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Deal</th>
-                  <th>Stage</th>
-                  <th>Owner</th>
-                  <th>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.topOpenDeals.map((deal) => (
-                  <tr key={deal.id}>
-                    <td>
-                      <Link className="inline-link" href={`/deals/${deal.id}`}>
-                        {deal.title}
-                      </Link>
-                      {deal.organization ? (
-                        <div className="deal-meta">
-                          <Link className="inline-link" href={`/organizations/${deal.organization.id}`}>
-                            {deal.organization.name}
-                          </Link>
-                        </div>
-                      ) : null}
-                    </td>
-                    <td>{deal.stageName}</td>
-                    <td>{deal.ownerName}</td>
-                    <td>{formatMoney(deal.valueCents, deal.currency)}</td>
+            <TableScroll aria-label="Top open deals table">
+              <table className="table crm-list-table">
+                <thead>
+                  <tr>
+                    <th>Deal</th>
+                    <th>Stage</th>
+                    <th>Owner</th>
+                    <th>Value</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {report.topOpenDeals.map((deal) => (
+                    <tr key={deal.id}>
+                      <td data-label="Deal">
+                        <div className="table-primary-cell">
+                          <Link
+                            className="inline-link"
+                            href={`/deals/${deal.id}`}
+                          >
+                            <strong>{deal.title}</strong>
+                          </Link>
+                          {deal.organization ? (
+                            <span className="table-secondary-text">
+                              <Link
+                                className="inline-link"
+                                href={`/organizations/${deal.organization.id}`}
+                              >
+                                {deal.organization.name}
+                              </Link>
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td data-label="Stage">{deal.stageName}</td>
+                      <td data-label="Owner">{deal.ownerName}</td>
+                      <td data-label="Value">
+                        {formatMoney(deal.valueCents, deal.currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">
-              No open deals yet. <Link href="/deals/new">Create a deal</Link> to start ranking opportunities by value.
-            </p>
+            <EmptyState
+              actions={
+                <Link
+                  aria-label={createDealLabel}
+                  className="button-secondary button-compact"
+                  href="/deals/new"
+                  title={createDealLabel}
+                >
+                  Create deal
+                </Link>
+              }
+              className="empty-state-compact empty-state-panel"
+              description="Create a deal to start ranking opportunities by value."
+              title="No open deals yet"
+            />
           )}
         </div>
 
         <div className="panel">
-          <div className="panel-title-row">
-            <h2 className="panel-title">Top Organizations</h2>
-            <Link className="inline-link" href="/organizations">
-              View organizations
-            </Link>
-          </div>
+          <PanelTitleRow
+            actions={
+              <Link aria-label={viewOrganizationsLabel} className="inline-link" href="/organizations" title={viewOrganizationsLabel}>
+                View organizations
+              </Link>
+            }
+            title="Top Organizations"
+          />
           {report.topOrganizations.length > 0 ? (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Organization</th>
-                  <th>Open deals</th>
-                  <th>Open value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.topOrganizations.map((organization) => (
-                  <tr key={organization.organizationId}>
-                    <td>
-                      <Link className="inline-link" href={`/organizations/${organization.organizationId}`}>
-                        {organization.organizationName}
-                      </Link>
-                    </td>
-                    <td>{organization.openDealCount}</td>
-                    <td>{formatMoney(organization.openValueCents, organization.currency)}</td>
+            <TableScroll aria-label="Top organizations table">
+              <table className="table crm-list-table">
+                <thead>
+                  <tr>
+                    <th>Organization</th>
+                    <th>Open deals</th>
+                    <th>Open value</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {report.topOrganizations.map((organization) => (
+                    <tr key={organization.organizationId}>
+                      <td data-label="Organization">
+                        <div className="table-primary-cell">
+                          <Link
+                            className="inline-link"
+                            href={`/organizations/${organization.organizationId}`}
+                          >
+                            <strong>{organization.organizationName}</strong>
+                          </Link>
+                        </div>
+                      </td>
+                      <td data-label="Open deals">
+                        {organization.openDealCount}
+                      </td>
+                      <td data-label="Open value">
+                        {formatMoney(
+                          organization.openValueCents,
+                          organization.currency,
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
           ) : (
-            <p className="empty-copy">
-              Open deal value by organization will appear after opportunities are linked to companies.
-            </p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="Open deal value by organization will appear after opportunities are linked to companies."
+              title="No organization pipeline value yet"
+            />
           )}
         </div>
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Goals v1</h2>
-        <p className="empty-copy" style={{ marginBottom: 16 }}>
-          Workspace-level monthly won-revenue goal only. Progress uses same-currency WON deals whose actual won timestamp (wonAt)
-          falls inside the selected month, not expected close date. Legacy won deals without wonAt are excluded. Same currency only;
-          no FX conversion is applied.
-        </p>
+        <PanelTitleRow title="Goals v1" />
+        <ReportScopeNote title="Goal scope">
+          Workspace-level monthly won-revenue goal only. Progress uses
+          same-currency WON deals whose actual won timestamp (wonAt) falls
+          inside the selected month, not expected close date. Legacy won deals
+          without wonAt are excluded. Same currency only; no FX conversion is
+          applied.
+        </ReportScopeNote>
 
-        <form action={saveMonthlyWonRevenueGoalAction} className="form-grid" style={{ marginBottom: 16 }}>
-          <label className="form-field">
-            <span>Month</span>
-            <input type="month" name="goalMonth" defaultValue={formatGoalMonthInput(goalProgress.periodStart)} required />
-          </label>
-          <label className="form-field">
-            <span>Currency</span>
-            <input name="goalCurrency" defaultValue={goalProgress.currency} maxLength={3} pattern="[A-Za-z]{3}" required />
-          </label>
-          <label className="form-field">
-            <span>Target</span>
-            <input
-              name="goalTargetAmount"
-              defaultValue={goalProgress.targetCents == null ? "" : formatMoneyInput(goalProgress.targetCents)}
-              inputMode="decimal"
-              placeholder="10000"
-              required
-            />
-          </label>
-          <div className="form-actions">
-            <button className="button-primary" type="submit">
-              Save goal
-            </button>
-          </div>
-        </form>
+        {canManageGoals ? (
+          <form
+            action={saveMonthlyWonRevenueGoalAction}
+            className="form-grid section-separated"
+          >
+            <label className="form-field">
+              <FormFieldLabel required>Month</FormFieldLabel>
+              <input
+                type="month"
+                name="goalMonth"
+                defaultValue={formatGoalMonthInput(goalProgress.periodStart)}
+                required
+              />
+            </label>
+            <label className="form-field">
+              <FormFieldLabel required>Currency</FormFieldLabel>
+              <input
+                name="goalCurrency"
+                defaultValue={goalProgress.currency}
+                maxLength={3}
+                pattern="[A-Za-z]{3}"
+                required
+              />
+            </label>
+            <label className="form-field">
+              <FormFieldLabel required>Target</FormFieldLabel>
+              <input
+                name="goalTargetAmount"
+                defaultValue={
+                  goalProgress.targetCents == null
+                    ? ""
+                    : formatMoneyInput(goalProgress.targetCents)
+                }
+                inputMode="decimal"
+                placeholder="10000"
+                required
+              />
+            </label>
+            <FormActionBar isSaving={false} submitLabel="Save goal" />
+          </form>
+        ) : (
+          <FormIntroCallout className="section-separated" title="Goal management">
+            Workspace admins and owners can save monthly goals. Members can view goal progress.
+          </FormIntroCallout>
+        )}
 
-        {goalSaved ? (
-          <p className="compact-success" role="status" style={{ marginBottom: 16 }}>
-            Goal saved.
-          </p>
-        ) : null}
-        {goalError ? (
-          <p className="compact-error" role="alert" style={{ marginBottom: 16 }}>
-            {goalError}
-          </p>
-        ) : null}
+        {goalSaved ? <FormSuccessMessage className="section-separated" compact>Goal saved.</FormSuccessMessage> : null}
+        {goalError ? <FormErrorMessage className="section-separated" compact>{goalError}</FormErrorMessage> : null}
 
-        <div className="table-scroll" role="region" aria-label="Goals v1 monthly won revenue table" tabIndex={0}>
-          <table className="table">
+        <TableScroll aria-label="Goals v1 monthly won revenue table">
+          <table className="table crm-list-table">
             <thead>
               <tr>
                 <th>Month</th>
@@ -347,62 +551,99 @@ export default async function ReportsPage({ searchParams }: PageProps) {
             </thead>
             <tbody>
               <tr>
-                <td>{formatGoalMonthLabel(goalProgress.periodStart)}</td>
-                <td>{goalProgress.currency}</td>
-                <td>
+                <td data-label="Month">
+                  {formatGoalMonthLabel(goalProgress.periodStart)}
+                </td>
+                <td data-label="Currency">{goalProgress.currency}</td>
+                <td data-label="Target">
                   {goalProgress.targetCents == null
                     ? "No monthly target saved yet"
-                    : formatMoney(goalProgress.targetCents, goalProgress.currency)}
+                    : formatMoney(
+                        goalProgress.targetCents,
+                        goalProgress.currency,
+                      )}
                 </td>
-                <td>{formatMoney(goalProgress.wonRevenueCents, goalProgress.currency)}</td>
-                <td>
+                <td data-label="Won revenue">
+                  {formatMoney(
+                    goalProgress.wonRevenueCents,
+                    goalProgress.currency,
+                  )}
+                </td>
+                <td data-label="Remaining">
                   {goalProgress.remainingCents == null
                     ? "Save a target to track remaining"
-                    : formatMoney(goalProgress.remainingCents, goalProgress.currency)}
+                    : formatMoney(
+                        goalProgress.remainingCents,
+                        goalProgress.currency,
+                      )}
                 </td>
-                <td>{goalProgress.progressPercent == null ? "Save target first" : formatGoalPercent(goalProgress.progressPercent)}</td>
-                <td>{goalProgress.includedDealCount}</td>
+                <td data-label="Progress">
+                  {goalProgress.progressPercent == null
+                    ? "Save target first"
+                    : formatGoalPercent(goalProgress.progressPercent)}
+                </td>
+                <td data-label="Included deals">
+                  {goalProgress.includedDealCount}
+                </td>
               </tr>
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       </section>
 
       <section className="panel">
-        <h2 className="panel-title">Forecasting v1</h2>
-        <p className="empty-copy" style={{ marginBottom: 16 }}>
-          Open deals by currency, expected close date, pipeline, stage, owner, and stage probability when set.
-        </p>
+        <PanelTitleRow title="Forecasting v1" />
+        <ReportScopeNote title="Forecast scope">
+          Open deals by currency, expected close date, pipeline, stage, owner,
+          and stage probability when set.
+        </ReportScopeNote>
         {report.forecast.openDealCount > 0 ? (
           <>
             <div className="stat-grid">
-              <MetricCard label="Open forecast" value={report.forecast.openDealCount} />
-              <MetricCard label="Currencies" value={report.forecast.currencyCount} />
-              <MetricCard label="No close date" value={report.forecast.dealsWithoutExpectedCloseCount} />
+              <MetricCard
+                label="Open forecast"
+                value={report.forecast.openDealCount}
+              />
+              <MetricCard
+                label="Currencies"
+                value={report.forecast.currencyCount}
+              />
+              <MetricCard
+                label="No close date"
+                value={report.forecast.dealsWithoutExpectedCloseCount}
+              />
               <MetricCard
                 label="Missing probability"
-                value={report.forecast.summaries.reduce((total, summary) => total + summary.missingProbabilityDealCount, 0)}
+                value={report.forecast.summaries.reduce(
+                  (total, summary) =>
+                    total + summary.missingProbabilityDealCount,
+                  0,
+                )}
               />
             </div>
 
             {report.forecast.hasMultipleCurrencies ? (
-              <p className="empty-copy" style={{ marginBottom: 16 }}>
-                Multiple currencies are shown separately. No FX conversion is applied in Forecasting v1.
-              </p>
+              <ReportScopeNote title="Currency scope">
+                Multiple currencies are shown separately. No FX conversion is
+                applied in Forecasting v1.
+              </ReportScopeNote>
             ) : null}
             {report.forecast.hasMissingStageProbabilities ? (
-              <p className="empty-copy" style={{ marginBottom: 16 }}>
-                Missing stage probability means a deal is in a stage with no probability set, so that deal is not included in weighted forecast value.
-              </p>
+              <ReportScopeNote title="Probability scope">
+                Missing stage probability means a deal is in a stage with no
+                probability set, so that deal is not included in weighted
+                forecast value.
+              </ReportScopeNote>
             ) : null}
             {report.forecast.dealsWithoutExpectedCloseCount > 0 ? (
-              <p className="empty-copy" style={{ marginBottom: 16 }}>
-                No expected close date means the deal has no expected close date set and is shown outside dated forecast planning.
-              </p>
+              <ReportScopeNote title="Close date scope">
+                No expected close date means the deal has no expected close date
+                set and is shown outside dated forecast planning.
+              </ReportScopeNote>
             ) : null}
 
-            <div className="table-scroll" role="region" aria-label="Forecast currency summary table" tabIndex={0}>
-              <table className="table">
+            <TableScroll aria-label="Forecast currency summary table">
+              <table className="table crm-list-table">
                 <thead>
                   <tr>
                     <th>Currency</th>
@@ -416,28 +657,48 @@ export default async function ReportsPage({ searchParams }: PageProps) {
                 <tbody>
                   {report.forecast.summaries.map((summary) => (
                     <tr key={summary.currency}>
-                      <td>{summary.currency}</td>
-                      <td>{summary.openDealCount}</td>
-                      <td>{formatMoney(summary.openForecastValueCents, summary.currency)}</td>
-                      <td>
-                        {summary.weightedForecastValueCents > 0 || summary.openDealCount > summary.missingProbabilityDealCount
-                          ? formatMoney(summary.weightedForecastValueCents, summary.currency)
+                      <td data-label="Currency">{summary.currency}</td>
+                      <td data-label="Open deals">
+                        {summary.openDealCount}
+                      </td>
+                      <td data-label="Open forecast value">
+                        {formatMoney(
+                          summary.openForecastValueCents,
+                          summary.currency,
+                        )}
+                      </td>
+                      <td data-label="Weighted forecast value">
+                        {summary.weightedForecastValueCents > 0 ||
+                        summary.openDealCount >
+                          summary.missingProbabilityDealCount
+                          ? formatMoney(
+                              summary.weightedForecastValueCents,
+                              summary.currency,
+                            )
                           : "No stage probabilities set"}
                       </td>
-                      <td>
-                        {summary.missingProbabilityDealCount} / {formatMoney(summary.missingProbabilityValueCents, summary.currency)}
+                      <td data-label="Missing stage probability">
+                        {summary.missingProbabilityDealCount} /{" "}
+                        {formatMoney(
+                          summary.missingProbabilityValueCents,
+                          summary.currency,
+                        )}
                       </td>
-                      <td>
-                        {summary.noExpectedCloseDealCount} / {formatMoney(summary.noExpectedCloseValueCents, summary.currency)}
+                      <td data-label="No expected close date">
+                        {summary.noExpectedCloseDealCount} /{" "}
+                        {formatMoney(
+                          summary.noExpectedCloseValueCents,
+                          summary.currency,
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
 
-            <div className="table-scroll" role="region" aria-label="Forecast deal detail table" tabIndex={0}>
-              <table className="table">
+            <TableScroll aria-label="Forecast deal detail table">
+              <table className="table crm-list-table">
                 <thead>
                   <tr>
                     <th>Deal</th>
@@ -452,15 +713,32 @@ export default async function ReportsPage({ searchParams }: PageProps) {
                 <tbody>
                   {report.forecast.rows.map((row) => (
                     <tr key={row.dealId}>
-                      <td>{row.dealTitle}</td>
-                      <td>
+                      <td data-label="Deal">
+                        <span className="table-primary-cell">
+                          <Link
+                            className="inline-link"
+                            href={`/deals/${row.dealId}`}
+                          >
+                            <strong>{row.dealTitle}</strong>
+                          </Link>
+                        </span>
+                      </td>
+                      <td data-label="Pipeline / Stage">
                         {row.pipelineName} / {row.stageName}
                       </td>
-                      <td>{row.ownerName}</td>
-                      <td>{row.expectedCloseAt ? formatDate(row.expectedCloseAt) : "No expected close date"}</td>
-                      <td>{formatMoney(row.valueCents, row.currency)}</td>
-                      <td>{formatProbability(row.stageProbability)}</td>
-                      <td>
+                      <td data-label="Owner">{row.ownerName}</td>
+                      <td data-label="Expected close">
+                        {row.expectedCloseAt
+                          ? formatDate(row.expectedCloseAt)
+                          : "No expected close date"}
+                      </td>
+                      <td data-label="Open value">
+                        {formatMoney(row.valueCents, row.currency)}
+                      </td>
+                      <td data-label="Stage probability">
+                        {formatProbability(row.stageProbability)}
+                      </td>
+                      <td data-label="Weighted value">
                         {row.weightedValueCents == null
                           ? "Not weighted: stage probability missing"
                           : formatMoney(row.weightedValueCents, row.currency)}
@@ -469,30 +747,34 @@ export default async function ReportsPage({ searchParams }: PageProps) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
           </>
         ) : (
-          <p className="empty-copy">No open deals are available for forecasting yet. Forecasting v1 excludes won and lost deals.</p>
+          <EmptyState
+            className="empty-state-compact empty-state-panel"
+            description="Forecasting v1 excludes won and lost deals."
+            title="No open deals are available for forecasting yet"
+          />
         )}
       </section>
     </AppShell>
   );
 }
 
-function MetricCard({ href, label, value }: { href?: Route | string; label: string; value: number | string }) {
-  const content = (
-    <div className="stat-card">
-      <p className="stat-label">{label}</p>
-      <p className="stat-value">{value}</p>
-    </div>
-  );
-
-  return href ? (
-    <Link className="stat-card-link" href={href as Route}>
-      {content}
-    </Link>
-  ) : (
-    content
+function ReportScopeNote({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <FormIntroCallout
+      className="section-separated report-scope-note"
+      title={title}
+    >
+      {children}
+    </FormIntroCallout>
   );
 }
 
@@ -509,6 +791,16 @@ function parseGoalCurrencyParam(value: string) {
   return /^[A-Z]{3}$/.test(currency) ? currency : "USD";
 }
 
+function reportMetricDealsHref(
+  dealQuery: string,
+  status: (typeof dealStatuses)[number],
+) {
+  const params = new URLSearchParams(dealQuery);
+  params.set("status", status);
+  params.delete("page");
+  return `/deals?${params.toString()}` as Route;
+}
+
 function formatGoalMonthInput(value: Date) {
   return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}`;
 }
@@ -517,7 +809,7 @@ function formatGoalMonthLabel(value: Date) {
   return new Intl.DateTimeFormat("en-US", {
     month: "long",
     year: "numeric",
-    timeZone: "UTC"
+    timeZone: "UTC",
   }).format(value);
 }
 

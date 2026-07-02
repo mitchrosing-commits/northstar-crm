@@ -2,15 +2,22 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { QuoteReadinessPanel } from "@/components/commercial-workflow-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
 import { formatDate, formatMoney, formatQuoteAdjustment } from "@/components/format";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { QuoteAdjustmentsForm } from "@/components/quote-adjustments-form";
 import { QuoteDealValueSyncAction } from "@/components/quote-deal-value-sync-action";
 import { QuotePublicLinkControls } from "@/components/quote-public-link-controls";
 import { QuoteStatusActions } from "@/components/quote-status-actions";
+import { StatusBadge } from "@/components/status-badge";
+import { TableScroll } from "@/components/table-scroll";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { summarizeQuoteReadiness } from "@/lib/commercial-workflow";
 import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import { formatPersonName } from "@/lib/person-name";
 import { buildPublicQuoteUrl } from "@/lib/public-url";
 import { getQuote } from "@/lib/services/crm";
 
@@ -30,40 +37,58 @@ export default async function QuoteDetailPage({ params }: PageProps) {
   });
   const publicLink = quote.publicLinks[0] ?? null;
   const publicUrl = publicLink ? buildPublicQuoteUrl(publicLink.token) : null;
+  const readiness = summarizeQuoteReadiness({ quote, deal: quote.deal });
+  const quoteFollowUpActionLabel = `Add follow-up for quote ${quote.number}`;
+  const quotePrintActionLabel = `Open print view for quote ${quote.number}`;
+  const quotePdfActionLabel = `Download PDF for quote ${quote.number}`;
+  const backToDealActionLabel = `Back to deal ${quote.deal.title}`;
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Internal quote</p>
-          <h1 className="page-title">{quote.number}</h1>
-        </div>
-        <div className="header-actions">
-          <span className="badge">{quote.status}</span>
-          {quote.status === "SENT" ? (
+      <PageHeader
+        actions={
+          <>
+            <StatusBadge status={quote.status} />
+            {quote.status === "SENT" ? (
+              <Link
+                aria-label={quoteFollowUpActionLabel}
+                className="button-secondary"
+                href={buildActivityFollowUpHref({
+                  dueInDays: 3,
+                  related: { type: "deal", id: quote.dealId },
+                  returnTo: `/deals/${quote.dealId}/quotes/${quote.id}`,
+                  title: `Follow up on ${quote.number}`,
+                  type: "TASK"
+                })}
+                title={quoteFollowUpActionLabel}
+              >
+                Add follow-up
+              </Link>
+            ) : null}
             <Link
+              aria-label={quotePrintActionLabel}
               className="button-secondary"
-              href={buildActivityFollowUpHref({
-                dueInDays: 3,
-                related: { type: "deal", id: quote.dealId },
-                title: `Follow up on ${quote.number}`,
-                type: "TASK"
-              })}
+              href={`/deals/${quote.dealId}/quotes/${quote.id}/print`}
+              title={quotePrintActionLabel}
             >
-              Add follow-up
+              Print view
             </Link>
-          ) : null}
-          <Link className="button-secondary" href={`/deals/${quote.dealId}/quotes/${quote.id}/print`}>
-            Print view
-          </Link>
-          <Link className="button-secondary" href={`/deals/${quote.dealId}/quotes/${quote.id}/pdf`}>
-            Download PDF
-          </Link>
-          <Link className="button-secondary" href={`/deals/${quote.dealId}`}>
-            Back to deal
-          </Link>
-        </div>
-      </header>
+            <Link
+              aria-label={quotePdfActionLabel}
+              className="button-secondary"
+              href={`/deals/${quote.dealId}/quotes/${quote.id}/pdf`}
+              title={quotePdfActionLabel}
+            >
+              Download PDF
+            </Link>
+            <Link aria-label={backToDealActionLabel} className="button-secondary" href={`/deals/${quote.dealId}`} title={backToDealActionLabel}>
+              Back to deal
+            </Link>
+          </>
+        }
+        eyebrow="Internal quote"
+        title={quote.number}
+      />
 
       <section className="detail-grid">
         <DetailFieldGrid
@@ -77,23 +102,25 @@ export default async function QuoteDetailPage({ params }: PageProps) {
               )
             },
             {
+              emptyLabel: "No organization",
               label: "Organization",
               value: quote.deal.organization ? (
                 <Link className="inline-link" href={`/organizations/${quote.deal.organization.id}`}>
                   {quote.deal.organization.name}
                 </Link>
               ) : (
-                "None"
+                null
               )
             },
             {
+              emptyLabel: "No contact",
               label: "Contact",
               value: quote.deal.person ? (
                 <Link className="inline-link" href={`/contacts/${quote.deal.person.id}`}>
-                  {formatPersonName(quote.deal.person)}
+                  {formatPersonName(quote.deal.person) ?? "Unnamed contact"}
                 </Link>
               ) : (
-                "None"
+                null
               )
             },
             { label: "Created", value: formatDate(quote.createdAt) }
@@ -119,7 +146,9 @@ export default async function QuoteDetailPage({ params }: PageProps) {
         />
       </section>
 
-      {quote.status === "DRAFT" ? (
+      <QuoteReadinessPanel summary={readiness} />
+
+      {quote.status === "DRAFT" && quote.deal.status === "OPEN" ? (
         <QuoteAdjustmentsForm
           discountType={quote.discountType}
           discountValue={quote.discountValue}
@@ -130,9 +159,21 @@ export default async function QuoteDetailPage({ params }: PageProps) {
         />
       ) : null}
 
-      <QuoteStatusActions quoteId={quote.id} status={quote.status} workspaceId={workspace.id} />
+      <QuoteStatusActions
+        canTransition={quote.deal.status === "OPEN"}
+        quoteId={quote.id}
+        quoteNumber={quote.number}
+        status={quote.status}
+        workspaceId={workspace.id}
+      />
 
-      <QuotePublicLinkControls publicUrl={publicUrl} quoteId={quote.id} workspaceId={workspace.id} />
+      <QuotePublicLinkControls
+        canGenerate={quote.status === "SENT" && quote.deal.status === "OPEN"}
+        publicUrl={publicUrl}
+        quoteId={quote.id}
+        quoteNumber={quote.number}
+        workspaceId={workspace.id}
+      />
 
       {quote.status === "ACCEPTED" ? (
         <QuoteDealValueSyncAction
@@ -145,43 +186,44 @@ export default async function QuoteDetailPage({ params }: PageProps) {
         />
       ) : null}
 
-      <section className="data-card" style={{ marginTop: 14 }}>
-        <div className="panel-title-row">
-          <h2 className="panel-title">Quote Items</h2>
-          <span className="badge">Internal tracking only</span>
-        </div>
-        <p className="empty-copy" style={{ marginBottom: 14 }}>
-          These items are snapshots from the deal line items at the moment the draft was created.
-        </p>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Description</th>
-              <th>Qty</th>
-              <th>Unit price</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {quote.items.map((item) => (
-              <tr key={item.id}>
-                <td>
-                  <strong>{item.name}</strong>
-                </td>
-                <td>{item.description ?? ""}</td>
-                <td>{item.quantity}</td>
-                <td>{formatMoney(item.unitPriceCents, item.currency)}</td>
-                <td>{formatMoney(item.lineTotalCents, item.currency)}</td>
+      <section className="data-card section-spaced">
+        <PanelTitleRow
+          actions={<span className="badge">Internal tracking only</span>}
+          description="These items are snapshots from the deal line items at the moment the draft was created."
+          title="Quote Items"
+        />
+        <TableScroll aria-label={`${quote.number} quote detail items table`}>
+          <table className="table crm-list-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Unit price</th>
+                <th>Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {quote.items.map((item) => (
+                <tr key={item.id}>
+                  <td data-label="Item">
+                    <div className="table-primary-cell">
+                      <strong>{item.name}</strong>
+                      {item.description ? <span className="table-secondary-text">{item.description}</span> : null}
+                    </div>
+                  </td>
+                  <td data-label="Qty">{item.quantity}</td>
+                  <td data-label="Unit price">
+                    {formatMoney(item.unitPriceCents, item.currency)}
+                  </td>
+                  <td data-label="Total">
+                    {formatMoney(item.lineTotalCents, item.currency)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       </section>
     </AppShell>
   );
-}
-
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }

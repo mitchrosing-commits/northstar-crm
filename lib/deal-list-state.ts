@@ -8,14 +8,19 @@ export const dealFilterKeys = [
   "ownerId",
   "personId",
   "organizationId",
+  "followUp",
+  "commercial",
   "customFieldId",
   "customFieldOperator",
   "customFieldValue"
 ] as const;
 
+export const dealCommercialFilters = ["noQuote", "hasQuote", "acceptedQuote", "valueNoLineItems"] as const;
+
 export type DealListStatus = (typeof dealStatuses)[number];
 export type DealListSort = (typeof dealSorts)[number];
 export type DealListFilterKey = (typeof dealFilterKeys)[number];
+export type DealCommercialFilter = (typeof dealCommercialFilters)[number];
 
 export const defaultDealListSortBy = "updatedAt" satisfies DealListSort;
 export const defaultDealListSortDirection = "desc" satisfies SortDirection;

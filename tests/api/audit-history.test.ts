@@ -7,7 +7,10 @@ import { formatAuditEvent } from "@/lib/audit-format";
 
 const auditEventList = readFileSync(join(process.cwd(), "components/audit-event-list.tsx"), "utf8");
 const auditHistoryPanel = readFileSync(join(process.cwd(), "components/audit-history-panel.tsx"), "utf8");
+const panelTitleRow = readFileSync(join(process.cwd(), "components/panel-title-row.tsx"), "utf8");
 const dashboardPage = readFileSync(join(process.cwd(), "app/dashboard/page.tsx"), "utf8");
+const timelineMetaRow = readFileSync(join(process.cwd(), "components/timeline-meta-row.tsx"), "utf8");
+const timelineBodyText = readFileSync(join(process.cwd(), "components/timeline-body-text.tsx"), "utf8");
 
 describe("audit history formatting", () => {
   it("uses readable labels for common CRM events", () => {
@@ -55,6 +58,22 @@ describe("audit history formatting", () => {
       label: "Added note",
       targetLabel: "Note"
     });
+    expect(formatAuditEvent({ action: "deal.imported", entityType: "Deal" })).toMatchObject({
+      label: "Imported deal from CSV",
+      targetLabel: "Deal"
+    });
+    expect(formatAuditEvent({ action: "contact.imported", entityType: "Person" })).toMatchObject({
+      label: "Imported contact from CSV",
+      targetLabel: "Contact"
+    });
+    expect(formatAuditEvent({ action: "organization.imported", entityType: "Organization" })).toMatchObject({
+      label: "Imported organization from CSV",
+      targetLabel: "Organization"
+    });
+    expect(formatAuditEvent({ action: "lead.imported", entityType: "Lead" })).toMatchObject({
+      label: "Imported lead from CSV",
+      targetLabel: "Lead"
+    });
   });
 
   it("uses explicit fallback labels for unknown audit actions", () => {
@@ -77,6 +96,12 @@ describe("audit history formatting", () => {
         metadata: { reattachedActivities: 2, reattachedNotes: 1 }
       }).metadataLabel
     ).toBe("Moved 2 activities and 1 note");
+    expect(
+      formatAuditEvent({
+        action: "lead.converted",
+        metadata: { reattachedActivities: 2, reattachedNotes: 1, reattachedEmailLogs: 1 }
+      }).metadataLabel
+    ).toBe("Moved 2 activities, 1 note, and 1 email log");
     expect(formatAuditEvent({ action: "custom_field_value.updated", metadata: { fieldIds: ["a", "b"] } }).metadataLabel).toBe(
       "2 custom fields updated"
     );
@@ -85,9 +110,32 @@ describe("audit history formatting", () => {
   it("shares rendering between record history panels and dashboard recent changes", () => {
     expect(auditEventList).toContain("formatAuditEvent(entry)");
     expect(auditEventList).toContain("formatDate(entry.createdAt)");
+    expect(auditEventList).toContain("TimelineMetaRow");
+    expect(auditEventList).toContain("className=\"timeline-item timeline-item-audit\"");
+    expect(auditEventList).toContain("showTarget ? event.targetLabel : null");
     expect(auditEventList).toContain("event.actorLabel");
     expect(auditEventList).toContain("event.metadataLabel");
+    expect(auditEventList).toContain("TimelineBodyText");
+    expect(auditEventList).toContain("<TimelineBodyText>{event.metadataLabel}</TimelineBodyText>");
+    expect(auditEventList).not.toContain('<p className="muted">{event.metadataLabel}</p>');
+    expect(timelineMetaRow).toContain("timeline-meta");
+    expect(timelineBodyText).toContain("timeline-body-text");
     expect(auditHistoryPanel).toContain("AuditEventList");
+    expect(auditEventList).toContain("ariaLabel={`${event.label} audit event metadata`}");
+    expect(auditHistoryPanel).toContain("EmptyState");
+    expect(auditHistoryPanel).toContain("empty-state-compact empty-state-panel");
+    expect(auditHistoryPanel).toContain("title={emptyMessage}");
+    expect(auditHistoryPanel).toContain("PanelTitleRow");
+    expect(auditHistoryPanel).toContain("const auditCountLabel = `${entries.length} audit ${entries.length === 1 ? \"event\" : \"events\"}`");
+    expect(auditHistoryPanel).toContain("aria-label={auditCountLabel}");
+    expect(auditHistoryPanel).toContain("title={auditCountLabel}");
+    expect(auditHistoryPanel).toContain("actionsLabel=\"Audit history event count\"");
+    expect(auditHistoryPanel).toContain("description={description}");
+    expect(auditHistoryPanel).toContain("Immutable workspace audit events for this record.");
+    expect(panelTitleRow).toContain("panel-title-row");
+    expect(auditHistoryPanel).toContain("className=\"data-card section-spaced\"");
+    expect(auditHistoryPanel).toContain("id = \"audit-history\"");
+    expect(auditHistoryPanel).toContain("id={id}");
     expect(dashboardPage).toContain("AuditEventList");
     expect(dashboardPage).toContain("showTarget");
   });

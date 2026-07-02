@@ -6,8 +6,8 @@ Deals import is implemented as a browser/server-action workflow on `/settings/im
 
 ## Current Import/Export Baseline
 
-- CSV exports are implemented for Deals, Contacts/People, Organizations, and Leads through `GET /api/v1/workspaces/:workspaceId/exports/:resource`.
-- The Deals export currently emits: `title`, `status`, `value`, `currency`, `pipeline`, `stage`, `expectedCloseAt`, `contactName`, `contactEmail`, `organizationName`, `ownerEmail`, `createdAt`, `updatedAt`, then `Custom: Field Name` columns for deal custom fields.
+- CSV exports are implemented for Deals, Contacts/People, Organizations, Leads, Activities, Products, and Quotes through `GET /api/v1/workspaces/:workspaceId/exports/:resource`.
+- The Deals export currently emits: `title`, `status`, `value`, `currency`, `pipeline`, `stage`, `expectedCloseAt`, `contactName`, `contactEmail`, `organizationName`, `ownerEmail`, `lineItemCount`, `quoteCount`, `latestQuoteNumber`, `latestQuoteStatus`, `latestQuoteTotal`, `createdAt`, `updatedAt`, then `Custom: Field Name` columns for deal custom fields.
 - CSV imports are implemented for Deals, Organizations, Contacts, and Leads as browser/server-action workflows on `/settings/import-export`, not as public REST endpoints.
 - Existing imports report unsupported columns, skip invalid or duplicate rows, re-run preview validation server-side before creating, never upsert, and write `*.imported` audit logs for created records.
 - Existing imports do not support custom field import, file upload/storage, background jobs, or automatic creation of associated records.
@@ -16,9 +16,9 @@ Deals import is implemented as a browser/server-action workflow on `/settings/im
 
 Required columns:
 
-- `title`, with `name` accepted as an alias.
-- `pipeline`, with `pipelineName` accepted as an alias.
-- `stage`, with `stageName` accepted as an alias.
+- `title`, with `name` and `Deal Title` accepted as aliases.
+- `pipeline`, with `pipelineName` and `Pipeline Name` accepted as aliases.
+- `stage`, with `stageName` and `Stage Name` accepted as aliases.
 
 Optional columns:
 
@@ -30,6 +30,8 @@ Optional columns:
 - `contactName`
 - `organizationName`
 - `ownerEmail`
+
+Human-readable spreadsheet headers are accepted for these optional fields, including `Expected Close At`, `Contact Email`, `Contact Name`, `Organization Name`, and `Owner Email`.
 
 Unsupported columns:
 
@@ -84,7 +86,7 @@ Value and currency:
 
 - `value` is optional and represents major currency units, matching Deals export output such as `1200.00`.
 - Blank `value` imports as `valueCents: null`.
-- Non-blank `value` must be a non-negative decimal with at most two fractional digits and must convert safely to integer cents.
+- Non-blank `value` must be a non-negative decimal with at most two fractional digits and must fit the current integer-cent storage limit.
 - `currency` is optional, defaults to `USD` when blank, and must be a 3-letter uppercase ISO-style code after trimming and uppercasing.
 
 Status:

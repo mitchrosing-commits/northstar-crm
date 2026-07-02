@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { ApiError } from "@/lib/api/responses";
 import { activeWorkspaceCookieName, getCurrentWorkspaceContext, getRequestContext } from "@/lib/auth/request-context";
 import { prisma } from "@/lib/db/prisma";
+import { redactSensitiveText } from "@/lib/security/redaction";
 import {
   acceptWorkspaceInvitation,
   createWorkspaceFromName,
@@ -82,7 +83,7 @@ export async function createWorkspaceAction(
     }
 
     if (error instanceof ApiError) {
-      return { name, error: error.message };
+      return { name, error: redactSensitiveText(error.message) };
     }
 
     return { name, error: "Workspace could not be created." };
@@ -116,7 +117,7 @@ export async function createWorkspaceInvitationAction(
     }
 
     if (error instanceof ApiError) {
-      return { email, role, error: error.message };
+      return { email, role, error: redactSensitiveText(error.message) };
     }
 
     return { email, role, error: "Workspace invitation could not be created." };

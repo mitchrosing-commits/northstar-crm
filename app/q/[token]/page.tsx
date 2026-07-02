@@ -1,8 +1,16 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { EmptyState } from "@/components/empty-state";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormSuccessMessage } from "@/components/form-success-message";
 import { formatDate, formatMoney, formatQuoteAdjustment } from "@/components/format";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { QuotePrintNotice } from "@/components/quote-print-notice";
+import { StatusBadge } from "@/components/status-badge";
+import { TableScroll } from "@/components/table-scroll";
 import { ApiError } from "@/lib/api/responses";
+import { formatPersonName } from "@/lib/person-name";
 import { getPublicQuoteByToken } from "@/lib/services/crm";
 import { acceptPublicQuoteAction } from "./actions";
 
@@ -19,7 +27,7 @@ export const metadata: Metadata = {
 
 type PageProps = {
   params: Promise<{ token: string }>;
-  searchParams?: Promise<{ accepted?: string; acceptance?: string }>;
+  searchParams?: Promise<{ acceptance?: string; accepted?: string }>;
 };
 
 export default async function PublicQuotePage({ params, searchParams }: PageProps) {
@@ -29,8 +37,13 @@ export default async function PublicQuotePage({ params, searchParams }: PageProp
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const canAccept = quote.status === "SENT";
-  const showAcceptedConfirmation = query?.accepted === "1" || quote.status === "ACCEPTED";
+  const canAccept = quote.status === "SENT" && quote.deal.status === "OPEN";
+  const showAcceptedConfirmation = quote.status === "ACCEPTED";
+  const acceptedRedirectConfirmed = query?.accepted === "1" && showAcceptedConfirmation;
+  const responseDescription = canAccept
+    ? "Accepting records your approval of this quote total only. It does not collect payment, signature, email delivery, or automatically update internal deal value."
+    : undefined;
+  const acceptQuoteLabel = `Accept quote ${quote.number}`;
 
   return (
     <main className="quote-print-page">
@@ -39,7 +52,10 @@ export default async function PublicQuotePage({ params, searchParams }: PageProp
           <div>
             <p className="page-kicker">Customer-facing quote view</p>
             <h1 className="page-title">{quote.number}</h1>
-            <p className="empty-copy">Review this quote snapshot. Acceptance is available only while the quote is sent; signatures, payment, email delivery, and internal deal-value updates are not collected on this page.</p>
+            <QuotePrintNotice title="Quote scope">
+              Review this quote snapshot. Acceptance is available only while the quote is sent; signatures, payment, email
+              delivery, and internal deal-value updates are not collected on this page.
+            </QuotePrintNotice>
           </div>
           <div className="quote-print-company">
             <strong>{quote.workspace.name}</strong>
@@ -56,34 +72,37 @@ export default async function PublicQuotePage({ params, searchParams }: PageProp
           <div>
             <h2 className="compact-title">Customer</h2>
             <p>{quote.deal.organization?.name ?? "No organization"}</p>
-            <p>{quote.deal.person ? formatPersonName(quote.deal.person) : "No contact"}</p>
+            <p>{quote.deal.person ? formatPersonName(quote.deal.person) ?? "Unnamed contact" : "No contact"}</p>
           </div>
         </section>
 
-        <table className="table quote-print-table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Description</th>
-              <th>Qty</th>
-              <th>Unit price</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {quote.items.map((item) => (
-              <tr key={`${item.name}-${item.quantity}-${item.lineTotalCents}`}>
-                <td>
-                  <strong>{item.name}</strong>
-                </td>
-                <td>{item.description ?? ""}</td>
-                <td>{item.quantity}</td>
-                <td>{formatMoney(item.unitPriceCents, item.currency)}</td>
-                <td>{formatMoney(item.lineTotalCents, item.currency)}</td>
+        <TableScroll aria-label={`${quote.number} public quote items table`}>
+          <table className="table quote-print-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Unit price</th>
+                <th>Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {quote.items.map((item, index) => (
+                <tr key={`${item.name}-${item.quantity}-${item.lineTotalCents}-${index}`}>
+                  <td data-label="Item">
+                    <span className="table-primary-cell">
+                      <strong>{item.name}</strong>
+                      {item.description ? <span className="table-secondary-text">{item.description}</span> : null}
+                    </span>
+                  </td>
+                  <td data-label="Qty">{item.quantity}</td>
+                  <td data-label="Unit price">{formatMoney(item.unitPriceCents, item.currency)}</td>
+                  <td data-label="Total">{formatMoney(item.lineTotalCents, item.currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
 
         <section className="quote-print-totals">
           <div>
@@ -104,41 +123,40 @@ export default async function PublicQuotePage({ params, searchParams }: PageProp
           </div>
         </section>
 
-        <section className="data-card" style={{ marginTop: 22 }}>
-          <div className="panel-title-row">
-            <h2 className="panel-title">Quote Response</h2>
-            <span className="badge">{quote.status}</span>
-          </div>
+        <section className="data-card section-spaced">
+          <PanelTitleRow actions={<StatusBadge status={quote.status} />} description={responseDescription} title="Quote Response" />
+          {acceptedRedirectConfirmed ? (
+            <FormSuccessMessage className="section-spaced" compact>
+              Quote acceptance recorded. The Northstar team can now follow up from the accepted quote.
+            </FormSuccessMessage>
+          ) : null}
           {showAcceptedConfirmation ? (
-            <p className="empty-copy">Quote accepted. The Northstar team will follow up; no payment, signature, email delivery, or automatic internal deal-value update was collected.</p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel quote-response-state"
+              title="Quote accepted"
+              description="The Northstar team will follow up; no payment, signature, email delivery, or automatic internal deal-value update was collected."
+            />
           ) : canAccept ? (
-            <>
-              <p className="empty-copy" style={{ marginBottom: 14 }}>
-                Accepting records your approval of this quote total only. It does not collect payment, signature, email delivery, or automatically update internal deal value.
-              </p>
-              <form action={acceptPublicQuoteAction}>
-                <input name="token" type="hidden" value={token} />
-                <button className="button-primary button-compact" type="submit">
-                  Accept Quote
-                </button>
-              </form>
-            </>
+            <form action={acceptPublicQuoteAction}>
+              <input name="token" type="hidden" value={token} />
+              <button aria-label={acceptQuoteLabel} className="button-primary button-compact" title={acceptQuoteLabel} type="submit">
+                Accept Quote
+              </button>
+            </form>
           ) : (
-            <p className="empty-copy">
-              This quote is not currently available for public acceptance. Current status: {quote.status}.
-            </p>
+            <EmptyState
+              className="empty-state-compact empty-state-panel quote-response-state"
+              title="Acceptance unavailable"
+              description={`This quote is not currently available for public acceptance. Current status: ${quote.status}.`}
+            />
           )}
           {query?.acceptance === "unavailable" ? (
-            <p className="form-error" style={{ marginTop: 12 }}>
+            <FormErrorMessage className="panel-actions-row">
               This quote cannot be accepted from the public link in its current status.
-            </p>
+            </FormErrorMessage>
           ) : null}
         </section>
       </section>
     </main>
   );
-}
-
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }

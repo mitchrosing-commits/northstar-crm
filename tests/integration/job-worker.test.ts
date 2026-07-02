@@ -1,6 +1,7 @@
 import { JobStatus } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { hashPasswordResetToken } from "@/lib/auth/password-reset";
 import {
   internalNoopJobType,
   jobHandlers,
@@ -23,6 +24,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   fixture = await createIntegrationFixture();
+  await fixture.prisma.job.deleteMany({});
 });
 
 afterEach(async () => {
@@ -128,10 +130,18 @@ describe("single-run job worker", () => {
     const fx = currentFixture();
     const now = new Date("2030-03-01T12:40:00.000Z");
     let observedRecovery = 0;
+    let observedRecoveryDead = 0;
     const job = await crm.enqueueJob({
       workspaceId: fx.workspaceA.id,
       type: internalNoopJobType,
       payload: { purpose: "stale recovery mechanics" },
+      runAt: new Date("2030-03-01T12:00:00.000Z")
+    });
+    const maxedJob = await crm.enqueueJob({
+      workspaceId: fx.workspaceA.id,
+      type: internalNoopJobType,
+      payload: { purpose: "maxed stale recovery mechanics" },
+      maxAttempts: 1,
       runAt: new Date("2030-03-01T12:00:00.000Z")
     });
     await fx.prisma.job.update({
@@ -143,26 +153,40 @@ describe("single-run job worker", () => {
         lockedBy: "crashed-worker"
       }
     });
+    await fx.prisma.job.update({
+      where: { id: maxedJob.id },
+      data: {
+        status: JobStatus.RUNNING,
+        attempts: 1,
+        lockedAt: new Date("2030-03-01T12:10:00.000Z"),
+        lockedBy: "maxed-crashed-worker"
+      }
+    });
 
     const result = await runJobsWorker({
       idleExitAfterMs: 0,
       onRecoveryResult: (recovery) => {
         observedRecovery += recovery.recovered;
+        observedRecoveryDead += recovery.dead;
       },
       pollIntervalMs: 1,
       staleAfterMs: 15 * 60 * 1000,
       workerId: "worker-stale-recovery",
       now
     });
-    const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+    const [reloaded, reloadedMaxed] = await Promise.all([
+      fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } }),
+      fx.prisma.job.findUniqueOrThrow({ where: { id: maxedJob.id } })
+    ]);
 
     expect(observedRecovery).toBe(1);
+    expect(observedRecoveryDead).toBe(1);
     expect(result).toMatchObject({
       recovered: 1,
       claimed: 1,
       succeeded: 1,
       failed: 0,
-      dead: 0,
+      dead: 1,
       stopped: false
     });
     expect(result.batches).toBeGreaterThanOrEqual(2);
@@ -173,6 +197,14 @@ describe("single-run job worker", () => {
       lockedBy: null,
       lastError: null
     });
+    expect(reloadedMaxed).toMatchObject({
+      status: JobStatus.DEAD,
+      attempts: 1,
+      lockedAt: null,
+      lockedBy: null,
+      lastError: "Stale running job exceeded max attempts during recovery."
+    });
+    expect(reloadedMaxed.failedAt?.toISOString()).toBe(now.toISOString());
   });
 
   it("continuous worker passes the normalized worker id to claimed jobs", async () => {
@@ -280,7 +312,8 @@ describe("single-run job worker", () => {
       failedAt: null
     });
     expect(reloaded.runAt.getTime()).toBeGreaterThan(now.getTime());
-    expect(reloaded.lastError).toContain("No job handler registered for type: unknown.job_type");
+    expect(reloaded.lastError).toBe("No job handler registered.");
+    expect(reloaded.lastError).not.toContain(job.type);
   });
 
   it("processes queued password reset email jobs through the Resend sender when configured", async () => {
@@ -293,6 +326,7 @@ describe("single-run job worker", () => {
     });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "email-id" }), { status: 200 }));
     const now = new Date("2030-03-02T12:45:00.000Z");
+    await createPasswordResetToken(fx.userA.id, "resend-reset-token", new Date("2030-03-02T13:15:00.000Z"));
     const job = await crm.enqueueJob({
       type: passwordResetEmailJobType,
       payload: {
@@ -343,6 +377,7 @@ describe("single-run job worker", () => {
     });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
     const now = new Date("2030-03-02T13:00:00.000Z");
+    await createPasswordResetToken(fx.userA.id, "queued-reset-token", new Date("2030-03-02T13:30:00.000Z"));
     const job = await crm.enqueueJob({
       type: passwordResetEmailJobType,
       payload: {
@@ -378,6 +413,308 @@ describe("single-run job worker", () => {
     }
   });
 
+  it("continuous worker processes queued password reset email jobs through the webhook sender", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: "Northstar CRM <no-reply@example.test>",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:03:00.000Z");
+    await createPasswordResetToken(fx.userA.id, "continuous-worker-reset-token", new Date("2030-03-02T13:33:00.000Z"));
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:33:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=continuous-worker-reset-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsWorker({
+        idleExitAfterMs: 0,
+        pollIntervalMs: 1,
+        workerId: "worker-password-reset-continuous",
+        now
+      });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toMatchObject({
+        claimed: 1,
+        recovered: 0,
+        succeeded: 1,
+        failed: 0,
+        dead: 0,
+        stopped: false
+      });
+      expect(result.batches).toBeGreaterThanOrEqual(2);
+      expect(reloaded).toMatchObject({
+        status: JobStatus.SUCCEEDED,
+        attempts: 1,
+        lockedAt: null,
+        lockedBy: null,
+        lastError: null
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://mail.example.test/auth-email",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            type: "password_reset",
+            to: fx.userA.email,
+            from: "Northstar CRM <no-reply@example.test>",
+            resetUrl: "https://crm.example.test/reset-password?token=continuous-worker-reset-token",
+            expiresAt: "2030-03-02T13:33:00.000Z"
+          })
+        })
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("drops superseded password reset email jobs before provider delivery", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:05:00.000Z");
+    const expiresAt = new Date("2030-03-02T13:35:00.000Z");
+    await Promise.all([
+      createPasswordResetToken(fx.userA.id, "superseded-reset-token", expiresAt, new Date("2030-03-02T13:04:00.000Z")),
+      createPasswordResetToken(fx.userA.id, "current-reset-token", expiresAt)
+    ]);
+    const supersededJob = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: expiresAt.toISOString(),
+        resetUrl: "https://crm.example.test/reset-password?token=superseded-reset-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+    const currentJob = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: expiresAt.toISOString(),
+        resetUrl: "https://crm.example.test/reset-password?token=current-reset-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-superseded", limit: 2, now });
+      const [reloadedSuperseded, reloadedCurrent] = await Promise.all([
+        fx.prisma.job.findUniqueOrThrow({ where: { id: supersededJob.id } }),
+        fx.prisma.job.findUniqueOrThrow({ where: { id: currentJob.id } })
+      ]);
+
+      expect(result).toEqual({ claimed: 2, succeeded: 2, failed: 0, dead: 0 });
+      expect(reloadedSuperseded).toMatchObject({ status: JobStatus.SUCCEEDED, lastError: null });
+      expect(reloadedCurrent).toMatchObject({ status: JobStatus.SUCCEEDED, lastError: null });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][1]?.body)).toContain("current-reset-token");
+      expect(String(fetchMock.mock.calls[0][1]?.body)).not.toContain("superseded-reset-token");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("drops superseded password reset email jobs before checking delivery configuration", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: undefined,
+      AUTH_EMAIL_WEBHOOK_URL: undefined,
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:07:00.000Z");
+    const expiresAt = new Date("2030-03-02T13:37:00.000Z");
+    await Promise.all([
+      createPasswordResetToken(fx.userA.id, "superseded-no-config-token", expiresAt, new Date("2030-03-02T13:06:00.000Z")),
+      createPasswordResetToken(fx.userA.id, "current-no-config-token", expiresAt)
+    ]);
+    const supersededJob = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: expiresAt.toISOString(),
+        resetUrl: "https://crm.example.test/reset-password?token=superseded-no-config-token",
+        to: fx.userA.email
+      },
+      maxAttempts: 1,
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-superseded-no-config", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: supersededJob.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded).toMatchObject({
+        status: JobStatus.SUCCEEDED,
+        lastError: null,
+        lockedAt: null,
+        lockedBy: null
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("rejects queued password reset email jobs whose reset URL does not match the app base URL", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:10:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:40:00.000Z",
+        resetUrl: "https://evil.example.test/reset-password?token=poisoned-reset-token",
+        to: fx.userA.email
+      },
+      maxAttempts: 1,
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-poisoned-url", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+      expect(reloaded.status).toBe(JobStatus.DEAD);
+      expect(reloaded.lastError).toBe("Invalid password reset email job payload.");
+      expect(reloaded.lastError).not.toContain("poisoned-reset-token");
+      expect(reloaded.lastError).not.toContain("evil.example.test");
+      expect(reloaded.lastError).not.toContain(fx.userA.email);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("rejects queued password reset email jobs whose reset URL contains credentials", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:15:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:45:00.000Z",
+        resetUrl: "https://preview:secret@crm.example.test/reset-password?token=credentialed-reset-token",
+        to: fx.userA.email
+      },
+      maxAttempts: 1,
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-credentialed-url", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+      expect(reloaded.status).toBe(JobStatus.DEAD);
+      expect(reloaded.lastError).toBe("Invalid password reset email job payload.");
+      expect(reloaded.lastError).not.toContain("credentialed-reset-token");
+      expect(reloaded.lastError).not.toContain("preview:secret");
+      expect(reloaded.lastError).not.toContain(fx.userA.email);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("rejects queued password reset email jobs with malformed recipients before provider delivery", async () => {
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T13:20:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T13:50:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=malformed-recipient-token",
+        to: "not-an-email"
+      },
+      maxAttempts: 1,
+      runAt: now
+    });
+
+    try {
+      const fx = currentFixture();
+      const result = await runJobsOnce({ workerId: "worker-password-reset-malformed-recipient", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
+      expect(reloaded.status).toBe(JobStatus.DEAD);
+      expect(reloaded.lastError).toBe("Invalid password reset email job payload.");
+      expect(reloaded.lastError).not.toContain("not-an-email");
+      expect(reloaded.lastError).not.toContain("malformed-recipient-token");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("drops expired password reset email jobs without sending dead reset links", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: undefined
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+    const now = new Date("2030-03-02T14:01:00.000Z");
+    const job = await crm.enqueueJob({
+      type: passwordResetEmailJobType,
+      payload: {
+        expiresAt: "2030-03-02T14:00:00.000Z",
+        resetUrl: "https://crm.example.test/reset-password?token=expired-reset-token",
+        to: fx.userA.email
+      },
+      runAt: now
+    });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-password-reset-expired", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded).toMatchObject({
+        status: JobStatus.SUCCEEDED,
+        lockedAt: null,
+        lockedBy: null,
+        lastError: null
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("shows password reset jobs as due pending before run-once and succeeded after processing", async () => {
     const fx = currentFixture();
     const restoreEnv = setAuthEmailEnv({
@@ -387,6 +724,7 @@ describe("single-run job worker", () => {
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
     const now = new Date("2030-03-02T13:15:00.000Z");
+    await createPasswordResetToken(fx.userA.id, "status-flow-token", new Date("2030-03-02T13:45:00.000Z"));
     const job = await crm.enqueueJob({
       type: passwordResetEmailJobType,
       payload: {
@@ -433,6 +771,7 @@ describe("single-run job worker", () => {
       RESEND_API_KEY: undefined
     });
     const now = new Date("2030-03-02T14:00:00.000Z");
+    await createPasswordResetToken(fx.userA.id, "missing-config-token", new Date("2030-03-02T14:30:00.000Z"));
     const job = await crm.enqueueJob({
       type: passwordResetEmailJobType,
       payload: {
@@ -466,6 +805,7 @@ describe("single-run job worker", () => {
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
     const now = new Date("2030-03-02T15:00:00.000Z");
+    await createPasswordResetToken(fx.userA.id, "provider-failure-token", new Date("2030-03-02T15:30:00.000Z"));
     const job = await crm.enqueueJob({
       type: passwordResetEmailJobType,
       payload: {
@@ -517,8 +857,10 @@ describe("single-run job worker", () => {
 
     expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 0, dead: 1 });
     expect(reloaded.lastError).toContain("[redacted reset url]");
+    expect(reloaded.lastError).toContain("[redacted email]");
     expect(reloaded.lastError).not.toContain("raw-reset-token");
     expect(reloaded.lastError).not.toContain("/reset-password");
+    expect(reloaded.lastError).not.toContain("recipient@example.test");
   });
 
   it("dead-letters handler failures at max attempts", async () => {
@@ -722,6 +1064,18 @@ describe("single-run job worker", () => {
 function currentFixture() {
   if (!fixture) throw new Error("Integration fixture was not initialized.");
   return fixture;
+}
+
+async function createPasswordResetToken(userId: string, resetToken: string, expiresAt: Date, consumedAt: Date | null = null) {
+  const fx = currentFixture();
+  return fx.prisma.passwordResetToken.create({
+    data: {
+      consumedAt,
+      expiresAt,
+      tokenHash: hashPasswordResetToken(resetToken),
+      userId
+    }
+  });
 }
 
 function setAuthEmailEnv(nextEnv: Record<string, string | undefined>) {

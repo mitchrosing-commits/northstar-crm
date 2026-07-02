@@ -2,6 +2,11 @@ import { DealStatus, LeadStatus, QuoteStatus } from "@prisma/client";
 
 import { classifyActivityDue } from "@/lib/activity-due";
 import { prisma } from "@/lib/db/prisma";
+import {
+  activityAttachmentRelationsWhere,
+  emailLogAttachmentRelationsWhere,
+  noteAttachmentRelationsWhere
+} from "@/lib/services/record-guards";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "@/lib/services/workspace-access";
 
 export const salesAssistantThresholds = {
@@ -90,7 +95,7 @@ export type DealAttentionSignal = {
 };
 
 const contractFieldKeys = ["nda_status", "msa_status", "sow_status"] as const;
-const contractStatusAttentionValues = new Set(["blocked", "in review", "sent"]);
+const contractStatusAttentionValues = new Set(["blocked", "in review", "in progress", "in_progress", "sent"]);
 
 export async function getNeedsAttentionSummary(actor: WorkspaceActor, now = new Date()) {
   await ensureWorkspaceAccess(actor);
@@ -103,6 +108,7 @@ export async function getNeedsAttentionSummary(actor: WorkspaceActor, now = new 
     prisma.activity.findMany({
       where: {
         workspaceId: actor.workspaceId,
+        ...activityAttachmentRelationsWhere(actor.workspaceId),
         completedAt: null,
         dueAt: { lt: tomorrow },
         ...activeWhere
@@ -121,21 +127,27 @@ export async function getNeedsAttentionSummary(actor: WorkspaceActor, now = new 
       include: {
         stage: true,
         activities: {
-          where: { ...activeWhere, completedAt: null },
+          where: {
+            workspaceId: actor.workspaceId,
+            ...activityAttachmentRelationsWhere(actor.workspaceId),
+            ...activeWhere,
+            completedAt: null
+          },
           orderBy: [{ dueAt: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
           take: 1
         },
         notes: {
-          where: activeWhere,
+          where: { workspaceId: actor.workspaceId, ...noteAttachmentRelationsWhere(actor.workspaceId), ...activeWhere },
           orderBy: { createdAt: "desc" },
           take: 1
         },
         emailLogs: {
+          where: { workspaceId: actor.workspaceId, ...emailLogAttachmentRelationsWhere(actor.workspaceId) },
           orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
           take: 1
         },
         quotes: {
-          where: { status: QuoteStatus.SENT },
+          where: { workspaceId: actor.workspaceId, status: QuoteStatus.SENT },
           orderBy: { updatedAt: "desc" },
           take: 1
         }
@@ -147,7 +159,12 @@ export async function getNeedsAttentionSummary(actor: WorkspaceActor, now = new 
       where: { workspaceId: actor.workspaceId, status: { in: [LeadStatus.NEW, LeadStatus.QUALIFIED] }, ...activeWhere },
       include: {
         activities: {
-          where: { ...activeWhere, completedAt: null },
+          where: {
+            workspaceId: actor.workspaceId,
+            ...activityAttachmentRelationsWhere(actor.workspaceId),
+            ...activeWhere,
+            completedAt: null
+          },
           orderBy: [{ dueAt: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
           take: 1
         }
@@ -173,7 +190,6 @@ export async function getNeedsAttentionSummary(actor: WorkspaceActor, now = new 
 
   for (const activity of priorityActivities) {
     const dueBucket = classifyActivityDue(activity, now);
-    const related = activity.deal ?? activity.lead ?? activity.person ?? activity.organization;
     const href = activity.deal
       ? `/deals/${activity.deal.id}`
       : activity.lead

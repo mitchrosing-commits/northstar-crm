@@ -1,0 +1,11 @@
+export const intColumnMin = -2_147_483_648;
+export const intColumnMax = 2_147_483_647;
+export const dealValueCentsMax = intColumnMax;
+export const goalTargetCentsMax = intColumnMax;
+export const jobMaxAttemptsMax = intColumnMax;
+export const productIntColumnMax = intColumnMax;
+export const quoteIntColumnMax = intColumnMax;
+export const sortOrderIntColumnMin = intColumnMin;
+export const sortOrderIntColumnMax = intColumnMax;
+export const stageProbabilityMin = 0;
+export const stageProbabilityMax = 100;

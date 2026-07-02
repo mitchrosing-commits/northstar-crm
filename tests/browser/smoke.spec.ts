@@ -1,9 +1,17 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type BrowserContext, type Locator, type Page, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 
+import { createLocalSession, revokeLocalSessionToken } from "@/lib/auth/local-auth";
+import { hashPassword } from "@/lib/auth/password";
+import { hashPasswordResetToken } from "@/lib/auth/password-reset";
+import { localSessionCookieName, serializeLocalSessionCookieValue } from "@/lib/auth/session";
+import { createMeetingIntake } from "@/lib/services/meeting-intelligence-service";
 import { generatePublicQuoteToken } from "@/lib/services/quote-service";
 
 const prisma = new PrismaClient();
+const browserBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3100";
+const activeWorkspaceCookieName = "northstar_workspace";
 const smokeIds = {
   dealLineItemId: "",
   productId: "",
@@ -11,22 +19,34 @@ const smokeIds = {
   quoteId: "",
   quoteItemId: ""
 };
-let browserFlowSuffix = "";
+const browserFlowSuffixes = new Set<string>();
+const browserAuthSmokeUserIds = new Set<string>();
+const browserAuthSmokeInvitationIds = new Set<string>();
+const browserMeetingIntakeIds = new Set<string>();
 
 let smokeQuote: { dealId: string; quoteId: string; token: string };
+let smokeAuth: { actorUserId: string; token: string; sessionCookieValue: string; workspaceId: string; expiresAt: Date };
 let communicationDealPath: string;
 
 test.describe("Northstar CRM browser smoke", () => {
   test.describe.configure({ timeout: 120_000 });
 
   test.beforeAll(async () => {
+    smokeAuth = await createBrowserSmokeAuth();
     smokeQuote = await createSmokeQuote();
     communicationDealPath = await communicationDealDetailPath();
   });
 
+  test.beforeEach(async ({ context }) => {
+    await authenticateBrowserContext(context);
+  });
+
   test.afterAll(async () => {
+    if (smokeAuth?.token) await revokeLocalSessionToken(smokeAuth.token);
     await cleanupSmokeQuote();
+    await cleanupBrowserMeetingIntakes();
     await cleanupBrowserFlowRecords();
+    await cleanupBrowserAuthSmokeUsers();
     await prisma.$disconnect();
   });
 
@@ -38,6 +58,7 @@ test.describe("Northstar CRM browser smoke", () => {
     const contactHref = await firstDetailHref(page, "/contacts", "/contacts/");
     const organizationHref = await firstDetailHref(page, "/organizations", "/organizations/");
 
+    await page.context().clearCookies();
     await expectPageReady(page, "/login", { requireAppShell: false });
     await expect(page.getByRole("link", { name: "Forgot your password?" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Create an account" })).toBeVisible();
@@ -47,6 +68,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(page.getByRole("heading", { name: "Reset password" })).toBeVisible();
     await expectPageReady(page, "/reset-password?token=invalid-smoke-token", { requireAppShell: false });
     await expect(page.getByText("This password reset link is invalid or expired.")).toBeVisible();
+    await authenticateBrowserContext(page.context());
 
     for (const path of [
       "/",
@@ -59,6 +81,7 @@ test.describe("Northstar CRM browser smoke", () => {
       "/leads",
       "/leads/new",
       leadHref,
+      "/meeting-intelligence",
       "/contacts",
       "/contacts/new",
       contactHref,
@@ -80,19 +103,19 @@ test.describe("Northstar CRM browser smoke", () => {
       if (path === dealHref || path === communicationDealPath) {
         await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Log Manual Email" })).toBeVisible();
-        await expect(page.getByText("Manual", { exact: true })).toBeVisible();
+        await expect(page.locator(".badge").getByText("Manual", { exact: true })).toBeVisible();
       }
       if (path === communicationDealPath) {
         await expect(page.getByText("Quote shared for manager training package")).toBeVisible();
         await expect(page.getByText("Logged outbound email")).toBeVisible();
         const contractWorkflow = page.locator(".contract-workflow-panel");
-        await expect(contractWorkflow.getByRole("heading", { name: "Contract Workflow" })).toBeVisible();
-        await expect(contractWorkflow.getByText("NDA Status")).toBeVisible();
-        await expect(contractWorkflow.getByText("MSA Status")).toBeVisible();
-        await expect(contractWorkflow.getByText("SOW Status")).toBeVisible();
+        await expect(contractWorkflow.getByText("Contract management")).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-step-label").filter({ hasText: /^NDA$/ })).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-step-label").filter({ hasText: /^MSA$/ })).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-step-label").filter({ hasText: /^SOW$/ })).toBeVisible();
         await expect(contractWorkflow.locator(".contract-status-chip").getByText("Signed", { exact: true })).toBeVisible();
         await expect(contractWorkflow.locator(".contract-status-chip").getByText("Sent", { exact: true })).toBeVisible();
-        await expect(contractWorkflow.locator(".contract-status-chip").getByText("In Review", { exact: true })).toBeVisible();
+        await expect(contractWorkflow.locator(".contract-status-chip").getByText("In progress", { exact: true })).toBeVisible();
       }
       if (path === "/dashboard") {
         await expect(page.getByRole("heading", { name: "Active Deals" })).toBeVisible();
@@ -105,8 +128,7 @@ test.describe("Northstar CRM browser smoke", () => {
         const settingsShortcut = page.locator('a.sidebar-settings-link[href="/settings"]');
         expect(await settingsShortcut.count(), "Expected one persistent Settings shortcut in the app shell").toBe(1);
         await expect(settingsShortcut, "Expected Settings shortcut to be visible in the app shell").toBeVisible();
-        await settingsShortcut.click();
-        await expect(page.getByRole("heading", { exact: true, name: "Settings" })).toBeVisible();
+        await expectSettingsShortcutNavigation(page, settingsShortcut);
       }
       if (path === "/pipeline") {
         const contractSummaries = page.locator(".contract-status-summary");
@@ -120,19 +142,19 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByLabel("Title")).toBeVisible();
       }
       if (path === "/contacts/new") {
-        await expect(page.getByRole("heading", { name: "New Contact" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "New contact" })).toBeVisible();
         await expect(page.getByLabel("Name")).toBeVisible();
       }
       if (path === "/organizations/new") {
-        await expect(page.getByRole("heading", { name: "New Organization" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "New organization" })).toBeVisible();
         await expect(page.getByLabel("Name")).toBeVisible();
       }
       if (path === "/leads/new") {
-        await expect(page.getByRole("heading", { name: "New Lead" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "New lead" })).toBeVisible();
         await expect(page.getByLabel("Title")).toBeVisible();
       }
       if (path === "/activities/new") {
-        await expect(page.getByRole("heading", { name: "New Activity" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "New activity" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Create Follow-up" })).toBeVisible();
       }
       if (path === "/deals") {
@@ -150,6 +172,14 @@ test.describe("Northstar CRM browser smoke", () => {
       if (path === "/activities") {
         await expect(page.getByRole("heading", { name: "Quick activity links" })).toBeVisible();
         await expect(page.getByRole("link", { name: "My open" })).toBeVisible();
+      }
+      if (path === "/meeting-intelligence") {
+        await expect(page.getByRole("heading", { name: "Meeting Intelligence" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "New intake" })).toBeVisible();
+        await expect(page.getByLabel("Source type")).toBeVisible();
+        await expect(page.getByLabel("Meeting notes or transcript")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Analyze intake" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Recent intakes" })).toBeVisible();
       }
       if (path === "/email") {
         await expect(page.getByRole("heading", { name: "Email Providers" })).toBeVisible();
@@ -174,23 +204,26 @@ test.describe("Northstar CRM browser smoke", () => {
       }
       if (path === "/settings") {
         await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
-        await expect(page.getByLabel("Display name")).toBeVisible();
+        await expect(page.locator("#account-display-name")).toBeVisible();
         await expect(page.locator("#account-email")).toBeVisible();
         await expect(page.getByRole("heading", { name: "Email Connections" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Gmail / Google Workspace" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Microsoft 365 / Outlook" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "IMAP / SMTP" })).toBeVisible();
-        await expect(page.getByRole("link", { name: "Open API surface" })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Open developer API surface" })).toBeVisible();
         expect(await page.getByText("Not configured").count()).toBeGreaterThanOrEqual(1);
         await expect(page.getByRole("button", { name: "Planned" })).toBeDisabled();
       }
       if (path === "/settings/import-export") {
         await expect(page.getByRole("heading", { name: "Deals Import Preview" })).toBeVisible();
         await expect(page.getByLabel("Deals CSV")).toBeVisible();
-        for (const resource of ["deals", "contacts", "organizations", "activities", "quotes"]) {
-          const exportResponse = await page.context().request.get(`/api/v1/workspaces/${await demoWorkspaceId()}/exports/${resource}`);
+        const workspaceId = await demoWorkspaceId();
+        for (const resource of ["deals", "contacts", "organizations", "leads", "activities", "products", "quotes"]) {
+          const exportResponse = await page.context().request.get(`/api/v1/workspaces/${workspaceId}/exports/${resource}`);
           expect(exportResponse.ok(), `Expected ${resource} export to return ok`).toBeTruthy();
           expect(exportResponse.headers()["content-type"]).toContain("text/csv");
+          expect(exportResponse.headers()["cache-control"]).toContain("private, no-store");
+          expect(exportResponse.headers()["x-content-type-options"]).toBe("nosniff");
           const csv = await exportResponse.text();
           expect(csv).toContain("createdAt");
           expect(csv.split("\n").length, `Expected ${resource} export to include seeded rows`).toBeGreaterThan(1);
@@ -204,8 +237,8 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "API Keys" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Webhooks" })).toBeVisible();
         await expect(page.getByText("CSV exports are REST endpoints")).toBeVisible();
-        await expect(page.getByRole("button", { name: "Coming soon" })).toBeDisabled();
-        await expect(page.getByRole("button", { name: "Planned" })).toHaveCount(2);
+        await expect(page.getByRole("button", { name: "API Keys controls are planned and not yet available" })).toBeDisabled();
+        await expect(page.getByRole("button", { name: /controls are planned and not yet available/ })).toHaveCount(3);
       }
       if (path === "/reports") {
         await expect(page.getByRole("heading", { name: "Goals v1" })).toBeVisible();
@@ -215,14 +248,43 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Quote Status Summary" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Top Open Deals" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Top Organizations" })).toBeVisible();
-        await expect(page.getByRole("link", { name: "View open deals" })).toBeVisible();
+        await expect(page.getByRole("link", { name: "View open deals from reports" })).toBeVisible();
       }
     }
   });
 
+  test("renders a ready Meeting Intelligence review draft", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const intake = await createMeetingIntake(
+      { actorUserId: smokeAuth.actorUserId, workspaceId: smokeAuth.workspaceId },
+      {
+        contextText: "Meeting date: 2030-05-01",
+        hints: { dealId: smokeQuote.dealId },
+        originalFilename: `browser-review-${uniqueSmokeSuffix()}.txt`,
+        text: [
+          "Meeting date: 2030-05-01",
+          "The smoke quote deal needs a pricing recap and implementation plan.",
+          "Action: send implementation recap by 2030-05-04."
+        ].join("\n")
+      }
+    );
+    browserMeetingIntakeIds.add(intake.id);
+    expect(intake.status).toBe("READY_FOR_REVIEW");
+
+    await expectPageReady(page, `/meeting-intelligence/${intake.id}`);
+    await expect(page.getByRole("heading", { name: "Review Intake" })).toBeVisible();
+    await expect(page.getByLabel("Status: Ready for review")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Meeting Log" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Matches and Warnings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Proposed Notes" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Follow-Ups" })).toBeVisible();
+    await expect(page.getByText("Evidence:").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Apply selected updates" })).toBeVisible();
+  });
+
   test("creates linked CRM records and completes a follow-up from the UI", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    browserFlowSuffix = Date.now().toString(36);
+    const browserFlowSuffix = registerBrowserFlowSuffix();
     const organizationName = `Browser Flow Organization ${browserFlowSuffix}`;
     const contactName = `Browser Flow Contact ${browserFlowSuffix}`;
     const dealTitle = `Browser Flow Deal ${browserFlowSuffix}`;
@@ -230,78 +292,359 @@ test.describe("Northstar CRM browser smoke", () => {
 
     await expectPageReady(page, "/organizations/new");
     await page.waitForLoadState("networkidle");
-    await page.getByLabel("Name").fill(organizationName);
-    await page.getByLabel("Domain").fill(`browser-flow-${browserFlowSuffix}.example`);
+    const organizationForm = page.locator("form.form-card");
+    const createOrganizationButton = organizationForm.getByRole("button", { name: "Create organization" });
+    await organizationForm.getByLabel("Name").fill(organizationName);
+    await organizationForm.getByLabel("Domain").fill(`browser-flow-${browserFlowSuffix}.example`);
+    await expectSubmitEnabledAfterHydration(
+      organizationForm.getByLabel("Name"),
+      organizationName,
+      createOrganizationButton
+    );
     const organizationResponse = waitForWorkspaceApiResponse(page, "POST", "/organizations");
-    await page.getByRole("button", { name: "Create organization" }).click();
+    await createOrganizationButton.click();
     await expectApiOk(organizationResponse, "Expected organization create API to succeed");
     const organizationPath = await waitForDetailPath(page, "/organizations/");
     await expect(page.getByRole("heading", { name: organizationName })).toBeVisible();
 
     await expectPageReady(page, "/contacts/new");
     await page.waitForLoadState("networkidle");
-    await page.getByLabel("Name").fill(contactName);
-    await page.getByLabel("Email").fill(`browser-flow-${browserFlowSuffix}@example.test`);
-    await page.getByLabel("Phone").fill("555-0101");
-    await page.getByLabel("Organization").selectOption({ label: organizationName });
+    const contactForm = page.locator("form.form-card");
+    await contactForm.getByLabel("Name").fill(contactName);
+    await contactForm.getByLabel("Email").fill(`browser-flow-${browserFlowSuffix}@example.test`);
+    await contactForm.getByLabel("Phone").fill("555-0101");
+    await contactForm.getByLabel("Organization").selectOption({ label: organizationName });
     const contactResponse = waitForWorkspaceApiResponse(page, "POST", "/people");
-    await page.getByRole("button", { name: "Create contact" }).click();
+    await contactForm.getByRole("button", { name: "Create contact" }).click();
     await expectApiOk(contactResponse, "Expected contact create API to succeed");
     const contactPath = await waitForDetailPath(page, "/contacts/");
     await expect(page.getByRole("heading", { name: contactName })).toBeVisible();
-    await expect(page.getByRole("link", { name: organizationName })).toHaveAttribute("href", organizationPath);
+    await expect(page.getByRole("link", { name: organizationName }).first()).toHaveAttribute("href", organizationPath);
 
     await expectPageReady(page, "/deals/new");
     await page.waitForLoadState("networkidle");
-    await page.getByLabel("Title").fill(dealTitle);
-    await page.getByLabel("Value").fill("12345.67");
-    await page.getByLabel("Currency").fill("USD");
-    await page.getByLabel("Person").selectOption({ label: contactName });
-    await page.getByLabel("Organization").selectOption({ label: organizationName });
-    await expect(page.getByRole("button", { name: "Create deal" })).toBeEnabled();
+    const dealForm = page.locator("form.form-card");
+    await dealForm.getByLabel("Title").fill(dealTitle);
+    await dealForm.getByLabel("Value").fill("12345.67");
+    await dealForm.getByLabel("Currency").fill("USD");
+    await dealForm.getByLabel("Person").selectOption({ label: contactName });
+    await dealForm.getByLabel("Organization").selectOption({ label: organizationName });
+    await expect(dealForm.getByRole("button", { name: "Create deal" })).toBeEnabled();
     const dealResponse = waitForWorkspaceApiResponse(page, "POST", "/deals");
-    await page.getByRole("button", { name: "Create deal" }).click();
+    await dealForm.getByRole("button", { name: "Create deal" }).click();
     await expectApiOk(dealResponse, "Expected deal create API to succeed");
     const dealPath = await waitForDetailPath(page, "/deals/");
     await expect(page.getByRole("heading", { name: dealTitle })).toBeVisible();
-    await expect(page.getByRole("link", { name: contactName })).toHaveAttribute("href", contactPath);
-    await expect(page.getByRole("link", { name: organizationName })).toHaveAttribute("href", organizationPath);
+    await expect(page.getByRole("link", { name: contactName }).first()).toHaveAttribute("href", contactPath);
+    await expect(page.getByRole("link", { name: organizationName }).first()).toHaveAttribute("href", organizationPath);
 
     const addActivity = page.locator("#add-activity");
     await addActivity.getByLabel("Title").fill(activityTitle);
     await addActivity.getByLabel("Type").selectOption("CALL");
-    await addActivity.getByLabel("Due date").fill("2026-07-15");
+    await addActivity.locator('input[type="date"]').fill("2026-07-15");
     await addActivity.getByLabel("Description").fill("Created by the browser regression workflow.");
     const activityResponse = waitForWorkspaceApiResponse(page, "POST", "/activities");
     await addActivity.getByRole("button", { name: "Add activity" }).click();
     await expectApiOk(activityResponse, "Expected activity create API to succeed");
+    await page.reload();
 
-    const openNextSteps = page.locator(".data-card").filter({
-      has: page.getByRole("heading", { name: "Open Next Steps" })
-    });
-    await expect(openNextSteps.getByText(activityTitle)).toBeVisible();
+    const activityItem = page.locator(".activity-item").filter({ hasText: activityTitle }).first();
+    await expect(activityItem).toBeVisible();
     const completeResponse = waitForWorkspaceApiResponse(page, "PATCH", "/activities/");
-    await openNextSteps.getByRole("button", { name: "Mark complete" }).click();
+    await activityItem.getByRole("button", { name: `Mark activity ${activityTitle} complete` }).click();
     await expectApiOk(completeResponse, "Expected activity completion API to succeed");
 
-    const completedHistory = page.locator(".data-card").filter({
-      has: page.getByRole("heading", { name: "Completed Activity History" })
-    });
-    await expect(completedHistory.getByText(activityTitle)).toBeVisible();
+    await expect(page.locator(".activity-item").filter({ hasText: activityTitle }).first()).toBeVisible();
 
     await expectPageReady(page, contactPath);
-    await expect(page.getByRole("link", { name: dealTitle })).toHaveAttribute("href", dealPath);
+    await expect(page.getByRole("link", { name: dealTitle }).first()).toHaveAttribute("href", dealPath);
     await expectPageReady(page, organizationPath);
-    await expect(page.getByRole("link", { name: contactName })).toHaveAttribute("href", contactPath);
-    await expect(page.getByRole("link", { name: dealTitle })).toHaveAttribute("href", dealPath);
+    await expect(page.getByRole("link", { name: contactName }).first()).toHaveAttribute("href", contactPath);
+    await expect(page.getByRole("link", { name: dealTitle }).first()).toHaveAttribute("href", dealPath);
+  });
+
+  test("signs in a returning local user from the UI", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const suffix = uniqueSmokeSuffix();
+    const password = `browser-login-${suffix}`;
+    const user = await prisma.user.create({
+      data: {
+        email: `browser-login-${suffix}@example.test`,
+        name: "Browser Login Smoke",
+        passwordHash: hashPassword(password),
+        memberships: {
+          create: {
+            workspaceId: smokeAuth.workspaceId,
+            role: "MEMBER"
+          }
+        }
+      },
+      select: { email: true, id: true, name: true }
+    });
+    browserAuthSmokeUserIds.add(user.id);
+
+    await page.context().clearCookies();
+    await expectPageReady(page, "/login?next=/dashboard", { requireAppShell: false });
+    await page.getByLabel("Email").fill(user.email.toUpperCase());
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+
+    await page.waitForURL(/\/dashboard(?:[?#].*)?$/, { timeout: 10_000 });
+    await expect(page.locator("#main-content")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+    await expect(page.locator(".signed-in-user")).toHaveText(user.name ?? user.email);
+  });
+
+  test("accepts a workspace invitation after signing in from a shared link", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const suffix = uniqueSmokeSuffix();
+    const password = `browser-invite-${suffix}`;
+    const workspace = await prisma.workspace.findUniqueOrThrow({
+      where: { id: smokeAuth.workspaceId },
+      select: { id: true, name: true }
+    });
+    const user = await prisma.user.create({
+      data: {
+        email: `browser-invite-${suffix}@example.test`,
+        name: "Browser Invite Smoke",
+        passwordHash: hashPassword(password)
+      },
+      select: { email: true, id: true, name: true }
+    });
+    browserAuthSmokeUserIds.add(user.id);
+    const invitation = await prisma.workspaceInvitation.create({
+      data: {
+        workspaceId: workspace.id,
+        email: user.email,
+        role: "MEMBER"
+      }
+    });
+    browserAuthSmokeInvitationIds.add(invitation.id);
+    const invitationPath = `/workspaces/invitations/${invitation.id}`;
+
+    await page.context().clearCookies();
+    await gotoWithConnectionRetry(page, invitationPath);
+    await page.waitForURL((url) => url.pathname === "/login" && url.searchParams.get("next") === invitationPath);
+    await page.getByLabel("Email").fill(user.email.toUpperCase());
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+
+    await page.waitForURL((url) => url.pathname === invitationPath, { timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: workspace.name })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Accept invitation to ${workspace.name}` })).toBeVisible();
+    await page.getByRole("button", { name: `Accept invitation to ${workspace.name}` }).click();
+
+    await page.waitForURL(/\/settings(?:[?#].*)?$/, { timeout: 10_000 });
+    await expect(page.locator("#main-content")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page.locator(".signed-in-user")).toHaveText(user.name ?? user.email);
+    await expect(page.locator("#account-email")).toHaveValue(user.email);
+    await expect(page.locator(".stat-card").filter({ hasText: "Settings access" }).getByText("Member")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Team / Workspace Invitations" })).toHaveCount(0);
+    await expect
+      .poll(() =>
+        prisma.workspaceMembership.count({
+          where: {
+            workspaceId: workspace.id,
+            userId: user.id,
+            role: "MEMBER"
+          }
+        })
+      )
+      .toBe(1);
+  });
+
+  test("previews invalid CSV imports without exposing the import action", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expectPageReady(page, "/settings/import-export");
+
+    const organizationForm = page.locator("form.import-form").filter({ has: page.locator("#organizationCsv") });
+    await organizationForm
+      .getByLabel("Organizations CSV")
+      .fill("\uFEFFname,domain,ownerEmail\nBrowser Invalid Import,browser-invalid.example,not-an-email");
+    await organizationForm.getByRole("button", { name: "Preview organization CSV without creating records" }).click();
+
+    await expect(organizationForm.getByText("Preview results")).toBeVisible();
+    await expect(organizationForm.getByText("0 valid")).toBeVisible();
+    await expect(organizationForm.getByText("1 invalid rows to skip")).toBeVisible();
+    await expect(organizationForm.getByText("Browser Invalid Import", { exact: true })).toBeVisible();
+    await expect(organizationForm.getByText("Owner email must be a valid email address.")).toBeVisible();
+    await expect(organizationForm.getByRole("button", { name: "Import valid organizations" })).toHaveCount(0);
+    await expect(
+      prisma.organization.count({ where: { name: "Browser Invalid Import", domain: "browser-invalid.example" } })
+    ).resolves.toBe(0);
+  });
+
+  test("saves and applies a filtered deal view from the UI", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const browserFlowSuffix = registerBrowserFlowSuffix();
+    const savedViewName = `Browser Flow Saved View ${browserFlowSuffix}`;
+
+    await expectPageReady(page, "/deals?q=Needle&status=OPEN&sortBy=title&sortDirection=asc&page=2&pageSize=25");
+    const savedViewsPanel = page.locator(".saved-views-panel").filter({ hasText: "Saved deal views" });
+    await savedViewsPanel.getByLabel("Saved view name").fill(savedViewName);
+    await savedViewsPanel.getByRole("button", { name: "Saved deal views: save current view" }).click();
+
+    const savedViewLink = savedViewsPanel.getByRole("link", { name: savedViewName });
+    await expect(savedViewLink).toBeVisible();
+    const savedViewHref = await savedViewLink.getAttribute("href");
+    expect(savedViewHref).toContain("q=Needle");
+    expect(savedViewHref).toContain("status=OPEN");
+    expect(savedViewHref).toContain("sortBy=title");
+    expect(savedViewHref).toContain("pageSize=25");
+    expect(savedViewHref).not.toContain("page=2");
+    await expect
+      .poll(async () => {
+        const savedView = await prisma.savedView.findFirst({
+          where: { workspaceId: smokeAuth.workspaceId, recordType: "DEAL", name: savedViewName },
+          select: { state: true }
+        });
+        return savedView ? JSON.stringify(savedView.state) : "";
+      }, { message: "Expected saved deal view to persist without transient page state" })
+      .toContain("Needle");
+    const persistedState = await prisma.savedView.findFirstOrThrow({
+      where: { workspaceId: smokeAuth.workspaceId, recordType: "DEAL", name: savedViewName },
+      select: { state: true }
+    });
+    const persistedStateText = JSON.stringify(persistedState.state);
+    expect(persistedStateText).not.toContain("\"page\"");
+    expect(persistedStateText).not.toContain("\"pagination\"");
+
+    await savedViewLink.click();
+    await page.waitForURL(
+      (url) => url.pathname === "/deals" && url.searchParams.get("q") === "Needle" && url.searchParams.get("page") === null
+    );
+    expect(new URL(page.url()).searchParams.get("page")).toBeNull();
+    await expect(page.getByText(`Saved view: ${savedViewName}`)).toBeVisible();
+    await expect(page.getByRole("link", { name: `Clear saved view: Saved view: ${savedViewName}` })).toBeVisible();
+
+    await page.getByRole("button", { name: `Delete saved view ${savedViewName}` }).click();
+    await expect(savedViewLink).toHaveCount(0);
+    await expect
+      .poll(() =>
+        prisma.savedView.count({
+          where: { workspaceId: smokeAuth.workspaceId, recordType: "DEAL", name: savedViewName }
+        })
+      )
+      .toBe(0);
+  });
+
+  test("creates and converts a lead from the UI", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const browserFlowSuffix = registerBrowserFlowSuffix();
+    const leadTitle = `Browser Flow Lead ${browserFlowSuffix}`;
+    const dealTitle = `Browser Flow Converted Deal ${browserFlowSuffix}`;
+    const emailSubject = `Browser Flow Lead Email ${browserFlowSuffix}`;
+
+    await expectPageReady(page, "/leads/new");
+    await page.waitForLoadState("networkidle");
+    const leadForm = page.locator("form.form-card");
+    const createLeadButton = leadForm.getByRole("button", { name: "Create lead" });
+    await leadForm.getByLabel("Title").fill(leadTitle);
+    await leadForm.getByLabel("Source").fill("Browser regression");
+    await leadForm.getByLabel("Status").selectOption("QUALIFIED");
+    await expectSubmitEnabledAfterHydration(leadForm.getByLabel("Title"), leadTitle, createLeadButton);
+    const leadResponse = waitForWorkspaceApiResponse(page, "POST", "/leads");
+    await createLeadButton.click();
+    await expectApiOk(leadResponse, "Expected lead create API to succeed");
+    const leadPath = await waitForDetailPath(page, "/leads/");
+    await expect(page.getByRole("heading", { name: leadTitle })).toBeVisible();
+    await expect(page.getByText("Browser regression", { exact: true }).first()).toBeVisible();
+
+    const emailLogPanel = page.locator("#email-log");
+    await emailLogPanel.getByLabel("Direction").selectOption("INBOUND");
+    await emailLogPanel.getByLabel("Subject").fill(emailSubject);
+    await emailLogPanel.getByLabel("Body").fill("Lead email context should move to the converted deal.");
+    const emailLogResponse = waitForWorkspaceApiResponse(page, "POST", "/email-logs");
+    await emailLogPanel.getByRole("button", { name: "Save email log" }).click();
+    await expectApiOk(emailLogResponse, "Expected lead email log API to succeed");
+    await page.reload();
+    await expect(page.getByText(emailSubject)).toBeVisible();
+    await expect(page.getByText("Logged inbound email")).toBeVisible();
+
+    await page.getByLabel("Deal title").fill(dealTitle);
+    const conversionResponse = waitForWorkspaceApiResponse(page, "POST", "/convert");
+    await page.getByRole("button", { name: "Convert to deal" }).click();
+    await expectApiOk(conversionResponse, "Expected lead conversion API to succeed");
+    const dealPath = await waitForDetailPath(page, "/deals/");
+    await expect(page.getByRole("heading", { name: dealTitle })).toBeVisible();
+    await expect(page.getByText(emailSubject)).toBeVisible();
+    await expect(page.getByText("Logged inbound email")).toBeVisible();
+
+    await expectPageReady(page, leadPath);
+    await expect(page.getByText("Locked after conversion")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Edit lead: .*: Converted lead locked/ })).toBeDisabled();
+    await expect(page.getByText("This lead has already been converted.")).toBeVisible();
+    expect(dealPath).toMatch(/^\/deals\/[^/]+$/);
+  });
+
+  test("requests and completes a password reset from the UI", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const suffix = uniqueSmokeSuffix();
+    const resetUser = await prisma.user.create({
+      data: {
+        email: `browser-reset-${suffix}@example.test`,
+        name: "Browser Reset Smoke"
+      },
+      select: { email: true, id: true }
+    });
+    browserAuthSmokeUserIds.add(resetUser.id);
+
+    await page.context().clearCookies();
+    await expectPageReady(page, "/forgot-password", { requireAppShell: false });
+    await page.getByLabel("Email").fill(resetUser.email);
+    await page.getByRole("button", { name: "Request reset" }).click();
+    await expect(page.getByText("If an account exists for that email and password reset is configured")).toBeVisible();
+    await expect
+      .poll(() => prisma.passwordResetToken.count({ where: { userId: resetUser.id, consumedAt: null } }), {
+        message: "Expected forgot-password form submission to create an active reset token"
+      })
+      .toBeGreaterThan(0);
+
+    const resetToken = `browser-reset-token-${suffix}-${randomUUID()}`;
+    await prisma.passwordResetToken.create({
+      data: {
+        userId: resetUser.id,
+        tokenHash: hashPasswordResetToken(resetToken),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000)
+      }
+    });
+
+    await expectPageReady(page, `/reset-password?token=${encodeURIComponent(resetToken)}`, { requireAppShell: false });
+    await page.getByLabel("New password", { exact: true }).fill(`browser-reset-${suffix}`);
+    await page.getByLabel("Confirm new password").fill(`browser-reset-${suffix}`);
+    await page.getByRole("button", { name: "Reset password" }).click();
+    await expect(page.getByText("Password reset. You can sign in with your new password.")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Back to sign in" })).toBeVisible();
   });
 
   test("renders a small mobile viewport subset", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const dealHref = await firstDetailHref(page, "/deals", "/deals/");
+    const leadHref = await firstDetailHref(page, "/leads", "/leads/");
+    const contactHref = await firstDetailHref(page, "/contacts", "/contacts/");
+    const organizationHref = await firstDetailHref(page, "/organizations", "/organizations/");
 
-    for (const path of ["/dashboard", "/deals", dealHref, "/activities", "/custom-fields"]) {
+    for (const path of [
+      "/dashboard",
+      "/pipeline",
+      "/deals",
+      dealHref,
+      "/leads",
+      leadHref,
+      "/contacts",
+      contactHref,
+      "/organizations",
+      organizationHref,
+      "/activities",
+      "/email",
+      "/search?q=orbit",
+      "/settings",
+      "/settings/import-export",
+      "/custom-fields"
+    ]) {
       await expectPageReady(page, path);
+      await expectNoPageHorizontalOverflow(page, path);
     }
   });
 
@@ -322,7 +665,8 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(page.getByText("Internal quote")).toBeVisible();
     await expect(page.getByText("Internal tracking only")).toBeVisible();
 
-    await expectPageReady(page, `${quotePath}/print`);
+    await expectPageReady(page, `${quotePath}/print`, { requireAppShell: false });
+    await expect(page.locator("main.quote-print-page")).toBeVisible();
     await expect(page.getByRole("button", { name: "Print quote" })).toBeVisible();
 
     const pdfResponse = await page.context().request.get(`${quotePath}/pdf`);
@@ -335,6 +679,24 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(page.getByText("Customer-facing quote view")).toBeVisible();
     await expect(page.getByText("automatically update internal deal value")).toBeVisible();
     await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Accept Quote" }).click();
+    await page.waitForURL(new RegExp(`/q/${smokeQuote.token}\\?accepted=1$`));
+    await expect(page.getByRole("heading", { name: /Q-SMOKE-/ })).toBeVisible();
+    await expect(page.getByText("Quote accepted")).toBeVisible();
+    await expect(page.getByText("no payment, signature, email delivery, or automatic internal deal-value update was collected")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Accept Quote" })).toHaveCount(0);
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        prisma.auditLog.count({
+          where: {
+            action: "quote.public_accepted",
+            entityId: smokeQuote.quoteId
+          }
+        })
+      )
+      .toBe(1);
   });
 });
 
@@ -345,12 +707,87 @@ async function firstDetailHref(page: Page, listPath: string, hrefPrefix: string)
   return href;
 }
 
-async function waitForDetailPath(page: Page, prefix: string) {
-  await page.waitForURL((url) => {
-    const path = url.pathname;
-    return path.startsWith(prefix) && !path.endsWith("/new") && !path.endsWith("/edit");
+async function createBrowserSmokeAuth() {
+  const [user, workspace] = await Promise.all([
+    prisma.user.findFirstOrThrow({
+      where: {
+        email: process.env.DEV_ACTOR_EMAIL ?? "alex@example.test",
+        deletedAt: null
+      },
+      select: { id: true }
+    }),
+    prisma.workspace.findFirstOrThrow({
+      where: {
+        slug: process.env.DEV_WORKSPACE_SLUG ?? "northstar-revenue",
+        deletedAt: null
+      },
+      select: { id: true }
+    })
+  ]);
+  await prisma.workspaceMembership.findUniqueOrThrow({
+    where: {
+      workspaceId_userId: {
+        workspaceId: workspace.id,
+        userId: user.id
+      }
+    },
+    select: { id: true }
   });
-  return new URL(page.url()).pathname;
+  const session = await createLocalSession(user.id);
+
+  return {
+    actorUserId: user.id,
+    token: session.token,
+    sessionCookieValue: serializeLocalSessionCookieValue(session.token),
+    workspaceId: workspace.id,
+    expiresAt: session.expiresAt
+  };
+}
+
+async function authenticateBrowserContext(context: BrowserContext) {
+  await context.addCookies([
+    {
+      name: localSessionCookieName,
+      value: smokeAuth.sessionCookieValue,
+      url: browserBaseUrl,
+      httpOnly: true,
+      sameSite: "Lax",
+      expires: Math.floor(smokeAuth.expiresAt.getTime() / 1000)
+    },
+    {
+      name: activeWorkspaceCookieName,
+      value: smokeAuth.workspaceId,
+      url: browserBaseUrl,
+      sameSite: "Lax",
+      expires: Math.floor(smokeAuth.expiresAt.getTime() / 1000)
+    }
+  ]);
+}
+
+async function waitForDetailPath(page: Page, prefix: string) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await page.waitForURL((url) => {
+        const path = url.pathname;
+        return path.startsWith(prefix) && !path.endsWith("/new") && !path.endsWith("/edit");
+      });
+      return new URL(page.url()).pathname;
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableNavigationError(error) || attempt === 9) throw error;
+      await waitForBrowserServer(page);
+
+      const currentUrl = new URL(page.url());
+      if (currentUrl.pathname.startsWith(prefix) && !currentUrl.pathname.endsWith("/new") && !currentUrl.pathname.endsWith("/edit")) {
+        await gotoWithConnectionRetry(page, `${currentUrl.pathname}${currentUrl.search}`);
+        return new URL(page.url()).pathname;
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 async function waitForWorkspaceApiResponse(page: Page, method: string, pathSuffix: string) {
@@ -367,6 +804,30 @@ async function waitForWorkspaceApiResponse(page: Page, method: string, pathSuffi
 async function expectApiOk(responsePromise: Promise<Awaited<ReturnType<Page["waitForResponse"]>>>, message: string) {
   const response = await responsePromise;
   expect(response.ok(), message).toBeTruthy();
+}
+
+async function expectSubmitEnabledAfterHydration(
+  field: Locator,
+  value: string,
+  submitButton: Locator
+) {
+  await expect
+    .poll(async () => {
+      if (await submitButton.isEnabled()) return true;
+      await field.fill(value);
+      return submitButton.isEnabled();
+    }, { timeout: 10_000 })
+    .toBe(true);
+}
+
+function registerBrowserFlowSuffix() {
+  const suffix = uniqueSmokeSuffix();
+  browserFlowSuffixes.add(suffix);
+  return suffix;
+}
+
+function uniqueSmokeSuffix() {
+  return `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
 
 async function closedDealHrefFromList(page: Page) {
@@ -412,12 +873,23 @@ async function expectPageReady(page: Page, path: string, options: { requireAppSh
     }
   };
 
-  page.once("pageerror", (error) => errors.push(error.message));
+  const onPageError = (error: Error) => errors.push(error.message);
+  page.on("pageerror", onPageError);
   page.on("response", onResponse);
 
   try {
-    const response = await page.goto(path);
-    const bodyText = (await page.locator("body").textContent({ timeout: 5_000 })) ?? "";
+    let response: Awaited<ReturnType<typeof gotoWithConnectionRetry>> | null = null;
+    let bodyText = "";
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      errors.length = 0;
+      serverErrors.length = 0;
+      response = await gotoWithConnectionRetry(page, path);
+      bodyText = await page.locator("body").innerText({ timeout: 5_000 });
+      if (!bodyText.includes("Application error") || !shouldRetryApplicationError(errors) || attempt === 2) break;
+      await page.goto("about:blank");
+      await page.waitForTimeout(500);
+    }
 
     expect(response?.ok(), `Expected ${path} to return an ok response`).toBeTruthy();
     expect(response?.status(), `Expected ${path} not to return a server error`).toBeLessThan(500);
@@ -426,12 +898,103 @@ async function expectPageReady(page: Page, path: string, options: { requireAppSh
     expect(bodyText).not.toContain("PrismaClientKnownRequestError");
     expect(bodyText).not.toContain("P2022");
     expect(bodyText).not.toContain("This site can't be reached");
-    if (requireAppShell) await expect(page.locator("main")).toBeVisible();
+    if (requireAppShell) await expect(page.locator("#main-content")).toBeVisible();
     expect(errors, `Unexpected browser error on ${path}`).toEqual([]);
     expect(serverErrors, `Unexpected 5xx response while loading ${path}`).toEqual([]);
   } finally {
+    page.off("pageerror", onPageError);
     page.off("response", onResponse);
   }
+}
+
+async function expectNoPageHorizontalOverflow(page: Page, path: string) {
+  const overflow = await page.evaluate(() => {
+    const root = document.documentElement;
+    return {
+      clientWidth: root.clientWidth,
+      overflowPixels: Math.max(0, root.scrollWidth - root.clientWidth),
+      scrollWidth: root.scrollWidth
+    };
+  });
+
+  expect(
+    overflow.overflowPixels,
+    `Expected ${path} not to create document-level horizontal overflow at ${overflow.clientWidth}px viewport; scrollWidth was ${overflow.scrollWidth}px`
+  ).toBeLessThanOrEqual(2);
+}
+
+async function expectSettingsShortcutNavigation(page: Page, settingsShortcut: Locator) {
+  const errors: string[] = [];
+  const onPageError = (error: Error) => errors.push(error.message);
+  page.on("pageerror", onPageError);
+
+  try {
+    await settingsShortcut.click();
+    await page.waitForURL(/\/settings(?:[?#].*)?$/, { timeout: 5_000 });
+    let bodyText = await page.locator("body").innerText({ timeout: 5_000 });
+
+    if (bodyText.includes("Application error") && shouldRetryApplicationError(errors)) {
+      errors.length = 0;
+      await page.waitForTimeout(500);
+      const response = await gotoWithConnectionRetry(page, "/settings");
+      bodyText = await page.locator("body").innerText({ timeout: 5_000 });
+      expect(response?.ok(), "Expected Settings retry to return an ok response").toBeTruthy();
+    }
+
+    expect(bodyText).not.toContain("Application error");
+    expect(errors, "Unexpected browser error after clicking Settings shortcut").toEqual([]);
+    await expect(page.getByRole("heading", { exact: true, name: "Settings" })).toBeVisible();
+  } finally {
+    page.off("pageerror", onPageError);
+  }
+}
+
+async function gotoWithConnectionRetry(page: Page, path: string) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      return await page.goto(path);
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableNavigationError(error) || attempt === 9) throw error;
+      await waitForBrowserServer(page);
+    }
+  }
+
+  throw lastError;
+}
+
+async function waitForBrowserServer(page: Page) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const response = await page.context().request.get(`${browserBaseUrl}/api/health`, { timeout: 2_000 });
+      if (response.ok()) return;
+    } catch {
+      // Keep retrying until the local Next listener is back.
+    }
+    await page.waitForTimeout(1_000);
+  }
+}
+
+function isConnectionRefusedError(error: unknown) {
+  return error instanceof Error && error.message.includes("ERR_CONNECTION_REFUSED");
+}
+
+function isNavigationAbortedError(error: unknown) {
+  return error instanceof Error && error.message.includes("net::ERR_ABORTED");
+}
+
+function isRetriableNavigationError(error: unknown) {
+  return isConnectionRefusedError(error) || isNavigationAbortedError(error);
+}
+
+function isChunkLoadError(message: string) {
+  return message.includes("ChunkLoadError") || message.includes("Loading chunk");
+}
+
+function shouldRetryApplicationError(errors: string[]) {
+  return errors.length === 0 || errors.some(isChunkLoadError);
 }
 
 async function createSmokeQuote() {
@@ -444,7 +1007,7 @@ async function createSmokeQuote() {
     orderBy: { createdAt: "asc" },
     select: { id: true }
   });
-  const suffix = Date.now().toString(36);
+  const suffix = uniqueSmokeSuffix();
   const product = await prisma.product.create({
     data: {
       workspaceId: workspace.id,
@@ -540,36 +1103,91 @@ async function cleanupSmokeQuote() {
   if (smokeIds.productId) await prisma.product.deleteMany({ where: { id: smokeIds.productId } });
 }
 
+async function cleanupBrowserMeetingIntakes() {
+  const intakeIds = Array.from(browserMeetingIntakeIds);
+  if (intakeIds.length === 0) return;
+
+  await prisma.auditLog.deleteMany({
+    where: {
+      entityId: { in: intakeIds },
+      entityType: "MeetingIntake",
+      workspaceId: smokeAuth.workspaceId
+    }
+  });
+  await prisma.meetingIntake.deleteMany({ where: { id: { in: intakeIds }, workspaceId: smokeAuth.workspaceId } });
+}
+
 async function cleanupBrowserFlowRecords() {
-  if (!browserFlowSuffix) return;
+  if (browserFlowSuffixes.size === 0) return;
 
   const workspace = await prisma.workspace.findUniqueOrThrow({
     where: { slug: "northstar-revenue" },
     select: { id: true }
   });
-  const [deals, people, organizations] = await Promise.all([
+  const suffixFilters = Array.from(browserFlowSuffixes);
+  const [deals, leads, people, organizations] = await Promise.all([
     prisma.deal.findMany({
-      where: { workspaceId: workspace.id, title: { contains: browserFlowSuffix } },
+      where: { workspaceId: workspace.id, OR: suffixFilters.map((suffix) => ({ title: { contains: suffix } })) },
+      select: { id: true }
+    }),
+    prisma.lead.findMany({
+      where: { workspaceId: workspace.id, OR: suffixFilters.map((suffix) => ({ title: { contains: suffix } })) },
       select: { id: true }
     }),
     prisma.person.findMany({
-      where: { workspaceId: workspace.id, email: `browser-flow-${browserFlowSuffix}@example.test` },
+      where: {
+        workspaceId: workspace.id,
+        OR: suffixFilters.map((suffix) => ({ email: `browser-flow-${suffix}@example.test` }))
+      },
       select: { id: true }
     }),
     prisma.organization.findMany({
-      where: { workspaceId: workspace.id, name: { contains: browserFlowSuffix } },
+      where: { workspaceId: workspace.id, OR: suffixFilters.map((suffix) => ({ name: { contains: suffix } })) },
       select: { id: true }
     })
   ]);
   const dealIds = deals.map((deal) => deal.id);
+  const leadIds = leads.map((lead) => lead.id);
   const personIds = people.map((person) => person.id);
   const organizationIds = organizations.map((organization) => organization.id);
+  const savedViews = await prisma.savedView.findMany({
+    where: { workspaceId: workspace.id, OR: suffixFilters.map((suffix) => ({ name: { contains: suffix } })) },
+    select: { id: true }
+  });
   const activities = await prisma.activity.findMany({
     where: {
       workspaceId: workspace.id,
       OR: [
-        { title: { contains: browserFlowSuffix } },
+        ...suffixFilters.map((suffix) => ({ title: { contains: suffix } })),
         { dealId: { in: dealIds } },
+        { leadId: { in: leadIds } },
+        { personId: { in: personIds } },
+        { organizationId: { in: organizationIds } }
+      ]
+    },
+    select: { id: true }
+  });
+  const notes = await prisma.note.findMany({
+    where: {
+      workspaceId: workspace.id,
+      OR: [
+        ...suffixFilters.map((suffix) => ({ body: { contains: suffix } })),
+        { dealId: { in: dealIds } },
+        { leadId: { in: leadIds } },
+        { personId: { in: personIds } },
+        { organizationId: { in: organizationIds } }
+      ]
+    },
+    select: { id: true }
+  });
+  const emailLogs = await prisma.emailLog.findMany({
+    where: {
+      workspaceId: workspace.id,
+      OR: [
+        ...suffixFilters.map((suffix) => ({ subject: { contains: suffix } })),
+        ...suffixFilters.map((suffix) => ({ body: { contains: suffix } })),
+        { dealId: { in: dealIds } },
+        { leadId: { in: leadIds } },
         { personId: { in: personIds } },
         { organizationId: { in: organizationIds } }
       ]
@@ -577,13 +1195,44 @@ async function cleanupBrowserFlowRecords() {
     select: { id: true }
   });
   const activityIds = activities.map((activity) => activity.id);
-  const entityIds = [...activityIds, ...dealIds, ...personIds, ...organizationIds];
+  const noteIds = notes.map((note) => note.id);
+  const emailLogIds = emailLogs.map((emailLog) => emailLog.id);
+  const savedViewIds = savedViews.map((savedView) => savedView.id);
+  const entityIds = [...activityIds, ...noteIds, ...emailLogIds, ...dealIds, ...leadIds, ...personIds, ...organizationIds];
 
+  if (savedViewIds.length > 0) await prisma.savedView.deleteMany({ where: { id: { in: savedViewIds } } });
   if (entityIds.length > 0) {
     await prisma.auditLog.deleteMany({ where: { workspaceId: workspace.id, entityId: { in: entityIds } } });
   }
+  if (emailLogIds.length > 0) await prisma.emailLog.deleteMany({ where: { id: { in: emailLogIds } } });
+  if (noteIds.length > 0) await prisma.note.deleteMany({ where: { id: { in: noteIds } } });
   if (activityIds.length > 0) await prisma.activity.deleteMany({ where: { id: { in: activityIds } } });
   if (dealIds.length > 0) await prisma.deal.deleteMany({ where: { id: { in: dealIds } } });
+  if (leadIds.length > 0) await prisma.lead.deleteMany({ where: { id: { in: leadIds } } });
   if (personIds.length > 0) await prisma.person.deleteMany({ where: { id: { in: personIds } } });
   if (organizationIds.length > 0) await prisma.organization.deleteMany({ where: { id: { in: organizationIds } } });
+}
+
+async function cleanupBrowserAuthSmokeUsers() {
+  const userIds = Array.from(browserAuthSmokeUserIds);
+  const invitationIds = Array.from(browserAuthSmokeInvitationIds);
+  if (userIds.length === 0 && invitationIds.length === 0) return;
+
+  if (userIds.length > 0 || invitationIds.length > 0) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        OR: [
+          ...(userIds.length > 0 ? [{ actorId: { in: userIds } }] : []),
+          ...(invitationIds.length > 0 ? [{ entityId: { in: invitationIds } }] : [])
+        ]
+      }
+    });
+  }
+  if (invitationIds.length > 0) await prisma.workspaceInvitation.deleteMany({ where: { id: { in: invitationIds } } });
+  if (userIds.length > 0) {
+    await prisma.passwordResetToken.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.session.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.workspaceMembership.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+  }
 }

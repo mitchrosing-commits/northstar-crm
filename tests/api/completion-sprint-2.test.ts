@@ -21,6 +21,14 @@ describe("rapid completion sprint 2 surfaces", () => {
     expect(automationService).toContain("contract-follow-up");
     expect(automationService).toContain("post-sale-handoff");
     expect(automationService).toContain("lost-reengagement");
+    expect(automationService).toContain("normalizeAutomationTemplateId");
+    expect(automationService).toContain("normalizeAutomationTargetId");
+    expect(automationService).toContain("normalizeAutomationTimestamp");
+    expect(automationService).toContain("Automation template is not available.");
+    expect(automationService).toContain("Automation target ids must be text.");
+    expect(automationService).toContain("Automation template timestamp is invalid.");
+    expect(automationService).toContain("openDealAutomationTemplateIds");
+    expect(automationService).toContain("DEAL_CLOSED");
     expect(automationService).toContain("const existing = await prisma.activity.findFirst");
     expect(automationService).toContain("created: false");
     expect(automationService).not.toContain("background");
@@ -32,11 +40,22 @@ describe("rapid completion sprint 2 surfaces", () => {
     expect(leadActions).toContain("createLeadAutomationActivityAction");
     expect(dealPage).toContain("DealAutomationTemplatesPanel");
     expect(dealPage).toContain("One-click next actions");
+    expect(dealPage).toContain("FormIntroCallout");
+    expect(dealPage).toContain("title=\"Suggested next steps\"");
+    expect(dealPage).toContain("className=\"data-card automation-template-panel section-separated\"");
+    expect(dealPage).toContain("const automationActionLabel = `${suggestion.actionLabel}: create ${suggestion.title.toLowerCase()} activity`");
+    expect(dealPage).toContain("aria-label={automationActionLabel}");
+    expect(dealPage).toContain("title={automationActionLabel}");
     expect(dealPage).toContain("Post-sale handoff");
     expect(dealPage).toContain("Future re-engagement");
     expect(leadPage).toContain("Suggested Automation");
+    expect(leadPage).toContain("title=\"Suggested next step\"");
+    expect(leadPage).toContain("className=\"data-card automation-template-panel section-separated\"");
     expect(leadPage).toContain("Lead first outreach");
     expect(leadPage).toContain("createLeadAutomationActivityAction");
+    expect(leadPage).toContain("const outreachActionLabel = `Create outreach: create first outreach activity for ${lead.title}`");
+    expect(leadPage).toContain("aria-label={outreachActionLabel}");
+    expect(leadPage).toContain("title={outreachActionLabel}");
   });
 
   it("adds a My Day agenda on Activities using existing activity data", () => {
@@ -45,7 +64,7 @@ describe("rapid completion sprint 2 surfaces", () => {
     expect(activitiesPage).toContain("Overdue");
     expect(activitiesPage).toContain("Due today");
     expect(activitiesPage).toContain("Upcoming");
-    expect(activitiesPage).toContain("Recently completed");
+    expect(activitiesPage).toContain("Completed recently");
     expect(activitiesPage).toContain("showCompleteAction");
   });
 
@@ -60,6 +79,7 @@ describe("rapid completion sprint 2 surfaces", () => {
     expect(settingsPage).toContain("Secret values are never shown here.");
     expect(settingsPage).toContain("APP_BASE_URL");
     expect(settingsPage).toContain("passwordResetEmailReadiness(process.env)");
+    expect(settingsPage).toContain("Set APP_BASE_URL plus RESEND_API_KEY and AUTH_EMAIL_FROM");
     expect(settingsPage).toContain("Worker required");
     expect(settingsPage).toContain("npm run jobs:work");
     expect(settingsPage).toContain("GOOGLE_OAUTH_CLIENT_ID");

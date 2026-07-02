@@ -2,7 +2,7 @@ import type { SortDirection } from "@/lib/list-page-query";
 
 export const leadStatuses = ["NEW", "QUALIFIED", "DISQUALIFIED", "CONVERTED"] as const;
 export const leadSorts = ["updatedAt", "createdAt", "title"] as const;
-export const leadFilterKeys = ["status", "source", "ownerId", "customFieldId", "customFieldOperator", "customFieldValue"] as const;
+export const leadFilterKeys = ["status", "source", "ownerId", "followUp", "customFieldId", "customFieldOperator", "customFieldValue"] as const;
 
 export type LeadListStatus = (typeof leadStatuses)[number];
 export type LeadListSort = (typeof leadSorts)[number];

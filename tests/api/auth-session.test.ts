@@ -6,6 +6,7 @@ import {
   defaultAuthUserIdHeader,
   isSafeAuthUserIdHeaderName,
   localSessionCookieName,
+  readLocalSessionToken,
   resolveAuthMode,
   resolveAuthUserIdHeader,
   resolveSessionIdentity,
@@ -47,6 +48,7 @@ describe("auth session abstraction", () => {
     expect(isSafeAuthUserIdHeaderName("authorization")).toBe(false);
     expect(isSafeAuthUserIdHeaderName("cookie")).toBe(false);
     expect(isSafeAuthUserIdHeaderName("x-forwarded-for")).toBe(false);
+    expect(isSafeAuthUserIdHeaderName({ header: "x-user-id" } as unknown as string)).toBe(false);
   });
 
   it("keeps seeded demo fallback gated to demo mode", () => {
@@ -112,6 +114,8 @@ describe("auth session abstraction", () => {
       kind: "missing",
       mode: "local"
     });
+    expect(readLocalSessionToken({ cookie: `${localSessionCookieName}=${cookieValue}` } as unknown as string, env)).toBeNull();
+    expect(serializeLocalSessionCookieValue({ token: "session-token-123" } as unknown as string, env)).toBe(".");
   });
 
   it("returns missing session outside demo mode", () => {

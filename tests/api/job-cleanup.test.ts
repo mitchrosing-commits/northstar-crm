@@ -9,6 +9,8 @@ import {
 
 const scriptSource = readFileSync(join(process.cwd(), "scripts/jobs-cleanup.ts"), "utf8");
 const packageJson = readFileSync(join(process.cwd(), "package.json"), "utf8");
+const deploymentReadiness = readFileSync(join(process.cwd(), "docs/deployment-readiness.md"), "utf8");
+const backgroundJobsDesign = readFileSync(join(process.cwd(), "docs/background-jobs-event-outbox-design.md"), "utf8");
 
 describe("job cleanup command", () => {
   it("parses retention env vars conservatively", () => {
@@ -76,5 +78,29 @@ describe("job cleanup command", () => {
     expect(scriptSource).not.toContain("resetUrl");
     expect(scriptSource).not.toContain("lastError");
     expect(scriptSource).not.toContain("error.message");
+  });
+
+  it("documents cleanup as terminal-only while retryable failures return to pending", () => {
+    expect(deploymentReadiness).toContain(
+      "It is not limited to active workspaces, so old terminal rows tied to deleted workspaces can still be pruned."
+    );
+    expect(deploymentReadiness).toContain(
+      "It does not delete `PENDING` retryable jobs, `RUNNING` jobs, or non-terminal `FAILED` rows."
+    );
+    expect(deploymentReadiness).toContain(
+      "Cleanup output is aggregate-only and does not print payloads, reset URLs, tokens, recipient emails, dedupe keys, `lastError`, or secrets."
+    );
+    expect(deploymentReadiness).toContain(
+      "The status, run-once, continuous-worker, and cleanup commands print summary counts only and do not print payloads, reset URLs, tokens, recipient emails, or secrets."
+    );
+    expect(backgroundJobsDesign).toContain(
+      "The current retry path requeues retryable failures as `PENDING` with a future `runAt`."
+    );
+    expect(backgroundJobsDesign).toContain(
+      "including old terminal rows for deleted workspaces"
+    );
+    expect(backgroundJobsDesign).toContain(
+      "It leaves `PENDING` retryable jobs, `RUNNING` jobs, and non-terminal `FAILED` rows untouched"
+    );
   });
 });

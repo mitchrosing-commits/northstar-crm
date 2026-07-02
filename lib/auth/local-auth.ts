@@ -34,8 +34,9 @@ export type LocalSignupResult = {
 };
 
 export async function loginWithEmailAndPassword(email: string, password: string): Promise<LocalLoginResult> {
-  const normalizedEmail = email.trim().toLowerCase();
-  if (!normalizedEmail || !password) {
+  const normalizedEmail = normalizeLocalAuthEmail(email);
+  const normalizedPassword = normalizeLocalAuthPassword(password);
+  if (!normalizedEmail || !normalizedPassword) {
     throw new ApiError("INVALID_CREDENTIALS", invalidLoginMessage, 401);
   }
 
@@ -48,7 +49,7 @@ export async function loginWithEmailAndPassword(email: string, password: string)
   });
 
   const passwordHash = user?.passwordHash ?? fakePasswordHash;
-  if (!user || !user.passwordHash || !verifyPassword(password, passwordHash)) {
+  if (!user || !user.passwordHash || !verifyPassword(normalizedPassword, passwordHash)) {
     throw new ApiError("INVALID_CREDENTIALS", invalidLoginMessage, 401);
   }
 
@@ -69,8 +70,9 @@ export async function signupWithEmailAndPassword(input: {
   name?: string | null;
   password: string;
 }): Promise<LocalSignupResult> {
-  const email = normalizeSignupEmail(input.email);
+  const email = normalizeLocalAuthEmail(input.email);
   const name = normalizeSignupName(input.name);
+  const password = normalizeLocalAuthPassword(input.password);
 
   if (!email) {
     throw new ApiError("VALIDATION_ERROR", "Email is required.", 422);
@@ -78,7 +80,7 @@ export async function signupWithEmailAndPassword(input: {
   if (!isValidSignupEmail(email)) {
     throw new ApiError("VALIDATION_ERROR", "Enter a valid email address.", 422);
   }
-  if (input.password.length < minimumSignupPasswordLength) {
+  if (!password || password.length < minimumSignupPasswordLength) {
     throw new ApiError("VALIDATION_ERROR", "Password must be at least 8 characters.", 422);
   }
 
@@ -98,7 +100,7 @@ export async function signupWithEmailAndPassword(input: {
     data: {
       email,
       name,
-      passwordHash: hashPassword(input.password)
+      passwordHash: hashPassword(password)
     },
     select: { id: true, email: true, name: true }
   });
@@ -145,12 +147,16 @@ export function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function normalizeSignupEmail(email: string) {
-  return email.trim().toLowerCase();
+function normalizeLocalAuthEmail(email: unknown) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
 }
 
-function normalizeSignupName(name: string | null | undefined) {
-  const normalized = name?.trim().replace(/\s+/g, " ");
+function normalizeLocalAuthPassword(password: unknown) {
+  return typeof password === "string" ? password : "";
+}
+
+function normalizeSignupName(name: unknown) {
+  const normalized = typeof name === "string" ? name.trim().replace(/\s+/g, " ") : "";
   return normalized || null;
 }
 

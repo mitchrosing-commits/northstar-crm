@@ -28,6 +28,7 @@ const actionLabels: Record<string, string> = {
   "deal.created": "Created deal",
   "deal.created_from_lead": "Created deal from lead",
   "deal.deleted": "Removed deal",
+  "deal.imported": "Imported deal from CSV",
   "deal.lost": "Marked deal lost",
   "deal.reopened": "Reopened deal",
   "deal.stage_changed": "Moved deal stage",
@@ -41,14 +42,17 @@ const actionLabels: Record<string, string> = {
   "email_template.updated": "Updated email template",
   "lead.converted": "Converted lead",
   "lead.created": "Created lead",
+  "lead.imported": "Imported lead from CSV",
   "lead.updated": "Updated lead",
   "note.created": "Added note",
   "note.deleted": "Removed note",
   "organization.created": "Created organization",
   "organization.deleted": "Removed organization",
+  "organization.imported": "Imported organization from CSV",
   "organization.updated": "Updated organization",
   "person.created": "Created contact",
   "person.deleted": "Removed contact",
+  "contact.imported": "Imported contact from CSV",
   "person.updated": "Updated contact",
   "pipeline.created": "Created pipeline",
   "pipeline.deleted": "Removed pipeline",
@@ -107,9 +111,20 @@ function metadataSummary(metadata: unknown) {
     return `Lost reason: ${metadata.lostReason.trim()}`;
   }
 
-  if (typeof metadata.reattachedActivities === "number" || typeof metadata.reattachedNotes === "number") {
+  if (
+    typeof metadata.reattachedActivities === "number" ||
+    typeof metadata.reattachedNotes === "number" ||
+    typeof metadata.reattachedEmailLogs === "number"
+  ) {
     const activityCount = typeof metadata.reattachedActivities === "number" ? metadata.reattachedActivities : 0;
     const noteCount = typeof metadata.reattachedNotes === "number" ? metadata.reattachedNotes : 0;
+    const emailLogCount = typeof metadata.reattachedEmailLogs === "number" ? metadata.reattachedEmailLogs : undefined;
+    if (emailLogCount !== undefined) {
+      const activityText = `${activityCount} ${pluralize("activity", activityCount)}`;
+      const noteText = `${noteCount} ${pluralize("note", noteCount)}`;
+      const emailLogText = `${emailLogCount} ${pluralize("email log", emailLogCount)}`;
+      return `Moved ${activityText}, ${noteText}, and ${emailLogText}`;
+    }
     return `Moved ${activityCount} ${pluralize("activity", activityCount)} and ${noteCount} ${pluralize("note", noteCount)}`;
   }
 

@@ -18,6 +18,17 @@ export type SerializedListViewState<TSortBy extends string = string, TFilterKey 
   sortDirection: SortDirection;
   pageSize: number;
 };
+export type ListServiceFilters<TSortBy extends string = string, TFilterKey extends string = string> = {
+  q?: string;
+  sortBy?: TSortBy;
+  sortDirection?: SortDirection;
+} & Partial<Record<TFilterKey, string>>;
+export type ListViewStateOptions<TSortBy extends string, TFilterKey extends string = string> = {
+  defaultSortBy: TSortBy;
+  defaultSortDirection: SortDirection;
+  filterKeys: readonly TFilterKey[];
+  sortByValues: readonly TSortBy[];
+};
 export type PageInfo = PaginationInput & {
   total: number;
   totalPages: number;
@@ -32,10 +43,23 @@ const defaultPageSize = 10;
 const maxPageSize = 50;
 export const sortDirections = ["asc", "desc"] as const;
 
+export function searchParamsToListSearchParams(searchParams: URLSearchParams): ListSearchParams {
+  const params: ListSearchParams = {};
+
+  for (const key of searchParams.keys()) {
+    if (params[key] !== undefined) continue;
+
+    const values = searchParams.getAll(key);
+    params[key] = values.length > 1 ? values : values[0];
+  }
+
+  return params;
+}
+
 export function getSearchParam(searchParams: ListSearchParams, key: string) {
   const value = searchParams[key];
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
+  if (Array.isArray(value)) return value.find((item) => typeof item === "string") ?? "";
+  return typeof value === "string" ? value : "";
 }
 
 export function optionalSearchParam(searchParams: ListSearchParams, key: string) {
@@ -58,12 +82,7 @@ export function hasActiveListFilters(searchParams: ListSearchParams, keys: reado
 
 export function parseListViewState<TSortBy extends string, TFilterKey extends string = string>(
   searchParams: ListSearchParams,
-  options: {
-    defaultSortBy: TSortBy;
-    defaultSortDirection: SortDirection;
-    filterKeys: readonly TFilterKey[];
-    sortByValues: readonly TSortBy[];
-  }
+  options: ListViewStateOptions<TSortBy, TFilterKey>
 ): ListViewState<TSortBy, TFilterKey> {
   return {
     q: optionalSearchParam(searchParams, "q"),
@@ -75,6 +94,29 @@ export function parseListViewState<TSortBy extends string, TFilterKey extends st
     sortDirection: enumSearchParam(searchParams, "sortDirection", sortDirections) ?? options.defaultSortDirection,
     pagination: parsePagination(searchParams)
   };
+}
+
+export function listServiceFiltersFromSearchParams<TSortBy extends string, TFilterKey extends string = string>(
+  searchParams: ListSearchParams,
+  options: ListViewStateOptions<TSortBy, TFilterKey>,
+  enumFilters: Partial<Record<TFilterKey, readonly string[]>> = {}
+): ListServiceFilters<TSortBy, TFilterKey> {
+  const state = parseListViewState(searchParams, options);
+  const activeFilters: Partial<Record<TFilterKey, string>> = {};
+
+  for (const key of options.filterKeys) {
+    const value = state.filters[key];
+    const allowed = enumFilters[key];
+    if (!value || (allowed && !allowed.includes(value))) continue;
+    activeFilters[key] = value;
+  }
+
+  return {
+    ...activeFilters,
+    q: state.q,
+    sortBy: state.sortBy,
+    sortDirection: state.sortDirection
+  } as ListServiceFilters<TSortBy, TFilterKey>;
 }
 
 export function enumListViewFilter<T extends string, TFilterKey extends string = string>(
@@ -126,17 +168,18 @@ export function parsePagination(searchParams: ListSearchParams): PaginationInput
 }
 
 export function resolvePagination(total: number, pagination: PaginationInput): PageInfo {
-  const pageSize = clamp(pagination.pageSize, 1, maxPageSize);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const page = clamp(pagination.page, 1, totalPages);
-  const skip = total === 0 ? 0 : (page - 1) * pageSize;
-  const from = total === 0 ? 0 : skip + 1;
-  const to = Math.min(total, skip + pageSize);
+  const safeTotal = normalizePositiveInteger(total, 0);
+  const pageSize = clamp(normalizePositiveInteger(pagination.pageSize, defaultPageSize), 1, maxPageSize);
+  const totalPages = Math.max(1, Math.ceil(safeTotal / pageSize));
+  const page = clamp(normalizePositiveInteger(pagination.page, 1), 1, totalPages);
+  const skip = safeTotal === 0 ? 0 : (page - 1) * pageSize;
+  const from = safeTotal === 0 ? 0 : skip + 1;
+  const to = Math.min(safeTotal, skip + pageSize);
 
   return {
     page,
     pageSize,
-    total,
+    total: safeTotal,
     totalPages,
     skip,
     from,
@@ -153,7 +196,7 @@ export function paginationHref(pathname: string, searchParams: ListSearchParams,
     if (key === "page" || key === "pageSize") continue;
     const values = Array.isArray(rawValue) ? rawValue : [rawValue];
     for (const value of values) {
-      if (value) params.append(key, value);
+      if (typeof value === "string" && value) params.append(key, value);
     }
   }
 
@@ -162,9 +205,30 @@ export function paginationHref(pathname: string, searchParams: ListSearchParams,
   return `${pathname}?${params.toString()}`;
 }
 
+export function listPageHref(pathname: string, searchParams: ListSearchParams) {
+  const params = new URLSearchParams();
+
+  for (const [key, rawValue] of Object.entries(searchParams)) {
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+    for (const value of values) {
+      if (typeof value === "string" && value) params.append(key, value);
+    }
+  }
+
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
 function positiveInt(value: string, fallback: number) {
+  if (!/^\d+$/.test(value.trim())) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number) {
+  if (typeof value === "string") return positiveInt(value, fallback);
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallback;
+  return Math.trunc(value);
 }
 
 function clamp(value: number, min: number, max: number) {

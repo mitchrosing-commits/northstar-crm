@@ -3,16 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ActionGroup } from "@/components/action-group";
+import { FormErrorMessage } from "@/components/form-error-message";
+
 type ActivityCompleteButtonProps = {
   workspaceId: string;
   activityId: string;
   inline?: boolean;
+  ariaLabel?: string;
 };
 
-export function ActivityCompleteButton({ workspaceId, activityId, inline = false }: ActivityCompleteButtonProps) {
+export function ActivityCompleteButton({ workspaceId, activityId, inline = false, ariaLabel }: ActivityCompleteButtonProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const actionsLabel = "Complete activity actions";
 
   async function completeActivity() {
     setError(null);
@@ -37,18 +42,25 @@ export function ActivityCompleteButton({ workspaceId, activityId, inline = false
 
   const content = (
     <>
-      <button className="button-secondary button-compact" disabled={isSaving} onClick={completeActivity} type="button">
+      <button
+        aria-label={ariaLabel}
+        className="button-secondary button-compact"
+        disabled={isSaving}
+        onClick={completeActivity}
+        title={ariaLabel}
+        type="button"
+      >
         {isSaving ? "Saving..." : "Mark complete"}
       </button>
-      {error ? <p className="form-error compact-error">{error}</p> : null}
+      {error ? <FormErrorMessage compact>{error}</FormErrorMessage> : null}
     </>
   );
 
   if (inline) return content;
 
   return (
-    <div className="activity-actions">
+    <ActionGroup className="activity-actions" label={actionsLabel}>
       {content}
-    </div>
+    </ActionGroup>
   );
 }

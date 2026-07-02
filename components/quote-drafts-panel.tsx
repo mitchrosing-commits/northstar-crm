@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ActionGroup } from "@/components/action-group";
+import { CompactTitleRow } from "@/components/compact-title-row";
+import { EmptyState } from "@/components/empty-state";
+import { FormErrorMessage } from "@/components/form-error-message";
 import { formatDate, formatMoney } from "@/components/format";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { TableScroll } from "@/components/table-scroll";
 import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 
 type QuoteItem = {
@@ -32,20 +39,36 @@ type QuoteDraftsPanelProps = {
   dealId: string;
   quotes: QuoteDraft[];
   canCreate: boolean;
+  disabledReason?: string;
 };
 
-export function QuoteDraftsPanel({ workspaceId, dealId, quotes, canCreate }: QuoteDraftsPanelProps) {
+export function QuoteDraftsPanel({
+  workspaceId,
+  dealId,
+  quotes,
+  canCreate,
+  disabledReason,
+}: QuoteDraftsPanelProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const emptyQuoteDescription = canCreate
+    ? "Create one after the deal has line items to review a frozen snapshot."
+    : disabledReason
+      ? "Quote drafts are read-only for this deal."
+      : "Add at least one deal line item to enable draft quote creation.";
+  const quoteStatusSummaryLabel = "Quote status summary";
 
   async function createDraftQuote() {
     setError(null);
     setIsSaving(true);
 
-    const response = await fetch(`/api/v1/workspaces/${workspaceId}/deals/${dealId}/quotes`, {
-      method: "POST"
-    });
+    const response = await fetch(
+      `/api/v1/workspaces/${workspaceId}/deals/${dealId}/quotes`,
+      {
+        method: "POST",
+      },
+    );
 
     if (!response.ok) {
       const body = await response.json().catch(() => null);
@@ -59,99 +82,129 @@ export function QuoteDraftsPanel({ workspaceId, dealId, quotes, canCreate }: Quo
   }
 
   return (
-    <section className="data-card" style={{ marginTop: 14 }}>
-      <div className="panel-title-row">
-        <div>
-          <h2 className="panel-title">Quotes</h2>
-          <p className="empty-copy">Create, send, accept, or decline internal quote snapshots from this deal.</p>
-        </div>
-        <button
-          className="button-primary button-compact"
-          disabled={isSaving || !canCreate}
-          onClick={createDraftQuote}
-          type="button"
-        >
-          {isSaving ? "Creating..." : "Create quote draft"}
-        </button>
-      </div>
-      <div className="filter-actions" style={{ marginTop: 12 }}>
+    <section className="data-card section-spaced" id="quotes">
+      <PanelTitleRow
+        actions={
+          <button
+            className="button-primary button-compact"
+            disabled={isSaving || !canCreate}
+            onClick={createDraftQuote}
+            type="button"
+          >
+            {isSaving ? "Creating..." : "Create quote draft"}
+          </button>
+        }
+        description="Create, send, accept, or decline internal quote snapshots from this deal. Quotes are internal snapshots of current line items. Status changes are internal tracking only; public links, PDFs, and customer acceptance are managed from quote detail without email delivery, signatures, or payment collection."
+        title="Quotes"
+      />
+      <ActionGroup
+        className="filter-actions panel-actions-row"
+        label={quoteStatusSummaryLabel}
+      >
         {quoteLifecycleStatuses.map((status) => (
           <span className="badge" key={status}>
-            {status}: {quotes.filter((quote) => quote.status === status.toUpperCase()).length}
+            {status}:{" "}
+            {
+              quotes.filter((quote) => quote.status === status.toUpperCase())
+                .length
+            }
           </span>
         ))}
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 14 }}>
-        Quotes are internal snapshots of current line items. Status changes are internal tracking only; public links, PDFs, and customer acceptance are managed from quote detail without email delivery, signatures, or payment collection.
-      </p>
-      {!canCreate ? (
-        <p className="empty-copy" style={{ marginBottom: 14 }}>
-          Add at least one deal line item to enable draft quote creation.
-        </p>
+      </ActionGroup>
+      {!canCreate && disabledReason ? (
+        <LockedPanelNotice>{disabledReason}</LockedPanelNotice>
       ) : null}
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       {quotes.length > 0 ? (
         <div className="quote-draft-list">
-          {quotes.map((quote) => (
-            <article className="quote-draft-item" key={quote.id}>
-              <div className="panel-title-row">
-                <div>
-                  <h3 className="compact-title">{quote.number}</h3>
-                  <p className="empty-copy">
-                    {quote.status} · {formatDate(quote.createdAt)}
-                  </p>
-                </div>
-                <span className="badge">{formatMoney(quote.totalCents, quote.currency)}</span>
-              </div>
-              <div className="filter-actions">
-                <Link className="button-secondary button-compact" href={`/deals/${dealId}/quotes/${quote.id}`}>
-                  View quote
-                </Link>
-                {quote.status === "SENT" ? (
+          {quotes.map((quote) => {
+            const quoteActionsLabel = `${quote.number} quote actions`;
+
+            return (
+              <article className="quote-draft-item" key={quote.id}>
+                <CompactTitleRow
+                  actions={
+                    <span className="badge">
+                      {formatMoney(quote.totalCents, quote.currency)}
+                    </span>
+                  }
+                  description={`${quote.status} · ${formatDate(quote.createdAt)}`}
+                  title={quote.number}
+                />
+                <ActionGroup
+                  className="filter-actions"
+                  label={quoteActionsLabel}
+                >
                   <Link
+                    aria-label={`View quote ${quote.number}`}
                     className="button-secondary button-compact"
-                    href={buildActivityFollowUpHref({
-                      dueInDays: 3,
-                      related: { type: "deal", id: dealId },
-                      title: `Follow up on ${quote.number}`,
-                      type: "TASK"
-                    })}
+                    href={`/deals/${dealId}/quotes/${quote.id}`}
+                    title={`View quote ${quote.number}`}
                   >
-                    Add quote follow-up
+                    View quote
                   </Link>
-                ) : null}
-              </div>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Description</th>
-                    <th>Qty</th>
-                    <th>Unit price</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quote.items.map((item) => (
-                    <tr key={item.id}>
-                      <td>
-                        <strong>{item.name}</strong>
-                      </td>
-                      <td>{item.description ?? ""}</td>
-                      <td>{item.quantity}</td>
-                      <td>{formatMoney(item.unitPriceCents, item.currency)}</td>
-                      <td>{formatMoney(item.lineTotalCents, item.currency)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </article>
-          ))}
+                  {quote.status === "SENT" ? (
+                    <Link
+                      aria-label={`Add follow-up for quote ${quote.number}`}
+                      className="button-secondary button-compact"
+                      href={buildActivityFollowUpHref({
+                        dueInDays: 3,
+                        related: { type: "deal", id: dealId },
+                        returnTo: `/deals/${dealId}`,
+                        title: `Follow up on ${quote.number}`,
+                        type: "TASK",
+                      })}
+                      title={`Add follow-up for quote ${quote.number}`}
+                    >
+                      Add quote follow-up
+                    </Link>
+                  ) : null}
+                </ActionGroup>
+                <TableScroll aria-label={`${quote.number} quote items table`}>
+                  <table className="table crm-list-table">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Qty</th>
+                        <th>Unit price</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quote.items.map((item) => (
+                        <tr key={item.id}>
+                          <td data-label="Item">
+                            <div className="table-primary-cell">
+                              <strong>{item.name}</strong>
+                              {item.description ? (
+                                <span className="table-secondary-text">
+                                  {item.description}
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td data-label="Qty">{item.quantity}</td>
+                          <td data-label="Unit price">
+                            {formatMoney(item.unitPriceCents, item.currency)}
+                          </td>
+                          <td data-label="Total">
+                            {formatMoney(item.lineTotalCents, item.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
+              </article>
+            );
+          })}
         </div>
       ) : (
-        <p className="empty-copy">
-          No internal quote drafts yet. Create one after the deal has line items to review a frozen snapshot.
-        </p>
+        <EmptyState
+          className="empty-state-compact empty-state-panel quote-drafts-empty"
+          description={emptyQuoteDescription}
+          title="No internal quote drafts yet"
+        />
       )}
     </section>
   );

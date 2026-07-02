@@ -1,5 +1,7 @@
 import { AppShell } from "@/components/app-shell";
 import { ContactForm } from "@/components/contact-form";
+import { FormHeaderActions } from "@/components/form-header-actions";
+import { PageHeader } from "@/components/page-header";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { getWorkspace, listOrganizations } from "@/lib/services/crm";
 
@@ -8,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function NewContactPage({
   searchParams
 }: {
-  searchParams?: Promise<{ email?: string; name?: string }>;
+  searchParams?: Promise<{ email?: string; name?: string; organizationId?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
@@ -21,22 +23,34 @@ export default async function NewContactPage({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
   }));
+  const defaultEmail = firstSearchParam(resolvedSearchParams?.email);
+  const defaultName = firstSearchParam(resolvedSearchParams?.name);
+  const defaultOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId);
+  const organizationOptions = organizations.map((organization) => ({ id: organization.id, name: organization.name }));
+  const hasPrefill = Boolean(defaultEmail || defaultName || defaultOrganizationId);
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Contacts</p>
-          <h1 className="page-title">New Contact</h1>
-        </div>
-      </header>
+      <PageHeader
+        actions={<FormHeaderActions backHref="/contacts" backLabel="Back to contacts" />}
+        eyebrow="Contacts"
+        subtitle="Add a person record that can be linked to deals, organizations, activities, and email."
+        title="New contact"
+      />
       <ContactForm
-        defaultEmail={firstSearchParam(resolvedSearchParams?.email)}
-        defaultName={firstSearchParam(resolvedSearchParams?.name)}
+        cancelHref="/contacts"
+        defaultEmail={defaultEmail}
+        defaultName={defaultName}
+        defaultOrganizationId={organizationOptions.some((organization) => organization.id === defaultOrganizationId) ? defaultOrganizationId : undefined}
         defaultOwnerId={actorUserId}
         mode="create"
-        organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
+        organizations={organizationOptions}
         owners={owners}
+        prefillNotice={
+          hasPrefill
+            ? "We prefilled this contact from your search or related-record shortcut. Review the details, then add the person."
+            : undefined
+        }
         workspaceId={workspace.id}
       />
     </AppShell>

@@ -1,11 +1,21 @@
-import { DealStatus, LeadStatus } from "@prisma/client";
+import { DealStatus, LeadStatus, QuoteStatus } from "@prisma/client";
 
+import { startOfDay } from "@/lib/activity-due";
 import { prisma } from "@/lib/db/prisma";
+import { getFollowUpHealthSummary } from "@/lib/services/activity-service";
+import { activityAttachmentRelationsWhere, noteAttachmentRelationsWhere } from "./record-guards";
+import { scopeWorkspaceRelation, type WorkspaceScopedRelation } from "./relation-scope";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
 import { userDisplaySelect } from "./user-select";
 
 const leadStatuses = [LeadStatus.NEW, LeadStatus.QUALIFIED, LeadStatus.DISQUALIFIED, LeadStatus.CONVERTED] as const;
 const activeLeadStatuses = [LeadStatus.NEW, LeadStatus.QUALIFIED] as const;
+
+type DashboardDealStatusGroup = {
+  status: DealStatus;
+  _count: { _all: number };
+  _sum: { valueCents: number | null };
+};
 
 export async function getDashboardSummary(actor: WorkspaceActor, now = new Date()) {
   await ensureWorkspaceAccess(actor);
@@ -13,6 +23,11 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
   const today = startOfDay(now);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
+  const scopedActivityWhere = {
+    workspaceId: actor.workspaceId,
+    ...activityAttachmentRelationsWhere(actor.workspaceId),
+    ...activeWhere
+  };
 
   const [
     dealStatusGroups,
@@ -33,6 +48,14 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
     dueTodayActivitiesCount,
     upcomingActivitiesCount,
     completedActivitiesCount,
+    followUpHealth,
+    openQuotedDealValue,
+    openUnquotedDealValue,
+    openDealsWithoutQuotesCount,
+    openValueWithoutLineItemsCount,
+    draftQuotesCount,
+    acceptedQuotesCount,
+    recentClosedDealRecords,
     recentChanges
   ] = await Promise.all([
     prisma.deal.groupBy({
@@ -64,7 +87,7 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
       take: 5
     }),
     prisma.activity.findMany({
-      where: { workspaceId: actor.workspaceId, completedAt: null, ...activeWhere },
+      where: { ...scopedActivityWhere, completedAt: null },
       include: {
         deal: true,
         lead: true,
@@ -106,28 +129,94 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
       where: { workspaceId: actor.workspaceId, ...activeWhere }
     }),
     prisma.activity.count({
-      where: { workspaceId: actor.workspaceId, ...activeWhere }
+      where: scopedActivityWhere
     }),
     prisma.quote.count({
-      where: { workspaceId: actor.workspaceId }
+      where: { workspaceId: actor.workspaceId, deal: { workspaceId: actor.workspaceId, ...activeWhere } }
     }),
     prisma.product.count({
       where: { workspaceId: actor.workspaceId, ...activeWhere }
     }),
     prisma.note.count({
-      where: { workspaceId: actor.workspaceId, ...activeWhere }
+      where: { workspaceId: actor.workspaceId, ...noteAttachmentRelationsWhere(actor.workspaceId), ...activeWhere }
     }),
     prisma.activity.count({
-      where: { workspaceId: actor.workspaceId, completedAt: null, dueAt: { lt: today }, ...activeWhere }
+      where: { ...scopedActivityWhere, completedAt: null, dueAt: { lt: today } }
     }),
     prisma.activity.count({
-      where: { workspaceId: actor.workspaceId, completedAt: null, dueAt: { gte: today, lt: tomorrow }, ...activeWhere }
+      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
     }),
     prisma.activity.count({
-      where: { workspaceId: actor.workspaceId, completedAt: null, dueAt: { gte: tomorrow }, ...activeWhere }
+      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: tomorrow } }
     }),
     prisma.activity.count({
-      where: { workspaceId: actor.workspaceId, completedAt: { not: null }, ...activeWhere }
+      where: { ...scopedActivityWhere, completedAt: { not: null } }
+    }),
+    getFollowUpHealthSummary(actor, now),
+    prisma.deal.aggregate({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: DealStatus.OPEN,
+        quotes: { some: { workspaceId: actor.workspaceId } },
+        ...activeWhere
+      },
+      _sum: { valueCents: true }
+    }),
+    prisma.deal.aggregate({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: DealStatus.OPEN,
+        quotes: { none: { workspaceId: actor.workspaceId } },
+        ...activeWhere
+      },
+      _sum: { valueCents: true }
+    }),
+    prisma.deal.count({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: DealStatus.OPEN,
+        quotes: { none: { workspaceId: actor.workspaceId } },
+        ...activeWhere
+      }
+    }),
+    prisma.deal.count({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: DealStatus.OPEN,
+        valueCents: { gt: 0 },
+        lineItems: { none: { workspaceId: actor.workspaceId } },
+        ...activeWhere
+      }
+    }),
+    prisma.quote.count({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: QuoteStatus.DRAFT,
+        deal: { workspaceId: actor.workspaceId, status: DealStatus.OPEN, ...activeWhere }
+      }
+    }),
+    prisma.quote.count({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: QuoteStatus.ACCEPTED,
+        deal: { workspaceId: actor.workspaceId, ...activeWhere }
+      }
+    }),
+    prisma.deal.findMany({
+      where: {
+        workspaceId: actor.workspaceId,
+        status: { in: [DealStatus.WON, DealStatus.LOST] },
+        OR: [{ wonAt: { not: null } }, { lostAt: { not: null } }],
+        ...activeWhere
+      },
+      include: {
+        organization: true,
+        owner: { select: userDisplaySelect },
+        person: true,
+        stage: true
+      },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: 20
     }),
     prisma.auditLog.findMany({
       where: { workspaceId: actor.workspaceId },
@@ -137,10 +226,34 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
     })
   ]);
 
-  const dealCounts = new Map(dealStatusGroups.map((group) => [group.status, group]));
+  const dealMetrics = summarizeDealStatusMetrics(dealStatusGroups);
   const leadCounts = new Map(leadStatusGroups.map((group) => [group.status, group._count._all]));
-  const openDealGroup = dealCounts.get(DealStatus.OPEN);
-  const dealRecordCount = dealStatusGroups.reduce((sum, group) => sum + group._count._all, 0);
+  const dealRecordCount = dealMetrics.totalDealsCount;
+  const recentClosedDeals = recentClosedDealRecords
+    .flatMap((deal) => {
+      const scopedDeal = scopeDashboardDealRelations(deal);
+      const closedAt = deal.status === DealStatus.WON ? deal.wonAt : deal.lostAt;
+      if (!closedAt) return [];
+
+      return [
+        {
+          id: scopedDeal.id,
+          title: scopedDeal.title,
+          status: scopedDeal.status,
+          valueCents: scopedDeal.valueCents ?? 0,
+          currency: scopedDeal.currency,
+          closedAt,
+          organization: scopedDeal.organization ? { id: scopedDeal.organization.id, name: scopedDeal.organization.name } : null,
+          ownerName: scopedDeal.owner?.name ?? scopedDeal.owner?.email ?? "Unassigned",
+          person: scopedDeal.person
+            ? { id: scopedDeal.person.id, firstName: scopedDeal.person.firstName, lastName: scopedDeal.person.lastName }
+            : null,
+          stageName: scopedDeal.stage.name
+        }
+      ];
+    })
+    .sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime())
+    .slice(0, 6);
   const hasMeaningfulCrmData =
     dealRecordCount +
       leadRecordCount +
@@ -154,11 +267,14 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
 
   return {
     metrics: {
-      openPipelineValueCents: openDealGroup?._sum.valueCents ?? 0,
-      openDealsCount: openDealGroup?._count._all ?? 0,
-      wonDealsCount: dealCounts.get(DealStatus.WON)?._count._all ?? 0,
-      lostDealsCount: dealCounts.get(DealStatus.LOST)?._count._all ?? 0,
+      openPipelineValueCents: dealMetrics.openPipelineValueCents,
+      openDealsCount: dealMetrics.openDealsCount,
+      wonDealsCount: dealMetrics.wonDealsCount,
+      wonDealsValueCents: dealMetrics.wonDealsValueCents,
+      lostDealsCount: dealMetrics.lostDealsCount,
+      lostDealsValueCents: dealMetrics.lostDealsValueCents,
       activeLeadsCount,
+      activeLeadsMissingNextActivity: followUpHealth.activeLeadsMissingNextActivity,
       overdueActivitiesCount,
       dueTodayActivitiesCount
     },
@@ -191,17 +307,67 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
       overdue: overdueActivitiesCount,
       dueToday: dueTodayActivitiesCount,
       upcoming: upcomingActivitiesCount,
-      completed: completedActivitiesCount
+      completed: completedActivitiesCount,
+      completedRecently: followUpHealth.recentlyCompletedActivities
     },
-    recentOpenDeals,
+    pipelineHealth: {
+      openDeals: dealMetrics.openDealsCount,
+      openValueCents: dealMetrics.openPipelineValueCents,
+      overdueActivities: overdueActivitiesCount,
+      dueTodayActivities: dueTodayActivitiesCount,
+      activeLeadsWithoutNextActivity: followUpHealth.activeLeadsMissingNextActivity,
+      openDealsWithoutNextActivity: followUpHealth.openDealsMissingNextActivity
+    },
+    commercialSnapshot: {
+      openQuotedDealValueCents: openQuotedDealValue._sum.valueCents ?? 0,
+      openUnquotedDealValueCents: openUnquotedDealValue._sum.valueCents ?? 0,
+      openDealsWithoutQuotes: openDealsWithoutQuotesCount,
+      openValueWithoutLineItems: openValueWithoutLineItemsCount,
+      draftQuotes: draftQuotesCount,
+      acceptedQuotes: acceptedQuotesCount
+    },
+    recentClosedDeals,
+    recentOpenDeals: recentOpenDeals.map((deal) => scopeDashboardDealRelations(deal)),
     priorityActivities,
-    recentQuotes,
+    recentQuotes: recentQuotes.map((quote) => scopeDashboardQuoteRelations(quote)),
     recentChanges
   };
 }
 
-function startOfDay(value: Date) {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
+function scopeDashboardDealRelations<T extends { workspaceId: string; person: WorkspaceScopedRelation; organization: WorkspaceScopedRelation }>(
+  deal: T
+) {
+  return {
+    ...deal,
+    person: scopeWorkspaceRelation(deal.workspaceId, deal.person),
+    organization: scopeWorkspaceRelation(deal.workspaceId, deal.organization)
+  };
+}
+
+function scopeDashboardQuoteRelations<
+  T extends {
+    deal: { workspaceId: string; person: WorkspaceScopedRelation; organization: WorkspaceScopedRelation };
+  }
+>(quote: T) {
+  return {
+    ...quote,
+    deal: scopeDashboardDealRelations(quote.deal)
+  };
+}
+
+export function summarizeDealStatusMetrics(groups: DashboardDealStatusGroup[]) {
+  const dealCounts = new Map(groups.map((group) => [group.status, group]));
+  const openDealGroup = dealCounts.get(DealStatus.OPEN);
+  const wonDealGroup = dealCounts.get(DealStatus.WON);
+  const lostDealGroup = dealCounts.get(DealStatus.LOST);
+
+  return {
+    totalDealsCount: groups.reduce((sum, group) => sum + group._count._all, 0),
+    openPipelineValueCents: openDealGroup?._sum.valueCents ?? 0,
+    openDealsCount: openDealGroup?._count._all ?? 0,
+    wonDealsCount: wonDealGroup?._count._all ?? 0,
+    wonDealsValueCents: wonDealGroup?._sum.valueCents ?? 0,
+    lostDealsCount: lostDealGroup?._count._all ?? 0,
+    lostDealsValueCents: lostDealGroup?._sum.valueCents ?? 0
+  };
 }

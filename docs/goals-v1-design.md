@@ -59,7 +59,7 @@ Goals v1 should start workspace-level only:
 - One workspace goal per currency and period for the MVP.
 - No per-owner targets in the first implementation.
 - No team goals, role-based quotas, or visibility groups.
-- Workspace admins/owners can manage goals if/when goal management UI is added; normal members can view according to existing report access patterns unless a separate permissions slice changes that.
+- Workspace admins/owners can manage monthly goal targets from Reports; normal members can view goal progress according to existing report access patterns.
 
 Period rules:
 
@@ -94,6 +94,7 @@ Implemented target/service readiness:
 
 - `Goal` stores one monthly `WON_REVENUE` target per workspace/currency/month.
 - `createOrUpdateMonthlyWonRevenueGoal` creates or updates the target for the normalized month.
+- Goal targets are validated against the current integer-cent storage limit before writing.
 - `getMonthlyWonRevenueGoalProgress` sums same-currency `WON` deals with `wonAt >= periodStart` and `wonAt < periodEnd`.
 - Progress excludes `OPEN`/`LOST` deals, cross-workspace deals, and legacy `WON` deals with null `wonAt`.
 - No FX conversion is applied.
@@ -176,4 +177,4 @@ Browser smoke:
 
 ## Recommended Next Slice
 
-Goals v1 design, schema/service foundation, Reports UI MVP, and validation/copy hardening are implemented. The next sensible slice should be a small permission/readiness review around who can create or update workspace goals from `/reports`, plus any needed docs/tests. Do not add charts, dashboard widgets, owner/user/team goals, quarterly goals, activity goals, saved/scheduled reports, notifications, automations, background jobs, API routes, or FX conversion as part of that review.
+Goals v1 design, schema/service foundation, Reports UI MVP, validation/copy hardening, and the admin/owner goal-management boundary are implemented. Future slices should stay focused unless product requirements change. Do not add charts, dashboard widgets, owner/user/team goals, quarterly goals, activity goals, saved/scheduled reports, notifications, automations, background jobs, API routes, or FX conversion as part of readiness cleanup.

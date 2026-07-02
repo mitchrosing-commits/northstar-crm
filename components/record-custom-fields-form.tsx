@@ -3,14 +3,21 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type FieldType = "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT" | "MULTI_SELECT" | "URL";
-type EntityType = "DEAL" | "PERSON" | "ORGANIZATION" | "LEAD";
+import { Badge } from "@/components/badge";
+import { EmptyState } from "@/components/empty-state";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
 
-type RecordCustomField = {
+export type RecordCustomFieldType = "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT" | "MULTI_SELECT" | "URL";
+export type RecordCustomFieldEntityType = "DEAL" | "PERSON" | "ORGANIZATION" | "LEAD";
+
+export type RecordCustomField = {
   id: string;
   name: string;
   key: string;
-  fieldType: FieldType;
+  fieldType: RecordCustomFieldType;
   required: boolean;
   options?: unknown;
   value: unknown;
@@ -25,12 +32,13 @@ type DealCustomFieldsFormProps = {
 type RecordCustomFieldsFormProps = {
   emptyMessage: string;
   entityId: string;
-  entityType: EntityType;
+  entityType: RecordCustomFieldEntityType;
   fields: RecordCustomField[];
   workspaceId: string;
 };
 
-const editableTypes = new Set<FieldType>(["TEXT", "NUMBER", "DATE", "BOOLEAN", "SELECT"]);
+const editableTypes = new Set<RecordCustomFieldType>(["TEXT", "NUMBER", "DATE", "BOOLEAN", "SELECT"]);
+const readOnlyCustomFieldMessage = "Only text, number, date, yes/no, and single-select fields can be edited in this MVP.";
 
 export function DealCustomFieldsForm({ dealId, fields, workspaceId }: DealCustomFieldsFormProps) {
   return (
@@ -90,13 +98,13 @@ export function RecordCustomFieldsForm({
   }
 
   if (fields.length === 0) {
-    return <p className="empty-copy">{emptyMessage}</p>;
+    return <CustomFieldsEmptyState title={emptyMessage} />;
   }
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {!hasValues ? <p className="empty-copy">Custom fields are ready, but no values have been filled in yet.</p> : null}
-      {error ? <div className="form-error compact-error">{error}</div> : null}
+      {!hasValues ? <CustomFieldsEmptyState title="Custom fields are ready, but no values have been filled in yet." /> : null}
+      {error ? <FormErrorMessage compact>{error}</FormErrorMessage> : null}
       <div className="form-grid">
         {editableFields.map((field) => (
           <FieldInput
@@ -108,20 +116,14 @@ export function RecordCustomFieldsForm({
         ))}
         {readOnlyFields.map((field) => (
           <div className="form-field custom-field-readonly" key={field.id}>
-            <span>{field.name}</span>
-            <span className="badge">Read-only</span>
+            <FormFieldLabel required={field.required}>{field.name}</FormFieldLabel>
+            <Badge label={`${field.name} is read-only`}>Read-only</Badge>
             <p className="field-value">{displayValue(field.value)}</p>
-            <p className="muted">Only text, number, date, and yes/no fields can be edited in this MVP.</p>
+            <CustomFieldReadOnlyNotice />
           </div>
         ))}
       </div>
-      {editableFields.length > 0 ? (
-        <div className="form-actions">
-          <button className="button-primary" disabled={isSaving} type="submit">
-            {isSaving ? "Saving..." : "Save custom fields"}
-          </button>
-        </div>
-      ) : null}
+      {editableFields.length > 0 ? <FormActionBar isSaving={isSaving} submitLabel="Save custom fields" /> : null}
     </form>
   );
 }
@@ -136,31 +138,37 @@ export function RecordCustomFieldsReadOnly({
   lockedMessage?: string;
 }) {
   if (fields.length === 0) {
-    return <p className="empty-copy">{emptyMessage}</p>;
+    return <CustomFieldsEmptyState title={emptyMessage} />;
   }
   const hasValues = fields.some((field) => hasDisplayValue(field.value));
 
   return (
     <div>
-      {lockedMessage ? <p className="empty-copy">{lockedMessage}</p> : null}
-      {!hasValues ? <p className="empty-copy">No custom field values have been filled in yet.</p> : null}
+      {lockedMessage ? <LockedPanelNotice>{lockedMessage}</LockedPanelNotice> : null}
+      {!hasValues ? <CustomFieldsEmptyState title="No custom field values have been filled in yet." /> : null}
       <div className="form-grid">
         {fields.map((field) => (
           <div
             className={!editableTypes.has(field.fieldType) ? "form-field custom-field-readonly" : "form-field"}
             key={field.id}
           >
-            <span>{field.name}</span>
-            {!editableTypes.has(field.fieldType) ? <span className="badge">Read-only</span> : null}
+            <FormFieldLabel required={field.required}>{field.name}</FormFieldLabel>
+            {!editableTypes.has(field.fieldType) ? <Badge label={`${field.name} is read-only`}>Read-only</Badge> : null}
             <p className="field-value">{displayValue(field.value)}</p>
-            {!editableTypes.has(field.fieldType) ? (
-              <p className="muted">Only text, number, date, and yes/no fields can be edited in this MVP.</p>
-            ) : null}
+            {!editableTypes.has(field.fieldType) ? <CustomFieldReadOnlyNotice /> : null}
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function CustomFieldsEmptyState({ title }: { title: string }) {
+  return <EmptyState className="empty-state-compact empty-state-panel record-custom-fields-empty" title={title} />;
+}
+
+function CustomFieldReadOnlyNotice() {
+  return <p className="custom-field-readonly-note">{readOnlyCustomFieldMessage}</p>;
 }
 
 function FieldInput({
@@ -175,7 +183,7 @@ function FieldInput({
   if (field.fieldType === "BOOLEAN") {
     return (
       <label className="form-field">
-        <span>{field.name}</span>
+        <FormFieldLabel required={field.required}>{field.name}</FormFieldLabel>
         <select onChange={(event) => onChange(event.target.value)} required={field.required} value={value}>
           <option value="">Not set</option>
           <option value="true">True</option>
@@ -189,7 +197,7 @@ function FieldInput({
     const options = selectOptions(field.options);
     return (
       <label className="form-field">
-        <span>{field.name}</span>
+        <FormFieldLabel required={field.required}>{field.name}</FormFieldLabel>
         <select onChange={(event) => onChange(event.target.value)} required={field.required} value={value}>
           <option value="">Not set</option>
           {options.map((option) => (
@@ -204,7 +212,7 @@ function FieldInput({
 
   return (
     <label className="form-field">
-      <span>{field.name}</span>
+      <FormFieldLabel required={field.required}>{field.name}</FormFieldLabel>
       <input
         onChange={(event) => onChange(event.target.value)}
         required={field.required}
@@ -216,13 +224,13 @@ function FieldInput({
   );
 }
 
-function inputType(fieldType: FieldType) {
+function inputType(fieldType: RecordCustomFieldType) {
   if (fieldType === "NUMBER") return "number";
   if (fieldType === "DATE") return "date";
   return "text";
 }
 
-function inputValue(value: unknown, fieldType: FieldType) {
+function inputValue(value: unknown, fieldType: RecordCustomFieldType) {
   if (value === null || value === undefined) return "";
   if (fieldType === "BOOLEAN") return value === true ? "true" : value === false ? "false" : "";
   return String(value);

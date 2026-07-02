@@ -3,7 +3,14 @@ import Link from "next/link";
 
 import { ActivityForm } from "@/components/activity-form";
 import { AppShell } from "@/components/app-shell";
+import { EmptyState } from "@/components/empty-state";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormHeaderActions } from "@/components/form-header-actions";
+import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { formatPersonName } from "@/lib/person-name";
+import { parseReturnToHref, returnToLabel } from "@/lib/return-to";
 import { getWorkspace, listDeals, listLeads, listOrganizations, listPeople } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +24,7 @@ type PageProps = {
     organizationId?: string;
     personId?: string;
     related?: string;
+    returnTo?: string;
     title?: string;
     type?: string;
   }>;
@@ -39,7 +47,7 @@ export default async function NewActivityPage({ searchParams }: PageProps) {
   }));
   const attachmentOptions = [
     ...deals.map((deal) => ({ label: `Deal: ${deal.title}`, value: `deal:${deal.id}` })),
-    ...people.map((person) => ({ label: `Contact: ${formatPersonName(person)}`, value: `person:${person.id}` })),
+    ...people.map((person) => ({ label: `Contact: ${formatPersonName(person) ?? "Unnamed contact"}`, value: `person:${person.id}` })),
     ...organizations.map((organization) => ({
       label: `Organization: ${organization.name}`,
       value: `organization:${organization.id}`
@@ -49,74 +57,103 @@ export default async function NewActivityPage({ searchParams }: PageProps) {
       .map((lead) => ({ label: `Lead: ${lead.title}`, value: `lead:${lead.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
   const initialAttachmentValue = parseInitialAttachmentValue(resolvedSearchParams);
+  const returnHref = parseReturnToHref(resolvedSearchParams?.returnTo, "/activities");
+  const returnLabel = returnToLabel(returnHref);
   const hasPrefill =
     Boolean(resolvedSearchParams?.title) ||
     Boolean(resolvedSearchParams?.description) ||
     Boolean(resolvedSearchParams?.due) ||
     Boolean(initialAttachmentValue);
+  const addDealActionLabel = "Add a deal before creating an activity";
+  const addContactActionLabel = "Add a contact before creating an activity";
+  const addOrganizationActionLabel = "Add an organization before creating an activity";
+  const addLeadActionLabel = "Add a lead before creating an activity";
 
   return (
     <AppShell workspace={workspace}>
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Activity</p>
-          <h1 className="page-title">New Activity</h1>
-        </div>
-        <Link className="button-secondary" href="/activities">
-          Back to activities
-        </Link>
-      </header>
+      <PageHeader
+        actions={
+          <FormHeaderActions
+            backHref={returnHref}
+            backLabel={returnLabel}
+          />
+        }
+        eyebrow="Activity"
+        subtitle="Schedule the next call, email, meeting, or task against a CRM record."
+        title="New activity"
+      />
 
       <section className="data-card">
-        <h2 className="panel-title">Create Follow-up</h2>
+        <PanelTitleRow title="Create Follow-up" />
         {hasPrefill ? (
-          <p className="form-hint" style={{ marginBottom: 12 }}>
-            We prefilled this activity from the record you were viewing. Review the details, then save the follow-up.
-          </p>
+          <FormIntroCallout title="Prefilled follow-up">
+            We prefilled this activity from your search or record shortcut. Review the details, then save the
+            follow-up.
+          </FormIntroCallout>
         ) : null}
         {attachmentOptions.length === 0 ? (
-          <div className="empty-state" style={{ marginBottom: 16 }}>
-            <h3>Create something to follow up on</h3>
-            <p>
-              Activities need a related deal, contact, organization, or lead. Add one first, then come back to schedule
-              the follow-up.
-            </p>
-            <div className="filter-actions">
-              <Link className="button-secondary button-compact" href={"/deals/new" as Route}>
-                Add a deal
-              </Link>
-              <Link className="button-secondary button-compact" href={"/contacts/new" as Route}>
-                Add a contact
-              </Link>
-              <Link className="button-secondary button-compact" href={"/organizations/new" as Route}>
-                Add an organization
-              </Link>
-              <Link className="button-secondary button-compact" href={"/leads/new" as Route}>
-                Add a lead
-              </Link>
-            </div>
-          </div>
+          <EmptyState
+            actions={
+              <>
+                <Link
+                  aria-label={addDealActionLabel}
+                  className="button-secondary button-compact"
+                  href={"/deals/new" as Route}
+                  title={addDealActionLabel}
+                >
+                  Add a deal
+                </Link>
+                <Link
+                  aria-label={addContactActionLabel}
+                  className="button-secondary button-compact"
+                  href={"/contacts/new" as Route}
+                  title={addContactActionLabel}
+                >
+                  Add a contact
+                </Link>
+                <Link
+                  aria-label={addOrganizationActionLabel}
+                  className="button-secondary button-compact"
+                  href={"/organizations/new" as Route}
+                  title={addOrganizationActionLabel}
+                >
+                  Add an organization
+                </Link>
+                <Link
+                  aria-label={addLeadActionLabel}
+                  className="button-secondary button-compact"
+                  href={"/leads/new" as Route}
+                  title={addLeadActionLabel}
+                >
+                  Add a lead
+                </Link>
+              </>
+            }
+            className="section-separated"
+            description="Activities need a related deal, contact, organization, or lead. Add one first, then come back to schedule the follow-up."
+            title="Create something to follow up on"
+          />
         ) : null}
-        <ActivityForm
-          attachmentOptions={attachmentOptions}
-          defaultOwnerId={actorUserId}
-          initialAttachmentValue={initialAttachmentValue}
-          initialDescription={trimParam(resolvedSearchParams?.description)}
-          initialDueAt={parseDueDateParam(resolvedSearchParams?.due)}
-          initialTitle={trimParam(resolvedSearchParams?.title)}
-          initialType={parseActivityType(resolvedSearchParams?.type)}
-          owners={owners}
-          redirectTo={"/activities" as Route}
-          submitLabel="Create activity"
-          workspaceId={workspace.id}
-        />
+        {attachmentOptions.length > 0 ? (
+          <ActivityForm
+            attachmentOptions={attachmentOptions}
+            cancelHref={returnHref}
+            cancelLabel={returnLabel}
+            defaultOwnerId={actorUserId}
+            initialAttachmentValue={initialAttachmentValue}
+            initialDescription={trimParam(resolvedSearchParams?.description)}
+            initialDueAt={parseDueDateParam(resolvedSearchParams?.due)}
+            initialTitle={trimParam(resolvedSearchParams?.title)}
+            initialType={parseActivityType(resolvedSearchParams?.type)}
+            owners={owners}
+            redirectTo={returnHref}
+            submitLabel="Create activity"
+            workspaceId={workspace.id}
+          />
+        ) : null}
       </section>
     </AppShell>
   );
-}
-
-function formatPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }
 
 function parseInitialAttachmentValue(searchParams: Awaited<PageProps["searchParams"]>) {

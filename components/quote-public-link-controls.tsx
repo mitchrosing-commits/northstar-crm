@@ -3,17 +3,35 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ActionGroup } from "@/components/action-group";
+import { Badge } from "@/components/badge";
+import { EmptyState } from "@/components/empty-state";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { PanelTitleRow } from "@/components/panel-title-row";
+
 type QuotePublicLinkControlsProps = {
   workspaceId: string;
   quoteId: string;
+  quoteNumber?: string;
   publicUrl: string | null;
+  canGenerate: boolean;
 };
 
-export function QuotePublicLinkControls({ workspaceId, quoteId, publicUrl }: QuotePublicLinkControlsProps) {
+export function QuotePublicLinkControls({
+  workspaceId,
+  quoteId,
+  quoteNumber = "quote",
+  publicUrl,
+  canGenerate
+}: QuotePublicLinkControlsProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const publicLinkActionsLabel = `${quoteNumber} public quote link actions`;
+  const publicLinkStatus = publicUrl ? "Active" : "Not shared";
 
   async function generateLink() {
     setError(null);
@@ -62,35 +80,63 @@ export function QuotePublicLinkControls({ workspaceId, quoteId, publicUrl }: Quo
   }
 
   return (
-    <section className="data-card" style={{ marginTop: 14 }}>
-      <div className="panel-title-row">
-        <h2 className="panel-title">Public Quote Link</h2>
-        <span className="badge">{publicUrl ? "Active" : "Not shared"}</span>
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 14 }}>
-        Public links are customer-facing quote views with optional acceptance while the quote is sent. Revoking a link immediately makes it return a safe 404. Links do not expose the CRM app, send email, capture signatures, or allow payment.
-      </p>
-      {error ? <div className="form-error">{error}</div> : null}
-      {notice ? <p className="empty-copy">{notice}</p> : null}
+    <section className="data-card section-spaced">
+      <PanelTitleRow
+        actions={<Badge label={`Public quote link status: ${publicLinkStatus}`}>{publicLinkStatus}</Badge>}
+        description="Public links are customer-facing quote views with optional acceptance while the quote is sent. Revoking a link immediately makes it return a safe 404. Links do not expose the CRM app, send email, capture signatures, or allow payment."
+        title="Public Quote Link"
+      />
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {notice ? (
+        <FormIntroCallout className="quote-public-link-notice" title="Link status">
+          {notice}
+        </FormIntroCallout>
+      ) : null}
       {publicUrl ? (
         <>
-          <label className="form-field" style={{ marginBottom: 12 }}>
-            <span>Public URL</span>
+          <label className="form-field panel-field-spaced">
+            <FormFieldLabel>Public URL</FormFieldLabel>
             <input readOnly value={publicUrl} />
           </label>
-          <div className="filter-actions">
-            <button className="button-secondary button-compact" onClick={copyLink} type="button">
+          <ActionGroup className="filter-actions" label={publicLinkActionsLabel}>
+            <button
+              aria-label={`Copy public quote link for ${quoteNumber}`}
+              className="button-secondary button-compact"
+              onClick={copyLink}
+              title={`Copy public quote link for ${quoteNumber}`}
+              type="button"
+            >
               Copy link
             </button>
-            <button className="button-secondary button-compact" disabled={isSaving} onClick={revokeLink} type="button">
+            <button
+              aria-label={`Revoke public quote link for ${quoteNumber}`}
+              className="button-secondary button-compact"
+              disabled={isSaving}
+              onClick={revokeLink}
+              title={`Revoke public quote link for ${quoteNumber}`}
+              type="button"
+            >
               {isSaving ? "Revoking..." : "Revoke link"}
             </button>
-          </div>
+          </ActionGroup>
         </>
-      ) : (
-        <button className="button-primary button-compact" disabled={isSaving} onClick={generateLink} type="button">
+      ) : canGenerate ? (
+        <button
+          aria-label={`Generate public quote link for ${quoteNumber}`}
+          className="button-primary button-compact"
+          disabled={isSaving}
+          onClick={generateLink}
+          title={`Generate public quote link for ${quoteNumber}`}
+          type="button"
+        >
           {isSaving ? "Generating..." : "Generate public link"}
         </button>
+      ) : (
+        <EmptyState
+          className="empty-state-compact empty-state-panel quote-public-link-empty"
+          title="Quote not sent yet"
+          description="Mark this quote sent before generating a public link."
+        />
       )}
     </section>
   );

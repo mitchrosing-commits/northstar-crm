@@ -3,6 +3,15 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { ActionGroup } from "@/components/action-group";
+import { CompactTitleRow } from "@/components/compact-title-row";
+import { EmptyState } from "@/components/empty-state";
+import { FormActionBar } from "@/components/form-action-bar";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { FormFieldLabel } from "@/components/form-field-label";
+import { FormIntroCallout } from "@/components/form-intro-callout";
+import { PanelTitleRow } from "@/components/panel-title-row";
+
 type EmailTemplate = {
   id: string;
   name: string;
@@ -16,26 +25,38 @@ type EmailTemplatesPanelProps = {
   workspaceId: string;
 };
 
-export function EmailTemplatesPanel({ templates, workspaceId }: EmailTemplatesPanelProps) {
+export function EmailTemplatesPanel({
+  templates,
+  workspaceId,
+}: EmailTemplatesPanelProps) {
   return (
-    <section className="panel" style={{ marginBottom: 16 }}>
-      <div className="panel-title-row">
-        <h2 className="panel-title">Email Templates</h2>
-        <span className="badge">Manual logging</span>
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 16 }}>
-        Reusable text for manual email logs. Templates do not send email, sync inboxes, or add merge variables.
+    <section className="panel section-separated">
+      <PanelTitleRow
+        actions={<span className="badge">Manual logging</span>}
+        title="Email Templates"
+      />
+      <p className="empty-copy section-separated">
+        Reusable text for manual email logs. Templates do not send email, sync
+        inboxes, or add merge variables.
       </p>
       <EmailTemplateCreateForm workspaceId={workspaceId} />
-      <div style={{ marginTop: 18 }}>
+      <div className="section-spaced">
         {templates.length > 0 ? (
           <div className="quote-draft-list">
             {templates.map((template) => (
-              <EmailTemplateEditForm key={template.id} template={template} workspaceId={workspaceId} />
+              <EmailTemplateEditForm
+                key={template.id}
+                template={template}
+                workspaceId={workspaceId}
+              />
             ))}
           </div>
         ) : (
-          <p className="empty-copy">No email templates yet.</p>
+          <EmptyState
+            className="empty-state-compact empty-state-panel email-template-empty"
+            title="No email templates yet"
+            description="Create a template above to reuse subject and body text when logging manual email activity."
+          />
         )}
       </div>
     </section>
@@ -55,15 +76,20 @@ function EmailTemplateCreateForm({ workspaceId }: { workspaceId: string }) {
     setError(null);
     setIsSaving(true);
 
-    const response = await fetch(`/api/v1/workspaces/${workspaceId}/email-templates`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, subject, body })
-    });
+    const response = await fetch(
+      `/api/v1/workspaces/${workspaceId}/email-templates`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, subject, body }),
+      },
+    );
 
     if (!response.ok) {
       const responseBody = await response.json().catch(() => null);
-      setError(responseBody?.error?.message ?? "Could not create this email template.");
+      setError(
+        responseBody?.error?.message ?? "Could not create this email template.",
+      );
       setIsSaving(false);
       return;
     }
@@ -77,31 +103,51 @@ function EmailTemplateCreateForm({ workspaceId }: { workspaceId: string }) {
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
-      {error ? <div className="form-error">{error}</div> : null}
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       <div className="form-grid">
         <label className="form-field">
-          <span>Name</span>
-          <input onChange={(event) => setName(event.target.value)} required value={name} />
+          <FormFieldLabel required>Name</FormFieldLabel>
+          <input
+            onChange={(event) => setName(event.target.value)}
+            required
+            value={name}
+          />
         </label>
         <label className="form-field">
-          <span>Subject</span>
-          <input onChange={(event) => setSubject(event.target.value)} required value={subject} />
+          <FormFieldLabel required>Subject</FormFieldLabel>
+          <input
+            onChange={(event) => setSubject(event.target.value)}
+            required
+            value={subject}
+          />
         </label>
       </div>
       <label className="form-field">
-        <span>Body</span>
-        <textarea onChange={(event) => setBody(event.target.value)} required rows={4} value={body} />
+        <FormFieldLabel required>Body</FormFieldLabel>
+        <textarea
+          onChange={(event) => setBody(event.target.value)}
+          required
+          rows={4}
+          value={body}
+        />
       </label>
-      <div className="form-actions">
-        <button className="button-primary" disabled={isSaving || !name.trim() || !subject.trim() || !body.trim()} type="submit">
-          {isSaving ? "Creating..." : "Create template"}
-        </button>
-      </div>
+      <FormActionBar
+        isSaving={isSaving}
+        pendingLabel="Creating..."
+        submitDisabled={!name.trim() || !subject.trim() || !body.trim()}
+        submitLabel="Create template"
+      />
     </form>
   );
 }
 
-function EmailTemplateEditForm({ template, workspaceId }: { template: EmailTemplate; workspaceId: string }) {
+function EmailTemplateEditForm({
+  template,
+  workspaceId,
+}: {
+  template: EmailTemplate;
+  workspaceId: string;
+}) {
   const router = useRouter();
   const [name, setName] = useState(template.name);
   const [subject, setSubject] = useState(template.subject);
@@ -116,15 +162,20 @@ function EmailTemplateEditForm({ template, workspaceId }: { template: EmailTempl
     setNotice(null);
     setIsSaving(true);
 
-    const response = await fetch(`/api/v1/workspaces/${workspaceId}/email-templates/${template.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, subject, body })
-    });
+    const response = await fetch(
+      `/api/v1/workspaces/${workspaceId}/email-templates/${template.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, subject, body }),
+      },
+    );
 
     if (!response.ok) {
       const responseBody = await response.json().catch(() => null);
-      setError(responseBody?.error?.message ?? "Could not update this email template.");
+      setError(
+        responseBody?.error?.message ?? "Could not update this email template.",
+      );
       setIsSaving(false);
       return;
     }
@@ -140,53 +191,98 @@ function EmailTemplateEditForm({ template, workspaceId }: { template: EmailTempl
     setIsSaving(true);
 
     const action = template.active ? "deactivate" : "activate";
-    const response = await fetch(`/api/v1/workspaces/${workspaceId}/email-templates/${template.id}/${action}`, {
-      method: "POST"
-    });
+    const response = await fetch(
+      `/api/v1/workspaces/${workspaceId}/email-templates/${template.id}/${action}`,
+      {
+        method: "POST",
+      },
+    );
 
     if (!response.ok) {
       const responseBody = await response.json().catch(() => null);
-      setError(responseBody?.error?.message ?? "Could not update this email template status.");
+      setError(
+        responseBody?.error?.message ??
+          "Could not update this email template status.",
+      );
       setIsSaving(false);
       return;
     }
 
-    setNotice(template.active ? "Template deactivated." : "Template reactivated.");
+    setNotice(
+      template.active ? "Template deactivated." : "Template reactivated.",
+    );
     setIsSaving(false);
     router.refresh();
   }
 
+  const templateActionsLabel = `${template.name} template actions`;
+
   return (
     <article className="quote-draft-item">
-      <div className="panel-title-row">
-        <h3 className="compact-title">{template.name}</h3>
-        <span className="badge">{template.active ? "Active" : "Inactive"}</span>
-      </div>
+      <CompactTitleRow
+        actions={
+          <span className="badge">
+            {template.active ? "Active" : "Inactive"}
+          </span>
+        }
+        title={template.name}
+      />
       <form className="inline-form" onSubmit={saveTemplate}>
-        {error ? <div className="form-error">{error}</div> : null}
-        {notice ? <p className="empty-copy">{notice}</p> : null}
+        {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+        {notice ? (
+          <FormIntroCallout
+            className="email-template-status-callout"
+            title="Template status"
+          >
+            {notice}
+          </FormIntroCallout>
+        ) : null}
         <div className="form-grid">
           <label className="form-field">
-            <span>Name</span>
-            <input onChange={(event) => setName(event.target.value)} required value={name} />
+            <FormFieldLabel required>Name</FormFieldLabel>
+            <input
+              onChange={(event) => setName(event.target.value)}
+              required
+              value={name}
+            />
           </label>
           <label className="form-field">
-            <span>Subject</span>
-            <input onChange={(event) => setSubject(event.target.value)} required value={subject} />
+            <FormFieldLabel required>Subject</FormFieldLabel>
+            <input
+              onChange={(event) => setSubject(event.target.value)}
+              required
+              value={subject}
+            />
           </label>
         </div>
         <label className="form-field">
-          <span>Body</span>
-          <textarea onChange={(event) => setBody(event.target.value)} required rows={4} value={body} />
+          <FormFieldLabel required>Body</FormFieldLabel>
+          <textarea
+            onChange={(event) => setBody(event.target.value)}
+            required
+            rows={4}
+            value={body}
+          />
         </label>
-        <div className="filter-actions">
-          <button className="button-primary button-compact" disabled={isSaving || !name.trim() || !subject.trim() || !body.trim()} type="submit">
+        <ActionGroup className="filter-actions" label={templateActionsLabel}>
+          <button
+            className="button-primary button-compact"
+            disabled={
+              isSaving || !name.trim() || !subject.trim() || !body.trim()
+            }
+            type="submit"
+          >
             {isSaving ? "Saving..." : "Save"}
           </button>
-          <button className="button-secondary button-compact" disabled={isSaving} onClick={toggleActive} type="button">
+          <button
+            className="button-secondary button-compact"
+            disabled={isSaving}
+            onClick={toggleActive}
+            type="button"
+          >
             {template.active ? "Deactivate" : "Reactivate"}
           </button>
-        </div>
+        </ActionGroup>
       </form>
     </article>
   );

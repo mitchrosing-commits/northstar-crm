@@ -3,12 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ActionGroup } from "@/components/action-group";
+import { EmptyState } from "@/components/empty-state";
+import { FormErrorMessage } from "@/components/form-error-message";
+import { LockedPanelNotice } from "@/components/locked-panel-notice";
+import { PanelTitleRow } from "@/components/panel-title-row";
+import { StatusBadge } from "@/components/status-badge";
+
 type QuoteStatus = "DRAFT" | "SENT" | "ACCEPTED" | "DECLINED";
 
 type QuoteStatusActionsProps = {
   workspaceId: string;
   quoteId: string;
+  quoteNumber?: string;
   status: QuoteStatus;
+  canTransition?: boolean;
 };
 
 const nextActions: Record<QuoteStatus, Array<{ label: string; action: string }>> = {
@@ -21,11 +30,18 @@ const nextActions: Record<QuoteStatus, Array<{ label: string; action: string }>>
   DECLINED: []
 };
 
-export function QuoteStatusActions({ workspaceId, quoteId, status }: QuoteStatusActionsProps) {
+export function QuoteStatusActions({
+  workspaceId,
+  quoteId,
+  quoteNumber = "quote",
+  status,
+  canTransition = true
+}: QuoteStatusActionsProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const actions = nextActions[status] ?? [];
+  const quoteStatusActionsLabel = `${quoteNumber} quote status actions`;
 
   async function transition(action: string) {
     setError(null);
@@ -47,31 +63,37 @@ export function QuoteStatusActions({ workspaceId, quoteId, status }: QuoteStatus
   }
 
   return (
-    <section className="data-card" style={{ marginTop: 14 }}>
-      <div className="panel-title-row">
-        <h2 className="panel-title">Internal Status</h2>
-        <span className="badge">{status}</span>
-      </div>
-      <p className="empty-copy" style={{ marginBottom: 14 }}>
-        These actions track internal sales progress only. They do not send email, expose a public link, or collect customer acceptance.
-      </p>
-      {error ? <div className="form-error">{error}</div> : null}
-      {actions.length > 0 ? (
-        <div className="filter-actions">
+    <section className="data-card section-spaced">
+      <PanelTitleRow
+        actions={<StatusBadge status={status} />}
+        description="These actions track internal sales progress only. They do not send email, expose a public link, or collect customer acceptance."
+        title="Internal Status"
+      />
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {!canTransition ? (
+        <LockedPanelNotice>Closed deals are locked. Quote status is read-only.</LockedPanelNotice>
+      ) : actions.length > 0 ? (
+        <ActionGroup className="filter-actions" label={quoteStatusActionsLabel}>
           {actions.map((item) => (
             <button
+              aria-label={`${item.label} for ${quoteNumber}`}
               className="button-secondary button-compact"
               disabled={savingAction !== null}
               key={item.action}
               onClick={() => transition(item.action)}
+              title={`${item.label} for ${quoteNumber}`}
               type="button"
             >
               {savingAction === item.action ? "Saving..." : item.label}
             </button>
           ))}
-        </div>
+        </ActionGroup>
       ) : (
-        <p className="empty-copy">Accepted and declined quotes are terminal in this MVP.</p>
+        <EmptyState
+          className="empty-state-compact empty-state-panel quote-status-terminal"
+          title="No status actions available"
+          description="Accepted and declined quotes are terminal in this MVP."
+        />
       )}
     </section>
   );

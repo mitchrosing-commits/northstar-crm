@@ -27,6 +27,10 @@ export async function GET(request: NextRequest) {
     }
 
     const state = verifyEmailOAuthState(request.nextUrl.searchParams.get("state"));
+    if (state.provider !== "GOOGLE_WORKSPACE") {
+      return redirectToSettings(settingsUrl, "gmail-error");
+    }
+
     const requestContext = await getRequestContext();
     if (requestContext.actorUserId !== state.actorUserId) {
       return redirectToSettings(settingsUrl, "gmail-error");

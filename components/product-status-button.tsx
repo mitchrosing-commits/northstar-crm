@@ -3,17 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { FormErrorMessage } from "@/components/form-error-message";
+
 type ProductStatusButtonProps = {
   workspaceId: string;
   productId: string;
+  productName: string;
   active: boolean;
 };
 
-export function ProductStatusButton({ workspaceId, productId, active }: ProductStatusButtonProps) {
+export function ProductStatusButton({ workspaceId, productId, productName, active }: ProductStatusButtonProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const action = active ? "deactivate" : "activate";
+  const actionLabel = active ? `Deactivate product ${productName}` : `Reactivate product ${productName}`;
 
   async function onClick() {
     setError(null);
@@ -36,8 +40,15 @@ export function ProductStatusButton({ workspaceId, productId, active }: ProductS
 
   return (
     <div className="inline-form">
-      {error ? <div className="compact-error">{error}</div> : null}
-      <button className="button-secondary button-compact" disabled={isSaving} onClick={onClick} type="button">
+      {error ? <FormErrorMessage compact>{error}</FormErrorMessage> : null}
+      <button
+        aria-label={actionLabel}
+        className="button-secondary button-compact"
+        disabled={isSaving}
+        onClick={onClick}
+        title={actionLabel}
+        type="button"
+      >
         {isSaving ? "Saving..." : active ? "Deactivate" : "Reactivate"}
       </button>
     </div>

@@ -57,6 +57,7 @@ export async function cleanupIntegrationFixture({
   userIds: string[];
 }) {
   await prisma.job.deleteMany({ where: { OR: [{ workspaceId: { in: workspaceIds } }, { workspaceId: null }] } });
+  await prisma.meetingIntake.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.workspaceInvitation.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.savedView.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
@@ -69,6 +70,7 @@ export async function cleanupIntegrationFixture({
   await prisma.emailConnection.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.note.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.activity.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
+  await prisma.dealContractStep.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.quoteItem.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.quote.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.dealLineItem.deleteMany({ where: { workspaceId: { in: workspaceIds } } });

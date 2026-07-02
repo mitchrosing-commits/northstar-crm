@@ -1,14 +1,19 @@
-import { parseCsv } from "@/lib/csv";
 import { prisma } from "@/lib/db/prisma";
 import {
   buildImportAuditMetadata,
+  countNonBlankImportRows,
   countImportPreviewRows,
+  createEmptyImportPreview,
   createImportResultCounts,
   firstImportHeaderIndex,
+  groupImportOwnersByEmail,
+  listDuplicateImportColumnMessages,
   listUnsupportedImportColumns,
-  normalizeImportHeader,
   normalizeImportNameKey,
-  stripCsvBom,
+  parseImportCsvPreviewInput,
+  recordImportCreateFailure,
+  resolveImportOwnerId,
+  type ImportFailedRow,
   type ImportPreviewStatus
 } from "./import-utils";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
@@ -17,6 +22,8 @@ export type OrganizationImportPreviewRow = {
   rowNumber: number;
   name: string;
   domain: string;
+  ownerEmail: string;
+  ownerId: string | null;
   status: ImportPreviewStatus;
   skipReasons: string[];
   errors: string[];
@@ -39,10 +46,11 @@ export type OrganizationImportResult = {
   skippedDuplicateCount: number;
   skippedInvalidCount: number;
   errorCount: number;
+  failedRows: ImportFailedRow[];
   createdOrganizations: Array<{ id: string; name: string }>;
 };
 
-const supportedOrganizationColumns = new Set(["name", "organization name", "domain"]);
+const supportedOrganizationColumns = new Set(["name", "organization name", "domain", "owneremail", "owner email"]);
 const organizationImportMessages = {
   missingName: "Organization name is required.",
   unsupportedColumns: "Unsupported columns will be ignored.",
@@ -52,38 +60,46 @@ const organizationImportMessages = {
 
 export async function previewOrganizationImport(
   actor: WorkspaceActor,
-  csvText: string
+  csvText: unknown
 ): Promise<OrganizationImportPreview> {
   await ensureWorkspaceAccess(actor);
 
-  const text = csvText.trim();
-  if (!text) return emptyPreview(["CSV text is required."]);
-
-  let parsed: ReturnType<typeof parseCsv>;
-  try {
-    parsed = parseCsv(text);
-  } catch (error) {
-    return emptyPreview([error instanceof Error ? error.message : "CSV could not be parsed."]);
-  }
-
-  const headers = parsed.headers.map((header, index) => normalizeImportHeader(index === 0 ? stripCsvBom(header) : header));
+  const input = parseImportCsvPreviewInput(csvText);
+  if ("parseErrors" in input) return createEmptyImportPreview<OrganizationImportPreviewRow>(input.parseErrors);
+  const { parsed, headers } = input;
   const nameIndex = firstImportHeaderIndex(headers, ["name", "organization name"]);
   const domainIndex = firstImportHeaderIndex(headers, ["domain"]);
+  const ownerEmailIndex = firstImportHeaderIndex(headers, ["owneremail", "owner email"]);
   const unsupportedColumns = listUnsupportedImportColumns(parsed.headers, headers, supportedOrganizationColumns);
+  const duplicateColumnErrors = listDuplicateImportColumnMessages(headers, [
+    { label: "organization name", candidates: ["name", "organization name"] },
+    { label: "domain", candidates: ["domain"] },
+    { label: "owner email", candidates: ["owneremail", "owner email"] }
+  ]);
 
-  if (nameIndex === -1) {
+  const headerErrors = [...duplicateColumnErrors];
+  if (nameIndex === -1) headerErrors.push("CSV must include a name column.");
+  if (headerErrors.length > 0) {
     return {
-      ...emptyPreview(["CSV must include a name column."]),
-      totalRows: parsed.rows.length,
+      ...createEmptyImportPreview<OrganizationImportPreviewRow>(headerErrors),
+      totalRows: countNonBlankImportRows(parsed.rows),
       unsupportedColumns
     };
   }
 
-  const existingOrganizations = await prisma.organization.findMany({
-    where: { workspaceId: actor.workspaceId, ...activeWhere },
-    select: { name: true }
-  });
+  const [existingOrganizations, owners] = await Promise.all([
+    prisma.organization.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      select: { name: true }
+    }),
+    prisma.user.findMany({
+      where: { deletedAt: null, memberships: { some: { workspaceId: actor.workspaceId } } },
+      select: { id: true, email: true },
+      orderBy: [{ email: "asc" }, { id: "asc" }]
+    })
+  ]);
   const existingNames = new Set(existingOrganizations.map((organization) => normalizeImportNameKey(organization.name)));
+  const ownersByEmail = groupImportOwnersByEmail(owners);
   const seenImportNames = new Set<string>();
 
   const rows = parsed.rows
@@ -92,7 +108,9 @@ export async function previewOrganizationImport(
     .map(({ row, rowNumber }): OrganizationImportPreviewRow => {
       const name = (row[nameIndex] ?? "").trim();
       const domain = domainIndex === -1 ? "" : (row[domainIndex] ?? "").trim();
+      const ownerEmail = ownerEmailIndex === -1 ? "" : (row[ownerEmailIndex] ?? "").trim();
       const normalizedName = normalizeImportNameKey(name);
+      const ownerResolution = resolveImportOwnerId(ownersByEmail, ownerEmail);
       const errors: string[] = [];
       const warnings: string[] = [];
       const skipReasons: string[] = [];
@@ -103,9 +121,16 @@ export async function previewOrganizationImport(
       }
       if (unsupportedColumns.length > 0) warnings.push(organizationImportMessages.unsupportedColumns);
 
-      const duplicatesExisting = normalizedName ? existingNames.has(normalizedName) : false;
-      const duplicatesImport = normalizedName ? seenImportNames.has(normalizedName) : false;
-      if (normalizedName) seenImportNames.add(normalizedName);
+      if (ownerResolution.error) {
+        errors.push(ownerResolution.error);
+        skipReasons.push(ownerResolution.error);
+      }
+      const duplicatesExisting = errors.length === 0 && normalizedName ? existingNames.has(normalizedName) : false;
+      const duplicatesImport =
+        errors.length === 0 && normalizedName && !duplicatesExisting ? seenImportNames.has(normalizedName) : false;
+      if (errors.length === 0 && normalizedName && !duplicatesExisting && !duplicatesImport) {
+        seenImportNames.add(normalizedName);
+      }
 
       if (duplicatesExisting) {
         warnings.push(organizationImportMessages.duplicateExisting);
@@ -120,6 +145,8 @@ export async function previewOrganizationImport(
         rowNumber,
         name,
         domain,
+        ownerEmail,
+        ownerId: ownerResolution.ownerId,
         status: errors.length > 0 ? "invalid" : duplicatesExisting || duplicatesImport ? "duplicate" : "valid",
         skipReasons,
         errors,
@@ -141,7 +168,7 @@ export async function previewOrganizationImport(
 
 export async function importOrganizationsFromCsv(
   actor: WorkspaceActor,
-  csvText: string
+  csvText: unknown
 ): Promise<OrganizationImportResult> {
   const preview = await previewOrganizationImport(actor, csvText);
   const result: OrganizationImportResult = {
@@ -160,7 +187,8 @@ export async function importOrganizationsFromCsv(
         data: {
           workspaceId: actor.workspaceId,
           name: row.name,
-          domain: row.domain || null
+          domain: row.domain || null,
+          ownerId: row.ownerId
         },
         select: { id: true, name: true }
       });
@@ -174,21 +202,9 @@ export async function importOrganizationsFromCsv(
       result.createdOrganizations.push(organization);
       result.createdCount += 1;
     } catch {
-      result.errorCount += 1;
+      recordImportCreateFailure(result, row.rowNumber);
     }
   }
 
   return result;
-}
-
-function emptyPreview(parseErrors: string[]): OrganizationImportPreview {
-  return {
-    totalRows: 0,
-    validRows: 0,
-    duplicateRows: 0,
-    invalidRows: 0,
-    unsupportedColumns: [],
-    parseErrors,
-    rows: []
-  };
 }

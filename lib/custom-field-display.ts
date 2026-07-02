@@ -1,6 +1,7 @@
 import type { CustomFieldType } from "@prisma/client";
 
 export const supportedCustomFieldTypes = ["TEXT", "NUMBER", "DATE", "BOOLEAN"] as const;
+export const editableCustomFieldTypes = ["TEXT", "NUMBER", "DATE", "BOOLEAN", "SELECT"] as const;
 export const customFieldFilterOperators = ["equals", "contains", "is_empty", "is_not_empty"] as const;
 
 export type CustomFieldFilterOperator = (typeof customFieldFilterOperators)[number];
@@ -9,7 +10,16 @@ export function isSupportedCustomFieldType(fieldType: CustomFieldType | string) 
   return supportedCustomFieldTypes.includes(fieldType as (typeof supportedCustomFieldTypes)[number]);
 }
 
-export function normalizeCustomFieldFilterOperator(rawOperator?: string | null) {
+export function isFilterableCustomFieldType(fieldType: CustomFieldType | string) {
+  return isSupportedCustomFieldType(fieldType);
+}
+
+export function isEditableCustomFieldType(fieldType: CustomFieldType | string) {
+  return editableCustomFieldTypes.includes(fieldType as (typeof editableCustomFieldTypes)[number]);
+}
+
+export function normalizeCustomFieldFilterOperator(rawOperator?: unknown) {
+  if (rawOperator !== undefined && rawOperator !== null && typeof rawOperator !== "string") return undefined;
   const operator = rawOperator?.trim();
   if (!operator) return "equals" satisfies CustomFieldFilterOperator;
   return customFieldFilterOperators.includes(operator as CustomFieldFilterOperator)
@@ -18,7 +28,7 @@ export function normalizeCustomFieldFilterOperator(rawOperator?: string | null) 
 }
 
 export function isCustomFieldFilterOperatorAllowed(fieldType: CustomFieldType, operator: CustomFieldFilterOperator) {
-  if (!isSupportedCustomFieldType(fieldType)) return false;
+  if (!isFilterableCustomFieldType(fieldType)) return false;
   if (operator === "contains") return fieldType === "TEXT";
   return true;
 }

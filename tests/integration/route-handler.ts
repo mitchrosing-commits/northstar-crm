@@ -1,9 +1,14 @@
 import { vi } from "vitest";
 
 type WorkspacesRouteModule = typeof import("@/app/api/v1/workspaces/route");
+type WorkspaceDetailRouteModule = typeof import("@/app/api/v1/workspaces/[workspaceId]/route");
 type WorkspaceRouteModule = typeof import("@/app/api/v1/workspaces/[workspaceId]/[...segments]/route");
 type QuotePdfRouteModule = typeof import("@/app/deals/[dealId]/quotes/[quoteId]/pdf/route");
 type WorkspacesRouteHandler = (request: Request) => Promise<Response>;
+type WorkspaceDetailRouteHandler = (
+  request: Request,
+  context: { params: Promise<{ workspaceId: string }> }
+) => Promise<Response>;
 type WorkspaceRouteHandler = (
   request: Request,
   context: { params: Promise<{ workspaceId: string; segments?: string[] }> }
@@ -17,6 +22,13 @@ type InvokeWorkspacesApiOptions = {
   method: "GET" | "POST";
   actorUserId?: string;
   body?: unknown;
+  rawBody?: string;
+};
+
+type InvokeWorkspaceDetailApiOptions = {
+  method: "GET";
+  workspaceId: string;
+  actorUserId?: string;
 };
 
 type InvokeWorkspaceApiOptions = {
@@ -25,6 +37,8 @@ type InvokeWorkspaceApiOptions = {
   segments?: string[];
   actorUserId?: string;
   body?: unknown;
+  rawBody?: string;
+  query?: string | URLSearchParams;
 };
 
 type InvokeQuotePdfRouteOptions = {
@@ -50,13 +64,15 @@ vi.mock("next/headers", () => ({
 }));
 
 let workspacesRouteModule: Promise<WorkspacesRouteModule> | undefined;
+let workspaceDetailRouteModule: Promise<WorkspaceDetailRouteModule> | undefined;
 let workspaceRouteModule: Promise<WorkspaceRouteModule> | undefined;
 let quotePdfRouteModule: Promise<QuotePdfRouteModule> | undefined;
 
 export async function invokeWorkspacesApi({
   method,
   actorUserId,
-  body
+  body,
+  rawBody
 }: InvokeWorkspacesApiOptions) {
   setMockHeaders(actorUserId);
   const route = await loadWorkspacesRouteModule();
@@ -66,7 +82,25 @@ export async function invokeWorkspacesApi({
     throw new Error(`Workspaces API route does not export a ${method} handler.`);
   }
 
-  return withTrustedHeaderAuth(actorUserId, () => handler(createRequest("api/v1/workspaces", method, body)));
+  return withTrustedHeaderAuth(actorUserId, () => handler(createRequest("api/v1/workspaces", method, body, rawBody)));
+}
+
+export async function invokeWorkspaceDetailApi({
+  method,
+  workspaceId,
+  actorUserId
+}: InvokeWorkspaceDetailApiOptions) {
+  setMockHeaders(actorUserId);
+  const route = await loadWorkspaceDetailRouteModule();
+  const handler = route[method] as WorkspaceDetailRouteHandler | undefined;
+
+  if (!handler) {
+    throw new Error(`Workspace detail API route does not export a ${method} handler.`);
+  }
+
+  return withTrustedHeaderAuth(actorUserId, () => handler(createRequest(`api/v1/workspaces/${workspaceId}`, method), {
+    params: Promise.resolve({ workspaceId })
+  }));
 }
 
 export async function invokeWorkspaceApi({
@@ -74,7 +108,9 @@ export async function invokeWorkspaceApi({
   workspaceId,
   segments = [],
   actorUserId,
-  body
+  body,
+  rawBody,
+  query
 }: InvokeWorkspaceApiOptions) {
   setMockHeaders(actorUserId);
   const route = await loadWorkspaceRouteModule();
@@ -84,8 +120,9 @@ export async function invokeWorkspaceApi({
     throw new Error(`Workspace API route does not export a ${method} handler.`);
   }
 
-  const path = ["api", "v1", "workspaces", workspaceId, ...segments].join("/");
-  const request = createRequest(path, method, body);
+  const queryString = typeof query === "string" ? query : query?.toString();
+  const path = `${["api", "v1", "workspaces", workspaceId, ...segments].join("/")}${queryString ? `?${queryString}` : ""}`;
+  const request = createRequest(path, method, body, rawBody);
 
   return withTrustedHeaderAuth(actorUserId, () => handler(request, {
     params: Promise.resolve({ workspaceId, segments })
@@ -121,11 +158,14 @@ function setMockHeaders(actorUserId?: string, selectedWorkspaceId?: string) {
   mockHeaderState.cookies = new Map(selectedWorkspaceId ? [["northstar_workspace", selectedWorkspaceId]] : undefined);
 }
 
-function createRequest(path: string, method: string, body?: unknown) {
+function createRequest(path: string, method: string, body?: unknown, rawBody?: string) {
   const headers = new Headers();
   const init: RequestInit = { method, headers };
 
-  if (body !== undefined) {
+  if (rawBody !== undefined) {
+    headers.set("content-type", "application/json");
+    init.body = rawBody;
+  } else if (body !== undefined) {
     headers.set("content-type", "application/json");
     init.body = JSON.stringify(body);
   }
@@ -160,6 +200,11 @@ function restoreEnv(key: "AUTH_MODE" | "AUTH_USER_ID_HEADER", value: string | un
 function loadWorkspacesRouteModule() {
   workspacesRouteModule ??= import("@/app/api/v1/workspaces/route");
   return workspacesRouteModule;
+}
+
+function loadWorkspaceDetailRouteModule() {
+  workspaceDetailRouteModule ??= import("@/app/api/v1/workspaces/[workspaceId]/route");
+  return workspaceDetailRouteModule;
 }
 
 function loadWorkspaceRouteModule() {
