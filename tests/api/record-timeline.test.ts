@@ -274,8 +274,8 @@ describe("unified record timeline", () => {
     expect(recordTimeline).toContain("EmptyState");
     expect(recordTimeline).toContain("empty-state-compact empty-state-panel");
     expect(recordTimeline).toContain("const timelineCountLabel = `${title} timeline event count: ${items.length}`");
-    expect(recordTimeline).toContain("aria-label={timelineCountLabel}");
-    expect(recordTimeline).toContain("title={timelineCountLabel}");
+    expect(recordTimeline).toContain('import { CountBadge } from "@/components/count-badge"');
+    expect(recordTimeline).toContain("<CountBadge label={timelineCountLabel}>");
     expect(recordTimeline).toContain("actionsLabel={`${title} timeline event count`}");
     expect(recordTimeline).toContain("description={description}");
     expect(recordTimeline).toContain("Notes, activities, emails, and audit events in newest-first order.");

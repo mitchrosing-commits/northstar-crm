@@ -1,4 +1,5 @@
 import { ActionGroup } from "@/components/action-group";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { formatDate } from "@/components/format";
 import { LockedPanelNotice } from "@/components/locked-panel-notice";
@@ -54,9 +55,9 @@ export function NotesPanel({
     <section className={panelClassName} id={id}>
       <PanelTitleRow
         actions={
-          <span aria-label={notesCountLabel} className="count-badge" title={notesCountLabel}>
+          <CountBadge label={notesCountLabel}>
             {notes.length}
-          </span>
+          </CountBadge>
         }
         actionsLabel="Recent notes count"
         description={description}

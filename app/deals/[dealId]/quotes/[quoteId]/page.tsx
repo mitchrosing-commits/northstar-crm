@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
 import { QuoteReadinessPanel } from "@/components/commercial-workflow-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
 import { formatDate, formatMoney, formatQuoteAdjustment } from "@/components/format";
@@ -188,7 +189,7 @@ export default async function QuoteDetailPage({ params }: PageProps) {
 
       <section className="data-card section-spaced">
         <PanelTitleRow
-          actions={<span className="badge">Internal tracking only</span>}
+          actions={<Badge>Internal tracking only</Badge>}
           description="These items are snapshots from the deal line items at the moment the draft was created."
           title="Quote Items"
         />

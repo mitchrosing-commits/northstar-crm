@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AttentionBadge } from "@/components/attention-badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { ContractWorkflowSummary } from "@/components/contract-workflow-panel";
 import { formatDate, formatMoney } from "@/components/format";
@@ -130,9 +131,9 @@ export function PipelineBoard({ pipeline, workspaceId }: { pipeline: Pipeline; w
                         {attentionBadges.length > 0 ? (
                           <div className="deal-card-badges" aria-label={attentionSignalsLabel} title={attentionSignalsLabel}>
                             {attentionBadges.map((badge) => (
-                              <span className={`deal-attention-badge deal-attention-badge-${badge.kind}`} key={badge.kind}>
+                              <AttentionBadge classNamePrefix="deal-attention-badge" key={badge.kind} tone={badge.kind}>
                                 {badge.label}
-                              </span>
+                              </AttentionBadge>
                             ))}
                           </div>
                         ) : null}

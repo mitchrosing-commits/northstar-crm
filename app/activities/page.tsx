@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ActivityList } from "@/components/activity-list";
 import { AppShell } from "@/components/app-shell";
 import { CompactTitleRow } from "@/components/compact-title-row";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { FilterPanel } from "@/components/filter-panel";
 import { FormFieldLabel } from "@/components/form-field-label";
@@ -289,9 +290,9 @@ function ActivityAgendaPanel({ agenda, workspaceId }: { agenda: ActivityAgenda; 
             <div className="activity-agenda-section" key={section.title}>
               <CompactTitleRow
                 actions={
-                  <span aria-label={activityCountLabel} className="badge" title={activityCountLabel}>
+                  <CountBadge className="badge" label={activityCountLabel}>
                     {section.activities.length}
-                  </span>
+                  </CountBadge>
                 }
                 actionsLabel={`${section.title} activity count`}
                 title={section.title}

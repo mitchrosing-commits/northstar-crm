@@ -126,9 +126,9 @@ describe("audit history formatting", () => {
     expect(auditHistoryPanel).toContain("empty-state-compact empty-state-panel");
     expect(auditHistoryPanel).toContain("title={emptyMessage}");
     expect(auditHistoryPanel).toContain("PanelTitleRow");
+    expect(auditHistoryPanel).toContain('import { CountBadge } from "@/components/count-badge"');
     expect(auditHistoryPanel).toContain("const auditCountLabel = `${entries.length} audit ${entries.length === 1 ? \"event\" : \"events\"}`");
-    expect(auditHistoryPanel).toContain("aria-label={auditCountLabel}");
-    expect(auditHistoryPanel).toContain("title={auditCountLabel}");
+    expect(auditHistoryPanel).toContain("<CountBadge label={auditCountLabel}>");
     expect(auditHistoryPanel).toContain("actionsLabel=\"Audit history event count\"");
     expect(auditHistoryPanel).toContain("description={description}");
     expect(auditHistoryPanel).toContain("Immutable workspace audit events for this record.");

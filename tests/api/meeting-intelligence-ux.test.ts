@@ -29,6 +29,13 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceForm).toContain("FormActionBar");
     expect(meetingIntelligenceForm).toContain('submitLabel="Analyze intake"');
     expect(meetingIntelligenceForm).toContain("panel-actions-row");
+    expect(meetingIntelligenceForm).toContain(
+      "Supported: pasted text, markdown, .txt, .md, .rtf, .html, .csv, .json, text-based PDF, DOCX"
+    );
+    expect(meetingIntelligenceForm).toContain("Deferred: PPTX, XLSX, whiteboard images, audio, video, scanned PDFs");
+    expect(meetingIntelligenceForm).toContain("Text, RTF, HTML, CSV, JSON, and markdown files extract locally before review.");
+    expect(meetingIntelligenceForm).toContain("PPTX decks are not locally parsed yet.");
+    expect(meetingIntelligenceForm).toContain("Scanned PDFs stop with an OCR or vision provider requirement.");
     expect(meetingIntelligencePage).toContain("import { CompactList }");
     expect(meetingIntelligencePage).toContain(
       '<CompactList className="meeting-intake-list">',
@@ -46,17 +53,24 @@ describe("meeting intelligence UX", () => {
     );
     expect(meetingIntelligenceReview).toContain("import { EmptyState }");
     expect(meetingIntelligenceReview).toContain("import { PanelTitleRow }");
+    expect(meetingIntelligenceReview).toContain("sourceMetadataDetails");
+    expect(meetingIntelligenceReview).toContain("conversion: ${conversionDisplay(metadata.conversionMode)}");
     for (const titleRow of [
-      '<PanelTitleRow title="Meeting Log" titleId="meeting-proposal-heading" />',
-      '<PanelTitleRow title="Matches and Warnings" titleId="matches-heading" />',
-      '<PanelTitleRow title="Proposed Notes" titleId="notes-heading" />',
-      '<PanelTitleRow title="Follow-Ups" titleId="next-steps-heading" />',
-      '<PanelTitleRow title="Normalized Markdown" titleId="markdown-preview-heading" />',
-      '<PanelTitleRow title="Apply Summary" titleId="apply-summary-heading" />',
+      'title="Meeting Log"',
+      'title="Matches and Warnings"',
+      'title="Proposed Notes"',
+      'title="Follow-Ups"',
+      'title="Normalized Markdown"',
+      'title="Apply Summary"',
       '<PanelTitleRow title="Applied Updates" titleId="applied-updates-heading" />',
     ]) {
       expect(meetingIntelligenceReview).toContain(titleRow);
     }
+    expect(meetingIntelligenceReview).toContain('import { Badge } from "@/components/badge"');
+    expect(meetingIntelligenceReview).toContain('import { CountBadge } from "@/components/count-badge"');
+    expect(meetingIntelligenceReview).toContain("meetingReviewWarningCount(draft)");
+    expect(meetingIntelligenceReview).toContain("{selectedUpdateCount} selected");
+    expect(meetingIntelligenceReview).toContain("Source preview");
     expect(meetingIntelligenceReview).toContain(
       'aria-labelledby="applied-updates-heading"',
     );
@@ -123,6 +137,7 @@ describe("meeting intelligence UX", () => {
     );
 
     expect(meetingIntelligenceDetailPage).toContain("import { ActionGroup }");
+    expect(meetingIntelligenceDetailPage).toContain("import { CompactList, CompactListItem }");
     expect(meetingIntelligenceDetailPage).toContain("import { EmptyState }");
     expect(meetingIntelligenceDetailPage).toContain(
       'const failedActionsLabel = "Failed meeting intake actions";',
@@ -142,6 +157,9 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceDetailPage).toContain(
       '<EmptyState',
     );
+    expect(meetingIntelligenceDetailPage).toContain("Provider boundary");
+    expect(meetingIntelligenceDetailPage).toContain("Required provider");
+    expect(meetingIntelligenceDetailPage).toContain("Provider-required conversion");
     expect(meetingIntelligenceDetailPage).toContain(
       'className="empty-state-compact"',
     );

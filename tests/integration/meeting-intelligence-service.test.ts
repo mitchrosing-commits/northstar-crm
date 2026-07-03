@@ -13,6 +13,8 @@ type Fixture = Awaited<ReturnType<typeof createIntegrationFixture>>;
 let fixture: Fixture | undefined;
 const pdfFixtureBase64 =
   "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggMTQ3ID4+CnN0cmVhbQpCVCAvRjEgMTIgVGYgNzIgNzIwIFRkIChNZWV0aW5nIGRhdGU6IDIwMzAtMDQtMDEpIFRqIDAgLTE4IFRkIChBY3Rpb246IHNlbmQgU09XIGJ5IDIwMzAtMDQtMDUuKSBUaiAwIC0xOCBUZCAoQ3VycmVudCBXTVMgaGFzIGludmVudG9yeSBwYWluLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMxMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjUwOQolJUVPRgo=";
+const scannedPdfFixtureBase64 =
+  "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8ID4+ID4+CmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNCAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKMjA4CiUlRU9GCg==";
 
 beforeAll(async () => {
   fixture = await createIntegrationFixture();
@@ -461,6 +463,175 @@ describe("meeting intelligence service", () => {
     expect(intake.status).toBe("READY_FOR_REVIEW");
     expect(intake.rawText).toContain("Action: send SOW by 2030-04-05.");
     expect(intake.markdownText).toContain("- Pages: 1");
+    expect(intake.markdownText).toContain("- Conversion: Local");
+    expect(intake.analysisJson).toMatchObject({
+      processorStatus: {
+        capability: "supported",
+        conversionMode: "local",
+        extractionMethod: "local-pdf",
+        originalFilename: "discovery.pdf",
+        sourceType: "pdf"
+      }
+    });
+  });
+
+  it.each([
+    [
+      "meeting.rtf",
+      "application/rtf",
+      "{\\rtf1\\ansi Meeting date: 2030-04-01\\par Action: send SOW by 2030-04-05.}",
+      "rtf",
+      "local-rtf",
+      "Action: send SOW by 2030-04-05."
+    ],
+    [
+      "meeting.html",
+      "text/html",
+      "<html><body><h1>Discovery Recap</h1><p>Action: send SOW by 2030-04-05.</p></body></html>",
+      "html",
+      "local-html",
+      "# Discovery Recap"
+    ],
+    [
+      "actions.csv",
+      "text/csv",
+      "Owner,Action,Due\nSam,send SOW,2030-04-05",
+      "csv",
+      "local-csv",
+      "| Sam | send SOW | 2030-04-05 |"
+    ],
+    [
+      "meeting.json",
+      "application/json",
+      JSON.stringify({ action_items: [{ due: "2030-04-05", owner: "Sam", task: "send SOW" }], meeting_date: "2030-04-01" }),
+      "json",
+      "local-json",
+      "| due | owner | task |"
+    ]
+  ])("extracts %s into a reviewable intake without mutating CRM records", async (
+    filename,
+    mimeType,
+    fileText,
+    sourceType,
+    extractionMethod,
+    expectedMarkdown
+  ) => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-01\nAttendees: Alpha Contact",
+      fileText,
+      hints: { dealId: fx.recordsA.deal.id },
+      originalFilename: filename,
+      originalMimeType: mimeType
+    });
+
+    expect(intake.errorMessage).toBeNull();
+    expect(intake.status).toBe("READY_FOR_REVIEW");
+    expect(intake.markdownText).toContain("## User Context");
+    expect(intake.markdownText).toContain("Attendees: Alpha Contact");
+    expect(intake.markdownText).toContain(expectedMarkdown);
+    expect(intake.analysisJson).toMatchObject({
+      processorStatus: {
+        capability: "supported",
+        conversionMode: "local",
+        extractionMethod,
+        originalFilename: filename,
+        originalMimeType: mimeType,
+        sourceType
+      }
+    });
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+  });
+
+  it.each([
+    ["review.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx", /presentation parser/],
+    ["tracker.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx", /spreadsheet parser/]
+  ])("persists unsupported %s document failures with conversion guidance and no CRM mutation", async (
+    filename,
+    mimeType,
+    sourceType,
+    errorPattern
+  ) => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const intake = await createMeetingIntake(fx.actorA, {
+      originalFilename: filename,
+      originalMimeType: mimeType
+    });
+
+    expect(intake.status).toBe("FAILED");
+    expect(intake.errorMessage).toMatch(errorPattern);
+    expect(intake.analysisJson).toMatchObject({
+      processorStatus: {
+        capability: "unsupported",
+        conversionMode: "unsupported",
+        extractionMethod: "unavailable",
+        originalFilename: filename,
+        originalMimeType: mimeType,
+        requiredProvider: "document_conversion",
+        sourceType
+      }
+    });
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+  });
+
+  it.each([
+    ["whiteboard.png", "image/png", "image", "ocr_or_vision", /OCR or vision provider/],
+    ["call.mp3", "audio/mpeg", "audio", "transcription", /transcription provider/],
+    ["recording.mp4", "video/mp4", "video", "media_processing", /media processing provider/]
+  ])("persists provider-required %s failures with clear reviewable status and no CRM mutation", async (
+    filename,
+    mimeType,
+    sourceType,
+    requiredProvider,
+    errorPattern
+  ) => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-20",
+      originalFilename: filename,
+      originalMimeType: mimeType
+    });
+
+    expect(intake.status).toBe("FAILED");
+    expect(intake.errorMessage).toMatch(errorPattern);
+    expect(intake.analysisJson).toMatchObject({
+      processorStatus: {
+        capability: "provider_required",
+        conversionMode: "provider_required",
+        extractionMethod: "provider-required",
+        originalFilename: filename,
+        originalMimeType: mimeType,
+        requiredProvider,
+        sourceType
+      }
+    });
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("persists scanned PDF failures as OCR provider-required without creating CRM updates", async () => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const intake = await createMeetingIntake(fx.actorA, {
+      fileBase64: scannedPdfFixtureBase64,
+      originalFilename: "scanned-discovery.pdf",
+      originalMimeType: "application/pdf"
+    });
+
+    expect(intake.status).toBe("FAILED");
+    expect(intake.errorMessage).toMatch(/OCR or vision provider integration is required for scanned PDFs/);
+    expect(intake.analysisJson).toMatchObject({
+      processorStatus: {
+        capability: "provider_required",
+        conversionMode: "provider_required",
+        failureCode: "MEETING_INTAKE_OCR_REQUIRED",
+        requiredProvider: "ocr_or_vision",
+        sourceType: "pdf"
+      }
+    });
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
   });
 
   it("persists processor failures with a clear error", async () => {
@@ -496,4 +667,12 @@ describe("meeting intelligence service", () => {
 function currentFixture() {
   if (!fixture) throw new Error("Fixture was not initialized.");
   return fixture;
+}
+
+async function crmMutationCounts(fx: Fixture) {
+  return {
+    activities: await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } }),
+    associations: await fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } }),
+    notes: await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })
+  };
 }

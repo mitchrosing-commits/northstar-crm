@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { Badge } from "@/components/badge";
+
 type FormFieldLabelProps = {
   children: ReactNode;
   required?: boolean;
@@ -11,9 +13,9 @@ export function FormFieldLabel({ children, required = false }: FormFieldLabelPro
   return (
     <span className="form-field-label">
       <span>{children}</span>
-      <span aria-label={requirementLabel} className="badge" title={requirementLabel}>
+      <Badge label={requirementLabel}>
         {required ? "Required" : "Optional"}
-      </span>
+      </Badge>
     </span>
   );
 }

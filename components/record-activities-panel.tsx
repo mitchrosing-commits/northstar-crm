@@ -1,6 +1,7 @@
 import { ActivityForm } from "@/components/activity-form";
 import { activityManualFollowUpCopy } from "@/components/activity-form-guidance";
 import { ActivityList } from "@/components/activity-list";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { LockedPanelNotice } from "@/components/locked-panel-notice";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -141,9 +142,9 @@ function ActivitySectionContent({
     <>
       <PanelTitleRow
         actions={
-          <span aria-label={activityCountLabel} className="count-badge" title={activityCountLabel}>
+          <CountBadge label={activityCountLabel}>
             {section.activities.length}
-          </span>
+          </CountBadge>
         }
         actionsLabel={`${section.title} activity count`}
         description={section.description ? <span className="record-activity-section-hint">{section.description}</span> : null}

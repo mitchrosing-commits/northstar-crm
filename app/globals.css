@@ -1007,6 +1007,20 @@ textarea {
   margin-bottom: 16px;
 }
 
+.dashboard-priority-zone {
+  display: grid;
+  gap: 0;
+  margin-bottom: 16px;
+}
+
+.dashboard-scorecard {
+  margin-bottom: 16px;
+}
+
+.dashboard-scorecard .stat-grid {
+  margin-bottom: 0;
+}
+
 .command-strip {
   grid-template-columns: minmax(220px, 1.2fr) repeat(2, minmax(190px, 1fr));
 }
@@ -3360,7 +3374,8 @@ textarea {
 }
 
 .button-primary,
-.button-secondary {
+.button-secondary,
+.button-danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3407,6 +3422,11 @@ textarea {
   cursor: not-allowed;
 }
 
+.button-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .button-secondary {
   background: var(--surface);
   color: var(--text);
@@ -3416,6 +3436,19 @@ textarea {
 .button-secondary:focus-visible:not(:disabled) {
   border-color: var(--line-strong);
   background: var(--surface-muted);
+}
+
+.button-danger {
+  border-color: #f2b8b5;
+  background: #fff7f6;
+  color: var(--red);
+}
+
+.button-danger:hover:not(:disabled),
+.button-danger:focus-visible:not(:disabled) {
+  border-color: var(--red);
+  background: #fff0ef;
+  box-shadow: 0 8px 16px rgb(180 35 24 / 0.12);
 }
 
 .form-card {

@@ -98,7 +98,7 @@ describe("deal close behavior", () => {
     expect(closeActions).toContain("title={markWonActionLabel}");
     expect(closeActions).toContain("aria-label={markLostActionLabel}");
     expect(closeActions).toContain("title={markLostActionLabel}");
-    expect(closeActions).toContain("button-secondary button-compact");
+    expect(closeActions).toContain("button-danger button-compact");
   });
 
   it("stores lost reason in audit metadata instead of the Deal model", () => {

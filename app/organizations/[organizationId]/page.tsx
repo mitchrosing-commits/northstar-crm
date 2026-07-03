@@ -107,7 +107,7 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
           { label: "Owner", value: organization.owner?.name ?? organization.owner?.email ?? "Unassigned", tone: organization.owner ? "default" : "muted" },
           {
             label: "Next follow-up",
-            value: <RecordNextActivitySummary activity={nextActivity} />,
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel="Needs follow-up" emptyLabel="No open organization follow-up" />,
             tone: nextActivity ? "default" : "warning"
           },
           { label: "Notes", value: organization.notes.length }

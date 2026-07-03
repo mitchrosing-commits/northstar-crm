@@ -11,7 +11,12 @@ import type {
   ApplyMeetingIntelligenceInput,
   ApplyMeetingIntelligenceResult,
   CrmTarget,
+  ExtractedMeetingText,
   MeetingIntelligenceDraft,
+  MeetingSourceConversionMode,
+  MeetingSourceProviderRequirement,
+  ProcessorCapability,
+  SourceDetectionResult,
   MeetingSourceType
 } from "@/lib/meeting-intelligence/types";
 import { redactSensitiveText } from "@/lib/security/redaction";
@@ -155,7 +160,13 @@ export async function createMeetingIntake(actor: WorkspaceActor, data: CreateMee
     const updated = await prisma.meetingIntake.update({
       where: { id: intake.id },
       data: {
-        analysisJson: toJson({ detection, extractionWarnings: extracted.warnings, metadata: extracted.metadata, sections: normalized.sections }),
+        analysisJson: toJson({
+          detection,
+          extractionWarnings: extracted.warnings,
+          metadata: extracted.metadata,
+          processorStatus: buildProcessorStatus(detection, input, { extracted }),
+          sections: normalized.sections
+        }),
         proposedChangesJson: toJson(draft),
         status: MeetingIntakeStatus.READY_FOR_REVIEW
       }
@@ -170,7 +181,11 @@ export async function createMeetingIntake(actor: WorkspaceActor, data: CreateMee
     const failed = await prisma.meetingIntake.update({
       where: { id: intake.id },
       data: {
-        analysisJson: toJson({ detection }),
+        analysisJson: toJson({
+          detection,
+          failureCode: error instanceof ApiError ? error.code : undefined,
+          processorStatus: buildProcessorStatus(detection, input, { error, message })
+        }),
         errorMessage: message,
         status: MeetingIntakeStatus.FAILED
       }
@@ -414,6 +429,51 @@ export function formatMeetingIntakeFailureMessage(error: unknown, fallback = "Me
   return fallback;
 }
 
+type MeetingIntakeProcessorStatus = {
+  capability: ProcessorCapability;
+  conversionMode: MeetingSourceConversionMode;
+  extractionMethod: string;
+  failureCode?: string;
+  message?: string;
+  originalFilename?: string;
+  originalMimeType?: string;
+  processor?: string;
+  requiredProvider?: MeetingSourceProviderRequirement;
+  sourceType: MeetingSourceType;
+  warnings?: string[];
+};
+
+function buildProcessorStatus(
+  detection: SourceDetectionResult,
+  input: ReturnType<typeof normalizeCreateMeetingIntakeInput>,
+  result: { error?: unknown; extracted?: ExtractedMeetingText; message?: string } = {}
+): MeetingIntakeProcessorStatus {
+  const extracted = result.extracted;
+  const scannedPdfNeedsProvider =
+    result.error instanceof ApiError && result.error.code === "MEETING_INTAKE_OCR_REQUIRED" && detection.sourceType === "pdf";
+  const capability: ProcessorCapability = scannedPdfNeedsProvider ? "provider_required" : detection.capability;
+  const conversionMode: MeetingSourceConversionMode = scannedPdfNeedsProvider ? "provider_required" : detection.conversionMode;
+  const status: MeetingIntakeProcessorStatus = {
+    capability,
+    conversionMode,
+    extractionMethod: scannedPdfNeedsProvider ? "provider-required" : extracted?.metadata.extractionMethod ?? detection.extractionMethod,
+    sourceType: detection.sourceType
+  };
+
+  const message = result.message ?? extracted?.metadata.statusMessage ?? detection.message;
+  const requiredProvider = scannedPdfNeedsProvider ? "ocr_or_vision" : detection.requiredProvider;
+  const warnings = extracted?.warnings ?? extracted?.metadata.warnings;
+
+  if (input.originalFilename) status.originalFilename = input.originalFilename;
+  if (input.originalMimeType) status.originalMimeType = input.originalMimeType;
+  if (extracted?.metadata.processor) status.processor = extracted.metadata.processor;
+  if (result.error instanceof ApiError) status.failureCode = result.error.code;
+  if (message) status.message = message;
+  if (requiredProvider) status.requiredProvider = requiredProvider;
+  if (warnings?.length) status.warnings = warnings;
+  return status;
+}
+
 function normalizeCreateMeetingIntakeInput(data: CreateMeetingIntakeInput) {
   const input = objectInput(data);
   return {
@@ -531,14 +591,20 @@ function parseDraft(value: Prisma.JsonValue): MeetingIntelligenceDraft {
 function toPrismaSourceType(sourceType: MeetingSourceType) {
   const map: Record<MeetingSourceType, MeetingIntakeSourceType> = {
     audio: MeetingIntakeSourceType.AUDIO,
+    csv: MeetingIntakeSourceType.TEXT_FILE,
     docx: MeetingIntakeSourceType.DOCX,
+    html: MeetingIntakeSourceType.TEXT_FILE,
     image: MeetingIntakeSourceType.IMAGE,
+    json: MeetingIntakeSourceType.TEXT_FILE,
     markdown: MeetingIntakeSourceType.MARKDOWN,
     pasted_text: MeetingIntakeSourceType.PASTED_TEXT,
     pdf: MeetingIntakeSourceType.PDF,
+    pptx: MeetingIntakeSourceType.UNSUPPORTED,
+    rtf: MeetingIntakeSourceType.TEXT_FILE,
     text_file: MeetingIntakeSourceType.TEXT_FILE,
     unsupported: MeetingIntakeSourceType.UNSUPPORTED,
-    video: MeetingIntakeSourceType.VIDEO
+    video: MeetingIntakeSourceType.VIDEO,
+    xlsx: MeetingIntakeSourceType.UNSUPPORTED
   };
   return map[sourceType];
 }

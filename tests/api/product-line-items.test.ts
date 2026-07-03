@@ -213,7 +213,7 @@ describe("product catalog and deal line items MVP", () => {
       'description="Products provide snapshot pricing for deal line items.',
     );
     expect(productsPage).toContain(
-      'actions={<span className="badge">{products.length} total</span>}',
+      'actions={<CountBadge className="badge">{products.length} total</CountBadge>}',
     );
     expect(productsPage).toContain('title="Product Catalog"');
     expect(productsPage).toContain("EmptyState");
@@ -246,7 +246,8 @@ describe("product catalog and deal line items MVP", () => {
       'description={product.description ?? "No description"}',
     );
     expect(productsPage).toContain("actions={");
-    expect(productsPage).toContain('className="badge"');
+    expect(productsPage).toContain("import { Badge }");
+    expect(productsPage).toContain("import { CountBadge }");
     expect(productsPage).toContain('product.active ? "Active" : "Inactive"');
     expect(productsPage).not.toContain(
       '<h3 className="compact-title">{product.name}</h3>',

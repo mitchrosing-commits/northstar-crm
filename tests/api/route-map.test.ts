@@ -275,7 +275,7 @@ describe("workspace API routing", () => {
     expect(activitySection).toContain("Completed activities are locked from normal edits and deletion.");
     expect(activitySection).toContain("The browser Activities page supports overdue, today, upcoming, no-due-date");
     expect(meetingIntelligenceSection).toContain(
-      "Supported sources are pasted text, markdown, text files, text-based PDFs, and DOCX files."
+      "Supported sources are pasted text, markdown, text files, RTF, HTML/HTM, CSV, JSON, text-based PDFs, and DOCX files."
     );
     expect(meetingIntelligenceSection).toContain("empty source submissions return `422 VALIDATION_ERROR` before any intake record is created");
     expect(openapi).toContain("empty source submissions return 422 before a record is created");

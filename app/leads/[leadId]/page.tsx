@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
+import { Badge } from "@/components/badge";
 import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
 import { FormIntroCallout } from "@/components/form-intro-callout";
@@ -105,7 +106,7 @@ export default async function LeadDetailPage({ params }: PageProps) {
           { label: "Owner", value: lead.owner?.name ?? lead.owner?.email ?? "Unassigned", tone: lead.owner ? "default" : "muted" },
           {
             label: "Next follow-up",
-            value: <RecordNextActivitySummary activity={nextActivity} emptyLabel="No open lead follow-up" />,
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel={lead.status === "CONVERTED" ? undefined : "Needs follow-up"} emptyLabel="No open lead follow-up" />,
             tone: nextActivity ? "default" : lead.status === "CONVERTED" ? "muted" : "warning"
           },
           { label: "Notes", value: lead.notes.length },
@@ -120,7 +121,7 @@ export default async function LeadDetailPage({ params }: PageProps) {
 
       {lead.status !== "CONVERTED" && lead.activities.length === 0 ? (
         <section className="data-card automation-template-panel section-separated">
-          <PanelTitleRow actions={<span className="badge">Creates activity</span>} eyebrow="Suggested Automation" title="First outreach" />
+          <PanelTitleRow actions={<Badge>Creates activity</Badge>} eyebrow="Suggested Automation" title="First outreach" />
           <FormIntroCallout title="Suggested next step">
             Create a first outreach activity for this lead. This is a one-click template, not an automatic rule.
           </FormIntroCallout>

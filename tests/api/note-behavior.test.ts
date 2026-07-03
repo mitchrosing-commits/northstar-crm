@@ -60,8 +60,8 @@ describe("deal note creation behavior", () => {
     expect(notesPanel).toContain("EmptyState");
     expect(notesPanel).toContain("PanelTitleRow");
     expect(notesPanel).toContain("const notesCountLabel = `${notes.length} recent ${notes.length === 1 ? \"note\" : \"notes\"}`");
-    expect(notesPanel).toContain("aria-label={notesCountLabel}");
-    expect(notesPanel).toContain("title={notesCountLabel}");
+    expect(notesPanel).toContain('import { CountBadge } from "@/components/count-badge"');
+    expect(notesPanel).toContain("<CountBadge label={notesCountLabel}>");
     expect(notesPanel).toContain("actionsLabel=\"Recent notes count\"");
     expect(notesPanel).toContain("description={description}");
     expect(notesPanel).toContain("Recent Notes");

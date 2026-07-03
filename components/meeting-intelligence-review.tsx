@@ -6,8 +6,10 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
 import { ActionGroup } from "@/components/action-group";
+import { Badge } from "@/components/badge";
 import { CompactList, CompactListItem } from "@/components/compact-list";
 import { CompactTitleRow } from "@/components/compact-title-row";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
@@ -18,6 +20,7 @@ import type {
   CrmTarget,
   MatchedCrmObject,
   MeetingIntelligenceDraft,
+  MeetingSourceMetadata,
   ProposedNextStepActivity,
   ProposedNote
 } from "@/lib/meeting-intelligence/types";
@@ -52,6 +55,16 @@ export function MeetingIntelligenceReview({
   const [isSaving, setIsSaving] = useState(false);
   const targetOptions = useMemo(() => buildTargetOptions(options), [options]);
   const isApplied = status === "APPLIED";
+  const warningCount = meetingReviewWarningCount(draft);
+  const proposedUpdateCount = (draft.meetingActivity ? 1 : 0) + draft.notes.length + draft.nextStepActivities.length;
+  const selectedUpdateCount =
+    (draft.meetingActivity?.include ? 1 : 0) +
+    draft.notes.filter((note) => note.include).length +
+    draft.nextStepActivities.filter((activity) => activity.include).length;
+  const missingTargetCount =
+    (draft.meetingActivity && draft.meetingActivity.include && !draft.meetingActivity.target ? 1 : 0) +
+    draft.notes.filter((note) => note.include && !note.target).length +
+    draft.nextStepActivities.filter((activity) => activity.include && !activity.target).length;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -112,7 +125,11 @@ export function MeetingIntelligenceReview({
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
 
       <section className="panel" aria-labelledby="meeting-proposal-heading">
-        <PanelTitleRow title="Meeting Log" titleId="meeting-proposal-heading" />
+        <PanelTitleRow
+          actions={<Badge>{draft.meetingActivity?.include ? "Selected" : "Review only"}</Badge>}
+          title="Meeting Log"
+          titleId="meeting-proposal-heading"
+        />
         {draft.meetingActivity ? (
           <div className="inline-form">
             <MeetingSummaryBlock
@@ -143,7 +160,10 @@ export function MeetingIntelligenceReview({
             </div>
             {draft.meetingActivity.associatedTargets && draft.meetingActivity.associatedTargets.length > 0 ? (
               <div className="meeting-review-group">
-                <CompactTitleRow title="Structured Associations" />
+                <CompactTitleRow
+                  actions={<CountBadge className="badge">{draft.meetingActivity.associatedTargets.length} records</CountBadge>}
+                  title="Structured Associations"
+                />
                 <div className="form-grid">
                   {draft.meetingActivity.associatedTargets.map((target, index) => (
                     <div className="data-card meeting-association-item" key={`${target.type}-${target.id}-${index}`}>
@@ -177,22 +197,23 @@ export function MeetingIntelligenceReview({
       </section>
 
       <section className="panel" aria-labelledby="matches-heading">
-        <PanelTitleRow title="Matches and Warnings" titleId="matches-heading" />
+        <PanelTitleRow
+          actions={<CountBadge className="badge">{warningCount} warnings</CountBadge>}
+          title="Matches and Warnings"
+          titleId="matches-heading"
+        />
         <CompactList>
           {draft.sourceMetadata ? (
             <CompactListItem>
               <strong>Source metadata</strong>
               <span className="muted">
-                {[
-                  draft.sourceMetadata.filename,
-                  draft.sourceMetadata.mimeType,
-                  draft.sourceMetadata.pageCount ? `${draft.sourceMetadata.pageCount} pages` : null,
-                  draft.sourceMetadata.wordCount ? `${draft.sourceMetadata.wordCount} words` : null,
-                  `processor: ${draft.sourceMetadata.processor}`
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {sourceMetadataDetails(draft.sourceMetadata).join(" · ")}
               </span>
+              {draft.sourceMetadata.warnings?.map((warning) => (
+                <Badge key={warning}>
+                  {warning}
+                </Badge>
+              ))}
             </CompactListItem>
           ) : null}
           {matchGroups(draft.matchedObjects).map((group) => (
@@ -206,7 +227,7 @@ export function MeetingIntelligenceReview({
                       {match.confidence} · {match.matchedReason}
                     </span>
                     <span className="muted">{match.evidenceExcerpt}</span>
-                    {match.warning ? <span className="badge">{match.warning}</span> : null}
+                    {match.warning ? <Badge>{match.warning}</Badge> : null}
                   </CompactListItem>
                 ))}
               </CompactList>
@@ -214,7 +235,7 @@ export function MeetingIntelligenceReview({
           ))}
           {draft.warnings.map((warning) => (
             <CompactListItem key={warning}>
-              <span className="badge">{warning}</span>
+              <Badge>{warning}</Badge>
             </CompactListItem>
           ))}
           {draft.unmatchedEntities.length > 0 ? (
@@ -235,12 +256,16 @@ export function MeetingIntelligenceReview({
       </section>
 
       <section className="panel" aria-labelledby="notes-heading">
-        <PanelTitleRow title="Proposed Notes" titleId="notes-heading" />
+        <PanelTitleRow
+          actions={<CountBadge className="badge">{draft.notes.length} notes</CountBadge>}
+          title="Proposed Notes"
+          titleId="notes-heading"
+        />
         <div className="inline-form">
           {draft.notes.length > 0 ? (
             noteGroups(draft.notes).map((group) => (
               <div className="meeting-review-group" key={group.key}>
-                <CompactTitleRow actions={<span className="badge">{group.items.length} notes</span>} title={group.label} />
+                <CompactTitleRow actions={<CountBadge className="badge">{group.items.length} notes</CountBadge>} title={group.label} />
                 <div className="inline-form">
                   {group.items.map(({ index, note }) => (
                     <div className="data-card meeting-review-item" key={note.id}>
@@ -249,7 +274,7 @@ export function MeetingIntelligenceReview({
                           <input defaultChecked={note.include} name={`note.${index}.include`} type="checkbox" />
                           <span>Apply note</span>
                         </label>
-                        <span className="badge">{noteKindLabel(note.kind)}</span>
+                        <Badge>{noteKindLabel(note.kind)}</Badge>
                       </div>
                       <div className="form-grid">
                         <label className="form-field">
@@ -283,7 +308,11 @@ export function MeetingIntelligenceReview({
       </section>
 
       <section className="panel" aria-labelledby="next-steps-heading">
-        <PanelTitleRow title="Follow-Ups" titleId="next-steps-heading" />
+        <PanelTitleRow
+          actions={<CountBadge className="badge">{draft.nextStepActivities.length} follow-ups</CountBadge>}
+          title="Follow-Ups"
+          titleId="next-steps-heading"
+        />
         <div className="inline-form">
           {draft.nextStepActivities.length > 0 ? (
             draft.nextStepActivities.map((activity, index) => (
@@ -293,7 +322,7 @@ export function MeetingIntelligenceReview({
                     <input defaultChecked={activity.include} name={`next.${index}.include`} type="checkbox" />
                     <span>Create follow-up</span>
                   </label>
-                  <span className="meeting-review-badges">{activityBadges(activity).map((badge) => <span className="badge" key={badge}>{badge}</span>)}</span>
+                  <span className="meeting-review-badges">{activityBadges(activity).map((badge) => <Badge key={badge}>{badge}</Badge>)}</span>
                 </div>
                 <div className="form-grid">
                   <label className="form-field form-field-wide">
@@ -352,12 +381,17 @@ export function MeetingIntelligenceReview({
       </section>
 
       <section className="panel" aria-labelledby="markdown-preview-heading">
-        <PanelTitleRow title="Normalized Markdown" titleId="markdown-preview-heading" />
+        <PanelTitleRow actions={<Badge>Source preview</Badge>} title="Normalized Markdown" titleId="markdown-preview-heading" />
         <pre className="meeting-markdown-preview">{draft.markdown}</pre>
       </section>
 
       <section className="panel" aria-labelledby="apply-summary-heading">
-        <PanelTitleRow title="Apply Summary" titleId="apply-summary-heading" />
+        <PanelTitleRow
+          actions={<CountBadge className="badge">{selectedUpdateCount} selected</CountBadge>}
+          description={`${proposedUpdateCount} proposed updates. ${missingTargetCount} selected updates missing targets.`}
+          title="Apply Summary"
+          titleId="apply-summary-heading"
+        />
         <CompactList>
           <CompactListItem>
             <strong>Default selected updates</strong>
@@ -365,7 +399,7 @@ export function MeetingIntelligenceReview({
           </CompactListItem>
           {draft.notes.some((note) => !note.target) || draft.nextStepActivities.some((activity) => !activity.target) ? (
             <CompactListItem>
-              <span className="badge">Untargeted selected updates will be skipped.</span>
+              <Badge>Untargeted selected updates will be skipped.</Badge>
             </CompactListItem>
           ) : null}
         </CompactList>
@@ -394,9 +428,9 @@ function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets
         {associatedTargets.length > 0 ? (
           <span className="meeting-review-badges">
             {associatedTargets.map((target) => (
-              <span className="badge" key={`${target.type}-${target.id}`}>
+              <Badge key={`${target.type}-${target.id}`}>
                 {targetDisplayLabel(target)}
-              </span>
+              </Badge>
             ))}
           </span>
         ) : (
@@ -490,6 +524,38 @@ function activityBadges(activity: ProposedNextStepActivity) {
   return [activity.type, activity.dueAt ? `Due ${isoToDateValue(activity.dueAt)}` : "No due date", targetDisplayLabel(activity.target)];
 }
 
+function sourceMetadataDetails(metadata: MeetingSourceMetadata) {
+  return [
+    `source: ${sourceTypeDisplay(metadata.sourceType)}`,
+    metadata.filename,
+    metadata.mimeType,
+    metadata.pageCount ? `${metadata.pageCount} pages` : null,
+    metadata.wordCount ? `${metadata.wordCount} words` : null,
+    metadata.extractionMethod ? `method: ${metadata.extractionMethod}` : null,
+    metadata.conversionMode ? `conversion: ${conversionDisplay(metadata.conversionMode)}` : null,
+    `processor: ${metadata.processor}`
+  ].filter((item): item is string => Boolean(item));
+}
+
+function sourceTypeDisplay(value: string) {
+  if (value === "pasted_text") return "pasted text";
+  if (value === "text_file") return "text file";
+  if (value === "docx") return "DOCX";
+  return value.replaceAll("_", " ");
+}
+
+function conversionDisplay(value: string) {
+  if (value === "local") return "local";
+  if (value === "provider_required") return "provider required";
+  return value;
+}
+
+function meetingReviewWarningCount(draft: MeetingIntelligenceDraft) {
+  const sourceWarnings = draft.sourceMetadata?.warnings?.length ?? 0;
+  const matchWarnings = draft.matchedObjects.filter((match) => Boolean(match.warning)).length;
+  return sourceWarnings + matchWarnings + draft.warnings.length;
+}
+
 function ProposalEvidence({
   confidence,
   evidence,
@@ -506,10 +572,9 @@ function ProposalEvidence({
   return (
     <CompactList>
       <CompactListItem>
-        {confidence || matchedReason ? (
-          <span className="muted">{[confidence ? `Confidence: ${confidence}` : "", matchedReason].filter(Boolean).join(" · ")}</span>
-        ) : null}
-        {targetWarning ? <span className="badge">{targetWarning}</span> : null}
+        {confidence ? <Badge>{`Confidence: ${confidence}`}</Badge> : null}
+        {matchedReason ? <span className="muted">{matchedReason}</span> : null}
+        {targetWarning ? <Badge className="badge badge-lost">{targetWarning}</Badge> : null}
         {items.map((item) => (
           <span className="muted" key={item}>
             Evidence: {item}

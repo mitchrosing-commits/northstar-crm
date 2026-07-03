@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ActionGroup } from "@/components/action-group";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { EmptyState } from "@/components/empty-state";
 import { FormErrorMessage } from "@/components/form-error-message";
@@ -102,13 +103,13 @@ export function QuoteDraftsPanel({
         label={quoteStatusSummaryLabel}
       >
         {quoteLifecycleStatuses.map((status) => (
-          <span className="badge" key={status}>
+          <Badge key={status}>
             {status}:{" "}
             {
               quotes.filter((quote) => quote.status === status.toUpperCase())
                 .length
             }
-          </span>
+          </Badge>
         ))}
       </ActionGroup>
       {!canCreate && disabledReason ? (
@@ -124,9 +125,9 @@ export function QuoteDraftsPanel({
               <article className="quote-draft-item" key={quote.id}>
                 <CompactTitleRow
                   actions={
-                    <span className="badge">
+                    <Badge>
                       {formatMoney(quote.totalCents, quote.currency)}
-                    </span>
+                    </Badge>
                   }
                   description={`${quote.status} · ${formatDate(quote.createdAt)}`}
                   title={quote.number}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { ActionGroup } from "@/components/action-group";
+import { Badge } from "@/components/badge";
 import { FieldMetric } from "@/components/field-metric";
 import { formatMoney } from "@/components/format";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -30,11 +31,11 @@ export function DealCommercialSummaryPanel({
     <section className="data-card section-spaced">
       <PanelTitleRow
         actions={
-          <span
+          <Badge
             className={`badge ${summary.level === "ready" ? "badge-won" : summary.level === "attention" ? "badge-lost" : ""}`}
           >
             {summary.label}
-          </span>
+          </Badge>
         }
         description={description}
         eyebrow="Commercial workflow"
@@ -115,11 +116,11 @@ export function QuoteReadinessPanel({
     <section className="data-card section-spaced">
       <PanelTitleRow
         actions={
-          <span
+          <Badge
             className={`badge ${summary.level === "ready" ? "badge-won" : summary.level === "attention" ? "badge-lost" : ""}`}
           >
             {summary.label}
-          </span>
+          </Badge>
         }
         description={description}
         eyebrow="Quote readiness"

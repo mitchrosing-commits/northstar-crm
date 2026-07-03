@@ -1,4 +1,5 @@
 import { AuditEventList } from "@/components/audit-event-list";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import type { AuditDisplayEntry } from "@/lib/audit-format";
@@ -27,9 +28,9 @@ export function AuditHistoryPanel({
     <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
         actions={
-          <span aria-label={auditCountLabel} className="count-badge" title={auditCountLabel}>
+          <CountBadge label={auditCountLabel}>
             {entries.length}
-          </span>
+          </CountBadge>
         }
         actionsLabel="Audit history event count"
         description={description}

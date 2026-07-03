@@ -118,7 +118,7 @@ export function DealCloseActions({ workspaceId, dealId, status }: DealCloseActio
       <ActionGroup className="form-actions" label={markLostActionsLabel}>
         <button
           aria-label={markLostActionLabel}
-          className="button-secondary button-compact"
+          className="button-danger button-compact"
           disabled={Boolean(isSaving)}
           onClick={() => closeDeal("LOST")}
           title={markLostActionLabel}

@@ -265,8 +265,8 @@ describe("CRM form header UX", () => {
     expect(formFieldLabel).toContain("export function FormFieldLabel");
     expect(formFieldLabel).toContain("className=\"form-field-label\"");
     expect(formFieldLabel).toContain("const requirementLabel = required ? \"Required field\" : \"Optional field\"");
-    expect(formFieldLabel).toContain("aria-label={requirementLabel}");
-    expect(formFieldLabel).toContain("title={requirementLabel}");
+    expect(formFieldLabel).toContain('import { Badge } from "@/components/badge"');
+    expect(formFieldLabel).toContain("<Badge label={requirementLabel}>");
     expect(formFieldLabel).toContain("required ? \"Required\" : \"Optional\"");
     expect(globalStyles).toContain(".form-field .form-field-label");
     expect(globalStyles).toContain(".form-field .form-field-label .badge");

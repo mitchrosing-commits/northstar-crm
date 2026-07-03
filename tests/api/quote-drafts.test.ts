@@ -748,7 +748,7 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain('emptyLabel: "No organization"');
     expect(quoteDetailPage).toContain("PanelTitleRow");
     expect(quoteDetailPage).toContain(
-      'actions={<span className="badge">Internal tracking only</span>}',
+      'actions={<Badge>Internal tracking only</Badge>}',
     );
     expect(quoteDetailPage).toContain('title="Quote Items"');
     expect(quoteDetailPage).toContain(

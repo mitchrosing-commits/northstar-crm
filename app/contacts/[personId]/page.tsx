@@ -102,7 +102,7 @@ export default async function ContactDetailPage({ params }: PageProps) {
           { label: "Owner", value: person.owner?.name ?? person.owner?.email ?? "Unassigned", tone: person.owner ? "default" : "muted" },
           {
             label: "Next follow-up",
-            value: <RecordNextActivitySummary activity={nextActivity} />,
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel="Needs follow-up" emptyLabel="No open contact follow-up" />,
             tone: nextActivity ? "default" : "warning"
           },
           { label: "Notes", value: person.notes.length },

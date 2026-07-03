@@ -41,7 +41,7 @@ export function NoteDeleteButton({ ariaLabel, noteId, workspaceId }: NoteDeleteB
     <>
       <button
         aria-label={ariaLabel}
-        className="button-secondary button-compact"
+        className="button-danger button-compact"
         disabled={isDeleting}
         onClick={deleteNote}
         title={ariaLabel}

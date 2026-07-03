@@ -134,12 +134,11 @@ describe("contact and organization detail pages", () => {
     expect(relatedRecordsTable).toContain("empty-state-compact empty-state-panel");
     expect(relatedRecordsTable).toContain("title={emptyMessage}");
     expect(relatedRecordsTable).toContain("PanelTitleRow");
-    expect(relatedRecordsTable).toContain("count-badge");
+    expect(relatedRecordsTable).toContain('import { CountBadge } from "@/components/count-badge"');
     expect(relatedRecordsTable).toContain(
       "const countLabel =\n    typeof count === \"number\" ? `${title} related record count: ${count}` : undefined;",
     );
-    expect(relatedRecordsTable).toContain("aria-label={countLabel}");
-    expect(relatedRecordsTable).toContain("title={countLabel}");
+    expect(relatedRecordsTable).toContain("<CountBadge label={countLabel}>");
     expect(relatedRecordsTable).toContain("actionsLabel={`${title} related record count`}");
     expect(relatedRecordsTable).toContain("titleId={titleId}");
     expect(relatedRecordsTable).toContain("TableScroll");

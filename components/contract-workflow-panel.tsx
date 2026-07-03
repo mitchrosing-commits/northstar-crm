@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
 import { ActionGroup } from "@/components/action-group";
+import { Badge } from "@/components/badge";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
@@ -104,7 +105,7 @@ export function ContractWorkflowPanel({
         actions={
           <ActionGroup className="filter-actions" label={summaryActionsLabel}>
             <span className="contract-progress-count">{completion}</span>
-            {nextAction ? <span className={`contract-status-chip contract-status-${nextAction.tone}`}>Next: {nextAction.label}</span> : <span className="contract-status-chip contract-status-success">Complete</span>}
+            {nextAction ? <Badge className={`contract-status-chip contract-status-${nextAction.tone}`}>Next: {nextAction.label}</Badge> : <Badge className="contract-status-chip contract-status-success">Complete</Badge>}
             {dealId && needsFollowUp && !readOnly ? (
               <Link
                 aria-label={followUpActionLabel}
@@ -197,10 +198,10 @@ export function ContractWorkflowSummary({ fields = [], steps = [] }: { fields?: 
   return (
     <span className="contract-status-summary" aria-label="Contract workflow status summary">
       {items.map((item) => (
-        <span className={`contract-status-mini contract-status-${item.tone}`} key={item.label}>
+        <Badge className={`contract-status-mini contract-status-${item.tone}`} key={item.label}>
           <span>{item.label}</span>
           <strong>{item.status}</strong>
-        </span>
+        </Badge>
       ))}
     </span>
   );
@@ -286,7 +287,7 @@ function ContractStepEditor({
       <div className={`contract-step-card contract-step-card-${contractStatusTone(statusPreview)}`}>
         <div className="contract-step-header">
           <span className="contract-step-label">{item.label}</span>
-          <span className={`contract-status-chip contract-status-${contractStatusTone(statusPreview)}`}>{statusPreview}</span>
+          <Badge className={`contract-status-chip contract-status-${contractStatusTone(statusPreview)}`}>{statusPreview}</Badge>
         </div>
         <span className="muted">{item.fieldName}</span>
         <div className="contract-step-meta">
@@ -341,7 +342,7 @@ function ContractStepEditor({
     <form className={`contract-step-card contract-step-card-${contractStatusTone(statusPreview)}`} onSubmit={onSubmit}>
       <div className="contract-step-header">
         <span className="contract-step-label">{item.label}</span>
-        <span className={`contract-status-chip contract-status-${contractStatusTone(statusPreview)}`}>{statusPreview}</span>
+        <Badge className={`contract-status-chip contract-status-${contractStatusTone(statusPreview)}`}>{statusPreview}</Badge>
       </div>
       <span className="muted">{item.fieldName}</span>
       <div className="contract-step-meta">

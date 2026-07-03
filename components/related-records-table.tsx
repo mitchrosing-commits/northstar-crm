@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from "react";
 
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { formatDate, formatMoney } from "@/components/format";
 import { ListRowActions } from "@/components/list-row-actions";
@@ -58,9 +59,9 @@ export function RelatedRecordsPanel({ children, count, id, title }: RelatedRecor
       <PanelTitleRow
         actions={
           typeof count === "number" ? (
-            <span aria-label={countLabel} className="count-badge" title={countLabel}>
+            <CountBadge label={countLabel}>
               {count}
-            </span>
+            </CountBadge>
           ) : null
         }
         actionsLabel={`${title} related record count`}

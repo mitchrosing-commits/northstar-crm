@@ -238,10 +238,10 @@ describe("activity create and completion behavior", () => {
     expect(recordActivitiesPanel).toContain("description={activityManualFollowUpCopy}");
     expect(recordActivitiesPanel).toContain("record-activity-section-hint");
     expect(recordActivitiesPanel).toContain("PanelTitleRow");
+    expect(recordActivitiesPanel).toContain('import { CountBadge } from "@/components/count-badge"');
     expect(recordActivitiesPanel).toContain("const addActivityLabel = \"Add activity from this record\"");
     expect(recordActivitiesPanel).toContain("const activityCountLabel = `${section.activities.length} ${section.title.toLowerCase()} ${");
-    expect(recordActivitiesPanel).toContain("aria-label={activityCountLabel}");
-    expect(recordActivitiesPanel).toContain("title={activityCountLabel}");
+    expect(recordActivitiesPanel).toContain("<CountBadge label={activityCountLabel}>");
     expect(recordActivitiesPanel).toContain("actionsLabel={`${section.title} activity count`}");
     expect(recordActivitiesPanel).toContain("EmptyState");
     expect(recordActivitiesPanel).toContain("const addActivityHref = showForm && formId ? `#${formId}` : undefined");
@@ -413,8 +413,8 @@ describe("activity create and completion behavior", () => {
     expect(globalStyles).toContain("overflow-wrap: anywhere");
     expect(activitiesPage).toContain("CompactTitleRow");
     expect(activitiesPage).toContain("const activityCountLabel = `${section.activities.length} ${section.title.toLowerCase()} ${");
-    expect(activitiesPage).toContain("aria-label={activityCountLabel}");
-    expect(activitiesPage).toContain("title={activityCountLabel}");
+    expect(activitiesPage).toContain('import { CountBadge } from "@/components/count-badge"');
+    expect(activitiesPage).toContain('<CountBadge className="badge" label={activityCountLabel}>');
     expect(activitiesPage).toContain("actionsLabel={`${section.title} activity count`}");
     expect(activitiesPage).not.toContain("<h3 className=\"compact-title\">{section.title}</h3>");
     expect(activitiesPage).toContain("<EmptyState className=\"empty-state-compact activity-agenda-empty\" title={section.empty} />");

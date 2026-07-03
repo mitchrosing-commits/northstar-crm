@@ -5,7 +5,9 @@ import type { Route } from "next";
 import { ApiError } from "@/lib/api/responses";
 import { ActivityDueBadge } from "@/components/activity-due-badge";
 import { AppShell } from "@/components/app-shell";
+import { AttentionBadge } from "@/components/attention-badge";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
+import { Badge } from "@/components/badge";
 import { DealCommercialSummaryPanel } from "@/components/commercial-workflow-panel";
 import { ContractWorkflowPanel, ContractWorkflowQuickLink } from "@/components/contract-workflow-panel";
 import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
@@ -180,7 +182,7 @@ export default async function DealDetailPage({ params }: PageProps) {
           { label: "Stage", value: deal.stage.name },
           {
             label: "Next follow-up",
-            value: <RecordNextActivitySummary activity={nextActivity} emptyLabel="No open deal follow-up" />,
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel={deal.status === "OPEN" ? "Needs follow-up" : undefined} emptyLabel="No open deal follow-up" />,
             tone: nextActivity ? "default" : "warning"
           },
           {
@@ -399,7 +401,7 @@ function DealAutomationTemplatesPanel({
   return (
     <section className="data-card automation-template-panel section-separated">
       <PanelTitleRow
-        actions={<span className="badge">Creates activities</span>}
+        actions={<Badge>Creates activities</Badge>}
         eyebrow="Suggested Automations"
         title="One-click next actions"
       />
@@ -540,7 +542,11 @@ function DealNextStepCard({
   return (
     <div className="data-card deal-next-step-card">
       <PanelTitleRow
-        actions={<span className={`deal-attention deal-attention-${attention}`}>{dealAttentionLabel(attention)}</span>}
+        actions={
+          <AttentionBadge classNamePrefix="deal-attention" tone={attention}>
+            {dealAttentionLabel(attention)}
+          </AttentionBadge>
+        }
         title="Next Step"
       />
       {activity ? (
@@ -574,9 +580,9 @@ function DealNextStepCard({
       {supportingBadges.length > 0 ? (
         <div className="deal-next-step-cues">
           {supportingBadges.map((badge) => (
-            <span className={`deal-attention-badge deal-attention-badge-${badge.kind}`} key={badge.kind}>
+            <AttentionBadge classNamePrefix="deal-attention-badge" key={badge.kind} tone={badge.kind}>
               {badge.label}
-            </span>
+            </AttentionBadge>
           ))}
         </div>
       ) : null}

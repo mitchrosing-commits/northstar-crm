@@ -80,7 +80,8 @@ describe("Sales Assistant / Needs Attention v1", () => {
     expect(pipelineService).toContain("quotes:");
     expect(pipelineBoard).toContain("buildDealAttentionBadges(deal).slice(0, 3)");
     expect(pipelineBoard).toContain("deal-card-badges");
-    expect(pipelineBoard).toContain("deal-attention-badge-${badge.kind}");
+    expect(pipelineBoard).toContain('import { AttentionBadge } from "@/components/attention-badge"');
+    expect(pipelineBoard).toContain('classNamePrefix="deal-attention-badge"');
     expect(salesAssistant).toContain("No next activity");
   });
 

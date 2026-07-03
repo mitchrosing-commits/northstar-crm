@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AttentionBadge } from "@/components/attention-badge";
 import { AppShell } from "@/components/app-shell";
 import { DealCommercialListSummary } from "@/components/commercial-workflow-panel";
 import { CustomFieldFilterControls, CustomFieldSummaryCell } from "@/components/custom-field-list-summary";
@@ -365,7 +366,11 @@ export default async function DealsPage({ searchParams }: PageProps) {
 }
 
 function DealAttentionBadge({ bucket }: { bucket: DealAttentionBucket }) {
-  return <span className={`deal-attention deal-attention-${bucket}`}>{dealAttentionLabel(bucket)}</span>;
+  return (
+    <AttentionBadge classNamePrefix="deal-attention" tone={bucket}>
+      {dealAttentionLabel(bucket)}
+    </AttentionBadge>
+  );
 }
 
 function DealQuickFilters({ actorUserId, searchParams }: { actorUserId: string; searchParams: ListSearchParams }) {

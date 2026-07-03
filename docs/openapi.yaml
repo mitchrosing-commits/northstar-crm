@@ -362,11 +362,11 @@ components:
           nullable: true
     MeetingIntakeInput:
       type: object
-      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, text-based PDF, and DOCX sources process locally; scanned PDF/image/audio/video processors return clear provider-required failures until integrations exist.
+      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX sources process locally; scanned PDF/image/audio/video processors return clear provider-required failures with processor status metadata until integrations exist. PPTX and XLSX return clear conversion-required failures until a direct local parser exists.
       properties:
         explicitSourceType:
           type: string
-          enum: [pasted_text, markdown, text_file, pdf, docx, image, audio, video, unsupported]
+          enum: [pasted_text, markdown, text_file, rtf, html, csv, json, pdf, docx, pptx, xlsx, image, audio, video, unsupported]
         originalFilename:
           type: string
           nullable: true
@@ -1259,7 +1259,7 @@ paths:
           $ref: "#/components/responses/Ok"
     post:
       summary: Create and analyze a meeting intake
-      description: Creates a persisted review record, extracts supported text/markdown/PDF/DOCX sources, matches CRM records, and stores a reviewable proposal without mutating CRM data. Empty source submissions return 422 before an intake record is created.
+      description: Creates a persisted review record, extracts supported text/markdown/RTF/HTML/CSV/JSON/PDF/DOCX sources, matches CRM records, and stores a reviewable proposal without mutating CRM data. Failed/provider-required intakes persist detected source type, original filename/MIME when provided, extraction method, conversion mode, required provider, failure code, and warnings in analysis JSON. Empty source submissions return 422 before an intake record is created.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:

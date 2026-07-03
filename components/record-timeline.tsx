@@ -5,6 +5,7 @@ import { formatAuditEvent } from "@/lib/audit-format";
 import type { RecordTimelineItem } from "@/lib/services/timeline-service";
 import { ActionGroup } from "@/components/action-group";
 import { ActivityDueBadge } from "@/components/activity-due-badge";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { formatActivityType, formatDate } from "@/components/format";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -32,9 +33,9 @@ export function RecordTimeline({
     <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
         actions={
-          <span aria-label={timelineCountLabel} className="count-badge" title={timelineCountLabel}>
+          <CountBadge label={timelineCountLabel}>
             {items.length}
-          </span>
+          </CountBadge>
         }
         actionsLabel={`${title} timeline event count`}
         description={description}

@@ -5,8 +5,10 @@ import type { ReactNode } from "react";
 import { ActivityCompleteButton } from "@/components/activity-complete-button";
 import { ActivityDueBadge } from "@/components/activity-due-badge";
 import { ActionGroup } from "@/components/action-group";
+import { AttentionBadge } from "@/components/attention-badge";
 import { AuditEventList } from "@/components/audit-event-list";
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -93,85 +95,95 @@ export default async function DashboardPage() {
         title="Dashboard"
       />
 
-      <DashboardFocusStrip
-        dueToday={summary.metrics.dueTodayActivitiesCount}
-        needsAttentionCount={needsAttention.length}
-        openPipelineValue={formatMoney(summary.metrics.openPipelineValueCents)}
-        overdue={summary.metrics.overdueActivitiesCount}
-      />
+      <section className="dashboard-priority-zone" aria-label="Dashboard priority work">
+        <DashboardFocusStrip
+          dueToday={summary.metrics.dueTodayActivitiesCount}
+          needsAttentionCount={needsAttention.length}
+          openPipelineValue={formatMoney(summary.metrics.openPipelineValueCents)}
+          overdue={summary.metrics.overdueActivitiesCount}
+        />
 
-      {summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null}
+        {summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null}
 
-      <NeedsAttentionPanel
-        items={needsAttention}
-        isCleanWorkspace={summary.onboarding.isCleanWorkspace}
-      />
+        <NeedsAttentionPanel
+          items={needsAttention}
+          isCleanWorkspace={summary.onboarding.isCleanWorkspace}
+        />
+      </section>
 
-      <section className="stat-grid">
-        <MetricCard
-          href="/deals?status=OPEN"
-          label="Open pipeline value"
-          value={formatMoney(summary.metrics.openPipelineValueCents)}
+      <section className="panel dashboard-scorecard" aria-labelledby="dashboard-scorecard-title">
+        <PanelTitleRow
+          actions={<Badge>12 metrics</Badge>}
+          description="Linked sales health metrics for pipeline, quote coverage, outcomes, leads, and activity queues."
+          title="Pipeline Scorecard"
+          titleId="dashboard-scorecard-title"
         />
-        <MetricCard
-          href="/deals?commercial=hasQuote"
-          label="Open quoted value"
-          value={formatMoney(
-            summary.commercialSnapshot.openQuotedDealValueCents,
-          )}
-        />
-        <MetricCard
-          href="/deals?commercial=noQuote"
-          label="Open unquoted value"
-          value={formatMoney(
-            summary.commercialSnapshot.openUnquotedDealValueCents,
-          )}
-        />
-        <MetricCard
-          href="/deals?status=WON"
-          label="Won deal value"
-          value={formatMoney(summary.metrics.wonDealsValueCents)}
-        />
-        <MetricCard
-          href="/deals?status=LOST"
-          label="Lost deal value"
-          value={formatMoney(summary.metrics.lostDealsValueCents)}
-        />
-        <MetricCard
-          href="/deals?status=OPEN"
-          label="Open deals"
-          value={summary.metrics.openDealsCount}
-        />
-        <MetricCard
-          href="/deals?status=WON"
-          label="Won deals"
-          value={summary.metrics.wonDealsCount}
-        />
-        <MetricCard
-          href="/deals?status=LOST"
-          label="Lost deals"
-          value={summary.metrics.lostDealsCount}
-        />
-        <MetricCard
-          href="/leads?status=QUALIFIED"
-          label="Active leads"
-          value={summary.metrics.activeLeadsCount}
-        />
-        <MetricCard
-          href="/leads?followUp=missing"
-          label="Active leads no next activity"
-          value={summary.metrics.activeLeadsMissingNextActivity}
-        />
-        <MetricCard
-          href="/activities?status=open&due=overdue"
-          label="Open overdue activities"
-          value={summary.metrics.overdueActivitiesCount}
-        />
-        <MetricCard
-          href="/activities?status=open&due=today"
-          label="Open due today"
-          value={summary.metrics.dueTodayActivitiesCount}
-        />
+        <div className="stat-grid">
+          <MetricCard
+            href="/deals?status=OPEN"
+            label="Open pipeline value"
+            value={formatMoney(summary.metrics.openPipelineValueCents)}
+          />
+          <MetricCard
+            href="/deals?commercial=hasQuote"
+            label="Open quoted value"
+            value={formatMoney(
+              summary.commercialSnapshot.openQuotedDealValueCents,
+            )}
+          />
+          <MetricCard
+            href="/deals?commercial=noQuote"
+            label="Open unquoted value"
+            value={formatMoney(
+              summary.commercialSnapshot.openUnquotedDealValueCents,
+            )}
+          />
+          <MetricCard
+            href="/deals?status=WON"
+            label="Won deal value"
+            value={formatMoney(summary.metrics.wonDealsValueCents)}
+          />
+          <MetricCard
+            href="/deals?status=LOST"
+            label="Lost deal value"
+            value={formatMoney(summary.metrics.lostDealsValueCents)}
+          />
+          <MetricCard
+            href="/deals?status=OPEN"
+            label="Open deals"
+            value={summary.metrics.openDealsCount}
+          />
+          <MetricCard
+            href="/deals?status=WON"
+            label="Won deals"
+            value={summary.metrics.wonDealsCount}
+          />
+          <MetricCard
+            href="/deals?status=LOST"
+            label="Lost deals"
+            value={summary.metrics.lostDealsCount}
+          />
+          <MetricCard
+            href="/leads?status=QUALIFIED"
+            label="Active leads"
+            value={summary.metrics.activeLeadsCount}
+          />
+          <MetricCard
+            href="/leads?followUp=missing"
+            label="Active leads no next activity"
+            value={summary.metrics.activeLeadsMissingNextActivity}
+          />
+          <MetricCard
+            href="/activities?status=open&due=overdue"
+            label="Open overdue activities"
+            value={summary.metrics.overdueActivitiesCount}
+          />
+          <MetricCard
+            href="/activities?status=open&due=today"
+            label="Open due today"
+            value={summary.metrics.dueTodayActivitiesCount}
+          />
+        </div>
       </section>
 
       <section className="content-grid">
@@ -690,13 +702,9 @@ function PipelineHealthPanel({ health }: { health: DashboardPipelineHealth }) {
     <div className="panel">
       <PanelTitleRow
         actions={
-          <span
-            className={
-              healthLabel === "Healthy" ? "badge badge-won" : "badge badge-lost"
-            }
-          >
+          <Badge className={healthLabel === "Healthy" ? "badge badge-won" : "badge badge-lost"}>
             {healthLabel}
-          </span>
+          </Badge>
         }
         description="Open pipeline operating signals, not forecast promises."
         title="Pipeline Health"
@@ -1115,11 +1123,11 @@ function NeedsAttentionPanel({
     >
       <PanelTitleRow
         actions={
-          <span className="badge">
+          <Badge>
             {items.length > 0
               ? `${items.length} next action${items.length === 1 ? "" : "s"}`
               : "Caught up"}
-          </span>
+          </Badge>
         }
         eyebrow="Sales Assistant"
         title="Needs Attention"
@@ -1134,11 +1142,9 @@ function NeedsAttentionPanel({
               <article className="needs-attention-item" key={item.id}>
                 <CompactTitleRow
                   actions={
-                    <span
-                      className={`attention-kind attention-kind-${item.kind}`}
-                    >
+                    <AttentionBadge tone={item.kind}>
                       {attentionKindLabel(item.kind)}
-                    </span>
+                    </AttentionBadge>
                   }
                   description={item.reason}
                   title={

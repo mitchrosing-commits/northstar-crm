@@ -1,6 +1,8 @@
 import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
+import { CountBadge } from "@/components/count-badge";
 import { EmptyState } from "@/components/empty-state";
 import { formatDate, formatMoney } from "@/components/format";
 import { ListExportLink } from "@/components/list-export-link";
@@ -45,7 +47,7 @@ export default async function ProductsPage() {
 
       <section className="panel">
         <PanelTitleRow
-          actions={<span className="badge">{products.length} total</span>}
+          actions={<CountBadge className="badge">{products.length} total</CountBadge>}
           title="Product Catalog"
         />
         {products.length > 0 ? (
@@ -57,9 +59,9 @@ export default async function ProductsPage() {
                 <article className="product-catalog-card" key={product.id}>
                   <CompactTitleRow
                     actions={
-                      <span className="badge">
+                      <Badge>
                         {product.active ? "Active" : "Inactive"}
-                      </span>
+                      </Badge>
                     }
                     description={product.description ?? "No description"}
                     title={product.name}

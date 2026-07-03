@@ -77,7 +77,7 @@ export function QuoteStatusActions({
           {actions.map((item) => (
             <button
               aria-label={`${item.label} for ${quoteNumber}`}
-              className="button-secondary button-compact"
+              className={quoteStatusActionClassName(item.action)}
               disabled={savingAction !== null}
               key={item.action}
               onClick={() => transition(item.action)}
@@ -97,4 +97,10 @@ export function QuoteStatusActions({
       )}
     </section>
   );
+}
+
+function quoteStatusActionClassName(action: string) {
+  if (action === "accept") return "button-primary button-compact";
+  if (action === "decline") return "button-danger button-compact";
+  return "button-secondary button-compact";
 }

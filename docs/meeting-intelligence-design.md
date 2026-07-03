@@ -22,6 +22,10 @@ Supported now:
 - pasted text
 - markdown
 - `.txt` and `.md` text files
+- `.rtf` rich text files via conservative local formatting flattening
+- `.html` and `.htm` exports via conservative local body-to-markdown conversion
+- `.csv` action trackers or structured exports via the local CSV parser and markdown table conversion
+- `.json` structured meeting exports via local JSON parsing and readable markdown conversion
 - text-based PDF files via local `pdfjs-dist` extraction
 - `.docx` Word files via local `mammoth` extraction
 
@@ -29,13 +33,15 @@ Detected but deferred/provider-required:
 
 - scanned or image-only PDF: requires OCR or vision provider integration
 - corrupt, encrypted, or unreadable PDF/DOCX: clear extraction failure
+- `.pptx`: unsupported in this slice because there is no direct local presentation parser; export to PDF, DOCX, markdown, HTML, or text first
+- `.xlsx`: unsupported in this slice because there is no direct local spreadsheet parser; export to CSV, markdown, HTML, or text first
 - legacy `.doc`: unsupported; convert to `.docx` first
 - image/whiteboard: requires OCR or vision provider integration
 - audio: requires transcription provider integration
 - video: requires transcription or media-processing provider integration
 - unknown files: unsupported with a clear failure message
 
-The current app accepts uploaded PDF/DOCX bytes for synchronous extraction, then stores extracted text and markdown, not original binary files.
+The current app accepts uploaded PDF/DOCX bytes and text-style artifact content for synchronous extraction, then stores extracted text and markdown, not original binary files.
 
 ## Data Model
 
@@ -46,7 +52,7 @@ The current app accepts uploaded PDF/DOCX bytes for synchronous extraction, then
 - user context
 - raw text and normalized markdown
 - status
-- analysis/proposal JSON
+- analysis/proposal JSON, including processor status metadata for detected source type, original filename, extraction method, local/provider-required conversion mode, required provider when applicable, failure code, and extraction warnings
 - apply-result JSON
 - failure message and applied timestamp
 
@@ -83,7 +89,7 @@ Reapplying an already-applied intake returns the stored result and does not dupl
 
 ## Future Provider / Job Boundary
 
-Text, markdown, text-based PDF, and DOCX process synchronously with bounded local extraction. Future heavy processors should use the existing background job foundation once provider integrations exist:
+Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX process synchronously with bounded local extraction. Provider-required files are detected and persisted as failed/deferred intakes with clear processor status; they do not create fake markdown or CRM proposals. Future heavy processors should use the existing background job foundation once provider integrations exist:
 
 - `meeting_intake.extract`
 - `meeting_intake.analyze`

@@ -2,8 +2,14 @@ export const meetingSourceTypes = [
   "pasted_text",
   "markdown",
   "text_file",
+  "rtf",
+  "html",
+  "csv",
+  "json",
   "pdf",
   "docx",
+  "pptx",
+  "xlsx",
   "image",
   "audio",
   "video",
@@ -25,6 +31,12 @@ export const meetingIntakeStatuses = [
 export type MeetingIntakeStatus = (typeof meetingIntakeStatuses)[number];
 
 export type ProcessorCapability = "supported" | "provider_required" | "deferred" | "unsupported";
+export type MeetingSourceConversionMode = "local" | "provider_required" | "unsupported";
+export type MeetingSourceProviderRequirement =
+  | "document_conversion"
+  | "media_processing"
+  | "ocr_or_vision"
+  | "transcription";
 
 export type SourceDetectionInput = {
   explicitSourceType?: unknown;
@@ -35,7 +47,10 @@ export type SourceDetectionInput = {
 
 export type SourceDetectionResult = {
   capability: ProcessorCapability;
+  conversionMode: MeetingSourceConversionMode;
+  extractionMethod: string;
   message?: string;
+  requiredProvider?: MeetingSourceProviderRequirement;
   sourceType: MeetingSourceType;
 };
 
@@ -49,11 +64,17 @@ export type ExtractedMeetingText = {
 
 export type MeetingSourceMetadata = {
   byteLength?: number;
+  conversionMode?: MeetingSourceConversionMode;
+  extractionMethod?: string;
   filename?: string;
   mimeType?: string;
   pageCount?: number;
   processor: string;
+  processorCapability?: ProcessorCapability;
+  requiredProvider?: MeetingSourceProviderRequirement;
   sourceType: MeetingSourceType;
+  statusMessage?: string;
+  warnings?: string[];
   wordCount?: number;
 };
 

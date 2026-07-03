@@ -49,14 +49,20 @@ export function extractSections(text: string): NormalizedMeetingMarkdown["sectio
 function sourceSection(sourceType: MeetingSourceType, originalFilename?: string | null, metadata?: MeetingSourceMetadata) {
   const labels: Record<MeetingSourceType, string> = {
     audio: "Audio",
+    csv: "CSV",
     docx: "Word document",
+    html: "HTML",
     image: "Image or whiteboard",
+    json: "JSON",
     markdown: "Markdown",
     pasted_text: "Pasted text",
     pdf: "PDF",
+    pptx: "PowerPoint deck",
+    rtf: "Rich text",
     text_file: "Text file",
     unsupported: "Unsupported",
-    video: "Video"
+    video: "Video",
+    xlsx: "Spreadsheet"
   };
   const details = [
     `- Source type: ${labels[sourceType]}`,
@@ -64,9 +70,19 @@ function sourceSection(sourceType: MeetingSourceType, originalFilename?: string 
     metadata?.mimeType ? `- MIME type: ${metadata.mimeType}` : "",
     metadata?.pageCount ? `- Pages: ${metadata.pageCount}` : "",
     metadata?.wordCount ? `- Extracted words: ${metadata.wordCount}` : "",
-    metadata?.processor ? `- Processor: ${metadata.processor}` : ""
+    metadata?.extractionMethod ? `- Extraction method: ${metadata.extractionMethod}` : "",
+    metadata?.conversionMode ? `- Conversion: ${conversionLabel(metadata.conversionMode)}` : "",
+    metadata?.processor ? `- Processor: ${metadata.processor}` : "",
+    metadata?.statusMessage ? `- Processor status: ${metadata.statusMessage}` : "",
+    ...(metadata?.warnings ?? []).map((warning) => `- Warning: ${warning}`)
   ].filter(Boolean);
   return `## Source\n\n${details.join("\n")}`;
+}
+
+function conversionLabel(value: NonNullable<MeetingSourceMetadata["conversionMode"]>) {
+  if (value === "local") return "Local";
+  if (value === "provider_required") return "Provider required";
+  return "Unsupported";
 }
 
 function extractAttendees(lines: string[]) {

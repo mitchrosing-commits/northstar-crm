@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 
 import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/badge";
+import { CompactList, CompactListItem } from "@/components/compact-list";
 import { EmptyState } from "@/components/empty-state";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { MeetingIntelligenceReview } from "@/components/meeting-intelligence-review";
@@ -30,6 +32,7 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
   if (!intake) notFound();
   const draft = parseDraft(intake.proposedChangesJson);
   const applyResult = parseApplyResult(intake.applyResultJson);
+  const analysis = parseAnalysis(intake.analysisJson);
 
   return (
     <AppShell workspace={workspace}>
@@ -44,6 +47,51 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
       {intake.status === "FAILED" ? (
         <section className="panel">
           <FormErrorMessage>{intake.errorMessage ?? "Meeting intake failed."}</FormErrorMessage>
+          {analysis?.processorStatus ? (
+            <CompactList>
+              <CompactListItem>
+                <strong>{analysis.processorStatus.capability === "provider_required" ? "Provider boundary" : "Source details"}</strong>
+                <span className="muted">
+                  {[
+                    analysis.processorStatus.sourceType ? sourceTypeLabel(analysis.processorStatus.sourceType) : null,
+                    analysis.processorStatus.originalFilename,
+                    analysis.processorStatus.originalMimeType
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </CompactListItem>
+              <CompactListItem>
+                <strong>Processor status</strong>
+                <span className="muted">
+                  {[
+                    capabilityLabel(analysis.processorStatus.capability),
+                    conversionLabel(analysis.processorStatus.conversionMode),
+                    analysis.processorStatus.extractionMethod
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </CompactListItem>
+              {analysis.processorStatus.requiredProvider ? (
+                <CompactListItem>
+                  <strong>Required provider</strong>
+                  <span className="muted">{providerLabel(analysis.processorStatus.requiredProvider)}</span>
+                </CompactListItem>
+              ) : null}
+              {analysis.processorStatus.failureCode ? (
+                <CompactListItem>
+                  <strong>Failure code</strong>
+                  <span className="muted">{analysis.processorStatus.failureCode}</span>
+                </CompactListItem>
+              ) : null}
+              {analysis.processorStatus.warnings?.map((warning) => (
+                <CompactListItem key={warning}>
+                  <Badge>{warning}</Badge>
+                </CompactListItem>
+              ))}
+            </CompactList>
+          ) : null}
           <ActionGroup className="form-actions" label={failedActionsLabel}>
             <Link
               aria-label={createAnotherActionLabel}
@@ -87,10 +135,52 @@ function parseApplyResult(value: unknown): ApplyMeetingIntelligenceResult | null
   return value as ApplyMeetingIntelligenceResult;
 }
 
+type IntakeAnalysisJson = {
+  processorStatus?: {
+    capability?: string;
+    conversionMode?: string;
+    extractionMethod?: string;
+    failureCode?: string;
+    originalFilename?: string;
+    originalMimeType?: string;
+    requiredProvider?: string;
+    sourceType?: string;
+    warnings?: string[];
+  };
+};
+
+function parseAnalysis(value: unknown): IntakeAnalysisJson | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as IntakeAnalysisJson;
+}
+
 function sourceTypeLabel(value: string) {
   return value
     .toLowerCase()
     .split("_")
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function capabilityLabel(value: string | undefined) {
+  if (value === "provider_required") return "Provider required";
+  if (value === "supported") return "Supported";
+  if (value === "unsupported") return "Unsupported";
+  if (value === "deferred") return "Deferred";
+  return value;
+}
+
+function conversionLabel(value: string | undefined) {
+  if (value === "local") return "Local conversion";
+  if (value === "provider_required") return "Provider-required conversion";
+  if (value === "unsupported") return "Unsupported conversion";
+  return value;
+}
+
+function providerLabel(value: string) {
+  if (value === "ocr_or_vision") return "OCR or vision provider";
+  if (value === "transcription") return "Transcription provider";
+  if (value === "media_processing") return "Media processing or transcription provider";
+  if (value === "document_conversion") return "Document conversion to DOCX or text";
+  return value;
 }

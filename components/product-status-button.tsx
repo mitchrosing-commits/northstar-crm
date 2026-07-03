@@ -18,6 +18,7 @@ export function ProductStatusButton({ workspaceId, productId, productName, activ
   const [isSaving, setIsSaving] = useState(false);
   const action = active ? "deactivate" : "activate";
   const actionLabel = active ? `Deactivate product ${productName}` : `Reactivate product ${productName}`;
+  const buttonClassName = active ? "button-danger button-compact" : "button-secondary button-compact";
 
   async function onClick() {
     setError(null);
@@ -43,7 +44,7 @@ export function ProductStatusButton({ workspaceId, productId, productName, activ
       {error ? <FormErrorMessage compact>{error}</FormErrorMessage> : null}
       <button
         aria-label={actionLabel}
-        className="button-secondary button-compact"
+        className={buttonClassName}
         disabled={isSaving}
         onClick={onClick}
         title={actionLabel}

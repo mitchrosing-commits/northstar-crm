@@ -41,7 +41,7 @@ export function ActivityDeleteButton({ activityId, workspaceId, ariaLabel }: Act
     <>
       <button
         aria-label={ariaLabel}
-        className="button-secondary button-compact"
+        className="button-danger button-compact"
         disabled={isDeleting}
         onClick={deleteActivity}
         title={ariaLabel}
