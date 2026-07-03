@@ -362,7 +362,7 @@ textarea {
 
 .sidebar-quick-action-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
   gap: 7px;
 }
 
@@ -4046,7 +4046,13 @@ textarea {
   }
 
   .nav-list {
-    grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  }
+
+  .nav-item {
+    gap: 6px;
+    padding-right: 7px;
+    padding-left: 7px;
   }
 
   .nav-group + .nav-group {
@@ -4111,7 +4117,7 @@ textarea {
   }
 
   .sidebar-quick-actions a {
-    flex: 0 0 150px;
+    flex: 0 0 190px;
   }
 
   .list-page-header-actions {

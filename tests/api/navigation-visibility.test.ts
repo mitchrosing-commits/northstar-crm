@@ -166,6 +166,7 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain(".sidebar-current-query-clear");
     expect(globalStyles).toContain(".sidebar-quick-actions");
     expect(globalStyles).toContain(".sidebar-quick-action-grid");
+    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));");
     expect(globalStyles).toContain(".sidebar-quick-action-active");
     expect(globalStyles).toContain(".sidebar-quick-action-icon");
     expect(globalStyles).toContain(".nav-item-label");
@@ -189,11 +190,12 @@ describe("main navigation visibility", () => {
 
   it("keeps mobile sidebar quick actions compact before page content", () => {
     expect(globalStyles).toContain("@media (max-width: 640px)");
+    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));");
     expect(globalStyles).toContain(".sidebar-quick-action-grid {\n    display: flex;");
     expect(globalStyles).toContain("overflow-x: auto;");
     expect(globalStyles).toContain("overscroll-behavior-x: contain;");
     expect(globalStyles).toContain("-webkit-overflow-scrolling: touch;");
-    expect(globalStyles).toContain(".sidebar-quick-actions a {\n    flex: 0 0 150px;");
+    expect(globalStyles).toContain(".sidebar-quick-actions a {\n    flex: 0 0 190px;");
   });
 
   it("browser smoke verifies the Settings link is visible and usable from the app shell", () => {

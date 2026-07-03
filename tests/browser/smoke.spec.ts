@@ -128,6 +128,7 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(contractWorkflow.locator(".contract-status-chip").getByText("In progress", { exact: true })).toBeVisible();
       }
       if (path === "/dashboard") {
+        await expectSidebarLabelsReadable(page, path);
         await expect(page.getByRole("heading", { name: "Active Deals" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Priority Activities" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Recent Quotes" })).toBeVisible();
@@ -660,6 +661,7 @@ test.describe("Northstar CRM browser smoke", () => {
     ]) {
       await expectPageReady(page, path);
       await expectNoPageHorizontalOverflow(page, path);
+      if (path === "/dashboard") await expectSidebarLabelsReadable(page, path);
     }
   });
 
@@ -949,6 +951,22 @@ async function expectNoPageHorizontalOverflow(page: Page, path: string) {
     overflow.overflowPixels,
     `Expected ${path} not to create document-level horizontal overflow at ${overflow.clientWidth}px viewport; scrollWidth was ${overflow.scrollWidth}px`
   ).toBeLessThanOrEqual(2);
+}
+
+async function expectSidebarLabelsReadable(page: Page, path: string) {
+  const truncated = await page.evaluate(() => {
+    const navLabels = Array.from(document.querySelectorAll(".nav-item-label"))
+      .filter((label) => label.scrollWidth > label.clientWidth + 1)
+      .map((label) => label.textContent?.trim() ?? "");
+    const quickLabels = Array.from(document.querySelectorAll(".sidebar-quick-actions strong, .sidebar-quick-actions small"))
+      .filter((label) => label.scrollWidth > label.clientWidth + 1)
+      .map((label) => label.textContent?.trim() ?? "");
+
+    return { navLabels, quickLabels };
+  });
+
+  expect(truncated.navLabels, `Expected primary nav labels to fit naturally on ${path}`).toEqual([]);
+  expect(truncated.quickLabels, `Expected sidebar quick-action labels to fit naturally on ${path}`).toEqual([]);
 }
 
 async function expectSettingsShortcutNavigation(page: Page, settingsShortcut: Locator) {
