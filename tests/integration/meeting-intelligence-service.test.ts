@@ -2,7 +2,7 @@ import { JobStatus } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { runJobsOnce } from "@/lib/jobs/run-once";
-import { POST as postInternalMeetingMediaExtract } from "@/app/api/internal/meeting-intelligence/media-extract/route";
+import { handleInternalMeetingMediaExtract } from "@/lib/meeting-intelligence/internal-media-extract-route";
 import { internalMeetingMediaExtractionRoutePath } from "@/lib/meeting-intelligence/openai-media-provider";
 import {
   applyMeetingIntake,
@@ -667,7 +667,7 @@ describe("meeting intelligence service", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
       if (requestUrl === internalRouteUrl) {
-        return postInternalMeetingMediaExtract(new Request(requestUrl, init));
+        return handleInternalMeetingMediaExtract(new Request(requestUrl, init));
       }
       if (requestUrl === "https://api.openai.com/v1/audio/transcriptions") {
         const formData = init?.body as FormData;

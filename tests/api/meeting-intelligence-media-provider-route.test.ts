@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { POST } from "@/app/api/internal/meeting-intelligence/media-extract/route";
+import { handleInternalMeetingMediaExtract } from "@/lib/meeting-intelligence/internal-media-extract-route";
 
 const routeUrl = "http://localhost/api/internal/meeting-intelligence/media-extract";
 
@@ -15,7 +15,7 @@ describe("internal Meeting Intelligence media extraction route", () => {
     vi.stubEnv("OPENAI_API_KEY", "openai-test-key");
 
     await expectJsonResponse(
-      await POST(
+      await handleInternalMeetingMediaExtract(
         new Request(routeUrl, {
           method: "POST",
           body: JSON.stringify({ fileBase64: "ZmFrZQ==", sourceType: "image" })
@@ -26,7 +26,7 @@ describe("internal Meeting Intelligence media extraction route", () => {
     );
 
     await expectJsonResponse(
-      await POST(
+      await handleInternalMeetingMediaExtract(
         new Request(routeUrl, {
           method: "POST",
           headers: { Authorization: "Bearer wrong-token" },
@@ -146,7 +146,7 @@ describe("internal Meeting Intelligence media extraction route", () => {
 });
 
 async function postMediaExtract(body: unknown) {
-  return POST(
+  return handleInternalMeetingMediaExtract(
     new Request(routeUrl, {
       method: "POST",
       headers: {
