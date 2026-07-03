@@ -4,6 +4,7 @@ import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { extractMeetingText } from "@/lib/meeting-intelligence/extractors";
 import { normalizeMeetingMarkdown } from "@/lib/meeting-intelligence/markdown-normalizer";
+import { unsupportedVideoError } from "@/lib/meeting-intelligence/openai-media-provider";
 import {
   createConfiguredMeetingMediaProvider,
   getMeetingMediaProviderReadiness,
@@ -205,6 +206,22 @@ async function queueOrFailMediaMeetingIntake(
       input,
       detection,
       new ApiError("MEETING_INTAKE_PROVIDER_NOT_CONFIGURED", mediaProviderRequiredMessage(detection.sourceType), 422)
+    );
+    await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intakeId, {
+      sourceType: detection.sourceType,
+      message: failed.errorMessage
+    });
+    return failed;
+  }
+
+  if (!providerReadiness.supportedSourceTypes.includes(detection.sourceType)) {
+    const failed = await failMeetingIntake(
+      intakeId,
+      input,
+      detection,
+      detection.sourceType === "video"
+        ? unsupportedVideoError()
+        : new ApiError("MEETING_INTAKE_PROVIDER_UNAVAILABLE", mediaProviderRequiredMessage(detection.sourceType), 422)
     );
     await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intakeId, {
       sourceType: detection.sourceType,

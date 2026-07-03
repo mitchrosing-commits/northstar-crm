@@ -39,6 +39,7 @@ export type MediaProviderReadiness = {
 
 export type MeetingMediaProviderEnv = {
   [key: string]: string | undefined;
+  MEETING_INTELLIGENCE_MEDIA_PROVIDER?: string;
   MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN?: string;
   MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL?: string;
 };
@@ -47,9 +48,18 @@ type MediaProviderHttpResponse = {
   confidence?: unknown;
   markdown?: unknown;
   metadata?: unknown;
+  providerId?: unknown;
+  providerName?: unknown;
   text?: unknown;
   transcript?: unknown;
   warnings?: unknown;
+};
+
+type MediaProviderHttpErrorResponse = {
+  error?: {
+    code?: unknown;
+    message?: unknown;
+  };
 };
 
 const providerId = "provider-http";
@@ -67,10 +77,16 @@ export function getMeetingMediaProviderReadiness(env: MeetingMediaProviderEnv = 
   }
   return {
     configured: true,
-    message: "Meeting media extraction provider is configured.",
+    message:
+      readNonEmpty(env.MEETING_INTELLIGENCE_MEDIA_PROVIDER) === "openai"
+        ? "Internal OpenAI media extraction provider is configured for image OCR/vision and audio transcription."
+        : "Meeting media extraction provider is configured.",
     providerId,
-    providerName,
-    supportedSourceTypes: ["image", "audio", "video"]
+    providerName:
+      readNonEmpty(env.MEETING_INTELLIGENCE_MEDIA_PROVIDER) === "openai"
+        ? "Internal OpenAI media extraction provider"
+        : providerName,
+    supportedSourceTypes: readNonEmpty(env.MEETING_INTELLIGENCE_MEDIA_PROVIDER) === "openai" ? ["image", "audio"] : ["image", "audio", "video"]
   };
 }
 
@@ -112,11 +128,14 @@ export function createConfiguredMeetingMediaProvider(
         throw new ApiError("MEETING_INTAKE_PROVIDER_FAILED", "Meeting media extraction provider request failed.", 502);
       }
 
+      const body = await response.json().catch(() => null) as MediaProviderHttpResponse | null;
       if (!response.ok) {
-        throw new ApiError("MEETING_INTAKE_PROVIDER_FAILED", "Meeting media extraction provider returned an error.", 502);
+        const errorBody = body as MediaProviderHttpErrorResponse | null;
+        const code = readNonEmpty(errorBody?.error?.code) ?? "MEETING_INTAKE_PROVIDER_FAILED";
+        const message = readNonEmpty(errorBody?.error?.message) ?? "Meeting media extraction provider returned an error.";
+        throw new ApiError(code, message, response.status >= 400 && response.status < 500 ? response.status : 502);
       }
 
-      const body = await response.json().catch(() => null) as MediaProviderHttpResponse | null;
       const text = readNonEmpty(body?.markdown) ?? readNonEmpty(body?.text) ?? readNonEmpty(body?.transcript);
       if (!text) {
         throw new ApiError("MEETING_INTAKE_PROVIDER_EMPTY_RESULT", "Meeting media extraction provider returned no text.", 422);
@@ -125,8 +144,8 @@ export function createConfiguredMeetingMediaProvider(
       return {
         confidence: normalizeConfidence(body?.confidence),
         metadata: normalizeProviderMetadata(body?.metadata),
-        providerId,
-        providerName,
+        providerId: readNonEmpty(body?.providerId) ?? providerId,
+        providerName: readNonEmpty(body?.providerName) ?? providerName,
         text,
         warnings: normalizeWarnings(body?.warnings)
       };

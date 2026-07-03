@@ -96,6 +96,18 @@ Notes:
 - Returns generic readiness status only.
 - Does not expose environment values, database URLs, user data, or workspace data.
 
+## Internal Provider Routes
+
+```text
+POST /api/internal/meeting-intelligence/media-extract
+```
+
+Notes:
+
+- This route implements the Meeting Intelligence provider-neutral media extraction contract for first-party deployments.
+- It requires `Authorization: Bearer ${MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN}` and is intended to be called by the background job worker through `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL`.
+- With `MEETING_INTELLIGENCE_MEDIA_PROVIDER=openai` and `OPENAI_API_KEY`, it performs image/whiteboard OCR/vision extraction and audio transcription. Video returns an explicit unsupported-media response until a safe video audio-extraction/storage path or video-capable provider is added.
+
 ## Workspaces
 
 ```text

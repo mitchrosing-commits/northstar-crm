@@ -2,6 +2,8 @@ import { JobStatus } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { runJobsOnce } from "@/lib/jobs/run-once";
+import { POST as postInternalMeetingMediaExtract } from "@/app/api/internal/meeting-intelligence/media-extract/route";
+import { internalMeetingMediaExtractionRoutePath } from "@/lib/meeting-intelligence/openai-media-provider";
 import {
   applyMeetingIntake,
   createMeetingIntake
@@ -24,6 +26,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await fixture?.prisma.meetingActivityAssociation.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.job.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.meetingIntake.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
@@ -649,6 +652,88 @@ describe("meeting intelligence service", () => {
         status: "FAILED"
       });
     });
+  });
+
+  it("processes queued audio through the internal OpenAI media route without CRM mutation before review", async () => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const mediaBase64 = Buffer.from("fake-audio-recording").toString("base64");
+    const internalRouteUrl = `http://localhost${internalMeetingMediaExtractionRoutePath}`;
+
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL", internalRouteUrl);
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN", "internal-media-token");
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER", "openai");
+    vi.stubEnv("OPENAI_API_KEY", "openai-test-key");
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl === internalRouteUrl) {
+        return postInternalMeetingMediaExtract(new Request(requestUrl, init));
+      }
+      if (requestUrl === "https://api.openai.com/v1/audio/transcriptions") {
+        const formData = init?.body as FormData;
+        expect(formData.get("model")).toBe("gpt-4o-transcribe");
+        expect(formData.get("response_format")).toBe("json");
+        return Response.json({
+          text: [
+            `Transcript for ${fx.recordsA.deal.title}.`,
+            "Current WMS has inventory pain.",
+            "Action: send SOW by 2030-04-05."
+          ].join("\n")
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${requestUrl}`);
+    });
+
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-01\nAttendees: Alpha Contact",
+      fileBase64: mediaBase64,
+      hints: { dealId: fx.recordsA.deal.id },
+      originalFilename: "call.mp3",
+      originalMimeType: "audio/mpeg"
+    });
+
+    expect(intake.status).toBe("EXTRACTING");
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+    await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-internal-route-test" })).resolves.toMatchObject({
+      claimed: 1,
+      failed: 0,
+      succeeded: 1
+    });
+
+    const reloaded = await fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } });
+    const draft = reloaded.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    expect(reloaded.status).toBe("READY_FOR_REVIEW");
+    expect(reloaded.rawText).toContain("Action: send SOW by 2030-04-05.");
+    expect(reloaded.markdownText).toContain("## User Context");
+    expect(draft.sourceMetadata).toMatchObject({
+      extractionMethod: "provider-transcription",
+      providerId: "openai",
+      providerName: "OpenAI media extraction",
+      sourceType: "audio"
+    });
+    expect(JSON.stringify(draft.matchedObjects)).toContain(fx.recordsA.deal.id);
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("keeps video explicitly unsupported when the internal OpenAI media provider is selected", async () => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL", `http://localhost${internalMeetingMediaExtractionRoutePath}`);
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN", "internal-media-token");
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER", "openai");
+    vi.stubEnv("OPENAI_API_KEY", "openai-test-key");
+
+    const intake = await createMeetingIntake(fx.actorA, {
+      fileBase64: Buffer.from("fake-video").toString("base64"),
+      originalFilename: "recording.mp4",
+      originalMimeType: "video/mp4"
+    });
+
+    expect(intake.status).toBe("FAILED");
+    expect(intake.errorMessage).toMatch(/does not process video yet/);
+    await expect(fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" } })).resolves.toBe(0);
+    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
   });
 
   it.each([

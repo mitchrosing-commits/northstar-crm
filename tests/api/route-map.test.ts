@@ -210,7 +210,8 @@ describe("workspace API routing", () => {
       "/api/v1/workspaces/:workspaceId/exports/deals",
       "/api/v1/workspaces/:workspaceId/exports/activities",
       "/api/v1/workspaces/:workspaceId/exports/products",
-      "/api/v1/workspaces/:workspaceId/exports/quotes"
+      "/api/v1/workspaces/:workspaceId/exports/quotes",
+      "/api/internal/meeting-intelligence/media-extract"
     ]) {
       expect(routeMap).toContain(path);
     }

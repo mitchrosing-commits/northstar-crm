@@ -397,6 +397,12 @@ describe("production readiness foundation", () => {
     expect(envExample).toContain("RESEND_API_KEY=");
     expect(envExample).toContain("GOOGLE_OAUTH_CLIENT_ID=");
     expect(envExample).toContain("MICROSOFT_OAUTH_CLIENT_ID=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_MEDIA_PROVIDER=");
+    expect(envExample).toContain("OPENAI_API_KEY=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_OPENAI_VISION_MODEL=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_OPENAI_TRANSCRIPTION_MODEL=");
     expect(envExample).toContain("EMAIL_TOKEN_ENCRYPTION_KEY=");
     expect(readinessDoc).toContain("Required Environment");
     expect(readinessDoc).toContain("Production Local-Auth Checklist");
@@ -404,6 +410,9 @@ describe("production readiness foundation", () => {
     expect(readinessDoc).toContain("Set `AUTH_MODE=local`.");
     expect(readinessDoc).toContain("Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` for direct Resend delivery");
     expect(readinessDoc).toContain("or set `AUTH_EMAIL_WEBHOOK_URL` to a provider-neutral `https` webhook endpoint");
+    expect(readinessDoc).toContain("set this to the app's absolute `/api/internal/meeting-intelligence/media-extract` URL");
+    expect(readinessDoc).toContain("Set to `openai` to use Northstar's first-party OpenAI media extraction adapter.");
+    expect(readinessDoc).toContain("required by the internal OpenAI media extraction route");
     expect(readinessDoc).toContain("Webhook URLs must not include embedded username/password credentials");
     expect(readinessDoc).toContain("OAuth redirect URIs must use public `https` callback hosts in production");
     expect(readinessDoc).toContain("must not include embedded username/password credentials");
