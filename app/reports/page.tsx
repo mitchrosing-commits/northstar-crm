@@ -82,7 +82,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   const viewActivitiesLabel = "View activities from reports";
   const createFollowUpLabel = "Create follow-up activity from reports";
   const findQuotesLabel = "Find deals with quotes from reports";
-  const viewOpenDealsLabel = "View open deals from reports";
+  const viewTopOpenDealsLabel = "View top open deals from reports";
   const createDealLabel = "Create deal from reports";
   const viewOrganizationsLabel = "View organizations from reports";
 
@@ -352,7 +352,12 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         <div className="panel">
           <PanelTitleRow
             actions={
-              <Link aria-label={viewOpenDealsLabel} className="inline-link" href="/deals?status=OPEN" title={viewOpenDealsLabel}>
+              <Link
+                aria-label={viewTopOpenDealsLabel}
+                className="inline-link"
+                href="/deals?status=OPEN"
+                title={viewTopOpenDealsLabel}
+              >
                 View open deals
               </Link>
             }

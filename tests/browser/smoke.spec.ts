@@ -57,6 +57,11 @@ test.describe("Northstar CRM browser smoke", () => {
     const leadHref = await firstDetailHref(page, "/leads", "/leads/");
     const contactHref = await firstDetailHref(page, "/contacts", "/contacts/");
     const organizationHref = await firstDetailHref(page, "/organizations", "/organizations/");
+    const activityEditHref = await firstActivityEditHref(page);
+    const contactEditHref = `${contactHref}/edit`;
+    const dealEditHref = `${dealHref}/edit`;
+    const leadEditHref = `${leadHref}/edit`;
+    const organizationEditHref = `${organizationHref}/edit`;
 
     await page.context().clearCookies();
     await expectPageReady(page, "/login", { requireAppShell: false });
@@ -77,19 +82,24 @@ test.describe("Northstar CRM browser smoke", () => {
       "/deals",
       "/deals/new",
       dealHref,
+      dealEditHref,
       communicationDealPath,
       "/leads",
       "/leads/new",
       leadHref,
+      leadEditHref,
       "/meeting-intelligence",
       "/contacts",
       "/contacts/new",
       contactHref,
+      contactEditHref,
       "/organizations",
       "/organizations/new",
       organizationHref,
+      organizationEditHref,
       "/activities",
       "/activities/new",
+      activityEditHref,
       "/email",
       "/products",
       "/reports",
@@ -248,7 +258,8 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Quote Status Summary" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Top Open Deals" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Top Organizations" })).toBeVisible();
-        await expect(page.getByRole("link", { name: "View open deals from reports" })).toBeVisible();
+        await expect(page.getByRole("link", { name: "View open deals from reports" })).toHaveCount(1);
+        await expect(page.getByRole("link", { name: "View top open deals from reports" })).toBeVisible();
       }
     }
   });
@@ -638,9 +649,13 @@ test.describe("Northstar CRM browser smoke", () => {
       organizationHref,
       "/activities",
       "/email",
+      "/products",
+      "/reports",
+      "/meeting-intelligence",
       "/search?q=orbit",
       "/settings",
       "/settings/import-export",
+      "/settings/developer-api",
       "/custom-fields"
     ]) {
       await expectPageReady(page, path);
@@ -861,6 +876,19 @@ async function firstQuoteHref(page: Page) {
 
     return values[0] ?? null;
   });
+}
+
+async function firstActivityEditHref(page: Page) {
+  await expectPageReady(page, "/activities");
+  const href = await page.locator('a[href^="/activities/"][href$="/edit"]').evaluateAll((links) => {
+    const values = links
+      .map((link) => link.getAttribute("href"))
+      .filter((value): value is string => Boolean(value));
+
+    return values[0] ?? null;
+  });
+  expect(href, "Expected activities list to include a seeded activity edit link").toBeTruthy();
+  return href;
 }
 
 async function expectPageReady(page: Page, path: string, options: { requireAppShell?: boolean } = {}) {
