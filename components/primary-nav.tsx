@@ -66,7 +66,7 @@ export function PrimaryNav() {
                     title={navItemLabel}
                   >
                     <Icon size={17} aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span className="nav-item-label">{item.label}</span>
                   </Link>
                 </li>
               );

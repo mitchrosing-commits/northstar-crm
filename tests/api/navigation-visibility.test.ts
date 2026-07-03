@@ -26,6 +26,7 @@ describe("main navigation visibility", () => {
     expect(primaryNav).toContain("const navItemLabel = primaryNavItemLabel(item.label, isActive);");
     expect(primaryNav).toContain("aria-label={navItemLabel}");
     expect(primaryNav).toContain("title={navItemLabel}");
+    expect(primaryNav).toContain('className="nav-item-label"');
     expect(primaryNav).toContain("function primaryNavItemLabel(label: string, isActive: boolean)");
     expect(primaryNav).toContain("return isActive ? `Current section: ${label}` : `Go to ${label}`;");
     expect(appShell).toContain("const settingsActionLabel = `Open workspace settings for ${workspace.name}`;");
@@ -159,6 +160,12 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain(".sidebar-quick-actions");
     expect(globalStyles).toContain(".sidebar-quick-action-grid");
     expect(globalStyles).toContain(".sidebar-quick-action-icon");
+    expect(globalStyles).toContain(".nav-item-label");
+    expect(globalStyles).toContain("text-overflow: ellipsis;");
+    expect(globalStyles).toContain("white-space: nowrap;");
+    expect(globalStyles).toContain("word-break: keep-all;");
+    expect(globalStyles).toContain(".nav-item-active::before");
+    expect(globalStyles).toContain("background: var(--accent);");
     expect(globalStyles).toContain("overflow-wrap: anywhere;");
   });
 

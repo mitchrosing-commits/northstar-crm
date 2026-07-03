@@ -153,10 +153,13 @@ textarea {
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 36px;
+  min-width: 0;
+  border: 1px solid transparent;
   padding: 8px 10px;
   border-radius: 8px;
   color: var(--muted);
@@ -168,17 +171,41 @@ textarea {
     box-shadow 140ms ease;
 }
 
+.nav-item svg {
+  flex: 0 0 auto;
+}
+
+.nav-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
 .nav-item:hover {
   background: var(--surface-muted);
   color: var(--muted-strong);
 }
 
 .nav-item-active {
-  background: var(--surface);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: var(--accent-soft);
   color: var(--text);
   box-shadow:
-    inset 3px 0 0 var(--accent),
     var(--shadow-soft);
+}
+
+.nav-item-active::before {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 4px;
+  border-radius: 0 999px 999px 0;
+  background: var(--accent);
+  content: "";
 }
 
 .sidebar-command {
