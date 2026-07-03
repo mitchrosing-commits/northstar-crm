@@ -71,6 +71,8 @@ export type MeetingSourceMetadata = {
   pageCount?: number;
   processor: string;
   processorCapability?: ProcessorCapability;
+  providerId?: string;
+  providerName?: string;
   requiredProvider?: MeetingSourceProviderRequirement;
   sourceType: MeetingSourceType;
   statusMessage?: string;

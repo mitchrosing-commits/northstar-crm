@@ -73,6 +73,7 @@ function sourceSection(sourceType: MeetingSourceType, originalFilename?: string 
     metadata?.extractionMethod ? `- Extraction method: ${metadata.extractionMethod}` : "",
     metadata?.conversionMode ? `- Conversion: ${conversionLabel(metadata.conversionMode)}` : "",
     metadata?.processor ? `- Processor: ${metadata.processor}` : "",
+    metadata?.providerName ? `- Provider: ${metadata.providerName}` : metadata?.providerId ? `- Provider: ${metadata.providerId}` : "",
     metadata?.statusMessage ? `- Processor status: ${metadata.statusMessage}` : "",
     ...(metadata?.warnings ?? []).map((warning) => `- Warning: ${warning}`)
   ].filter(Boolean);

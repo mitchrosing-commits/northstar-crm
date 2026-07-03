@@ -2,6 +2,7 @@ import { ApiError } from "@/lib/api/responses";
 import { parseCsv } from "@/lib/csv";
 import { join } from "node:path";
 
+import { isMediaProviderSourceType, mediaProviderRequiredMessage, type MediaExtractionProvider } from "./media-providers";
 import { detectMeetingSource } from "./source-detection";
 import type { ExtractedMeetingText, MeetingSourceType, SourceDetectionResult } from "./types";
 
@@ -17,6 +18,10 @@ type ExtractMeetingTextInput = {
   text?: unknown;
 };
 
+type ExtractMeetingTextOptions = {
+  mediaProvider?: MediaExtractionProvider | null;
+};
+
 type MeetingSourceProcessor = {
   extract(input: ExtractMeetingTextInput): Promise<ExtractedMeetingText>;
   name: string;
@@ -25,7 +30,10 @@ type MeetingSourceProcessor = {
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type PdfDocumentLoadingTask = ReturnType<PdfJsModule["getDocument"]>;
 
-export async function extractMeetingText(input: ExtractMeetingTextInput): Promise<ExtractedMeetingText> {
+export async function extractMeetingText(
+  input: ExtractMeetingTextInput,
+  options: ExtractMeetingTextOptions = {}
+): Promise<ExtractedMeetingText> {
   const rawText = readText(input.fileText) ?? readText(input.text);
   const detection = detectMeetingSource({
     explicitSourceType: input.explicitSourceType,
@@ -36,10 +44,51 @@ export async function extractMeetingText(input: ExtractMeetingTextInput): Promis
   const processor = getMeetingSourceProcessor(detection.sourceType);
 
   if (detection.capability !== "supported") {
+    if (isMediaProviderSourceType(detection.sourceType)) {
+      return extractWithMediaProvider(input, detection.sourceType, options.mediaProvider);
+    }
     throw unavailableExtractorError(detection);
   }
 
   return processor.extract(input);
+}
+
+async function extractWithMediaProvider(
+  input: ExtractMeetingTextInput,
+  sourceType: "audio" | "image" | "video",
+  mediaProvider: MediaExtractionProvider | null | undefined
+): Promise<ExtractedMeetingText> {
+  if (!mediaProvider?.supports(sourceType)) {
+    throw new ApiError("MEETING_INTAKE_PROVIDER_NOT_CONFIGURED", mediaProviderRequiredMessage(sourceType), 422);
+  }
+  const bytes = readFileBytes(input.fileBase64, sourceType.toUpperCase() as "AUDIO" | "IMAGE" | "VIDEO");
+  const result = await mediaProvider.extract({
+    bytes: new Uint8Array(bytes),
+    filename: readText(input.filename),
+    mimeType: readText(input.mimeType),
+    sourceType
+  });
+  const rawText = result.text.trim();
+  if (!rawText) throw new ApiError("MEETING_INTAKE_PROVIDER_EMPTY_RESULT", "Meeting media extraction provider returned no text.", 422);
+  return {
+    metadata: {
+      byteLength: bytes.byteLength,
+      conversionMode: "provider_required",
+      extractionMethod: sourceType === "image" ? "provider-ocr" : "provider-transcription",
+      filename: readText(input.filename),
+      mimeType: readText(input.mimeType),
+      processor: result.providerId,
+      processorCapability: "supported",
+      providerId: result.providerId,
+      providerName: result.providerName,
+      sourceType,
+      warnings: result.warnings,
+      wordCount: wordCount(rawText)
+    },
+    rawText,
+    sourceType,
+    warnings: result.warnings
+  };
 }
 
 export function getMeetingSourceProcessor(sourceType: MeetingSourceType): MeetingSourceProcessor {
@@ -297,7 +346,7 @@ async function extractDocx(input: ExtractMeetingTextInput): Promise<ExtractedMee
   }
 }
 
-function readFileBytes(value: unknown, label: "DOCX" | "PDF") {
+function readFileBytes(value: unknown, label: "AUDIO" | "DOCX" | "IMAGE" | "PDF" | "VIDEO") {
   const fileBase64 = readText(value);
 
   if (!fileBase64) {

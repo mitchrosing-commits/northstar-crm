@@ -533,6 +533,7 @@ function sourceMetadataDetails(metadata: MeetingSourceMetadata) {
     metadata.wordCount ? `${metadata.wordCount} words` : null,
     metadata.extractionMethod ? `method: ${metadata.extractionMethod}` : null,
     metadata.conversionMode ? `conversion: ${conversionDisplay(metadata.conversionMode)}` : null,
+    metadata.providerName ? `provider: ${metadata.providerName}` : metadata.providerId ? `provider: ${metadata.providerId}` : null,
     `processor: ${metadata.processor}`
   ].filter((item): item is string => Boolean(item));
 }

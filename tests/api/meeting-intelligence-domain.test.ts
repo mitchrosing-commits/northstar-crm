@@ -4,6 +4,7 @@ import { ApiError } from "@/lib/api/responses";
 import { analyzeMeetingIntelligence } from "@/lib/meeting-intelligence/analyze";
 import { extractMeetingText } from "@/lib/meeting-intelligence/extractors";
 import { normalizeMeetingMarkdown } from "@/lib/meeting-intelligence/markdown-normalizer";
+import { createConfiguredMeetingMediaProvider, getMeetingMediaProviderReadiness } from "@/lib/meeting-intelligence/media-providers";
 import { deterministicMeetingAnalysisProvider } from "@/lib/meeting-intelligence/providers";
 import { detectMeetingSource } from "@/lib/meeting-intelligence/source-detection";
 import { formatMeetingIntakeFailureMessage } from "@/lib/services/meeting-intelligence-service";
@@ -48,6 +49,91 @@ describe("meeting intelligence source detection", () => {
     await expect(extractMeetingText({ filename: "recording.mp4" })).rejects.toThrow(/media processing provider/);
     await expect(extractMeetingText({ filename: "review.pptx" })).rejects.toThrow(/dedicated local presentation parser/);
     await expect(extractMeetingText({ filename: "actions.xlsx" })).rejects.toThrow(/dedicated local spreadsheet parser/);
+  });
+
+  it.each([
+    ["image", "whiteboard.png", "image/png", "provider-ocr"],
+    ["audio", "call.mp3", "audio/mpeg", "provider-transcription"],
+    ["video", "recording.mp4", "video/mp4", "provider-transcription"]
+  ] as const)("uses an injected media provider for real %s extraction results", async (sourceType, filename, mimeType, extractionMethod) => {
+    const extracted = await extractMeetingText(
+      {
+        explicitSourceType: sourceType,
+        fileBase64: Buffer.from("fake-image-bytes").toString("base64"),
+        filename,
+        mimeType
+      },
+      {
+        mediaProvider: {
+          id: "test-vision",
+          name: "Test media provider",
+          supports: (candidate) => candidate === sourceType,
+          async extract() {
+            return {
+              providerId: "test-vision",
+              providerName: "Test media provider",
+              text: "Decision: approve WMS discovery.\nAction: send SOW by 2030-04-05.",
+              warnings: ["Low contrast whiteboard photo."]
+            };
+          }
+        }
+      }
+    );
+
+    expect(extracted.rawText).toContain("Action: send SOW by 2030-04-05.");
+    expect(extracted.metadata).toMatchObject({
+      conversionMode: "provider_required",
+      extractionMethod,
+      processor: "test-vision",
+      providerName: "Test media provider",
+      sourceType
+    });
+    expect(extracted.warnings).toEqual(["Low contrast whiteboard photo."]);
+  });
+
+  it("surfaces media provider configuration readiness and HTTP adapter behavior", async () => {
+    expect(getMeetingMediaProviderReadiness({})).toMatchObject({
+      configured: false,
+      supportedSourceTypes: []
+    });
+    const fetchCalls: unknown[] = [];
+    const provider = createConfiguredMeetingMediaProvider(
+      {
+        MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN: "provider-token",
+        MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL: "https://provider.example.test/extract"
+      },
+      async (url, init) => {
+        fetchCalls.push({ init, url });
+        return Response.json({
+          text: "Transcript: Action: schedule UAT workshop by 2030-04-05.",
+          warnings: ["Provider normalized background noise."]
+        });
+      }
+    );
+
+    expect(provider).toBeTruthy();
+    await expect(
+      provider?.extract({
+        bytes: new Uint8Array([1, 2, 3]),
+        filename: "call.mp3",
+        mimeType: "audio/mpeg",
+        sourceType: "audio"
+      })
+    ).resolves.toMatchObject({
+      providerId: "provider-http",
+      text: "Transcript: Action: schedule UAT workshop by 2030-04-05.",
+      warnings: ["Provider normalized background noise."]
+    });
+    expect(fetchCalls[0]).toMatchObject({
+      url: "https://provider.example.test/extract",
+      init: {
+        headers: {
+          Authorization: "Bearer provider-token",
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      }
+    });
   });
 
   it("includes local/provider processor metadata in detection results", () => {

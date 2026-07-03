@@ -1,5 +1,7 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { JobStatus } from "@prisma/client";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { runJobsOnce } from "@/lib/jobs/run-once";
 import {
   applyMeetingIntake,
   createMeetingIntake
@@ -21,7 +23,9 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await fixture?.prisma.meetingActivityAssociation.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
+  await fixture?.prisma.job.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.meetingIntake.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceA.id, entityType: "MeetingIntake" } });
   await fixture?.prisma.note.deleteMany({
@@ -544,6 +548,109 @@ describe("meeting intelligence service", () => {
     await expect(crmMutationCounts(fx)).resolves.toEqual(before);
   });
 
+  it("queues provider-configured image extraction and turns provider text into a reviewable proposal without CRM mutation", async () => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const mediaBase64 = Buffer.from("fake-whiteboard-image").toString("base64");
+
+    await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+      vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          fileBase64: mediaBase64,
+          filename: "whiteboard.png",
+          mimeType: "image/png",
+          sourceType: "image"
+        });
+        return Response.json({
+          text: [
+            `Whiteboard notes for ${fx.recordsA.deal.title}.`,
+            "Current WMS has inventory pain.",
+            "Action: send SOW by 2030-04-05."
+          ].join("\n"),
+          warnings: ["OCR confidence medium."]
+        });
+      });
+
+      const intake = await createMeetingIntake(fx.actorA, {
+        contextText: "Meeting date: 2030-04-01\nAttendees: Alpha Contact",
+        fileBase64: mediaBase64,
+        hints: { dealId: fx.recordsA.deal.id },
+        originalFilename: "whiteboard.png",
+        originalMimeType: "image/png"
+      });
+
+      expect(intake.status).toBe("EXTRACTING");
+      expect(intake.analysisJson).toMatchObject({
+        processorStatus: {
+          capability: "provider_required",
+          conversionMode: "provider_required",
+          extractionMethod: "provider-required",
+          message: "Queued for Configured media extraction provider extraction.",
+          sourceType: "image"
+        },
+        providerReadiness: {
+          configured: true,
+          providerId: "provider-http"
+        }
+      });
+      await expect(fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, status: JobStatus.PENDING } })).resolves.toBe(1);
+      await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+
+      await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-test" })).resolves.toMatchObject({
+        claimed: 1,
+        failed: 0,
+        succeeded: 1
+      });
+      const reloaded = await fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } });
+      const draft = reloaded.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+      expect(reloaded.status).toBe("READY_FOR_REVIEW");
+      expect(reloaded.errorMessage).toBeNull();
+      expect(reloaded.rawText).toContain("Action: send SOW by 2030-04-05.");
+      expect(reloaded.markdownText).toContain("## User Context");
+      expect(reloaded.markdownText).toContain("- Provider: Configured media extraction provider");
+      expect(draft.sourceMetadata).toMatchObject({
+        extractionMethod: "provider-ocr",
+        providerId: "provider-http",
+        providerName: "Configured media extraction provider",
+        sourceType: "image"
+      });
+      expect(draft.warnings).toContain("OCR confidence medium.");
+      expect(JSON.stringify(draft.matchedObjects)).toContain(fx.recordsA.deal.id);
+      await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+    });
+  });
+
+  it("keeps provider failures retryable through the job queue and readable on the intake", async () => {
+    const fx = currentFixture();
+    await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+      vi.stubGlobal("fetch", async () => {
+        throw new Error("provider unavailable");
+      });
+      const intake = await createMeetingIntake(fx.actorA, {
+        fileBase64: Buffer.from("fake-audio").toString("base64"),
+        originalFilename: "call.mp3",
+        originalMimeType: "audio/mpeg"
+      });
+      const job = await fx.prisma.job.findFirstOrThrow({ where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" } });
+
+      await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-provider-failure-test" })).resolves.toMatchObject({
+        claimed: 1,
+        failed: 1,
+        succeeded: 0
+      });
+      await expect(fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } })).resolves.toMatchObject({
+        attempts: 1,
+        status: JobStatus.PENDING
+      });
+      await expect(fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } })).resolves.toMatchObject({
+        errorMessage: "Meeting media extraction provider request failed.",
+        status: "FAILED"
+      });
+    });
+  });
+
   it.each([
     ["review.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx", /presentation parser/],
     ["tracker.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx", /spreadsheet parser/]
@@ -589,26 +696,29 @@ describe("meeting intelligence service", () => {
   ) => {
     const fx = currentFixture();
     const before = await crmMutationCounts(fx);
-    const intake = await createMeetingIntake(fx.actorA, {
-      contextText: "Meeting date: 2030-04-20",
-      originalFilename: filename,
-      originalMimeType: mimeType
-    });
-
-    expect(intake.status).toBe("FAILED");
-    expect(intake.errorMessage).toMatch(errorPattern);
-    expect(intake.analysisJson).toMatchObject({
-      processorStatus: {
-        capability: "provider_required",
-        conversionMode: "provider_required",
-        extractionMethod: "provider-required",
+    await withMeetingMediaProviderEnv(undefined, async () => {
+      const intake = await createMeetingIntake(fx.actorA, {
+        contextText: "Meeting date: 2030-04-20",
+        fileBase64: Buffer.from("fake-media").toString("base64"),
         originalFilename: filename,
-        originalMimeType: mimeType,
-        requiredProvider,
-        sourceType
-      }
+        originalMimeType: mimeType
+      });
+
+      expect(intake.status).toBe("FAILED");
+      expect(intake.errorMessage).toMatch(errorPattern);
+      expect(intake.analysisJson).toMatchObject({
+        processorStatus: {
+          capability: "provider_required",
+          conversionMode: "provider_required",
+          extractionMethod: "provider-required",
+          originalFilename: filename,
+          originalMimeType: mimeType,
+          requiredProvider,
+          sourceType
+        }
+      });
+      await expect(crmMutationCounts(fx)).resolves.toEqual(before);
     });
-    await expect(crmMutationCounts(fx)).resolves.toEqual(before);
   });
 
   it("persists scanned PDF failures as OCR provider-required without creating CRM updates", async () => {
@@ -675,4 +785,31 @@ async function crmMutationCounts(fx: Fixture) {
     associations: await fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } }),
     notes: await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })
   };
+}
+
+async function withMeetingMediaProviderEnv(url: string | undefined, callback: () => Promise<void>) {
+  const previousUrl = process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL;
+  const previousToken = process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN;
+  if (url) {
+    process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL = url;
+    process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN = "test-provider-token";
+  } else {
+    delete process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL;
+    delete process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN;
+  }
+
+  try {
+    await callback();
+  } finally {
+    if (previousUrl === undefined) {
+      delete process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL;
+    } else {
+      process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL = previousUrl;
+    }
+    if (previousToken === undefined) {
+      delete process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN;
+    } else {
+      process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN = previousToken;
+    }
+  }
 }

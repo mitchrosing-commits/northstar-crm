@@ -35,6 +35,7 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceForm).toContain("Deferred: PPTX, XLSX, whiteboard images, audio, video, scanned PDFs");
     expect(meetingIntelligenceForm).toContain("Text, RTF, HTML, CSV, JSON, and markdown files extract locally before review.");
     expect(meetingIntelligenceForm).toContain("PPTX decks are not locally parsed yet.");
+    expect(meetingIntelligenceForm).toContain("Images and whiteboards queue OCR/vision extraction when a provider is configured");
     expect(meetingIntelligenceForm).toContain("Scanned PDFs stop with an OCR or vision provider requirement.");
     expect(meetingIntelligencePage).toContain("import { CompactList }");
     expect(meetingIntelligencePage).toContain(
@@ -160,6 +161,8 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceDetailPage).toContain("Provider boundary");
     expect(meetingIntelligenceDetailPage).toContain("Required provider");
     expect(meetingIntelligenceDetailPage).toContain("Provider-required conversion");
+    expect(meetingIntelligenceDetailPage).toContain('title="Extraction queued"');
+    expect(meetingIntelligenceDetailPage).toContain("Status message");
     expect(meetingIntelligenceDetailPage).toContain(
       'className="empty-state-compact"',
     );

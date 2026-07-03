@@ -65,7 +65,10 @@ describe("global workspace search", () => {
     expect(sidebarCommand).toContain("htmlFor={searchInputId}");
     expect(sidebarCommand).toContain("id={searchInputId}");
     expect(sidebarCommand).toContain("id={searchHelperId}");
-    expect(sidebarCommand).toContain("<Link aria-label={actionTitle} href={action.href}");
+    expect(sidebarCommand).toContain("const isActive = quickActionMatchesPathname(pathname, action.href)");
+    expect(sidebarCommand).toContain("aria-current={isActive ? \"page\" : undefined}");
+    expect(sidebarCommand).toContain("aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}");
+    expect(sidebarCommand).toContain("href={action.href}");
     expect(sidebarCommand).toContain("getCrmCreateActionDefinition(action.href)");
     expect(sidebarCommand).toContain("createSidebarHelperForQuery(createMetadata, searchValue)");
     expect(sidebarCommand).toContain("sidebarCreateActionIcons[createMetadata.href]");
@@ -73,8 +76,8 @@ describe("global workspace search", () => {
     expect(sidebarCommand).not.toContain("function sidebarCreateActionPath");
     expect(sidebarCommand).not.toContain("map((action, index)");
     expect(sidebarCommand).toContain("const actionTitle = `${action.label}: ${action.helper}`");
-    expect(sidebarCommand).toContain("aria-label={actionTitle}");
     expect(sidebarCommand).toContain("title={actionTitle}");
+    expect(sidebarCommand).toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
     expect(sidebarCommand).toContain("Create actions are prefilled from this search.");
     expect(sidebarCommand).toContain("aria-label=\"Active workspace search\"");
     expect(sidebarCommand).toContain("className=\"sidebar-current-query\"");

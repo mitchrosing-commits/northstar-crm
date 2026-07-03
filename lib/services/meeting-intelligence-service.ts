@@ -4,6 +4,14 @@ import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { extractMeetingText } from "@/lib/meeting-intelligence/extractors";
 import { normalizeMeetingMarkdown } from "@/lib/meeting-intelligence/markdown-normalizer";
+import {
+  createConfiguredMeetingMediaProvider,
+  getMeetingMediaProviderReadiness,
+  isMediaProviderSourceType,
+  mediaProviderRequiredMessage,
+  meetingMediaExtractionJobType,
+  type MediaExtractionProvider
+} from "@/lib/meeting-intelligence/media-providers";
 import { matchMeetingCrmObjects, type MatchRecordHints } from "@/lib/meeting-intelligence/match-records";
 import { deterministicMeetingAnalysisProvider } from "@/lib/meeting-intelligence/providers";
 import { detectMeetingSource, normalizeSourceType } from "@/lib/meeting-intelligence/source-detection";
@@ -23,6 +31,7 @@ import { redactSensitiveText } from "@/lib/security/redaction";
 
 import { createActivity } from "./activity-service";
 import { createNote } from "./note-service";
+import { enqueueJob } from "./job-service";
 import { userDisplaySelect } from "./user-select";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 
@@ -35,6 +44,20 @@ type CreateMeetingIntakeInput = {
   originalMimeType?: unknown;
   text?: unknown;
   hints?: unknown;
+};
+
+type NormalizedCreateMeetingIntakeInput = ReturnType<typeof normalizeCreateMeetingIntakeInput>;
+
+export type MeetingMediaExtractionJobPayload = {
+  actorUserId: string;
+  contextText?: string;
+  fileBase64: string;
+  hints?: MatchRecordHints;
+  intakeId: string;
+  originalFilename?: string;
+  originalMimeType?: string;
+  sourceType: "audio" | "image" | "video";
+  workspaceId: string;
 };
 
 export async function listMeetingIntakes(actor: WorkspaceActor) {
@@ -121,6 +144,15 @@ export async function createMeetingIntake(actor: WorkspaceActor, data: CreateMee
     }
   });
 
+  if (isMediaProviderSourceType(detection.sourceType)) {
+    return queueOrFailMediaMeetingIntake(
+      actor,
+      intake.id,
+      input,
+      detection as SourceDetectionResult & { sourceType: "audio" | "image" | "video" }
+    );
+  }
+
   try {
     const extracted = await extractMeetingText({
       explicitSourceType: detection.sourceType,
@@ -130,72 +162,234 @@ export async function createMeetingIntake(actor: WorkspaceActor, data: CreateMee
       mimeType: input.originalMimeType,
       text: input.text
     });
-    const normalized = normalizeMeetingMarkdown({
-      contextText: input.contextText,
-      metadata: extracted.metadata,
-      originalFilename: input.originalFilename,
-      rawText: extracted.rawText,
-      sourceType: extracted.sourceType
-    });
-    await prisma.meetingIntake.update({
-      where: { id: intake.id },
-      data: {
-        markdownText: normalized.markdown,
-        rawText: extracted.rawText,
-        status: MeetingIntakeStatus.ANALYZING
-      }
-    });
-    const matches = await matchMeetingCrmObjects(actor, {
-      contextText: input.contextText,
-      hints: input.hints,
-      markdownText: normalized.markdown
-    });
-    const draft = await deterministicMeetingAnalysisProvider.analyzeMeetingMarkdown({
-      contextText: input.contextText,
-      markdown: normalized.markdown,
-      sourceMetadata: extracted.metadata,
-      ...matches
-    });
-    draft.warnings = [...extracted.warnings, ...draft.warnings];
-    const updated = await prisma.meetingIntake.update({
-      where: { id: intake.id },
-      data: {
-        analysisJson: toJson({
-          detection,
-          extractionWarnings: extracted.warnings,
-          metadata: extracted.metadata,
-          processorStatus: buildProcessorStatus(detection, input, { extracted }),
-          sections: normalized.sections
-        }),
-        proposedChangesJson: toJson(draft),
-        status: MeetingIntakeStatus.READY_FOR_REVIEW
-      }
-    });
+    const updated = await finishMeetingIntakeExtraction(actor, intake.id, input, detection, extracted);
     await writeAuditLog(actor, "meeting_intake.created", "MeetingIntake", intake.id, {
       sourceType: detection.sourceType,
       status: updated.status
     });
     return updated;
   } catch (error) {
-    const message = formatMeetingIntakeFailureMessage(error);
-    const failed = await prisma.meetingIntake.update({
-      where: { id: intake.id },
-      data: {
-        analysisJson: toJson({
-          detection,
-          failureCode: error instanceof ApiError ? error.code : undefined,
-          processorStatus: buildProcessorStatus(detection, input, { error, message })
-        }),
-        errorMessage: message,
-        status: MeetingIntakeStatus.FAILED
-      }
-    });
+    const failed = await failMeetingIntake(intake.id, input, detection, error);
     await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intake.id, {
       sourceType: detection.sourceType,
-      message
+      message: failed.errorMessage
     });
     return failed;
   }
+}
+
+async function queueOrFailMediaMeetingIntake(
+  actor: WorkspaceActor,
+  intakeId: string,
+  input: NormalizedCreateMeetingIntakeInput,
+  detection: SourceDetectionResult & { sourceType: "audio" | "image" | "video" }
+) {
+  const providerReadiness = getMeetingMediaProviderReadiness();
+  if (!input.fileBase64) {
+    const failed = await failMeetingIntake(
+      intakeId,
+      input,
+      detection,
+      new ApiError("MEETING_INTAKE_PROCESSOR_FAILED", `${detection.sourceType.toUpperCase()} extraction requires uploaded file content.`, 422)
+    );
+    await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intakeId, {
+      sourceType: detection.sourceType,
+      message: failed.errorMessage
+    });
+    return failed;
+  }
+
+  if (!providerReadiness.configured) {
+    const failed = await failMeetingIntake(
+      intakeId,
+      input,
+      detection,
+      new ApiError("MEETING_INTAKE_PROVIDER_NOT_CONFIGURED", mediaProviderRequiredMessage(detection.sourceType), 422)
+    );
+    await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intakeId, {
+      sourceType: detection.sourceType,
+      message: failed.errorMessage
+    });
+    return failed;
+  }
+
+  const job = await enqueueJob({
+    dedupeKey: `meeting-intake:${intakeId}:extract-media`,
+    maxAttempts: 3,
+    payload: toJson({
+      actorUserId: actor.actorUserId,
+      contextText: input.contextText,
+      fileBase64: input.fileBase64,
+      hints: input.hints,
+      intakeId,
+      originalFilename: input.originalFilename,
+      originalMimeType: input.originalMimeType,
+      sourceType: detection.sourceType,
+      workspaceId: actor.workspaceId
+    }),
+    type: meetingMediaExtractionJobType,
+    workspaceId: actor.workspaceId
+  });
+  const queued = await prisma.meetingIntake.update({
+    where: { id: intakeId },
+    data: {
+      analysisJson: toJson({
+        detection,
+        processorStatus: buildProcessorStatus(detection, input, {
+          message: `Queued for ${providerReadiness.providerName ?? "media provider"} extraction.`
+        }),
+        providerReadiness,
+        queuedJobId: job.id
+      }),
+      status: MeetingIntakeStatus.EXTRACTING
+    }
+  });
+  await writeAuditLog(actor, "meeting_intake.extraction_queued", "MeetingIntake", intakeId, {
+    jobId: job.id,
+    providerId: providerReadiness.providerId,
+    sourceType: detection.sourceType
+  });
+  return queued;
+}
+
+export async function processMeetingIntakeMediaExtractionJob(
+  payload: unknown,
+  options: { mediaProvider?: MediaExtractionProvider | null } = {}
+) {
+  const input = parseMeetingMediaExtractionJobPayload(payload);
+  const actor = { actorUserId: input.actorUserId, workspaceId: input.workspaceId };
+  await ensureWorkspaceAccess(actor);
+  const intake = await prisma.meetingIntake.findFirst({
+    where: { id: input.intakeId, workspaceId: input.workspaceId },
+    select: { id: true, status: true }
+  });
+  if (!intake) throw new Error("Invalid meeting media extraction job payload.");
+  if (intake.status === MeetingIntakeStatus.READY_FOR_REVIEW || intake.status === MeetingIntakeStatus.APPLIED) return;
+
+  const normalizedInput: NormalizedCreateMeetingIntakeInput = {
+    contextText: input.contextText,
+    explicitSourceType: input.sourceType,
+    fileBase64: input.fileBase64,
+    fileText: undefined,
+    hints: input.hints ?? {},
+    originalFilename: input.originalFilename,
+    originalMimeType: input.originalMimeType,
+    text: undefined
+  };
+  const detection = detectMeetingSource({
+    explicitSourceType: input.sourceType,
+    filename: input.originalFilename,
+    mimeType: input.originalMimeType
+  }) as SourceDetectionResult & { sourceType: "audio" | "image" | "video" };
+
+  await prisma.meetingIntake.update({
+    where: { id: intake.id },
+    data: {
+      analysisJson: toJson({
+        detection,
+        processorStatus: buildProcessorStatus(detection, normalizedInput, { message: "Provider extraction is running." })
+      }),
+      errorMessage: null,
+      status: MeetingIntakeStatus.EXTRACTING
+    }
+  });
+
+  try {
+    const mediaProvider = options.mediaProvider ?? createConfiguredMeetingMediaProvider();
+    const extracted = await extractMeetingText(
+      {
+        explicitSourceType: detection.sourceType,
+        fileBase64: input.fileBase64,
+        filename: input.originalFilename,
+        mimeType: input.originalMimeType
+      },
+      { mediaProvider }
+    );
+    const updated = await finishMeetingIntakeExtraction(actor, intake.id, normalizedInput, detection, extracted);
+    await writeAuditLog(actor, "meeting_intake.created", "MeetingIntake", intake.id, {
+      sourceType: detection.sourceType,
+      status: updated.status
+    });
+  } catch (error) {
+    await failMeetingIntake(intake.id, normalizedInput, detection, error);
+    await writeAuditLog(actor, "meeting_intake.failed", "MeetingIntake", intake.id, {
+      sourceType: detection.sourceType,
+      message: formatMeetingIntakeFailureMessage(error)
+    });
+    throw error;
+  }
+}
+
+async function finishMeetingIntakeExtraction(
+  actor: WorkspaceActor,
+  intakeId: string,
+  input: NormalizedCreateMeetingIntakeInput,
+  detection: SourceDetectionResult,
+  extracted: ExtractedMeetingText
+) {
+  const normalized = normalizeMeetingMarkdown({
+    contextText: input.contextText,
+    metadata: extracted.metadata,
+    originalFilename: input.originalFilename,
+    rawText: extracted.rawText,
+    sourceType: extracted.sourceType
+  });
+  await prisma.meetingIntake.update({
+    where: { id: intakeId },
+    data: {
+      errorMessage: null,
+      markdownText: normalized.markdown,
+      rawText: extracted.rawText,
+      status: MeetingIntakeStatus.ANALYZING
+    }
+  });
+  const matches = await matchMeetingCrmObjects(actor, {
+    contextText: input.contextText,
+    hints: input.hints,
+    markdownText: normalized.markdown
+  });
+  const draft = await deterministicMeetingAnalysisProvider.analyzeMeetingMarkdown({
+    contextText: input.contextText,
+    markdown: normalized.markdown,
+    sourceMetadata: extracted.metadata,
+    ...matches
+  });
+  draft.warnings = [...extracted.warnings, ...draft.warnings];
+  return prisma.meetingIntake.update({
+    where: { id: intakeId },
+    data: {
+      analysisJson: toJson({
+        detection,
+        extractionWarnings: extracted.warnings,
+        metadata: extracted.metadata,
+        processorStatus: buildProcessorStatus(detection, input, { extracted }),
+        sections: normalized.sections
+      }),
+      proposedChangesJson: toJson(draft),
+      status: MeetingIntakeStatus.READY_FOR_REVIEW
+    }
+  });
+}
+
+async function failMeetingIntake(
+  intakeId: string,
+  input: NormalizedCreateMeetingIntakeInput,
+  detection: SourceDetectionResult,
+  error: unknown
+) {
+  const message = formatMeetingIntakeFailureMessage(error);
+  return prisma.meetingIntake.update({
+    where: { id: intakeId },
+    data: {
+      analysisJson: toJson({
+        detection,
+        failureCode: error instanceof ApiError ? error.code : undefined,
+        processorStatus: buildProcessorStatus(detection, input, { error, message })
+      }),
+      errorMessage: message,
+      status: MeetingIntakeStatus.FAILED
+    }
+  });
 }
 
 export async function applyMeetingIntake(actor: WorkspaceActor, intakeId: string, data: unknown) {
@@ -438,6 +632,8 @@ type MeetingIntakeProcessorStatus = {
   originalFilename?: string;
   originalMimeType?: string;
   processor?: string;
+  providerId?: string;
+  providerName?: string;
   requiredProvider?: MeetingSourceProviderRequirement;
   sourceType: MeetingSourceType;
   warnings?: string[];
@@ -467,6 +663,8 @@ function buildProcessorStatus(
   if (input.originalFilename) status.originalFilename = input.originalFilename;
   if (input.originalMimeType) status.originalMimeType = input.originalMimeType;
   if (extracted?.metadata.processor) status.processor = extracted.metadata.processor;
+  if (extracted?.metadata.providerId) status.providerId = extracted.metadata.providerId;
+  if (extracted?.metadata.providerName) status.providerName = extracted.metadata.providerName;
   if (result.error instanceof ApiError) status.failureCode = result.error.code;
   if (message) status.message = message;
   if (requiredProvider) status.requiredProvider = requiredProvider;
@@ -485,6 +683,37 @@ function normalizeCreateMeetingIntakeInput(data: CreateMeetingIntakeInput) {
     originalFilename: normalizeOptionalText(input.originalFilename, 255),
     originalMimeType: normalizeOptionalText(input.originalMimeType, 255),
     text: normalizeOptionalText(input.text, 120_000)
+  };
+}
+
+function parseMeetingMediaExtractionJobPayload(payload: unknown): MeetingMediaExtractionJobPayload {
+  const input = objectInput(payload);
+  const actorUserId = normalizeOptionalText(input.actorUserId, 120);
+  const fileBase64 = normalizeOptionalBase64(input.fileBase64, 12_000_000);
+  const intakeId = normalizeOptionalText(input.intakeId, 120);
+  const sourceType = input.sourceType;
+  const workspaceId = normalizeOptionalText(input.workspaceId, 120);
+
+  if (
+    !actorUserId ||
+    !fileBase64 ||
+    !intakeId ||
+    !(sourceType === "audio" || sourceType === "image" || sourceType === "video") ||
+    !workspaceId
+  ) {
+    throw new Error("Invalid meeting media extraction job payload.");
+  }
+
+  return {
+    actorUserId,
+    contextText: normalizeOptionalText(input.contextText, 20_000),
+    fileBase64,
+    hints: normalizeHints(input.hints),
+    intakeId,
+    originalFilename: normalizeOptionalText(input.originalFilename, 255),
+    originalMimeType: normalizeOptionalText(input.originalMimeType, 255),
+    sourceType,
+    workspaceId
   };
 }
 

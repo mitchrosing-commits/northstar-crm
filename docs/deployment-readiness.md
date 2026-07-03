@@ -80,7 +80,7 @@ To enable hosted password reset email delivery on Railway:
    - Webhook fallback: `AUTH_EMAIL_WEBHOOK_URL`, optional `AUTH_EMAIL_WEBHOOK_TOKEN`, and optional `AUTH_EMAIL_FROM`.
 3. Create a second Railway service from the same repo, for example `northstar-worker`.
 4. Use the same Railway PostgreSQL `DATABASE_URL` reference as the web service.
-5. Give the worker the same runtime secrets needed by the web app, including `AUTH_MODE`, `AUTH_SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables being used.
+5. Give the worker the same runtime secrets needed by the web app, including `AUTH_MODE`, `AUTH_SESSION_SECRET`, `APP_BASE_URL`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, any `AUTH_EMAIL_*` webhook variables being used, and `MEETING_INTELLIGENCE_MEDIA_PROVIDER_*` variables if media extraction is enabled.
 6. Set `RAILWAY_SERVICE_ROLE=worker` on the worker service. The shared `railway.json` start command runs `npm run railway:start`, which dispatches to `npm run jobs:work` for worker services.
 7. Leave the web service `RAILWAY_SERVICE_ROLE` unset or set it to `web`; it will dispatch to `next start`.
 8. Deploy the web service first so migrations run, then deploy or restart the worker. The same pre-deploy migration command may run on both services and is idempotent.
@@ -108,6 +108,8 @@ Optional:
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`: optional Gmail / Google Workspace OAuth configuration. The documented `GOOGLE_OAUTH_*` names take precedence over the shorter Google aliases `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` when both are present. Gmail Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured.
 - `MICROSOFT_OAUTH_CLIENT_ID`, `MICROSOFT_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_TENANT_ID`, `MICROSOFT_OAUTH_REDIRECT_URI`: optional Microsoft 365 / Outlook OAuth configuration. The shorter `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and `MICROSOFT_REDIRECT_URI` aliases are also accepted. Microsoft Connect becomes available only when these values and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured. `MICROSOFT_OAUTH_TENANT_ID` is optional and defaults to `common`; when set, use a tenant id/domain such as `organizations`, `consumers`, a tenant GUID, or `contoso.onmicrosoft.com`, not a path-like value.
 - `EMAIL_TOKEN_ENCRYPTION_KEY`: secret used to derive AES-256-GCM keys for email OAuth token encryption. It must decode to at least 32 bytes. Raw 32+ character strings work for local setup; production should use a random secret.
+- `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL`: optional provider-neutral HTTPS endpoint for Meeting Intelligence image OCR and audio/video transcription. When set, media intakes queue `meeting_intake.extract_media` jobs and the worker sends JSON with `sourceType`, `filename`, `mimeType`, and `fileBase64`.
+- `MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN`: optional bearer token sent to `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL`. Do not embed credentials in the provider URL.
 - `DEV_ACTOR_EMAIL`: temporary development actor email. Defaults to `alex@example.test`.
 - `DEV_WORKSPACE_SLUG`: temporary development workspace slug. Defaults to `northstar-revenue`.
 - `SEED_LOGIN_PASSWORD`: optional local/demo seed password for the seeded users. Defaults to `northstar-demo`.

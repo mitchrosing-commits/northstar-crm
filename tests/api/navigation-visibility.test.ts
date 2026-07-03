@@ -45,6 +45,9 @@ describe("main navigation visibility", () => {
   it("keeps global search and quick actions available from the app shell", () => {
     expect(appShell).toContain("<SidebarCommand globalSearchDefaultValue={globalSearchDefaultValue} />");
     expect(sidebarCommand).toContain("export function SidebarCommand");
+    expect(sidebarCommand).toContain("\"use client\";");
+    expect(sidebarCommand).toContain('import { usePathname } from "next/navigation"');
+    expect(sidebarCommand).toContain("const pathname = usePathname() ?? \"\"");
     expect(sidebarCommand).toContain("sidebar-command");
     expect(sidebarCommand).toContain('const globalActionsLabel = "Global actions"');
     expect(sidebarCommand).toContain("aria-label={globalActionsLabel}");
@@ -86,9 +89,11 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain('<ActionGroup className="sidebar-quick-actions" label={quickActionsLabel}>');
     expect(sidebarCommand).toContain("sidebarJumpNavigationItems.map((item) => ({");
     expect(sidebarCommand).toContain("sidebarJumpActionIcons[item.icon]");
-    expect(sidebarCommand).toContain("<Link aria-label={actionTitle} href={action.href}");
+    expect(sidebarCommand).toContain("const isActive = quickActionMatchesPathname(pathname, action.href);");
+    expect(sidebarCommand).toContain("aria-current={isActive ? \"page\" : undefined}");
+    expect(sidebarCommand).toContain("aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}");
+    expect(sidebarCommand).toContain("className={isActive ? \"sidebar-quick-action sidebar-quick-action-active\" : \"sidebar-quick-action\"}");
     expect(sidebarCommand).toContain("const actionTitle = `${action.label}: ${action.helper}`");
-    expect(sidebarCommand).toContain("aria-label={actionTitle}");
     expect(sidebarCommand).toContain("title={actionTitle}");
     expect(sidebarCommand).toContain("buildSearchCreateActions(globalSearchDefaultValue)");
     expect(sidebarCommand).toContain("getCrmCreateActionDefinition(action.href)");
@@ -116,6 +121,8 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("title={clearSearchActionLabel}");
     expect(sidebarCommand).toContain("function clearSearchLabel(searchValue: string)");
     expect(sidebarCommand).toContain("return `Clear workspace search for ${searchValue}`;");
+    expect(sidebarCommand).toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
+    expect(sidebarCommand).toContain("const hrefPath = String(href).split(\"?\")[0];");
     expect(sidebarCommand).toContain("sidebar-quick-action-group");
     expect(sidebarCommand).toContain("className=\"sidebar-quick-action-group\" aria-labelledby={headingId} key={group.label} role=\"group\"");
     expect(sidebarCommand).toContain("const headingId = `sidebar-quick-actions-${group.label.toLowerCase()}`");
@@ -159,6 +166,7 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain(".sidebar-current-query-clear");
     expect(globalStyles).toContain(".sidebar-quick-actions");
     expect(globalStyles).toContain(".sidebar-quick-action-grid");
+    expect(globalStyles).toContain(".sidebar-quick-action-active");
     expect(globalStyles).toContain(".sidebar-quick-action-icon");
     expect(globalStyles).toContain(".nav-item-label");
     expect(globalStyles).toContain("text-overflow: ellipsis;");
@@ -166,7 +174,7 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain("word-break: keep-all;");
     expect(globalStyles).toContain(".nav-item-active::before");
     expect(globalStyles).toContain("background: var(--accent);");
-    expect(globalStyles).toContain("overflow-wrap: anywhere;");
+    expect(globalStyles).toContain("overflow-wrap: normal;");
   });
 
   it("prevents the fixed desktop sidebar from hiding lower navigation items", () => {

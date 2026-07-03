@@ -47,51 +47,7 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
       {intake.status === "FAILED" ? (
         <section className="panel">
           <FormErrorMessage>{intake.errorMessage ?? "Meeting intake failed."}</FormErrorMessage>
-          {analysis?.processorStatus ? (
-            <CompactList>
-              <CompactListItem>
-                <strong>{analysis.processorStatus.capability === "provider_required" ? "Provider boundary" : "Source details"}</strong>
-                <span className="muted">
-                  {[
-                    analysis.processorStatus.sourceType ? sourceTypeLabel(analysis.processorStatus.sourceType) : null,
-                    analysis.processorStatus.originalFilename,
-                    analysis.processorStatus.originalMimeType
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </CompactListItem>
-              <CompactListItem>
-                <strong>Processor status</strong>
-                <span className="muted">
-                  {[
-                    capabilityLabel(analysis.processorStatus.capability),
-                    conversionLabel(analysis.processorStatus.conversionMode),
-                    analysis.processorStatus.extractionMethod
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </CompactListItem>
-              {analysis.processorStatus.requiredProvider ? (
-                <CompactListItem>
-                  <strong>Required provider</strong>
-                  <span className="muted">{providerLabel(analysis.processorStatus.requiredProvider)}</span>
-                </CompactListItem>
-              ) : null}
-              {analysis.processorStatus.failureCode ? (
-                <CompactListItem>
-                  <strong>Failure code</strong>
-                  <span className="muted">{analysis.processorStatus.failureCode}</span>
-                </CompactListItem>
-              ) : null}
-              {analysis.processorStatus.warnings?.map((warning) => (
-                <CompactListItem key={warning}>
-                  <Badge>{warning}</Badge>
-                </CompactListItem>
-              ))}
-            </CompactList>
-          ) : null}
+          <ProcessorStatusList processorStatus={analysis?.processorStatus} />
           <ActionGroup className="form-actions" label={failedActionsLabel}>
             <Link
               aria-label={createAnotherActionLabel}
@@ -112,6 +68,15 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
           status={intake.status}
           workspaceId={workspace.id}
         />
+      ) : intake.status === "EXTRACTING" ? (
+        <section className="panel">
+          <EmptyState
+            className="empty-state-compact"
+            description="This intake is waiting for provider extraction. Run the background worker to process queued media jobs, then refresh this page."
+            title="Extraction queued"
+          />
+          <ProcessorStatusList processorStatus={analysis?.processorStatus} />
+        </section>
       ) : (
         <section className="panel">
           <EmptyState
@@ -141,6 +106,7 @@ type IntakeAnalysisJson = {
     conversionMode?: string;
     extractionMethod?: string;
     failureCode?: string;
+    message?: string;
     originalFilename?: string;
     originalMimeType?: string;
     requiredProvider?: string;
@@ -152,6 +118,53 @@ type IntakeAnalysisJson = {
 function parseAnalysis(value: unknown): IntakeAnalysisJson | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as IntakeAnalysisJson;
+}
+
+function ProcessorStatusList({ processorStatus }: { processorStatus?: IntakeAnalysisJson["processorStatus"] }) {
+  if (!processorStatus) return null;
+  return (
+    <CompactList>
+      <CompactListItem>
+        <strong>{processorStatus.capability === "provider_required" ? "Provider boundary" : "Source details"}</strong>
+        <span className="muted">
+          {[processorStatus.sourceType ? sourceTypeLabel(processorStatus.sourceType) : null, processorStatus.originalFilename, processorStatus.originalMimeType]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+      </CompactListItem>
+      <CompactListItem>
+        <strong>Processor status</strong>
+        <span className="muted">
+          {[capabilityLabel(processorStatus.capability), conversionLabel(processorStatus.conversionMode), processorStatus.extractionMethod]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+      </CompactListItem>
+      {processorStatus.requiredProvider ? (
+        <CompactListItem>
+          <strong>Required provider</strong>
+          <span className="muted">{providerLabel(processorStatus.requiredProvider)}</span>
+        </CompactListItem>
+      ) : null}
+      {processorStatus.failureCode ? (
+        <CompactListItem>
+          <strong>Failure code</strong>
+          <span className="muted">{processorStatus.failureCode}</span>
+        </CompactListItem>
+      ) : null}
+      {processorStatus.message ? (
+        <CompactListItem>
+          <strong>Status message</strong>
+          <span className="muted">{processorStatus.message}</span>
+        </CompactListItem>
+      ) : null}
+      {processorStatus.warnings?.map((warning) => (
+        <CompactListItem key={warning}>
+          <Badge>{warning}</Badge>
+        </CompactListItem>
+      ))}
+    </CompactList>
+  );
 }
 
 function sourceTypeLabel(value: string) {

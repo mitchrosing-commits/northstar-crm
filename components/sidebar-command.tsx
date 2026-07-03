@@ -1,3 +1,5 @@
+"use client";
+
 import {
   BarChart3,
   BrainCircuit,
@@ -18,6 +20,7 @@ import {
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useId } from "react";
 
 import { ActionGroup } from "@/components/action-group";
@@ -74,6 +77,7 @@ const searchFormLabel = "Search workspace records";
 const submitSearchLabel = "Submit workspace search";
 
 export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps) {
+  const pathname = usePathname() ?? "";
   const generatedSearchId = useId();
   const searchInputId = `${generatedSearchId}-global-search`;
   const searchHelperId = `${generatedSearchId}-sidebar-command-helper`;
@@ -168,8 +172,16 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
                 {group.actions.map((action) => {
                   const Icon = action.icon;
                   const actionTitle = `${action.label}: ${action.helper}`;
+                  const isActive = quickActionMatchesPathname(pathname, action.href);
                   return (
-                    <Link aria-label={actionTitle} href={action.href} key={`${group.label}-${action.href}`} title={actionTitle}>
+                    <Link
+                      aria-current={isActive ? "page" : undefined}
+                      aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}
+                      className={isActive ? "sidebar-quick-action sidebar-quick-action-active" : "sidebar-quick-action"}
+                      href={action.href}
+                      key={`${group.label}-${action.href}`}
+                      title={actionTitle}
+                    >
                       <span className="sidebar-quick-action-icon">
                         <Icon size={14} aria-hidden="true" />
                       </span>
@@ -195,4 +207,9 @@ function clearSearchLabel(searchValue: string) {
 
 function sidebarSearchListHelper(label: string, searchValue: string) {
   return `Find "${searchValue}" in ${label.toLowerCase()}`;
+}
+
+function quickActionMatchesPathname(pathname: string, href: Route) {
+  const hrefPath = String(href).split("?")[0];
+  return pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
 }

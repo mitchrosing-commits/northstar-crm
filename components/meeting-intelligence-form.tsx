@@ -85,15 +85,18 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
       return;
     }
     if (file.type.startsWith("image/") || /\.(jpe?g|png)$/i.test(file.name)) {
-      setFileNotice("Images and whiteboards require an OCR or vision provider. The intake will record that boundary clearly.");
+      setFileBase64(arrayBufferToBase64(await file.arrayBuffer()));
+      setFileNotice("Images and whiteboards queue OCR/vision extraction when a provider is configured; otherwise the intake explains the missing provider.");
       return;
     }
     if (file.type.startsWith("audio/") || /\.(m4a|mp3|wav)$/i.test(file.name)) {
-      setFileNotice("Audio recordings require a transcription provider. The intake will record that boundary clearly.");
+      setFileBase64(arrayBufferToBase64(await file.arrayBuffer()));
+      setFileNotice("Audio recordings queue transcription when a provider is configured; otherwise the intake explains the missing provider.");
       return;
     }
     if (file.type.startsWith("video/") || /\.(mov|mp4|webm)$/i.test(file.name)) {
-      setFileNotice("Video recordings require transcription or media processing. The intake will record that boundary clearly.");
+      setFileBase64(arrayBufferToBase64(await file.arrayBuffer()));
+      setFileNotice("Video recordings queue transcription/media extraction when a provider is configured; otherwise the intake explains the missing provider.");
       return;
     }
     setFileNotice("This file type is not supported yet and will fail with a clear processor requirement.");

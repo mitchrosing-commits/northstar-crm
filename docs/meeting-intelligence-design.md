@@ -36,12 +36,12 @@ Detected but deferred/provider-required:
 - `.pptx`: unsupported in this slice because there is no direct local presentation parser; export to PDF, DOCX, markdown, HTML, or text first
 - `.xlsx`: unsupported in this slice because there is no direct local spreadsheet parser; export to CSV, markdown, HTML, or text first
 - legacy `.doc`: unsupported; convert to `.docx` first
-- image/whiteboard: requires OCR or vision provider integration
-- audio: requires transcription provider integration
-- video: requires transcription or media-processing provider integration
+- image/whiteboard: queues OCR or vision extraction when `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL` is configured; otherwise fails with a clear provider-not-configured state
+- audio: queues transcription when `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL` is configured; otherwise fails with a clear provider-not-configured state
+- video: queues transcription or media-processing extraction when `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL` is configured; otherwise fails with a clear provider-not-configured state
 - unknown files: unsupported with a clear failure message
 
-The current app accepts uploaded PDF/DOCX bytes and text-style artifact content for synchronous extraction, then stores extracted text and markdown, not original binary files.
+The current app accepts uploaded PDF/DOCX bytes and text-style artifact content for synchronous extraction. Media bytes are stored only in the queued job payload long enough for provider extraction. Meeting Intelligence stores extracted text and markdown, not original binary files.
 
 ## Data Model
 
@@ -89,12 +89,13 @@ Reapplying an already-applied intake returns the stored result and does not dupl
 
 ## Future Provider / Job Boundary
 
-Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX process synchronously with bounded local extraction. Provider-required files are detected and persisted as failed/deferred intakes with clear processor status; they do not create fake markdown or CRM proposals. Future heavy processors should use the existing background job foundation once provider integrations exist:
+Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX process synchronously with bounded local extraction. Media files use the existing background job foundation when the provider-neutral HTTP adapter is configured:
 
-- `meeting_intake.extract`
-- `meeting_intake.analyze`
+- `meeting_intake.extract_media`
 
-Provider-backed processors should update intake status, store clear errors, and keep the same review-first apply contract.
+Configure `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL` to enable image OCR and audio/video transcription. Set optional `MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN` to send a bearer token. The provider receives JSON with `sourceType`, `filename`, `mimeType`, and `fileBase64`, and should return JSON with `text`, `transcript`, or `markdown` plus optional `warnings`, `confidence`, and `metadata`.
+
+Provider-backed processors update the intake from `EXTRACTING` to `READY_FOR_REVIEW` after successful markdown normalization, matching, and proposal generation. Provider failures are stored on the intake and left retryable through the job queue until the job reaches its configured max attempts. Provider-not-configured cases fail clearly and do not create fake markdown or CRM proposals.
 
 The default `deterministicMeetingAnalysisProvider` implements the `MeetingAnalysisProvider` contract with `analyzeMeetingMarkdown(input)`. Future AI providers should return structured review data with summary, evidence, warnings, confidence, entity candidates, proposed notes, and proposed next steps, but provider output must still be validated and reviewed before any CRM write.
 

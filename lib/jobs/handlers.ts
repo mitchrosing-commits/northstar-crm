@@ -4,10 +4,13 @@ import type { Job } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { isPasswordResetEmailConfigured, sendPasswordResetEmail } from "@/lib/email/auth-email";
+import { meetingMediaExtractionJobType } from "@/lib/meeting-intelligence/media-providers";
 import { enqueueJob } from "@/lib/services/job-service";
+import { processMeetingIntakeMediaExtractionJob } from "@/lib/services/meeting-intelligence-service";
 
 export const internalNoopJobType = "internal.noop";
 export const passwordResetEmailJobType = "auth.password_reset_email";
+export { meetingMediaExtractionJobType };
 
 export type JobHandlerInput = {
   job: Pick<Job, "attempts" | "id" | "maxAttempts" | "type" | "workspaceId">;
@@ -20,6 +23,7 @@ export type JobHandlerRegistry = Record<string, JobHandler>;
 
 export const jobHandlers = {
   [internalNoopJobType]: handleInternalNoopJob,
+  [meetingMediaExtractionJobType]: handleMeetingMediaExtractionJob,
   [passwordResetEmailJobType]: handlePasswordResetEmailJob
 } satisfies JobHandlerRegistry;
 
@@ -42,6 +46,10 @@ export async function enqueuePasswordResetEmailJob(input: { expiresAt: Date; res
 
 async function handleInternalNoopJob({ payload }: JobHandlerInput) {
   assertPlainObjectPayload(payload);
+}
+
+async function handleMeetingMediaExtractionJob({ payload }: JobHandlerInput) {
+  await processMeetingIntakeMediaExtractionJob(payload);
 }
 
 async function handlePasswordResetEmailJob({ now, payload }: JobHandlerInput) {

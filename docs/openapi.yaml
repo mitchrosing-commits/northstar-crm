@@ -362,7 +362,7 @@ components:
           nullable: true
     MeetingIntakeInput:
       type: object
-      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX sources process locally; scanned PDF/image/audio/video processors return clear provider-required failures with processor status metadata until integrations exist. PPTX and XLSX return clear conversion-required failures until a direct local parser exists.
+      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX/media bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX sources process locally. Image, audio, and video sources queue provider extraction when MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL is configured and return clear provider-not-configured or provider-failure states otherwise. Scanned PDFs still require OCR/vision support. PPTX and XLSX return clear conversion-required failures until a direct local parser exists.
       properties:
         explicitSourceType:
           type: string
@@ -385,7 +385,7 @@ components:
         fileBase64:
           type: string
           nullable: true
-          description: Base64-encoded file bytes for bounded local PDF/DOCX extraction. Original binary files are not stored.
+          description: Base64-encoded file bytes for bounded local PDF/DOCX extraction or queued image/audio/video provider extraction. Original binary files are not stored after extraction.
         hints:
           type: object
           additionalProperties: true
@@ -1259,7 +1259,7 @@ paths:
           $ref: "#/components/responses/Ok"
     post:
       summary: Create and analyze a meeting intake
-      description: Creates a persisted review record, extracts supported text/markdown/RTF/HTML/CSV/JSON/PDF/DOCX sources, matches CRM records, and stores a reviewable proposal without mutating CRM data. Failed/provider-required intakes persist detected source type, original filename/MIME when provided, extraction method, conversion mode, required provider, failure code, and warnings in analysis JSON. Empty source submissions return 422 before an intake record is created.
+      description: Creates a persisted review record, extracts supported text/markdown/RTF/HTML/CSV/JSON/PDF/DOCX sources synchronously, queues configured image/audio/video provider extraction, matches CRM records, and stores a reviewable proposal without mutating CRM data. Failed/provider-required intakes persist detected source type, original filename/MIME when provided, extraction method, conversion mode, required provider, failure code, and warnings in analysis JSON. Empty source submissions return 422 before an intake record is created.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:

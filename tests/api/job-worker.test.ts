@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   internalNoopJobType,
   jobHandlers,
+  meetingMediaExtractionJobType,
   parsePasswordResetEmailJobPayload,
   passwordResetEmailJobType
 } from "@/lib/jobs/handlers";
@@ -35,8 +36,9 @@ const packageJson = readFileSync(join(process.cwd(), "package.json"), "utf8");
 describe("single-run job worker shell", () => {
   it("keeps the handler registry explicit and limited to intended job types", () => {
     expect(internalNoopJobType).toBe("internal.noop");
+    expect(meetingMediaExtractionJobType).toBe("meeting_intake.extract_media");
     expect(passwordResetEmailJobType).toBe("auth.password_reset_email");
-    expect(Object.keys(jobHandlers)).toEqual([internalNoopJobType, passwordResetEmailJobType]);
+    expect(Object.keys(jobHandlers)).toEqual([internalNoopJobType, meetingMediaExtractionJobType, passwordResetEmailJobType]);
     expect(handlersSource).not.toContain("import(");
     expect(handlersSource).not.toContain("payload.type");
   });
