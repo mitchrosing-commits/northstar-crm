@@ -8,7 +8,9 @@ import {
   jobHandlers,
   meetingMediaExtractionJobType,
   parsePasswordResetEmailJobPayload,
-  passwordResetEmailJobType
+  parseWorkspaceInvitationEmailJobPayload,
+  passwordResetEmailJobType,
+  workspaceInvitationEmailJobType
 } from "@/lib/jobs/handlers";
 import { formatRunJobsOnceSummary, readRunJobsOnceCliOptions } from "@/lib/jobs/run-once-cli";
 import { defaultRunOnceWorkerId, normalizeRunOnceWorkerId } from "@/lib/jobs/run-once";
@@ -38,7 +40,13 @@ describe("single-run job worker shell", () => {
     expect(internalNoopJobType).toBe("internal.noop");
     expect(meetingMediaExtractionJobType).toBe("meeting_intake.extract_media");
     expect(passwordResetEmailJobType).toBe("auth.password_reset_email");
-    expect(Object.keys(jobHandlers)).toEqual([internalNoopJobType, meetingMediaExtractionJobType, passwordResetEmailJobType]);
+    expect(workspaceInvitationEmailJobType).toBe("workspace.invitation_email");
+    expect(Object.keys(jobHandlers)).toEqual([
+      internalNoopJobType,
+      meetingMediaExtractionJobType,
+      passwordResetEmailJobType,
+      workspaceInvitationEmailJobType
+    ]);
     expect(handlersSource).not.toContain("import(");
     expect(handlersSource).not.toContain("payload.type");
   });
@@ -87,6 +95,56 @@ describe("single-run job worker shell", () => {
       expect(message).toBe("Invalid password reset email job payload.");
       expect(message).not.toContain("secret-reset-token");
       expect(message).not.toContain("founder@example.test");
+    }
+  });
+
+  it("parses queued workspace invitation email payloads without leaking rejected values", () => {
+    expect(
+      parseWorkspaceInvitationEmailJobPayload({
+        invitationId: " invitation_1 ",
+        invitationUrl: " https://crm.example.test/workspaces/invitations/invitation_1 ",
+        invitedRoleLabel: " Member ",
+        inviterEmail: " owner@example.test ",
+        inviterName: " Owner User ",
+        to: " teammate@example.test ",
+        workspaceId: " workspace_1 ",
+        workspaceName: " Acme Workspace "
+      })
+    ).toEqual({
+      invitationId: "invitation_1",
+      invitationUrl: "https://crm.example.test/workspaces/invitations/invitation_1",
+      invitedRoleLabel: "Member",
+      inviterEmail: "owner@example.test",
+      inviterName: "Owner User",
+      to: "teammate@example.test",
+      workspaceId: "workspace_1",
+      workspaceName: "Acme Workspace"
+    });
+
+    for (const payload of [
+      null,
+      [],
+      {},
+      {
+        invitationId: "invitation_1",
+        invitationUrl: "https://crm.example.test/settings",
+        invitedRoleLabel: "Member",
+        to: "teammate@example.test",
+        workspaceId: "workspace_1",
+        workspaceName: "Acme Workspace"
+      },
+      {
+        invitationId: "invitation_1",
+        invitationUrl: "https://crm.example.test/workspaces/invitations/raw-invitation-token",
+        invitedRoleLabel: "Member",
+        to: "not-an-email",
+        workspaceId: "workspace_1",
+        workspaceName: "Acme Workspace"
+      }
+    ]) {
+      expect(() => parseWorkspaceInvitationEmailJobPayload(payload)).toThrow(
+        "Invalid workspace invitation email job payload."
+      );
     }
   });
 

@@ -125,17 +125,19 @@ describe("workspace invitations MVP", () => {
     expect(workspaceActions).toContain(
       "cookieStore.set(activeWorkspaceCookieName, workspace.id",
     );
-    expect(workspaceActions).toContain("Invitation record created for");
+    expect(workspaceActions).toContain("Invitation email queued.");
     expect(workspaceActions).toContain(
-      "Share the accept link from the pending invitations table.",
+      "Email delivery is not configured",
     );
     expect(settingsPage).toContain("Team / Workspace Invitations");
-    expect(settingsPage).toContain("Manual link sharing");
+    expect(settingsPage).toContain("Manual link fallback");
+    expect(settingsPage).toContain("Email delivery configured");
     expect(settingsPage).toContain("Invite a teammate by email.");
     expect(settingsPage).toContain("they can create one from the invite");
     expect(settingsPage).toContain(
-      "invitation email delivery is not configured",
+      "Invitation email delivery is not configured",
     );
+    expect(settingsPage).toContain("Invitation emails are queued for the background worker");
     expect(settingsPage).toContain(
       'aria-label="Pending workspace invitations table"',
     );
@@ -259,7 +261,7 @@ describe("workspace invitations MVP", () => {
     );
   });
 
-  it("documents no-email invitation limitations", () => {
+  it("documents invitation email delivery and manual fallback limitations", () => {
     expect(routeMap).toContain("GET /workspaces/invitations/:invitationId");
     expect(routeMap).toContain("createWorkspaceInvitationAction");
     expect(routeMap).toContain("acceptWorkspaceInvitationAction");
@@ -268,11 +270,10 @@ describe("workspace invitations MVP", () => {
     );
     expect(routeMap).toContain("removeWorkspaceMemberAction");
     expect(currentStatus).toContain("Workspace invitations");
+    expect(currentStatus).toContain("automatically queue invitation email");
+    expect(currentStatus).toContain("manual accept links remain visible");
     expect(currentStatus).toContain(
       "Owners/admins can remove non-admin workspace members",
-    );
-    expect(currentStatus).toContain(
-      "No invitation email delivery is implemented",
     );
     expect(currentStatus).toContain(
       "accepted invitations are idempotent only while the accepted membership still exists",

@@ -119,7 +119,7 @@ describe("settings admin UX patterns", () => {
     expect(settingsPage).not.toContain("No pending invitations.\n                    </td>");
     expect(inlineEmptyStateText).toContain("inline-empty-state-text");
     expect(settingsPage).toContain('import { Badge } from "@/components/badge"');
-    expect(settingsPage).toContain("actions={<Badge>Manual link sharing</Badge>}");
+    expect(settingsPage).toContain('actions={<Badge>{invitationEmailReadiness.configured ? "Email delivery configured" : "Manual link fallback"}</Badge>}');
     expect(settingsPage).toContain(
       '<Badge label={`${invitation.email} invited role: ${invitation.roleLabel}`}>',
     );

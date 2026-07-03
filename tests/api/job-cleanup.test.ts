@@ -88,10 +88,10 @@ describe("job cleanup command", () => {
       "It does not delete `PENDING` retryable jobs, `RUNNING` jobs, or non-terminal `FAILED` rows."
     );
     expect(deploymentReadiness).toContain(
-      "Cleanup output is aggregate-only and does not print payloads, reset URLs, tokens, recipient emails, dedupe keys, `lastError`, or secrets."
+      "Cleanup output is aggregate-only and does not print payloads, reset URLs, invitation URLs, tokens, recipient emails, dedupe keys, `lastError`, or secrets."
     );
     expect(deploymentReadiness).toContain(
-      "The status, run-once, continuous-worker, and cleanup commands print summary counts only and do not print payloads, reset URLs, tokens, recipient emails, or secrets."
+      "The status, run-once, continuous-worker, and cleanup commands print summary counts only and do not print payloads, reset URLs, invitation URLs, tokens, recipient emails, or secrets."
     );
     expect(backgroundJobsDesign).toContain(
       "The current retry path requeues retryable failures as `PENDING` with a future `runAt`."

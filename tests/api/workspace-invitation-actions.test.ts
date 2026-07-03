@@ -104,7 +104,7 @@ describe("workspace server actions", () => {
   });
 
   it("creates invitations through the workspace context and revalidates settings", async () => {
-    mocks.createWorkspaceInvitation.mockResolvedValue({ email: "teammate@example.test" });
+    mocks.createWorkspaceInvitation.mockResolvedValue({ email: "teammate@example.test", emailDeliveryStatus: "queued" });
 
     await expect(
       createWorkspaceInvitationAction(
@@ -114,7 +114,7 @@ describe("workspace server actions", () => {
     ).resolves.toEqual({
       email: "",
       role: "MEMBER",
-      message: "Invitation record created for teammate@example.test. Share the accept link from the pending invitations table."
+      message: "Invitation email queued. The accept link is also available in the pending invitations table. Invitee: teammate@example.test."
     });
 
     expect(mocks.createWorkspaceInvitation).toHaveBeenCalledWith(actor, {

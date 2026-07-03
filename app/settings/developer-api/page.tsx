@@ -160,7 +160,7 @@ const resourceAreas = [
   {
     title: "Background Jobs",
     status: "Internal",
-    description: "Job commands support password-reset email delivery and worker maintenance. No public job API is exposed.",
+    description: "Job commands support auth email delivery for password resets and workspace invitations plus worker maintenance. No public job API is exposed.",
     endpoints: ["npm run jobs:status", "npm run jobs:run-once", "npm run jobs:work", "npm run jobs:cleanup"]
   }
 ];

@@ -167,7 +167,7 @@ Avoid a no-op test job as the first production type unless the team wants to pro
 Domain services should not enqueue broad events until there is a real consumer. When consumers exist, likely sources are:
 
 - password reset requested -> enqueue `auth.password_reset_email`.
-- invitation created -> later invitation email delivery, still manual/link-only for now.
+- invitation created -> enqueue `workspace.invitation_email` when auth email delivery is configured, while keeping manual accept links visible as fallback.
 - activity due -> later reminders, deferred.
 - activity completed -> later automation/event feed, deferred.
 - deal won/lost -> later automations, webhooks, goals notifications, deferred.
@@ -250,7 +250,7 @@ Browser tests are not needed until there is a user-facing job UI, worker status 
 
 ## Background Jobs V1 Completion Plan
 
-Background Jobs v1 is runtime-complete for the current password-reset email queue: Northstar can run queued password-reset email delivery without a person repeatedly invoking `jobs:run-once`, can recover safely from interrupted workers, and has an explicit cleanup command for sensitive terminal job payloads. V1 still does not introduce new product workflows beyond `auth.password_reset_email`.
+Background Jobs v1 is runtime-complete for the current auth email queues: Northstar can run queued password-reset and workspace-invitation email delivery without a person repeatedly invoking `jobs:run-once`, can recover safely from interrupted workers, and has an explicit cleanup command for sensitive terminal job payloads. V1 still does not introduce a generic event outbox or automation runtime beyond explicit registered job handlers.
 
 ### Continuous Worker Command
 

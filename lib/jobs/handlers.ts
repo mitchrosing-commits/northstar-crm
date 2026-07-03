@@ -3,13 +3,19 @@ import { createHash } from "node:crypto";
 import type { Job } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
-import { isPasswordResetEmailConfigured, sendPasswordResetEmail } from "@/lib/email/auth-email";
+import {
+  isPasswordResetEmailConfigured,
+  isWorkspaceInvitationEmailConfigured,
+  sendPasswordResetEmail,
+  sendWorkspaceInvitationEmail
+} from "@/lib/email/auth-email";
 import { meetingMediaExtractionJobType } from "@/lib/meeting-intelligence/media-providers";
 import { enqueueJob } from "@/lib/services/job-service";
 import { processMeetingIntakeMediaExtractionJob } from "@/lib/services/meeting-intelligence-service";
 
 export const internalNoopJobType = "internal.noop";
 export const passwordResetEmailJobType = "auth.password_reset_email";
+export const workspaceInvitationEmailJobType = "workspace.invitation_email";
 export { meetingMediaExtractionJobType };
 
 export type JobHandlerInput = {
@@ -24,13 +30,25 @@ export type JobHandlerRegistry = Record<string, JobHandler>;
 export const jobHandlers = {
   [internalNoopJobType]: handleInternalNoopJob,
   [meetingMediaExtractionJobType]: handleMeetingMediaExtractionJob,
-  [passwordResetEmailJobType]: handlePasswordResetEmailJob
+  [passwordResetEmailJobType]: handlePasswordResetEmailJob,
+  [workspaceInvitationEmailJobType]: handleWorkspaceInvitationEmailJob
 } satisfies JobHandlerRegistry;
 
 export type PasswordResetEmailJobPayload = {
   expiresAt: string;
   resetUrl: string;
   to: string;
+};
+
+export type WorkspaceInvitationEmailJobPayload = {
+  invitationId: string;
+  invitationUrl: string;
+  invitedRoleLabel: string;
+  inviterEmail?: string;
+  inviterName?: string;
+  to: string;
+  workspaceId: string;
+  workspaceName: string;
 };
 
 export async function enqueuePasswordResetEmailJob(input: { expiresAt: Date; resetUrl: string; to: string }) {
@@ -40,6 +58,24 @@ export async function enqueuePasswordResetEmailJob(input: { expiresAt: Date; res
       expiresAt: input.expiresAt.toISOString(),
       resetUrl: input.resetUrl,
       to: input.to
+    }
+  });
+}
+
+export async function enqueueWorkspaceInvitationEmailJob(input: WorkspaceInvitationEmailJobPayload) {
+  return enqueueJob({
+    type: workspaceInvitationEmailJobType,
+    workspaceId: input.workspaceId,
+    dedupeKey: `workspace-invitation:${input.invitationId}:email`,
+    payload: {
+      invitationId: input.invitationId,
+      invitationUrl: input.invitationUrl,
+      invitedRoleLabel: input.invitedRoleLabel,
+      ...(input.inviterEmail ? { inviterEmail: input.inviterEmail } : {}),
+      ...(input.inviterName ? { inviterName: input.inviterName } : {}),
+      to: input.to,
+      workspaceId: input.workspaceId,
+      workspaceName: input.workspaceName
     }
   });
 }
@@ -67,6 +103,19 @@ async function handlePasswordResetEmailJob({ now, payload }: JobHandlerInput) {
   await sendPasswordResetEmail(input);
 }
 
+async function handleWorkspaceInvitationEmailJob({ payload }: JobHandlerInput) {
+  const input = parseWorkspaceInvitationEmailJobPayload(payload);
+  const deliveryConfigured = isWorkspaceInvitationEmailConfigured();
+  if (deliveryConfigured) {
+    assertWorkspaceInvitationUrlMatchesAppBaseUrl(input.invitationUrl);
+  }
+  if (!(await isWorkspaceInvitationStillPending(input))) return;
+  if (!deliveryConfigured) {
+    throw new Error("Workspace invitation email delivery is not configured.");
+  }
+  await sendWorkspaceInvitationEmail(input);
+}
+
 export function parsePasswordResetEmailJobPayload(payload: Job["payload"]) {
   if (!isRecord(payload)) {
     throw new Error("Invalid password reset email job payload.");
@@ -82,6 +131,37 @@ export function parsePasswordResetEmailJobPayload(payload: Job["payload"]) {
   }
 
   return { expiresAt, resetUrl, to };
+}
+
+export function parseWorkspaceInvitationEmailJobPayload(payload: Job["payload"]) {
+  if (!isRecord(payload)) {
+    throw new Error("Invalid workspace invitation email job payload.");
+  }
+
+  const invitationId = readNonEmpty(payload.invitationId);
+  const invitationUrl = readNonEmpty(payload.invitationUrl);
+  const invitedRoleLabel = readNonEmpty(payload.invitedRoleLabel);
+  const inviterEmail = readNonEmpty(payload.inviterEmail);
+  const inviterName = readNonEmpty(payload.inviterName);
+  const to = readNonEmpty(payload.to);
+  const workspaceId = readNonEmpty(payload.workspaceId);
+  const workspaceName = readNonEmpty(payload.workspaceName);
+
+  if (
+    !invitationId ||
+    !invitationUrl ||
+    !isValidWorkspaceInvitationUrl(invitationUrl) ||
+    !invitedRoleLabel ||
+    !to ||
+    !isValidRecipientEmail(to) ||
+    (inviterEmail && !isValidRecipientEmail(inviterEmail)) ||
+    !workspaceId ||
+    !workspaceName
+  ) {
+    throw new Error("Invalid workspace invitation email job payload.");
+  }
+
+  return { invitationId, invitationUrl, invitedRoleLabel, inviterEmail, inviterName, to, workspaceId, workspaceName };
 }
 
 function assertPlainObjectPayload(payload: Job["payload"]) {
@@ -110,6 +190,28 @@ function assertPasswordResetUrlMatchesAppBaseUrl(resetUrl: string) {
     }
   } catch {
     throw new Error("Invalid password reset email job payload.");
+  }
+}
+
+function assertWorkspaceInvitationUrlMatchesAppBaseUrl(invitationUrl: string) {
+  const appBaseUrl = readNonEmpty(process.env.APP_BASE_URL);
+
+  try {
+    if (!appBaseUrl) throw new Error("Missing APP_BASE_URL.");
+
+    const parsedInvitationUrl = new URL(invitationUrl);
+    const parsedAppBaseUrl = new URL(appBaseUrl);
+
+    if (
+      parsedInvitationUrl.username ||
+      parsedInvitationUrl.password ||
+      parsedInvitationUrl.origin !== parsedAppBaseUrl.origin ||
+      !isValidWorkspaceInvitationUrl(invitationUrl)
+    ) {
+      throw new Error("Unexpected workspace invitation URL.");
+    }
+  } catch {
+    throw new Error("Invalid workspace invitation email job payload.");
   }
 }
 
@@ -146,6 +248,21 @@ async function isPasswordResetTokenStillUsable(resetToken: string, now: Date) {
   return Boolean(stored && !stored.consumedAt && stored.expiresAt > now && !stored.user.deletedAt);
 }
 
+async function isWorkspaceInvitationStillPending(input: WorkspaceInvitationEmailJobPayload) {
+  const invitation = await prisma.workspaceInvitation.findFirst({
+    where: {
+      id: input.invitationId,
+      email: input.to,
+      workspaceId: input.workspaceId,
+      status: "PENDING",
+      workspace: { deletedAt: null }
+    },
+    select: { id: true }
+  });
+
+  return Boolean(invitation);
+}
+
 function hashPasswordResetToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -162,4 +279,18 @@ function readNonEmpty(value: unknown) {
 
 function isValidRecipientEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isValidWorkspaceInvitationUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      !url.username &&
+      !url.password &&
+      /^\/workspaces\/invitations\/[^/]+$/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
 }

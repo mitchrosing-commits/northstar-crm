@@ -72,7 +72,7 @@ describe("production readiness foundation", () => {
       ok: true,
       warnings: [
         "AUTH_MODE is not set; production runtime defaults to trusted-header and should set AUTH_USER_ID_HEADER explicitly.",
-        "Password reset email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL."
+        "Auth email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL."
       ],
       env: {
         databaseUrl: "postgresql://crm:crm@localhost:5432/crm_mvp",
@@ -129,7 +129,7 @@ describe("production readiness foundation", () => {
       ok: false,
       errors: [
         "APP_BASE_URL must use https: in production when AUTH_EMAIL_WEBHOOK_URL is set.",
-        "APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."
+        "APP_BASE_URL must be a public https URL in production when auth email delivery is configured."
       ]
     });
     expect(
@@ -141,7 +141,7 @@ describe("production readiness foundation", () => {
       })
     ).toEqual({
       ok: false,
-      errors: ["APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."]
+      errors: ["APP_BASE_URL must be a public https URL in production when auth email delivery is configured."]
     });
     expect(
       validateRuntimeEnv({
@@ -241,7 +241,7 @@ describe("production readiness foundation", () => {
       ok: true,
       warnings: [
         "AUTH_MODE is not set; production runtime defaults to trusted-header and should set AUTH_USER_ID_HEADER explicitly.",
-        "Password reset email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL."
+        "Auth email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL."
       ]
     });
     expect(
@@ -420,17 +420,17 @@ describe("production readiness foundation", () => {
     expect(readme).toContain("MICROSOFT_CLIENT_ID");
     expect(readme).toContain("MICROSOFT_CLIENT_SECRET");
     expect(readme).toContain("MICROSOFT_REDIRECT_URI");
-    expect(readinessDoc).toContain("Railway Password Reset Email Worker");
+    expect(readinessDoc).toContain("Railway Auth Email Worker");
     expect(readinessDoc).toContain("A minimal Railway deployment configuration is included for hosted preview use.");
     expect(readinessDoc).toContain("Other hosting providers still need their own service, database, migration, worker, and secret-management setup.");
     expect(readinessDoc).not.toContain("No hosting-provider-specific deployment configuration is included.");
     expect(readinessDoc).toContain("Set `RAILWAY_SERVICE_ROLE=worker` on the worker service.");
     expect(readinessDoc).toContain("npm run railway:start");
-    expect(readinessDoc).toContain("Without a worker or scheduled one-off job run, reset email jobs stay queued");
+    expect(readinessDoc).toContain("Without a worker or scheduled one-off job run, queued auth email jobs stay queued");
     expect(readinessDoc).toContain("when `APP_BASE_URL` can build an absolute reset URL from a public HTTPS origin");
     expect(readinessDoc).toContain("public HTTPS app URL");
-    expect(readinessDoc).toContain("password reset email delivery is reported as disabled unless `APP_BASE_URL` is configured");
-    expect(readinessDoc).toContain("queues a password-reset-only email job");
+    expect(readinessDoc).toContain("auth email delivery is reported as disabled unless `APP_BASE_URL` is configured");
+    expect(readinessDoc).toContain("queues an `auth.password_reset_email` job");
     expect(readinessDoc).toContain("npm run jobs:run-once");
     expect(readinessDoc).toContain("npm run prisma:deploy");
     expect(readinessDoc).toContain("npm run build");

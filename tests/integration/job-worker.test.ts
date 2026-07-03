@@ -6,6 +6,7 @@ import {
   internalNoopJobType,
   jobHandlers,
   passwordResetEmailJobType,
+  workspaceInvitationEmailJobType,
   type JobHandlerRegistry
 } from "@/lib/jobs/handlers";
 import { runJobsOnce } from "@/lib/jobs/run-once";
@@ -408,6 +409,86 @@ describe("single-run job worker", () => {
           })
         })
       );
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("processes queued workspace invitation email jobs through the Resend sender when configured", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: "Northstar <onboarding@resend.dev>",
+      AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email",
+      RESEND_API_KEY: "resend-key"
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "email-id" }), { status: 200 }));
+    const now = new Date("2030-03-02T13:01:00.000Z");
+    const invitation = await crm.createWorkspaceInvitation(fx.actorA, {
+      email: `queued-invite-${fx.workspaceA.id}@example.test`,
+      role: "ADMIN"
+    });
+    const job = await fx.prisma.job.findFirstOrThrow({
+      where: { workspaceId: fx.workspaceA.id, type: workspaceInvitationEmailJobType }
+    });
+    await fx.prisma.job.update({ where: { id: job.id }, data: { runAt: now } });
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-workspace-invitation-resend", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded.status).toBe(JobStatus.SUCCEEDED);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.resend.com/emails",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining(`https://crm.example.test/workspaces/invitations/${invitation.id}`)
+        })
+      );
+      const [, requestInit] = fetchMock.mock.calls[0];
+      const body = JSON.parse(String(requestInit?.body));
+      const headers = new Headers(requestInit?.headers);
+      expect(body).toMatchObject({
+        from: "Northstar <onboarding@resend.dev>",
+        subject: `You're invited to ${fx.workspaceA.name} on Northstar CRM`,
+        to: invitation.email
+      });
+      expect(body.text).toContain("Invited role: Admin.");
+      expect(body.text).toContain(fx.userA.email);
+      expect(headers.get("authorization")).toBe("Bearer resend-key");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("skips queued workspace invitation email jobs after an invitation is revoked", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: "Northstar <onboarding@resend.dev>",
+      RESEND_API_KEY: "resend-key"
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "email-id" }), { status: 200 }));
+    const now = new Date("2030-03-02T13:02:00.000Z");
+    const invitation = await crm.createWorkspaceInvitation(fx.actorA, {
+      email: `revoked-invite-${fx.workspaceA.id}@example.test`,
+      role: "MEMBER"
+    });
+    const job = await fx.prisma.job.findFirstOrThrow({
+      where: { workspaceId: fx.workspaceA.id, type: workspaceInvitationEmailJobType }
+    });
+    await fx.prisma.job.update({ where: { id: job.id }, data: { runAt: now } });
+    await crm.revokeWorkspaceInvitation(fx.actorA, invitation.id);
+
+    try {
+      const result = await runJobsOnce({ workerId: "worker-workspace-invitation-revoked", now });
+      const reloaded = await fx.prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      expect(reloaded.status).toBe(JobStatus.SUCCEEDED);
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       restoreEnv();
     }

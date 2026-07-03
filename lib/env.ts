@@ -210,20 +210,20 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
     warnings.push("AUTH_MODE=demo is intended only for local/demo use and should not be used for production traffic.");
   }
 
-  const hasPasswordResetDelivery = Boolean(authEmailWebhookUrl || (resendApiKey && authEmailFrom));
+  const hasAuthEmailDelivery = Boolean(authEmailWebhookUrl || (resendApiKey && authEmailFrom));
   if (
     env.NODE_ENV === "production" &&
-    hasPasswordResetDelivery &&
+    hasAuthEmailDelivery &&
     parsedAppBaseUrl &&
     !parsedAppBaseUrl.username &&
     !parsedAppBaseUrl.password &&
     !isPublicHttpsUrl(parsedAppBaseUrl)
   ) {
-    errors.push("APP_BASE_URL must be a public https URL in production when password reset email delivery is configured.");
+    errors.push("APP_BASE_URL must be a public https URL in production when auth email delivery is configured.");
   }
 
-  if (env.NODE_ENV === "production" && !hasPasswordResetDelivery) {
-    warnings.push("Password reset email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL.");
+  if (env.NODE_ENV === "production" && !hasAuthEmailDelivery) {
+    warnings.push("Auth email delivery is disabled; set RESEND_API_KEY and AUTH_EMAIL_FROM, or AUTH_EMAIL_WEBHOOK_URL.");
   }
 
   if (errors.length > 0) {

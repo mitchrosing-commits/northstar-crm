@@ -217,7 +217,7 @@ describe("local login MVP", () => {
     expect(currentStatus).toContain("email/password signup/login");
     expect(currentStatus).toContain("new users can sign up into a clean workspace");
     expect(deploymentReadiness).toContain("Invitees without accounts can sign up with the invited email before accepting.");
-    expect(architecture).toContain("invited people without accounts can sign up with the invited email before accepting");
+    expect(architecture).toContain("Invited people without accounts can sign up with the invited email before accepting");
     expect(architecture).toContain("enables built-in email/password signup and login");
     expect(architecture).not.toContain("Invites are for existing users only");
   });

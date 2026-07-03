@@ -17,7 +17,7 @@ import { StatCard } from "@/components/stat-card";
 import { TableScroll } from "@/components/table-scroll";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { resolveAuthMode } from "@/lib/auth/session";
-import { passwordResetEmailReadiness } from "@/lib/email/auth-email";
+import { passwordResetEmailReadiness, workspaceInvitationEmailReadiness } from "@/lib/email/auth-email";
 import {
   getWorkspaceMembershipSummary,
   getSupplyChainVerticalSetupStatus,
@@ -80,6 +80,7 @@ export default async function SettingsPage({
     .canManageWorkspaceSettings
     ? await listPendingWorkspaceInvitations(actor)
     : [];
+  const invitationEmailReadiness = workspaceInvitationEmailReadiness(process.env);
   const adminMemberCount = summary.members.filter(
     (member) => member.canManageWorkspaceSettings,
   ).length;
@@ -189,7 +190,7 @@ export default async function SettingsPage({
       >
         <p className="empty-copy">
           Gmail sync requires Google OAuth env vars and a redirect URI that
-          matches this hosted app. Password reset email delivery requires the
+          matches this hosted app. Auth email delivery requires the
           auth email webhook env vars and a worker or scheduled job run. Keep
           secrets in the hosting platform; do not commit local env files.
         </p>
@@ -205,14 +206,15 @@ export default async function SettingsPage({
       {summary.currentMembership.canManageWorkspaceSettings ? (
         <section className="panel section-separated">
           <PanelTitleRow
-            actions={<Badge>Manual link sharing</Badge>}
+            actions={<Badge>{invitationEmailReadiness.configured ? "Email delivery configured" : "Manual link fallback"}</Badge>}
             title="Team / Workspace Invitations"
           />
           <p className="empty-copy section-separated">
             Invite a teammate by email. If they do not have a Northstar account
             yet, they can create one from the invite flow and then accept the
-            shared link. Hosted invitation email delivery is not configured in
-            this MVP, so share the link manually.
+            shared link. {invitationEmailReadiness.configured
+              ? "Invitation emails are queued for the background worker, and the manual accept link remains available below."
+              : "Invitation email delivery is not configured, so share the accept link manually from the pending invitations table."}
           </p>
           <WorkspaceInviteForm />
           <TableScroll
@@ -664,9 +666,13 @@ function buildAdminReadinessStatuses() {
     hasEmailEncryption,
   );
   const passwordResetReadiness = passwordResetEmailReadiness(process.env);
+  const invitationEmailReadiness = workspaceInvitationEmailReadiness(process.env);
   const passwordResetDetail = passwordResetReadiness.configured
     ? `Configured through ${passwordResetReadiness.deliveryMethod === "resend" ? "Resend" : "webhook"}. Worker required: yes - run npm run jobs:work as a Railway worker service.`
     : "Not configured. Set APP_BASE_URL plus RESEND_API_KEY and AUTH_EMAIL_FROM, or APP_BASE_URL plus AUTH_EMAIL_WEBHOOK_URL. Worker required after configuration: yes.";
+  const invitationEmailDetail = invitationEmailReadiness.configured
+    ? `Invitation email is queued through ${invitationEmailReadiness.deliveryMethod === "resend" ? "Resend" : "webhook"}. Manual invite links remain available.`
+    : "Manual invite links remain available. Configure APP_BASE_URL plus RESEND_API_KEY and AUTH_EMAIL_FROM, or APP_BASE_URL plus AUTH_EMAIL_WEBHOOK_URL, to send invitation email.";
 
   return [
     {
@@ -705,9 +711,8 @@ function buildAdminReadinessStatuses() {
     },
     {
       label: "Team invitations",
-      configured: true,
-      detail:
-        "Invite links are available for manual sharing; email delivery is not automatic.",
+      configured: invitationEmailReadiness.configured,
+      detail: invitationEmailDetail,
     },
     {
       label: "Import / export",

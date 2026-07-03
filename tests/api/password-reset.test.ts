@@ -139,8 +139,9 @@ describe("password reset MVP", () => {
     ).toBe("https://crm.example.test/reset-password?token=abc%2F..%2Fsettings%3Fx%3D1");
   });
 
-  it("adds a narrow auth email boundary for password reset only", () => {
+  it("sends password reset through the shared auth email boundary", () => {
     expect(authEmail).toContain("sendPasswordResetEmail");
+    expect(authEmail).toContain("sendWorkspaceInvitationEmail");
     expect(authEmail).toContain("RESEND_API_KEY");
     expect(authEmail).toContain("https://api.resend.com/emails");
     expect(authEmail).toContain("AUTH_EMAIL_WEBHOOK_URL");
@@ -214,11 +215,11 @@ describe("password reset MVP", () => {
     expect(resetActions).toContain("Passwords must match.");
   });
 
-  it("documents password reset as local-only with a password-reset-only email boundary", () => {
+  it("documents password reset as local-only with queued auth email delivery", () => {
     expect(routeMap).toContain("GET /forgot-password");
     expect(routeMap).toContain("GET /reset-password?token=...");
     expect(routeMap).toContain("queues password-reset email jobs when `APP_BASE_URL` can build an absolute reset URL");
     expect(currentStatus).toContain("Password Reset MVP");
-    expect(currentStatus).toContain("queued password-reset-only Resend or webhook email delivery");
+    expect(currentStatus).toContain("queued Resend or webhook reset-link email delivery");
   });
 });

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { isPasswordResetEmailConfigured, passwordResetEmailReadiness, sendPasswordResetEmail } from "@/lib/email/auth-email";
+import {
+  isPasswordResetEmailConfigured,
+  passwordResetEmailReadiness,
+  sendPasswordResetEmail,
+  sendWorkspaceInvitationEmail,
+  workspaceInvitationEmailReadiness
+} from "@/lib/email/auth-email";
 import { validateRuntimeEnv } from "@/lib/env";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -252,7 +258,7 @@ describe("auth email sender boundary", () => {
       ok: false,
       errors: [
         "APP_BASE_URL must use https: in production when AUTH_EMAIL_WEBHOOK_URL is set.",
-        "APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."
+        "APP_BASE_URL must be a public https URL in production when auth email delivery is configured."
       ]
     });
     expect(
@@ -264,7 +270,7 @@ describe("auth email sender boundary", () => {
       })
     ).toEqual({
       ok: false,
-      errors: ["APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."]
+      errors: ["APP_BASE_URL must be a public https URL in production when auth email delivery is configured."]
     });
     expect(
       validateRuntimeEnv({
@@ -275,7 +281,7 @@ describe("auth email sender boundary", () => {
       })
     ).toEqual({
       ok: false,
-      errors: ["APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."]
+      errors: ["APP_BASE_URL must be a public https URL in production when auth email delivery is configured."]
     });
     expect(
       validateRuntimeEnv({
@@ -286,7 +292,7 @@ describe("auth email sender boundary", () => {
       })
     ).toEqual({
       ok: false,
-      errors: ["APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."]
+      errors: ["APP_BASE_URL must be a public https URL in production when auth email delivery is configured."]
     });
     expect(
       validateRuntimeEnv({
@@ -315,7 +321,7 @@ describe("auth email sender boundary", () => {
         })
       ).toEqual({
         ok: false,
-        errors: ["APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."]
+        errors: ["APP_BASE_URL must be a public https URL in production when auth email delivery is configured."]
       });
     }
     expect(
@@ -361,7 +367,7 @@ describe("auth email sender boundary", () => {
       ok: false,
       errors: [
         "APP_BASE_URL must use https: in production when RESEND_API_KEY is set.",
-        "APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."
+        "APP_BASE_URL must be a public https URL in production when auth email delivery is configured."
       ]
     });
     expect(
@@ -374,7 +380,7 @@ describe("auth email sender boundary", () => {
       })
     ).toEqual({
       ok: false,
-      errors: ["APP_BASE_URL must be a public https URL in production when password reset email delivery is configured."]
+      errors: ["APP_BASE_URL must be a public https URL in production when auth email delivery is configured."]
     });
   });
 
@@ -420,7 +426,61 @@ describe("auth email sender boundary", () => {
     expect(requests[0].headers.get("content-type")).toBe("application/json");
   });
 
-  it("posts only password-reset auth email payloads to the configured webhook", async () => {
+  it("sends workspace invitation emails directly through Resend when configured", async () => {
+    expect(
+      workspaceInvitationEmailReadiness({
+        APP_BASE_URL: "https://crm.example.test",
+        AUTH_EMAIL_FROM: "Northstar <onboarding@resend.dev>",
+        RESEND_API_KEY: "resend-key"
+      }).configured
+    ).toBe(true);
+    const requests: Array<{ body: unknown; headers: Headers; url: string }> = [];
+    await sendWorkspaceInvitationEmail(
+      {
+        invitationUrl: "https://crm.example.test/workspaces/invitations/invitation_1",
+        invitedRoleLabel: "Admin",
+        inviterEmail: "owner@example.test",
+        inviterName: "Owner User",
+        to: "teammate@example.test",
+        workspaceName: "Acme Workspace"
+      },
+      {
+        env: {
+          AUTH_EMAIL_FROM: "Northstar <onboarding@resend.dev>",
+          RESEND_API_KEY: "resend-key"
+        },
+        fetchImpl: (async (url, init) => {
+          requests.push({
+            body: JSON.parse(String(init?.body)),
+            headers: new Headers(init?.headers),
+            url: String(url)
+          });
+          return new Response(JSON.stringify({ id: "email-id" }), { status: 200 });
+        }) as typeof fetch
+      }
+    );
+
+    expect(requests).toEqual([
+      {
+        body: {
+          from: "Northstar <onboarding@resend.dev>",
+          to: "teammate@example.test",
+          subject: "You're invited to Acme Workspace on Northstar CRM",
+          text: expect.stringContaining("https://crm.example.test/workspaces/invitations/invitation_1"),
+          html: expect.stringContaining("https://crm.example.test/workspaces/invitations/invitation_1")
+        },
+        headers: expect.any(Headers),
+        url: "https://api.resend.com/emails"
+      }
+    ]);
+    const body = requests[0].body as { html: string; text: string };
+    expect(body.text).toContain("Owner User (owner@example.test) invited you");
+    expect(body.text).toContain("Invited role: Admin.");
+    expect(body.html).toContain("Accept workspace invitation");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer resend-key");
+  });
+
+  it("posts password-reset auth email payloads to the configured webhook", async () => {
     const requests: Array<{ body: unknown; headers: Headers; url: string }> = [];
     await sendPasswordResetEmail(
       {
@@ -460,6 +520,51 @@ describe("auth email sender boundary", () => {
     ]);
     expect(requests[0].headers.get("authorization")).toBe("Bearer webhook-token");
     expect(requests[0].headers.get("content-type")).toBe("application/json");
+  });
+
+  it("posts workspace invitation payloads to the configured webhook", async () => {
+    const requests: Array<{ body: unknown; headers: Headers; url: string }> = [];
+    await sendWorkspaceInvitationEmail(
+      {
+        invitationUrl: "https://crm.example.test/workspaces/invitations/invitation_1",
+        invitedRoleLabel: "Member",
+        inviterEmail: "owner@example.test",
+        to: "teammate@example.test",
+        workspaceName: "Acme Workspace"
+      },
+      {
+        env: {
+          AUTH_EMAIL_FROM: "Northstar CRM <no-reply@example.test>",
+          AUTH_EMAIL_WEBHOOK_TOKEN: "webhook-token",
+          AUTH_EMAIL_WEBHOOK_URL: "https://mail.example.test/auth-email"
+        },
+        fetchImpl: (async (url, init) => {
+          requests.push({
+            body: JSON.parse(String(init?.body)),
+            headers: new Headers(init?.headers),
+            url: String(url)
+          });
+          return new Response(null, { status: 202 });
+        }) as typeof fetch
+      }
+    );
+
+    expect(requests).toEqual([
+      {
+        body: {
+          type: "workspace_invitation",
+          to: "teammate@example.test",
+          from: "Northstar CRM <no-reply@example.test>",
+          workspaceName: "Acme Workspace",
+          invitedRoleLabel: "Member",
+          inviterEmail: "owner@example.test",
+          invitationUrl: "https://crm.example.test/workspaces/invitations/invitation_1"
+        },
+        headers: expect.any(Headers),
+        url: "https://mail.example.test/auth-email"
+      }
+    ]);
+    expect(requests[0].headers.get("authorization")).toBe("Bearer webhook-token");
   });
 
   it("rejects password-reset webhook URLs with embedded credentials before delivery", async () => {
@@ -541,5 +646,42 @@ describe("auth email sender boundary", () => {
     expect(requests).toEqual([]);
     expect(authEmailSource).toContain("normalizePasswordResetEmailInput(input)");
     expect(authEmailSource).toContain("Invalid password reset email input.");
+  });
+
+  it("rejects malformed direct workspace-invitation email inputs before provider delivery", async () => {
+    const requests: unknown[] = [];
+    const fetchImpl = (async (...args) => {
+      requests.push(args);
+      return new Response(null, { status: 202 });
+    }) as typeof fetch;
+    const env = {
+      AUTH_EMAIL_FROM: "Northstar <onboarding@resend.dev>",
+      RESEND_API_KEY: "resend-key"
+    };
+
+    await expect(
+      sendWorkspaceInvitationEmail(
+        {
+          invitationUrl: "https://crm.example.test/settings",
+          invitedRoleLabel: "Member",
+          to: "teammate@example.test",
+          workspaceName: "Acme Workspace"
+        },
+        { env, fetchImpl }
+      )
+    ).rejects.toThrow("Invalid workspace invitation email input.");
+    await expect(
+      sendWorkspaceInvitationEmail(
+        {
+          invitationUrl: "https://preview:secret@crm.example.test/workspaces/invitations/invitation_1",
+          invitedRoleLabel: "Member",
+          to: "teammate@example.test",
+          workspaceName: "Acme Workspace"
+        },
+        { env, fetchImpl }
+      )
+    ).rejects.toThrow("Invalid workspace invitation email input.");
+
+    expect(requests).toEqual([]);
   });
 });

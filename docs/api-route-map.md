@@ -61,7 +61,7 @@ Notes:
 - `updateAccountDisplayNameAction` is a user-level Settings action for display-name account settings. It updates only the current signed-in user's `User.name`; account email is read-only in this MVP.
 - `switchWorkspaceAction` stores an active workspace id in an httpOnly cookie only after verifying the current user is a workspace member.
 - `createWorkspaceAction` creates a workspace for the signed-in user, grants `OWNER` membership, and selects it through the same active-workspace cookie.
-- `createWorkspaceInvitationAction` creates pending invitations by email for current or future users, and only for workspace owners/admins.
+- `createWorkspaceInvitationAction` creates pending invitations by email for current or future users, only for workspace owners/admins, queues invitation email when auth email delivery is configured, and keeps the manual accept link available as fallback.
 - `revokeWorkspaceInvitationAction` revokes pending invitations for workspace owners/admins.
 - `acceptWorkspaceInvitationAction` accepts a matching signed-in user's invitation, creates membership idempotently while the accepted membership still exists, blocks old accepted links after member removal, and selects the invited workspace.
 - `removeWorkspaceMemberAction` removes another active workspace member when allowed by role policy: admins can remove normal members, owners can remove admins or normal members, and current owner removal remains blocked.

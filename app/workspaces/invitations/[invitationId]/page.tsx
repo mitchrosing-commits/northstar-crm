@@ -72,7 +72,7 @@ export default async function WorkspaceInvitationPage({ params }: WorkspaceInvit
         description={
           alreadyAccepted
             ? `You are already a member of ${invitation.workspace.name} as ${invitation.roleLabel}. Continue to Settings to work in this workspace.`
-            : `Accept this invitation for ${invitation.email} to join ${invitation.workspace.name} as ${invitation.roleLabel}. If you do not have an account yet, create one with this email first; email delivery is not implemented yet, so invitations are accepted from a shared link.`
+            : `Accept this invitation for ${invitation.email} to join ${invitation.workspace.name} as ${invitation.roleLabel}. If you do not have an account yet, create one with this email first. Workspace admins can also share this link manually when email delivery is unavailable.`
         }
         title={alreadyAccepted ? "Invitation already accepted" : invitation.workspace.name}
         titleLevel="h1"

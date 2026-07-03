@@ -2,6 +2,9 @@ import { MembershipRole, Prisma, WorkspaceInvitationStatus } from "@prisma/clien
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
+import { workspaceInvitationEmailReadiness } from "@/lib/email/auth-email";
+import { enqueueWorkspaceInvitationEmailJob } from "@/lib/jobs/handlers";
+import { isPublicHttpsUrl } from "@/lib/public-host";
 import {
   canTransferWorkspaceOwnership,
   canManageWorkspaceSettings,
@@ -276,6 +279,10 @@ export async function createWorkspaceInvitation(
       email,
       role,
       invitedById: actor.actorUserId
+    },
+    include: {
+      invitedBy: { select: userDisplaySelect },
+      workspace: { select: { id: true, name: true } }
     }
   }).catch((error: unknown) => {
     if (isUniqueConstraintError(error)) {
@@ -291,9 +298,11 @@ export async function createWorkspaceInvitation(
     invitation.id,
     { email: invitation.email, role: invitation.role }
   );
+  const emailDeliveryStatus = await queueWorkspaceInvitationEmail(invitation);
 
   return {
     ...invitation,
+    emailDeliveryStatus,
     roleLabel: workspaceRoleLabel(invitation.role)
   };
 }
@@ -622,6 +631,48 @@ function normalizeInvitationRole(role: unknown) {
 
 function isValidInvitationEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function queueWorkspaceInvitationEmail(invitation: {
+  email: string;
+  id: string;
+  invitedBy: { email: string; name: string | null } | null;
+  role: MembershipRole;
+  workspace: { id: string; name: string };
+  workspaceId: string;
+}) {
+  if (!workspaceInvitationEmailReadiness().configured) return "not_configured" as const;
+  const invitationUrl = buildWorkspaceInvitationUrl(invitation.id);
+  if (!invitationUrl) return "not_configured" as const;
+
+  try {
+    await enqueueWorkspaceInvitationEmailJob({
+      invitationId: invitation.id,
+      invitationUrl,
+      invitedRoleLabel: workspaceRoleLabel(invitation.role),
+      inviterEmail: invitation.invitedBy?.email,
+      inviterName: invitation.invitedBy?.name ?? undefined,
+      to: invitation.email,
+      workspaceId: invitation.workspaceId,
+      workspaceName: invitation.workspace.name
+    });
+    return "queued" as const;
+  } catch {
+    return "queue_failed" as const;
+  }
+}
+
+export function buildWorkspaceInvitationUrl(invitationId: string, env: Record<string, string | undefined> = process.env) {
+  const appBaseUrl = env.APP_BASE_URL?.trim();
+  if (!appBaseUrl) return null;
+
+  try {
+    const invitationUrl = new URL(`/workspaces/invitations/${encodeURIComponent(invitationId)}`, appBaseUrl);
+    if (env.NODE_ENV === "production" && !isPublicHttpsUrl(invitationUrl)) return null;
+    return invitationUrl.toString();
+  } catch {
+    return null;
+  }
 }
 
 async function ensureWorkspaceSettingsAdmin(actor: WorkspaceActor) {

@@ -106,10 +106,16 @@ export async function createWorkspaceInvitationAction(
     const { actor } = await getCurrentWorkspaceContext();
     const invitation = await createWorkspaceInvitation(actor, { email, role });
     revalidatePath("/settings");
+    const deliveryMessage =
+      invitation.emailDeliveryStatus === "queued"
+        ? "Invitation email queued. The accept link is also available in the pending invitations table."
+        : invitation.emailDeliveryStatus === "queue_failed"
+          ? "Invitation record created, but email could not be queued. Share the accept link from the pending invitations table."
+          : "Invitation record created. Email delivery is not configured, so share the accept link from the pending invitations table.";
     return {
       email: "",
       role: "MEMBER",
-      message: `Invitation record created for ${invitation.email}. Share the accept link from the pending invitations table.`
+      message: `${deliveryMessage} Invitee: ${invitation.email}.`
     };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {

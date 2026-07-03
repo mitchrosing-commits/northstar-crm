@@ -814,6 +814,49 @@ describe("current auth and workspace context", () => {
     }
   });
 
+  it("creates workspace invitations without email configuration and keeps the manual accept link usable", async () => {
+    const fx = currentFixture();
+    const restoreEnv = setAuthEmailEnv({
+      APP_BASE_URL: "https://crm.example.test",
+      AUTH_EMAIL_FROM: undefined,
+      AUTH_EMAIL_WEBHOOK_URL: undefined,
+      RESEND_API_KEY: undefined
+    });
+    const inviteEmail = `manual-invite-${fx.workspaceA.id}@example.test`;
+    const beforeJobCount = await fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    try {
+      const invitation = await createWorkspaceInvitation(fx.actorA, {
+        email: inviteEmail,
+        role: "MEMBER"
+      });
+      const invitedUser = await fx.prisma.user.create({
+        data: { email: inviteEmail, name: "Manual Invitee" }
+      });
+
+      try {
+        expect(invitation).toMatchObject({
+          email: inviteEmail,
+          emailDeliveryStatus: "not_configured",
+          role: "MEMBER"
+        });
+        await expect(fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeJobCount);
+        await expect(getWorkspaceInvitationForAcceptance(invitedUser.id, invitation.id)).resolves.toMatchObject({
+          email: inviteEmail,
+          workspace: { id: fx.workspaceA.id }
+        });
+        await expect(acceptWorkspaceInvitation(invitedUser.id, invitation.id)).resolves.toMatchObject({
+          id: fx.workspaceA.id
+        });
+      } finally {
+        await fx.prisma.workspaceMembership.deleteMany({ where: { workspaceId: fx.workspaceA.id, userId: invitedUser.id } });
+        await fx.prisma.user.deleteMany({ where: { id: invitedUser.id } });
+      }
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("accepts workspace invitations idempotently under concurrent submissions", async () => {
     const fx = currentFixture();
     const invitation = await createWorkspaceInvitation(fx.actorA, {
@@ -1365,4 +1408,26 @@ describe("current auth and workspace context", () => {
 function currentFixture() {
   if (!fixture) throw new Error("Integration fixture was not initialized.");
   return fixture;
+}
+
+function setAuthEmailEnv(nextEnv: Record<string, string | undefined>) {
+  const previousEnv = Object.fromEntries(Object.keys(nextEnv).map((key) => [key, process.env[key]]));
+
+  for (const [key, value] of Object.entries(nextEnv)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  return () => {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
 }
