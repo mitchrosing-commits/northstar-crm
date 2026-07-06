@@ -223,7 +223,7 @@ describe("Smart Email Labels", () => {
     expect(classification?.categoryEvidence).toBeUndefined();
   });
 
-  it("renders smart labels in the Email Command Center without replacing manual email workflows", () => {
+  it("renders smart labels in Inbox without replacing manual email workflows", () => {
     expect(emailPage).toContain('import { EmailSmartLabelPanel } from "@/components/email-smart-label-panel"');
     expect(emailPage).toContain("emailClassificationReadiness(process.env)");
     expect(emailPage).toContain("Relationship Inbox Queue");

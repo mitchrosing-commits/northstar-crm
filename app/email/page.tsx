@@ -93,6 +93,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const microsoftProvider = providers.find((provider) => provider.provider === "MICROSOFT_365");
   const imapProvider = providers.find((provider) => provider.provider === "IMAP_SMTP");
   const majorProviderCards = buildMajorProviderCards({ gmailProvider, microsoftProvider });
+  const gmailReadiness = gmailFullInboxReadiness(gmailProvider);
+  const fullInboxEmptyState = fullInboxEmptyStateCopy(gmailProvider, inboxThreads.length);
   const statusCopy = emailStatusCopy(resolvedSearchParams);
   const syncSummary = buildSyncSummary(resolvedSearchParams, latestSyncReview, majorProviderCards);
   const aiReplyReadiness = emailReplyAssistantReadiness(process.env);
@@ -133,9 +135,39 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           </Link>
         }
         eyebrow="Communication"
-        subtitle="Review provider status, sync results, and CRM-linked email activity."
-        title="Email"
+        subtitle="Work synced mailbox threads, relationship-priority messages, Smart Labels, AI reply drafts, and review-first follow-ups from one place."
+        title="Inbox"
       />
+
+      <section className="panel inbox-workflow-map" aria-label="Inbox workflow map">
+        <PanelTitleRow
+          actions={<Badge>Review-first</Badge>}
+          description="Email intelligence lives inside the Inbox workflow. Nothing here auto-sends, auto-classifies, creates CRM records, or creates follow-ups without review."
+          title="Inbox Workflows"
+        />
+        <div className="inbox-workflow-grid">
+          <InboxWorkflowItem
+            detail="Synced Gmail threads, stored readable bodies, explicit replies, and selected-thread refresh."
+            label="Full Inbox"
+          />
+          <InboxWorkflowItem
+            detail="CRM-prioritized stored emails with suggested next actions and relationship-risk signals."
+            label="Relationship Inbox"
+          />
+          <InboxWorkflowItem
+            detail="User-triggered classification snapshots with evidence attached to stored messages."
+            label="Smart Labels"
+          />
+          <InboxWorkflowItem
+            detail="Draft-only reply assistance inside an email card; the user still reviews and sends."
+            label="AI Reply Assistant"
+          />
+          <InboxWorkflowItem
+            detail="Review-first activity drafting and durable linked follow-up history from email context."
+            label="Follow-ups"
+          />
+        </div>
+      </section>
 
       <section className="panel section-separated">
         <PanelTitleRow actions={<Badge>{gmailProvider?.status ?? "Not configured"}</Badge>} title="Email Providers" />
@@ -143,11 +175,11 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           Gmail Full Inbox sync stores recent inbox messages and full readable bodies for review in Northstar. Replies
           are sent only from an explicit user action. Microsoft sync remains metadata-focused and CRM-matched for now.
         </EmailScopeCallout>
-        {!gmailProvider?.syncAvailable ? (
+        {!gmailReadiness.ready ? (
           <EmptyState
             className="email-provider-empty"
-            description="Connect Gmail / Google Workspace when OAuth is configured, or keep logging email manually from CRM records."
-            title="No email connected yet"
+            description={gmailReadiness.description}
+            title={gmailReadiness.title}
           />
         ) : null}
         {statusCopy ? (
@@ -175,7 +207,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                 {provider.syncStatusLabel ? (
                   <p>
                     Background sync: {provider.syncStatusLabel}
-                    {provider.syncStatusDetail ? ` · ${provider.syncStatusDetail}` : ""}
+                    {provider.syncStatusDetail ? ` · ${formatProviderSyncStatusDetail(provider.syncStatusDetail)}` : ""}
                   </p>
                 ) : null}
                 {provider.lastError ? <p>Last sync issue: {provider.lastError}</p> : null}
@@ -291,6 +323,12 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           actions={<Badge>{inboxThreads.length ? `${inboxThreads.length} threads` : "No synced threads"}</Badge>}
           title="Full Inbox"
         />
+        <FormIntroCallout className="email-status-callout email-inbox-status" title="Gmail sync status">
+          {gmailReadiness.statusLine}
+          {gmailProvider?.lastSyncAt ? ` Last synced ${formatDate(gmailProvider.lastSyncAt)}.` : ""}
+          {gmailProvider?.syncStatusLabel ? ` Background worker: ${gmailProvider.syncStatusLabel}.` : ""}
+          {gmailProvider?.syncStatusDetail ? ` ${formatProviderSyncStatusDetail(gmailProvider.syncStatusDetail)}` : ""}
+        </FormIntroCallout>
         <EmailScopeCallout title="Inbox workflow">
           Browse synced Gmail threads, read stored message bodies, and send replies only after writing and submitting
           the reply yourself. Viewing, filtering, and opening threads does not send email or create CRM records.
@@ -326,8 +364,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           </div>
         ) : (
           <EmptyState
-            description="Connect Gmail with Full Inbox scopes, then sync to store recent inbox threads. Relationship Inbox and manual logging still work without a connected mailbox."
-            title="No inbox threads synced yet"
+            description={fullInboxEmptyState.description}
+            title={fullInboxEmptyState.title}
           />
         )}
       </section>
@@ -346,8 +384,9 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           title="Relationship Inbox Queue"
         />
         <EmailScopeCallout title="Suggested priorities">
-          Smart Labels are saved only after you classify a stored email. They are suggested relationship signals, not
-          commands: Northstar does not create activities, notes, leads, or profile facts from viewing this queue.
+          Relationship Inbox is the CRM action queue for stored email. Smart Labels are saved only after you classify a
+          stored email. They are suggested relationship signals, not commands: Northstar does not create activities,
+          notes, leads, or profile facts from viewing this queue.
         </EmailScopeCallout>
         <ActionGroup className="relationship-inbox-filter-bar" label="Relationship Inbox priority filters">
           {priorityQueueSummary.map((item) => (
@@ -497,6 +536,15 @@ function EmailScopeCallout({ children, title }: { children: ReactNode; title: st
     <FormIntroCallout className="email-scope-callout" title={title}>
       {children}
     </FormIntroCallout>
+  );
+}
+
+function InboxWorkflowItem({ detail, label }: { detail: string; label: string }) {
+  return (
+    <div className="inbox-workflow-item">
+      <strong>{label}</strong>
+      <span>{detail}</span>
+    </div>
   );
 }
 
@@ -693,6 +741,115 @@ function shouldShowProviderDisconnect(provider: ProviderCard) {
     ((provider.provider === "GOOGLE_WORKSPACE" && provider.name === "Gmail") ||
       (provider.provider === "MICROSOFT_365" && provider.name === "Microsoft 365"))
   );
+}
+
+function gmailFullInboxReadiness(provider: ProviderCard | undefined) {
+  if (!provider) {
+    return {
+      description: "Configure Google OAuth and token encryption before Gmail Full Inbox can connect.",
+      ready: false,
+      statusLine: "Gmail Full Inbox is not configured yet.",
+      title: "Gmail setup required"
+    };
+  }
+
+  if (provider.status === "Not configured") {
+    return {
+      description: "Add Google OAuth client id, client secret, redirect URI, and token encryption env vars before connecting Gmail.",
+      ready: false,
+      statusLine: "Gmail OAuth is not configured for Full Inbox sync.",
+      title: "Gmail OAuth is not configured"
+    };
+  }
+
+  if (provider.status === "Token encryption required") {
+    return {
+      description: "Set EMAIL_TOKEN_ENCRYPTION_KEY before connecting Gmail. Northstar will not store OAuth tokens in plaintext.",
+      ready: false,
+      statusLine: "Gmail OAuth is configured, but encrypted token storage is not ready.",
+      title: "Token encryption required"
+    };
+  }
+
+  if (provider.status === "Reconnect required") {
+    return {
+      description: "Reconnect Gmail with the current read/send scopes before syncing inbox threads or sending explicit replies.",
+      ready: false,
+      statusLine: `Gmail is connected${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}, but Full Inbox scopes are missing.`,
+      title: "Reconnect Gmail for Full Inbox"
+    };
+  }
+
+  if (!provider.syncAvailable) {
+    return {
+      description: "Connect Gmail with Full Inbox scopes, or keep using Relationship Inbox and manual email logging from CRM records.",
+      ready: false,
+      statusLine: "Gmail Full Inbox is not connected yet.",
+      title: "Gmail is not connected"
+    };
+  }
+
+  if (provider.status === "Sync issue") {
+    return {
+      description: "Gmail is connected, but the latest provider sync reported an issue. Review the redacted provider error and retry sync.",
+      ready: true,
+      statusLine: `Gmail Full Inbox is connected${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}, with a sync issue to review.`,
+      title: "Gmail sync needs attention"
+    };
+  }
+
+  return {
+    description: "Gmail Full Inbox is connected. Sync now to queue the background worker or refresh a selected thread from the inbox reader.",
+    ready: true,
+    statusLine: `Gmail Full Inbox is connected${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}.`,
+    title: "Gmail Full Inbox connected"
+  };
+}
+
+function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount: number) {
+  if (threadCount > 0) {
+    return {
+      description: "Choose a synced Gmail thread to review stored messages, draft replies, classify, or create follow-ups.",
+      title: "Choose an inbox thread"
+    };
+  }
+
+  const readiness = gmailFullInboxReadiness(provider);
+  if (!readiness.ready) {
+    return {
+      description: `${readiness.description} Relationship Inbox and manual email logging still work without a synced mailbox.`,
+      title: readiness.title
+    };
+  }
+
+  if (provider?.lastSyncAt) {
+    return {
+      description:
+        "The latest Gmail sync did not store any inbox threads. Confirm the connected mailbox has recent inbox mail, then sync again or check the background worker.",
+      title: "No Gmail threads stored yet"
+    };
+  }
+
+  return {
+    description:
+      "Gmail is connected, but no inbox sync has completed yet. Use Sync Gmail inbox, then run the background worker so Northstar can store recent threads.",
+    title: "Sync Gmail to populate Full Inbox"
+  };
+}
+
+function formatProviderSyncStatusDetail(detail: string) {
+  const queuedAt = detail.match(/^Queued (.+)$/)?.[1];
+  if (queuedAt) return `Queued ${formatMaybeDate(queuedAt)}`;
+  const completedAt = detail.match(/^Completed (.+)$/)?.[1];
+  if (completedAt) return `Completed ${formatMaybeDate(completedAt)}`;
+  const retryAt = detail.match(/^Retry scheduled (.+)$/)?.[1];
+  if (retryAt) return `Retry scheduled ${formatMaybeDate(retryAt)}`;
+  return detail;
+}
+
+function formatMaybeDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : formatDate(date);
 }
 
 function formatEmailProvider(provider: string | null) {

@@ -25,11 +25,12 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   fixture = await createIntegrationFixture();
-  await fixture.prisma.job.deleteMany({});
+  await deleteJobWorkerTestRows(fixture.prisma);
 });
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  if (fixture) await deleteJobWorkerTestRows(fixture.prisma);
   await fixture?.cleanup();
   fixture = undefined;
 });
@@ -1145,6 +1146,24 @@ describe("single-run job worker", () => {
 function currentFixture() {
   if (!fixture) throw new Error("Integration fixture was not initialized.");
   return fixture;
+}
+
+async function deleteJobWorkerTestRows(prisma: Fixture["prisma"]) {
+  await prisma.job.deleteMany({
+    where: {
+      type: {
+        in: [
+          passwordResetEmailJobType,
+          "internal.continuous_unknown",
+          "internal.inspect_worker",
+          "internal.reset_url_failure",
+          "internal.retry_failure",
+          "internal.test_failure",
+          "internal.unknown_for_batch"
+        ]
+      }
+    }
+  });
 }
 
 async function createPasswordResetToken(userId: string, resetToken: string, expiresAt: Date, consumedAt: Date | null = null) {

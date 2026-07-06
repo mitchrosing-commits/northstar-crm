@@ -27,11 +27,12 @@ const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8"
 
 describe("global workspace search", () => {
   it("adds a search entry point in the app shell", () => {
-    expect(primaryNav).toContain("appShellNavigationManifest.filter((item) => item.group === group)");
+    expect(primaryNav).toContain("appShellNavigationManifest.filter((item) => item.group === group && item.primary !== false)");
     expect(primaryNav).toContain("navigationIcons[item.icon]");
     expect(navigation).toContain("href: \"/search\"");
     expect(navigation).toContain("label: \"Search\"");
-    expect(primaryNav).toContain("Search");
+    expect(navigation).toContain("primary: false");
+    expect(primaryNav).not.toContain('label: "Search"');
     expect(appShell).toContain("<SidebarCommand globalSearchDefaultValue={globalSearchDefaultValue} />");
     expect(appShell).toContain("globalSearchDefaultValue");
     expect(sidebarCommand).toContain("action=\"/search\"");
@@ -60,7 +61,7 @@ describe("global workspace search", () => {
     expect(sidebarSearchShortcut).toContain("if (isSlash && isTextEntryTarget(event.target)) return;");
     expect(sidebarSearchShortcut).toContain("if (!isSlash && !isCommandSearch) return;");
     expect(sidebarSearchShortcut).toContain("target.isContentEditable");
-    expect(sidebarCommand).toContain("Search, create, and jump without leaving the workspace flow.");
+    expect(sidebarCommand).toContain("Search and jump without leaving the workspace flow.");
     expect(sidebarCommand).toContain("defaultValue={globalSearchDefaultValue}");
     expect(sidebarCommand).toContain("htmlFor={searchInputId}");
     expect(sidebarCommand).toContain("id={searchInputId}");
@@ -69,16 +70,17 @@ describe("global workspace search", () => {
     expect(sidebarCommand).toContain("aria-current={isActive ? \"page\" : undefined}");
     expect(sidebarCommand).toContain("aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}");
     expect(sidebarCommand).toContain("href={action.href}");
-    expect(sidebarCommand).toContain("getCrmCreateActionDefinition(action.href)");
-    expect(sidebarCommand).toContain("createSidebarHelperForQuery(createMetadata, searchValue)");
-    expect(sidebarCommand).toContain("sidebarCreateActionIcons[createMetadata.href]");
+    expect(sidebarCommand).not.toContain("getCrmCreateActionDefinition(action.href)");
+    expect(sidebarCommand).not.toContain("createSidebarHelperForQuery(createMetadata, searchValue)");
+    expect(sidebarCommand).not.toContain("sidebarCreateActionIcons");
     expect(sidebarCommand).not.toContain("sidebarCreateActionMetadata");
     expect(sidebarCommand).not.toContain("function sidebarCreateActionPath");
     expect(sidebarCommand).not.toContain("map((action, index)");
     expect(sidebarCommand).toContain("const actionTitle = `${action.label}: ${action.helper}`");
     expect(sidebarCommand).toContain("title={actionTitle}");
     expect(sidebarCommand).toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
-    expect(sidebarCommand).toContain("Create actions are prefilled from this search.");
+    expect(sidebarCommand).toContain("Open matching list shortcuts for this search.");
+    expect(sidebarCommand).toContain("Use page-level New buttons for contacts, organizations, leads, deals, and activities.");
     expect(sidebarCommand).toContain("aria-label=\"Active workspace search\"");
     expect(sidebarCommand).toContain("className=\"sidebar-current-query\"");
     expect(sidebarCommand).toContain("<strong>{searchValue}</strong>");
@@ -91,6 +93,7 @@ describe("global workspace search", () => {
     expect(sidebarCommand).toContain('const quickActionsLabel = "Quick actions"');
     expect(sidebarCommand).toContain("import { ActionGroup }");
     expect(sidebarCommand).toContain('<ActionGroup className="sidebar-quick-actions" label={quickActionsLabel}>');
+    expect(sidebarCommand).not.toContain('label: "Create"');
     expect(sidebarCommand).toContain("sidebarJumpNavigationItems.map((item) => ({");
     expect(sidebarCommand).toContain("sidebarJumpActionIcons[item.icon]");
     expect(sidebarCommand).toContain("searchListNavigationItems.map((item) => ({");
@@ -105,6 +108,9 @@ describe("global workspace search", () => {
     expect(sidebarCommand).toContain("className=\"sidebar-quick-action-group\" aria-labelledby={headingId} key={group.label} role=\"group\"");
     expect(navigation).toContain("label: \"Reports\"");
     expect(navigation).toContain("helper: \"Metrics\"");
+    expect(navigation).toContain("label: \"Inbox\"");
+    expect(navigation).toContain("helper: \"Mailbox + priority\"");
+    expect(navigation).toContain("Open synced email, Relationship Inbox priorities, Smart Labels, AI reply drafts, and follow-ups.");
     expect(navigation).toContain("label: \"Settings\"");
     expect(navigation).toContain("helper: \"Admin\"");
     expect(navigation).toContain("export const sidebarJumpNavigationItems");
@@ -289,7 +295,8 @@ describe("global workspace search", () => {
     expect(searchPage).toContain("const searchNavigationIcons: Record<AppNavigationIconName, LucideIcon>");
     expect(searchPage).toContain("const searchCreateActionIcons: Record<CrmCreateActionPath, LucideIcon>");
     expect(searchCreateActions).toContain('import { searchJumpNavigationItems, searchListNavigationItems } from "@/lib/navigation"');
-    expect(sidebarCommand).toContain("import { buildSearchCreateActions, queryListHref } from \"@/lib/search-create-actions\"");
+    expect(sidebarCommand).toContain('import { queryListHref } from "@/lib/search-create-actions"');
+    expect(sidebarCommand).not.toContain("import { buildSearchCreateActions, queryListHref }");
     expect(sidebarCommand).toContain("import { searchListNavigationItems, sidebarJumpNavigationItems");
     expect(navigation).toContain('listDescription: "Browse follow-ups and tasks."');
     expect(navigation).toContain("export const searchListNavigationItems");
@@ -421,7 +428,9 @@ describe("global workspace search", () => {
     expect(buildSearchJumpActions().map((action) => action.href)).toEqual([
       "/dashboard",
       "/pipeline",
+      "/deals?commercial=hasQuote",
       "/activities",
+      "/email",
       "/meeting-intelligence",
       "/reports",
       "/settings"

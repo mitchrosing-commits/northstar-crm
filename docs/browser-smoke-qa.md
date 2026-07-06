@@ -58,7 +58,7 @@ The automated smoke test starts a local `next start` server on port `3100`, so i
 - One seeded deal detail page shows the unified Timeline section.
 - One closed seeded deal detail page shows the Reopen deal action.
 - The Settings Import/Export page renders and the browser session can download Deals, Contacts, Organizations, Leads, Activities, Products, and Quotes CSV exports with private no-store CSV responses.
-- Product, Reports, Email Command Center, Developer/API, and Custom Fields pages render their primary readiness content.
+- Product, Reports, Inbox, Developer/API, and Custom Fields pages render their primary readiness content.
 - Authenticated quote detail, quote print, authenticated quote PDF, and public quote routes render without exposing the CRM app shell on the public route.
 - A real browser create flow can add linked organization/contact/deal records, complete a follow-up, and then find those records from related detail pages.
 - A real browser lead flow can create a lead, log email context, convert it into a deal, verify the email context moves to the converted deal, and verify the converted lead is locked.

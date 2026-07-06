@@ -125,7 +125,7 @@ describe("meeting intelligence UX", () => {
       'title="Meeting Log"',
       'title="Matches and Warnings"',
       'title="Proposed Notes"',
-      'title="Relationship Brief Updates"',
+      'title="Relationship Memory Updates"',
       'title="Follow-Ups"',
       'title="Normalized Markdown"',
       'title="Apply Summary"',
@@ -145,7 +145,15 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("meeting-proposal-evidence");
     expect(meetingIntelligenceReview).toContain("{selectedUpdateCount} selected");
     expect(meetingIntelligenceReview).toContain("Review-first safety");
-    expect(meetingIntelligenceReview).toContain("Nothing is written to notes, activities, associations, or Relationship Brief fields");
+    expect(meetingIntelligenceReview).toContain("Nothing is written to notes, activities, associations, or Relationship Memory fields");
+    expect(meetingIntelligenceReview).toContain("relationship-memory-review-summary");
+    expect(meetingIntelligenceReview).toContain("Contact Relationship Memory");
+    expect(meetingIntelligenceReview).toContain("Separate from notes");
+    expect(meetingIntelligenceReview).toContain("Company, deal, lead, and raw timeline facts stay in Proposed Notes");
+    expect(meetingIntelligenceReview).toContain("relationship-memory-review-field-heading");
+    expect(meetingIntelligenceReview).toContain("relationship-memory-fact-review-header");
+    expect(meetingIntelligenceReview).toContain("Will update memory");
+    expect(meetingIntelligenceReview).toContain("Excluded");
     expect(meetingIntelligenceReview).toContain("submitActionLabel=\"Apply reviewed Meeting Intelligence updates\"");
     expect(meetingIntelligenceReview).toContain("Created updates are linked below. Skipped items did not mutate CRM data.");
     expect(meetingIntelligenceReview).toContain("meeting-apply-success");
@@ -155,6 +163,9 @@ describe("meeting intelligence UX", () => {
     expect(globalStyles).toContain(".meeting-intake-upload-capabilities");
     expect(globalStyles).toContain(".meeting-upload-capability-card");
     expect(globalStyles).toContain(".meeting-review-overview");
+    expect(globalStyles).toContain(".relationship-memory-review-summary");
+    expect(globalStyles).toContain(".relationship-memory-review-field-heading");
+    expect(globalStyles).toContain(".relationship-memory-fact-review-header");
     expect(globalStyles).toContain(".meeting-match-review-list > .compact-list-item");
     expect(globalStyles).toContain(".meeting-processor-status-item");
     expect(globalStyles).toContain(".meeting-intake-row,");
@@ -213,7 +224,7 @@ describe("meeting intelligence UX", () => {
     for (const emptyTitle of [
       'title="No meeting activity proposed"',
       'title="No notes proposed"',
-      'title="No relationship brief updates proposed"',
+      'title="No relationship memory updates proposed"',
       'title="No follow-ups proposed"',
       'title="No CRM updates created"',
     ]) {
@@ -230,14 +241,14 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("relationshipBriefFieldsFromPersonResponse");
     expect(meetingIntelligenceReview).toContain("reconcileRelationshipFactsForExisting");
     expect(meetingIntelligenceReview).toContain("relationshipBriefPreviewBlocked");
-    expect(meetingIntelligenceReview).toContain("Wait for the selected contact Relationship Brief preview to load");
+    expect(meetingIntelligenceReview).toContain("Wait for the selected contact Relationship Memory preview to load");
     expect(meetingIntelligenceReview).toContain("relationshipFactsForReview");
     expect(meetingIntelligenceReview).toContain("relationshipProposedFieldsFromReviewFacts");
     expect(meetingIntelligenceReview).toContain("relationshipMergedPreviewFromFacts");
     expect(meetingIntelligenceReview).toContain("relationshipExistingPreviewText");
     expect(meetingIntelligenceReview).toContain("relationshipAfterApplyPreviewText");
-    expect(meetingIntelligenceReview).toContain("Loading target Relationship Brief");
-    expect(meetingIntelligenceReview).toContain("Could not load the selected contact Relationship Brief");
+    expect(meetingIntelligenceReview).toContain("Loading target Relationship Memory");
+    expect(meetingIntelligenceReview).toContain("Could not load the selected contact Relationship Memory");
     expect(meetingIntelligenceReview).toContain("relationship.${index}.fact.${factIndex}.include");
     expect(meetingIntelligenceReview).toContain("relationship.${index}.fact.${factIndex}.text");
     expect(meetingIntelligenceReview).toContain("relationship.${index}.fact.${factIndex}.field");
@@ -254,13 +265,10 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("Safe personalization");
     expect(meetingIntelligenceReview).toContain("Use cautiously");
     expect(meetingIntelligenceReview).toContain("Do not mention directly");
-    expect(meetingIntelligenceReview).toContain("Personal context");
-    expect(meetingIntelligenceReview).toContain("Communication style");
-    expect(meetingIntelligenceReview).toContain("Business concerns");
-    expect(meetingIntelligenceReview).toContain("Follow-up reminders");
-    expect(meetingIntelligenceReview).toContain("Internal guidance");
-    expect(meetingIntelligenceReview).toContain("Relationship Brief updated");
-    expect(meetingIntelligenceReview).toContain("Relationship Brief Changes");
+    expect(meetingIntelligenceReview).toContain("relationshipBriefUsageItems");
+    expect(meetingIntelligenceReview).toContain("const relationshipBriefSections = relationshipBriefUsageItems()");
+    expect(meetingIntelligenceReview).toContain("Relationship Memory updated");
+    expect(meetingIntelligenceReview).toContain("Relationship Memory Changes");
     expect(meetingIntelligenceReview).toContain("result.relationshipBriefChanges");
     expect(meetingIntelligenceReview).toContain("relationshipBriefChangeSourceLabel");
     expect(meetingIntelligenceReview).toContain("relationshipBriefChangeExcerpt");

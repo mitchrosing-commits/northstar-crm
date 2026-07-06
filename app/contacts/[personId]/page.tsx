@@ -119,9 +119,9 @@ export default async function ContactDetailPage({ params }: PageProps) {
             extraJumps={[
               {
                 href: "#relationship-brief" as Route,
-                label: "Brief",
+                label: "Memory",
                 count: relationshipBriefCount,
-                countLabel: { singular: "saved section", plural: "saved sections" }
+                countLabel: { singular: "saved memory section", plural: "saved memory sections" }
               },
               {
                 href: "#related-deals" as Route,

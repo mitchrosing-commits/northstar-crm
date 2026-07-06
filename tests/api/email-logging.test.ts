@@ -217,10 +217,11 @@ describe("manual email logging and templates foundation", () => {
     expect(manualEmailPanel).toContain("This does not send email, sync an");
     expect(manualEmailPanel).toContain("inbox, or create background jobs.");
     expect(manualEmailPanel).toContain(
-      'const emailWorkspaceLabel = "Open Email workspace to connect or sync email"',
+      'const emailWorkspaceLabel = "Open Inbox to connect or sync email"',
     );
     expect(manualEmailPanel).toContain("aria-label={emailWorkspaceLabel}");
     expect(manualEmailPanel).toContain("title={emailWorkspaceLabel}");
+    expect(manualEmailPanel).toContain(">\n              Inbox\n            </Link>");
     expect(manualEmailPanel).toContain("Outbound - already sent");
     expect(manualEmailPanel).toContain("Inbound - received");
     expect(manualEmailPanel).toContain(

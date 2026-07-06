@@ -319,9 +319,9 @@ describe("shared page header UX", () => {
     expect(reportsPage).toContain("href={dealsHref}");
 
     expect(emailPage).toContain('eyebrow="Communication"');
-    expect(emailPage).toContain('title="Email"');
+    expect(emailPage).toContain('title="Inbox"');
     expect(emailPage).toContain(
-      "Review provider status, sync results, and CRM-linked email activity.",
+      "Work synced mailbox threads, relationship-priority messages, Smart Labels, AI reply drafts, and review-first follow-ups from one place.",
     );
     expect(emailPage).toContain('href="/settings#email-connections"');
 

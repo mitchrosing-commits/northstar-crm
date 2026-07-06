@@ -41,7 +41,7 @@ export function PrimaryNav() {
   const pathname = usePathname() ?? "";
   const groupedItems = appNavigationGroups.map((group) => ({
     label: group,
-    items: appShellNavigationManifest.filter((item) => item.group === group)
+    items: appShellNavigationManifest.filter((item) => item.group === group && item.primary !== false)
   }));
 
   return (
@@ -54,7 +54,8 @@ export function PrimaryNav() {
           <ul aria-labelledby={`primary-nav-${group.label.toLowerCase()}`} className="nav-list">
             {group.items.map((item) => {
               const Icon = navigationIcons[item.icon];
-              const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const hrefPath = String(item.href).split("?")[0];
+              const isActive = pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
               const navItemLabel = primaryNavItemLabel(item.label, isActive);
               return (
                 <li key={item.label}>

@@ -419,7 +419,7 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailFollowUpStateLabel("unknown")).toBe("Unknown");
   });
 
-  it("renders a focused queue in the Email Command Center without adding automatic mutation", () => {
+  it("renders a focused queue in Inbox without adding automatic mutation", () => {
     expect(emailPage).toContain("Relationship Inbox Queue");
     expect(emailPage).toContain("normalizeEmailPriorityQueueFilter(resolvedSearchParams?.inbox)");
     expect(emailPage).toContain("buildEmailPriorityQueueSummary(recentEmailLogs)");

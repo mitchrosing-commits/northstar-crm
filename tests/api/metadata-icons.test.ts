@@ -25,9 +25,16 @@ describe("app metadata icons", () => {
     expect(existsSync(join(process.cwd(), "app/icon.svg"))).toBe(true);
     expect(existsSync(join(process.cwd(), "app/apple-icon.png"))).toBe(true);
     expect(iconSvg).toContain("Northstar CRM icon");
-    expect(iconSvg).toContain('fill="#0f766e"');
-    expect(iconSvg).toContain('fill="#d9f99d"');
+    expect(iconSvg).toContain("northstar-logo-gradient");
+    expect(iconSvg).toContain('stop-color="#0f766e"');
+    expect(iconSvg).toContain('stop-color="#1d4ed8"');
+    expect(iconSvg).toContain('fill="#ffffff"');
+    expect(iconSvg).toContain('stroke="#ffffff"');
     expect(faviconIco.subarray(0, 6).toString("hex")).toBe("000001000300");
+    expect([0, 1, 2].map((entryIndex) => faviconIco[6 + entryIndex * 16])).toEqual([16, 32, 48]);
+    expect([0, 1, 2].map((entryIndex) => faviconIco[7 + entryIndex * 16])).toEqual([16, 32, 48]);
     expect(appleIcon.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    expect(appleIcon.readUInt32BE(16)).toBe(180);
+    expect(appleIcon.readUInt32BE(20)).toBe(180);
   });
 });

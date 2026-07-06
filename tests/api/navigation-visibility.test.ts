@@ -8,7 +8,12 @@ const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"
 const sidebarCommand = readFileSync(join(process.cwd(), "components/sidebar-command.tsx"), "utf8");
 const sidebarSearchShortcut = readFileSync(join(process.cwd(), "components/sidebar-search-shortcut.tsx"), "utf8");
 const createRecordActions = readFileSync(join(process.cwd(), "lib/create-record-actions.ts"), "utf8");
+const contactsPage = readFileSync(join(process.cwd(), "app/contacts/page.tsx"), "utf8");
+const dealsPage = readFileSync(join(process.cwd(), "app/deals/page.tsx"), "utf8");
+const leadsPage = readFileSync(join(process.cwd(), "app/leads/page.tsx"), "utf8");
 const navigation = readFileSync(join(process.cwd(), "lib/navigation.ts"), "utf8");
+const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
+const pipelinePage = readFileSync(join(process.cwd(), "app/pipeline/page.tsx"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 const smokeSpec = readFileSync(join(process.cwd(), "tests/browser/smoke.spec.ts"), "utf8");
 
@@ -16,7 +21,7 @@ describe("main navigation visibility", () => {
   it("keeps Settings in the primary navigation and workspace shortcut area", () => {
     expect(appShell).toContain("aria-label=\"Workspace navigation\"");
     expect(appShell).toContain('export { appShellNavigationManifest } from "@/lib/navigation";');
-    expect(primaryNav).toContain("appShellNavigationManifest.filter((item) => item.group === group)");
+    expect(primaryNav).toContain("appShellNavigationManifest.filter((item) => item.group === group && item.primary !== false)");
     expect(primaryNav).toContain("navigationIcons[item.icon]");
     expect(navigation).toContain("href: \"/settings\"");
     expect(navigation).toContain("label: \"Settings\"");
@@ -42,7 +47,7 @@ describe("main navigation visibility", () => {
     expect(appShell).toContain("Settings");
   });
 
-  it("keeps global search and quick actions available from the app shell", () => {
+  it("keeps global search and navigation shortcuts available from the app shell", () => {
     expect(appShell).toContain("<SidebarCommand globalSearchDefaultValue={globalSearchDefaultValue} />");
     expect(sidebarCommand).toContain("export function SidebarCommand");
     expect(sidebarCommand).toContain("\"use client\";");
@@ -53,7 +58,7 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("aria-label={globalActionsLabel}");
     expect(sidebarCommand).toContain("title={globalActionsLabel}");
     expect(sidebarCommand).toContain("sidebar-command-header");
-    expect(sidebarCommand).toContain("Search, create, and jump without leaving the workspace flow.");
+    expect(sidebarCommand).toContain("Search and jump without leaving the workspace flow.");
     expect(sidebarCommand).toContain("action=\"/search\"");
     expect(sidebarCommand).toContain('import { useId } from "react"');
     expect(sidebarCommand).toContain("const generatedSearchId = useId()");
@@ -95,10 +100,11 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("className={isActive ? \"sidebar-quick-action sidebar-quick-action-active\" : \"sidebar-quick-action\"}");
     expect(sidebarCommand).toContain("const actionTitle = `${action.label}: ${action.helper}`");
     expect(sidebarCommand).toContain("title={actionTitle}");
-    expect(sidebarCommand).toContain("buildSearchCreateActions(globalSearchDefaultValue)");
-    expect(sidebarCommand).toContain("getCrmCreateActionDefinition(action.href)");
-    expect(sidebarCommand).toContain("createSidebarHelperForQuery(createMetadata, searchValue)");
-    expect(sidebarCommand).toContain("sidebarCreateActionIcons[createMetadata.href]");
+    expect(sidebarCommand).not.toContain("buildSearchCreateActions(globalSearchDefaultValue)");
+    expect(sidebarCommand).not.toContain("getCrmCreateActionDefinition(action.href)");
+    expect(sidebarCommand).not.toContain("createSidebarHelperForQuery(createMetadata, searchValue)");
+    expect(sidebarCommand).not.toContain("sidebarCreateActionIcons");
+    expect(sidebarCommand).not.toContain('label: "Create"');
     expect(sidebarCommand).toContain("const findActions = hasSearchValue");
     expect(sidebarCommand).toContain("searchListNavigationItems.map((item) => ({");
     expect(sidebarCommand).toContain("href: queryListHref(item.href, searchValue)");
@@ -109,8 +115,8 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("const sidebarQuickActionGroups");
     expect(createRecordActions).toContain("export function createSidebarHelperForQuery");
     expect(createRecordActions).toContain("return `Prefills ${prefillKeyLabels[prefillKey]}`;");
-    expect(sidebarCommand).toContain("Create actions are prefilled from this search.");
-    expect(sidebarCommand).toContain("Search records, then create from the query when needed.");
+    expect(sidebarCommand).toContain("Open matching list shortcuts for this search.");
+    expect(sidebarCommand).toContain("Use page-level New buttons for contacts, organizations, leads, deals, and activities.");
     expect(sidebarCommand).toContain("aria-label=\"Active workspace search\"");
     expect(sidebarCommand).toContain("className=\"sidebar-current-query\"");
     expect(sidebarCommand).toContain("<strong>{searchValue}</strong>");
@@ -130,6 +136,16 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("id={headingId}");
     expect(sidebarCommand).toContain("sidebar-quick-action-icon");
     expect(createRecordActions).toContain('sidebarHelper: "Opportunity"');
+    expect(navigation).toContain("href: \"/email\"");
+    expect(navigation).toContain("label: \"Inbox\"");
+    expect(navigation).toContain("helper: \"Mailbox + priority\"");
+    expect(navigation).toContain("Open synced email, Relationship Inbox priorities, Smart Labels, AI reply drafts, and follow-ups.");
+    expect(navigation).toContain("href: \"/deals?commercial=hasQuote\"");
+    expect(navigation).toContain("label: \"Quotes\"");
+    expect(navigation).toContain("primary: false");
+    expect(navigation).not.toContain("label: \"Smart Labels\"");
+    expect(navigation).not.toContain("label: \"AI Reply Assistant\"");
+    expect(navigation).not.toContain("label: \"Relationship Inbox\"");
     expect(navigation).toContain("helper: \"Command center\"");
     expect(navigation).toContain("helper: \"Deal board\"");
     expect(navigation).toContain("helper: \"List view\"");
@@ -159,6 +175,7 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("href: \"/organizations\"");
     expect(navigation).toContain("href: \"/leads\"");
     expect(navigation).toContain("href: \"/activities\"");
+    expect(primaryNav).toContain("aria-current={isActive ? \"page\" : undefined}");
     expect(globalStyles).toContain(".sidebar-search");
     expect(globalStyles).toContain(".sidebar-command-header");
     expect(globalStyles).toContain(".sidebar-command-helper");
@@ -176,6 +193,18 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain(".nav-item-active::before");
     expect(globalStyles).toContain("background: var(--accent);");
     expect(globalStyles).toContain("overflow-wrap: normal;");
+  });
+
+  it("keeps basic create actions on list pages instead of the sidebar command", () => {
+    expect(sidebarCommand).not.toContain('label: "Create"');
+    expect(sidebarCommand).not.toContain('sidebarLabel: "New contact"');
+    expect(sidebarCommand).not.toContain('sidebarLabel: "New organization"');
+    expect(sidebarCommand).not.toContain('sidebarLabel: "New lead"');
+    expect(contactsPage).toContain('createLabel="New contact"');
+    expect(organizationsPage).toContain('createLabel="New organization"');
+    expect(leadsPage).toContain('createLabel="New lead"');
+    expect(dealsPage).toContain('createLabel="New deal"');
+    expect(pipelinePage).toContain('createLabel="New deal"');
   });
 
   it("prevents the fixed desktop sidebar from hiding lower navigation items", () => {

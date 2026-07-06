@@ -26,6 +26,7 @@ export type AppNavigationItem = {
   label: string;
   listDescription?: string;
   listSearchDescription?: string;
+  primary?: boolean;
   searchDescription?: string;
   searchJump?: boolean;
   searchListOrder?: number;
@@ -62,6 +63,16 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     listDescription: "Review open and closed opportunities.",
     listSearchDescription: "Open the deals list with this query.",
     searchListOrder: 10
+  },
+  {
+    href: "/deals?commercial=hasQuote" as Route,
+    label: "Quotes",
+    icon: "CircleDollarSign",
+    group: "Work",
+    helper: "Quote review",
+    commandJump: true,
+    searchDescription: "Review deals with quote activity.",
+    searchJump: true
   },
   {
     href: "/contacts",
@@ -110,6 +121,16 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     searchListOrder: 20
   },
   {
+    href: "/email",
+    label: "Inbox",
+    icon: "Inbox",
+    group: "Work",
+    helper: "Mailbox + priority",
+    commandJump: true,
+    searchDescription: "Open synced email, Relationship Inbox priorities, Smart Labels, AI reply drafts, and follow-ups.",
+    searchJump: true
+  },
+  {
     href: "/meeting-intelligence" as Route,
     label: "Meeting Intelligence",
     icon: "BrainCircuit",
@@ -119,20 +140,20 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     searchDescription: "Analyze meeting notes into reviewable CRM updates.",
     searchJump: true
   },
-  { href: "/email", label: "Email", icon: "Inbox", group: "Work" },
   {
     href: "/reports",
     label: "Reports",
     icon: "BarChart3",
     group: "Work",
     helper: "Metrics",
-    commandJump: true,
+    commandJump: false,
+    primary: false,
     searchDescription: "Review sales operating metrics.",
     searchJump: true
   },
-  { href: "/products", label: "Products", icon: "Package", group: "Work" },
-  { href: "/search", label: "Search", icon: "Search", group: "System" },
-  { href: "/custom-fields", label: "Custom Fields", icon: "SlidersHorizontal", group: "System" },
+  { href: "/products", label: "Products", icon: "Package", group: "Work", primary: false },
+  { href: "/search", label: "Search", icon: "Search", group: "System", primary: false },
+  { href: "/custom-fields", label: "Custom Fields", icon: "SlidersHorizontal", group: "System", primary: false },
   {
     href: "/settings",
     label: "Settings",

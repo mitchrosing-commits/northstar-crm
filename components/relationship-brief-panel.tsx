@@ -77,10 +77,11 @@ export function RelationshipBriefPanel({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const savedCount = relationshipBriefCount(brief);
-  const savedSections = relationshipBriefSavedSections(brief);
   const filteredRecentChanges = relationshipBriefFilteredChanges(recentChanges, historySourceFilter, historyFieldFilter);
   const changedFieldCounts = relationshipBriefChangedFieldCounts(recentChanges);
-  const editActionLabel = `${isEditing ? "Cancel editing" : "Edit"} relationship brief for ${contactName}`;
+  const meetingIntelligenceChangeCount = recentChanges.filter((change) => change.sourceType === "meeting_intelligence").length;
+  const manualChangeCount = recentChanges.filter((change) => change.sourceType === "manual").length;
+  const editActionLabel = `${isEditing ? "Cancel editing" : "Edit"} relationship memory for ${contactName}`;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,7 +96,7 @@ export function RelationshipBriefPanel({
 
     if (!response.ok) {
       const responseBody = await response.json().catch(() => null);
-      setError(responseBody?.error?.message ?? "Could not save the relationship brief.");
+      setError(responseBody?.error?.message ?? "Could not save the relationship memory.");
       setIsSaving(false);
       return;
     }
@@ -132,13 +133,13 @@ export function RelationshipBriefPanel({
         }
         actionsLabel="Relationship brief actions"
         description="Curated relationship context for thoughtful follow-up. Keep personal details limited to what was voluntarily shared and useful."
-        title="Relationship Brief"
+        title="Relationship Memory"
       />
 
       {isEditing ? (
-        <form className="section-spaced" onSubmit={onSubmit}>
+        <form className="relationship-memory-edit-form section-spaced" onSubmit={onSubmit}>
           {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
-          <div className="relationship-brief-guidance" aria-label="Relationship Brief sensitivity guidance">
+          <div className="relationship-brief-guidance" aria-label="Relationship Memory sensitivity guidance">
             {sensitivityGuidance.map((guidance) => (
               <Badge key={guidance}>{guidance}</Badge>
             ))}
@@ -147,13 +148,18 @@ export function RelationshipBriefPanel({
             Keep this as curated relationship memory. Do not store protected traits, confidential health or family details, or anything the team
             should not use for thoughtful follow-up.
           </p>
-          <div className="form-grid">
+          <div className="relationship-memory-edit-grid">
             {briefSections.map((section) => (
-              <label className="form-field form-field-wide" key={section.key}>
-                <FormFieldLabel>
-                  {section.label} <Badge>{section.badges[0]}</Badge>
-                </FormFieldLabel>
-                <small className="form-hint">{section.description}</small>
+              <label className="form-field relationship-memory-edit-card" key={section.key}>
+                <span className="relationship-memory-card-header">
+                  <FormFieldLabel>{section.label}</FormFieldLabel>
+                  <span className="relationship-brief-usage-badges">
+                    {section.badges.map((badge) => (
+                      <Badge key={badge}>{badge}</Badge>
+                    ))}
+                  </span>
+                </span>
+                <small className="form-hint">{relationshipBriefEditHelper(section)}</small>
                 <textarea
                   maxLength={2000}
                   onChange={(event) => setDraft((current) => ({ ...current, [section.key]: event.target.value }))}
@@ -165,7 +171,7 @@ export function RelationshipBriefPanel({
           </div>
           <div className="form-actions form-actions-compact">
             <button className="button-primary" disabled={isSaving} type="submit">
-              {isSaving ? "Saving..." : "Save relationship brief"}
+              {isSaving ? "Saving..." : "Save relationship memory"}
             </button>
             <button
               className="button-secondary"
@@ -181,25 +187,79 @@ export function RelationshipBriefPanel({
             </button>
           </div>
         </form>
-      ) : savedCount > 0 ? (
-        <dl className="field-grid section-spaced">
-          {savedSections.map((section) => (
-            <div className="field-grid-item" key={section.key}>
-              <dt className="field-label">{section.label}</dt>
-              <dd className="field-value">{brief[section.key] || <InlineEmptyStateText>{section.emptyLabel}</InlineEmptyStateText>}</dd>
-            </div>
-          ))}
-        </dl>
       ) : (
-        <EmptyState
-          className="empty-state-compact empty-state-panel section-spaced"
-          title="No relationship brief has been saved for this contact yet."
-        />
+        <div className="relationship-memory-read-view section-spaced">
+          <div className="relationship-memory-overview" aria-label="Relationship Memory overview">
+            <div>
+              <strong>{savedCount}/5 fields captured</strong>
+              <span>Personal context, tone, concerns, reminders, and internal handling guidance.</span>
+            </div>
+            <div>
+              <strong>{meetingIntelligenceChangeCount} from Meeting Intelligence</strong>
+              <span>Reviewed meeting facts can become curated contact memory after apply.</span>
+            </div>
+            <div>
+              <strong>{manualChangeCount} manual updates</strong>
+              <span>Users can add or refine details directly from this contact profile.</span>
+            </div>
+          </div>
+
+          {savedCount === 0 ? (
+            <EmptyState
+              className="empty-state-compact empty-state-panel relationship-memory-empty-state"
+              description="Use this space for voluntarily shared interests, communication preferences, business context, reminders, and private handling notes. Meeting Intelligence can suggest updates after a meeting, or you can add details manually."
+              title="No relationship memory has been saved for this contact yet."
+            />
+          ) : null}
+
+          <div className="relationship-memory-card-grid">
+            {briefSections.map((section) => {
+              const value = brief[section.key]?.trim() ?? "";
+              const latestChange = relationshipBriefLatestChangeForField(recentChanges, section.key);
+              return (
+                <article
+                  className={value ? "relationship-memory-card" : "relationship-memory-card relationship-memory-card-empty"}
+                  key={section.key}
+                >
+                  <header className="relationship-memory-card-header">
+                    <div>
+                      <h3>{section.label}</h3>
+                      <p className="relationship-memory-helper">{section.description}</p>
+                    </div>
+                    <span className="relationship-brief-usage-badges">
+                      {section.badges.map((badge) => (
+                        <Badge key={badge}>{badge}</Badge>
+                      ))}
+                    </span>
+                  </header>
+                  <p className="relationship-memory-value">
+                    {value || <InlineEmptyStateText>{relationshipBriefEmptyPrompt(section)}</InlineEmptyStateText>}
+                  </p>
+                  <footer className="relationship-memory-card-meta">
+                    {latestChange ? (
+                      <>
+                        <Badge>
+                          {latestChange.sourceType ? relationshipBriefSourceTypeLabel(latestChange.sourceType) : "Source recorded"}
+                        </Badge>
+                        <span>
+                          Last updated {formatHistoryDate(latestChange.changedAt)}
+                          {latestChange.actorLabel ? ` by ${latestChange.actorLabel}` : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <span>{relationshipBriefEmptySourcePrompt(section)}</span>
+                    )}
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       <details className="relationship-brief-usage-details section-spaced">
         <summary>Usage guidance</summary>
-        <div className="relationship-brief-usage-grid" aria-label="Relationship Brief usage guidance">
+        <div className="relationship-brief-usage-grid" aria-label="Relationship Memory usage guidance">
           {briefSections.map((section) => (
             <div className="relationship-brief-usage-card" key={section.key}>
               <div>
@@ -220,15 +280,16 @@ export function RelationshipBriefPanel({
       <div className="section-spaced">
         <PanelTitleRow
           actions={
-            <CountBadge label={`Recent relationship brief changes shown: ${filteredRecentChanges.length} of ${recentChanges.length}`}>
+            <CountBadge label={`Recent relationship memory changes shown: ${filteredRecentChanges.length} of ${recentChanges.length}`}>
               {filteredRecentChanges.length}/{recentChanges.length}
             </CountBadge>
           }
-          title="Recent Relationship Brief Changes"
+          description="Filter manual edits and Meeting Intelligence updates, then open source details for read-only provenance."
+          title="Source and Change History"
         />
         {recentChanges.length > 0 ? (
           <>
-            <div className="relationship-brief-history-toolbar" aria-label="Relationship Brief history filters">
+            <div className="relationship-brief-history-toolbar" aria-label="Relationship Memory history filters">
               <fieldset className="relationship-brief-history-source-filter">
                 <legend>Source</legend>
                 {[
@@ -263,7 +324,7 @@ export function RelationshipBriefPanel({
               </label>
             </div>
             {changedFieldCounts.length > 0 ? (
-              <div className="relationship-brief-history-summary" aria-label="Relationship Brief recently changed fields">
+              <div className="relationship-brief-history-summary" aria-label="Relationship Memory recently changed fields">
                 {changedFieldCounts.map((item) => (
                   <Badge key={item.key}>
                     {item.label}: {item.count}
@@ -276,12 +337,12 @@ export function RelationshipBriefPanel({
         {recentChanges.length === 0 ? (
           <EmptyState
             className="empty-state-compact empty-state-panel"
-            title="No Relationship Brief history has been recorded yet."
+            title="No Relationship Memory history has been recorded yet."
           />
         ) : filteredRecentChanges.length === 0 ? (
           <EmptyState
             className="empty-state-compact empty-state-panel"
-            title="No Relationship Brief changes match these filters."
+            title="No Relationship Memory changes match these filters."
           />
         ) : (
           <div className="relationship-brief-change-list">
@@ -389,8 +450,25 @@ function relationshipBriefCount(brief: RelationshipBriefValue) {
   return briefSections.filter((section) => Boolean(brief[section.key]?.trim())).length;
 }
 
-function relationshipBriefSavedSections(brief: RelationshipBriefValue): RelationshipBriefUsageGuidance[] {
-  return briefSections.filter((section) => Boolean(brief[section.key]?.trim()));
+function relationshipBriefLatestChangeForField(changes: RelationshipBriefHistoryItem[], fieldKey: RelationshipBriefFieldKey) {
+  return changes.find((change) => relationshipBriefHistoryFieldKey(change) === fieldKey);
+}
+
+function relationshipBriefEmptyPrompt(section: RelationshipBriefUsageGuidance) {
+  if (section.key === "relationshipPersonalContext") return "Add interests, hobbies, family context, or preferences the contact voluntarily shared.";
+  if (section.key === "relationshipCommunicationStyle") return "Add preferred channel, cadence, detail level, or tone.";
+  if (section.key === "relationshipBusinessConcerns") return "Add known objections, risks, priorities, or buying concerns to handle carefully.";
+  if (section.key === "relationshipFollowUpReminders") return "Add human reminders or promises worth remembering before the next conversation.";
+  return "Add private team guidance for handling the relationship. Do not quote it to the contact.";
+}
+
+function relationshipBriefEmptySourcePrompt(section: RelationshipBriefUsageGuidance) {
+  if (section.key === "relationshipInternalGuidance") return "Manual-only or reviewed Meeting Intelligence guidance can appear here.";
+  return "Meeting Intelligence can suggest this from reviewed meetings, or you can add it manually.";
+}
+
+function relationshipBriefEditHelper(section: RelationshipBriefUsageGuidance) {
+  return `${section.description} ${section.customerFacingUse}`;
 }
 
 function relationshipBriefFilteredChanges(
@@ -469,7 +547,7 @@ function relationshipBriefHistoryGuidance(change: RelationshipBriefHistoryItem) 
   if (change.sourceType === "manual") {
     return "Manual contact-page edit. No AI or provider call is required, and viewing these details does not mutate CRM data.";
   }
-  return "Read-only Relationship Brief audit detail. Older entries may have less source metadata.";
+  return "Read-only Relationship Memory audit detail. Older entries may have less source metadata.";
 }
 
 function formatHistoryDate(value: string) {

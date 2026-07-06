@@ -5,7 +5,6 @@ import {
   BrainCircuit,
   Building2,
   CalendarCheck,
-  CalendarPlus,
   CircleDollarSign,
   Contact,
   Inbox,
@@ -24,8 +23,7 @@ import { usePathname } from "next/navigation";
 import { useId } from "react";
 
 import { ActionGroup } from "@/components/action-group";
-import { createSidebarHelperForQuery, getCrmCreateActionDefinition, type CrmCreateActionPath } from "@/lib/create-record-actions";
-import { buildSearchCreateActions, queryListHref } from "@/lib/search-create-actions";
+import { queryListHref } from "@/lib/search-create-actions";
 import { SidebarSearchShortcut } from "@/components/sidebar-search-shortcut";
 import { searchListNavigationItems, sidebarJumpNavigationItems, type AppNavigationIconName } from "@/lib/navigation";
 
@@ -38,14 +36,6 @@ type SidebarQuickAction = {
   href: Route;
   icon: LucideIcon;
   label: string;
-};
-
-const sidebarCreateActionIcons: Record<CrmCreateActionPath, LucideIcon> = {
-  "/deals/new": CircleDollarSign,
-  "/contacts/new": Contact,
-  "/organizations/new": Building2,
-  "/leads/new": Contact,
-  "/activities/new": CalendarPlus
 };
 
 const sidebarJumpActionIcons: Record<AppNavigationIconName, LucideIcon> = {
@@ -84,15 +74,6 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
   const searchValue = globalSearchDefaultValue?.trim() ?? "";
   const hasSearchValue = searchValue.length > 0;
   const clearSearchActionLabel = hasSearchValue ? clearSearchLabel(searchValue) : "";
-  const createActions = buildSearchCreateActions(globalSearchDefaultValue).map((action) => {
-    const createMetadata = getCrmCreateActionDefinition(action.href);
-    return {
-      href: action.href,
-      label: createMetadata.sidebarLabel,
-      helper: createSidebarHelperForQuery(createMetadata, searchValue),
-      icon: sidebarCreateActionIcons[createMetadata.href]
-    };
-  });
   const findActions = hasSearchValue
     ? searchListNavigationItems.map((item) => ({
         href: queryListHref(item.href, searchValue),
@@ -103,7 +84,6 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
     : [];
   const sidebarQuickActionGroups: Array<{ actions: SidebarQuickAction[]; label: string }> = [
     ...(findActions.length > 0 ? [{ label: "Find", actions: findActions }] : []),
-    { label: "Create", actions: createActions },
     { label: "Jump", actions: sidebarJumpActions }
   ];
 
@@ -112,7 +92,7 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
       <SidebarSearchShortcut inputId={searchInputId} />
       <div className="sidebar-command-header">
         <p className="sidebar-command-eyebrow">Command</p>
-        <p className="sidebar-command-copy">Search, create, and jump without leaving the workspace flow.</p>
+        <p className="sidebar-command-copy">Search and jump without leaving the workspace flow.</p>
       </div>
       <form
         action="/search"
@@ -140,8 +120,8 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
       </form>
       <p className="sidebar-command-helper" id={searchHelperId}>
         {hasSearchValue
-          ? "Create actions are prefilled from this search."
-          : "Search records, then create from the query when needed."}
+          ? "Open matching list shortcuts for this search."
+          : "Use page-level New buttons for contacts, organizations, leads, deals, and activities."}
       </p>
       {hasSearchValue ? (
         <div aria-label="Active workspace search" className="sidebar-current-query">

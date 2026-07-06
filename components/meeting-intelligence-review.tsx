@@ -27,6 +27,7 @@ import type {
   RelationshipBriefFields,
   RelationshipBriefSensitivityCategory
 } from "@/lib/meeting-intelligence/types";
+import { relationshipBriefUsageItems } from "@/lib/relationship-brief-usage";
 
 type Option = { id: string; label: string };
 
@@ -96,7 +97,7 @@ export function MeetingIntelligenceReview({
     event.preventDefault();
     setError(null);
     if (relationshipBriefPreviewBlocked) {
-      setError("Wait for the selected contact Relationship Brief preview to load before applying updates.");
+      setError("Wait for the selected contact Relationship Memory preview to load before applying updates.");
       return;
     }
     setIsSaving(true);
@@ -207,7 +208,7 @@ export function MeetingIntelligenceReview({
           index === updateIndex && state.targetId === target.id
             ? {
                 existing: {},
-                error: "Could not load the selected contact Relationship Brief. Choose another contact or try again.",
+                error: "Could not load the selected contact Relationship Memory. Choose another contact or try again.",
                 status: "failed",
                 targetId: target.id,
                 targetLabel: target.label
@@ -449,11 +450,25 @@ export function MeetingIntelligenceReview({
 
       <section className="panel meeting-review-section" aria-labelledby="relationship-brief-heading">
         <PanelTitleRow
-          actions={<CountBadge className="badge">{relationshipBriefUpdates.length} brief updates</CountBadge>}
-          description="Review-first curated memory for matched contacts. Approved additions are merged into the contact profile; empty fields are ignored."
-          title="Relationship Brief Updates"
+          actions={<CountBadge className="badge">{relationshipBriefUpdates.length} memory updates</CountBadge>}
+          description="Review-first curated contact memory. These suggestions update the selected contact profile, not normal timeline notes."
+          title="Relationship Memory Updates"
           titleId="relationship-brief-heading"
         />
+        <div className="relationship-memory-review-summary" aria-label="Relationship Memory proposal guidance">
+          <div>
+            <strong>Contact Relationship Memory</strong>
+            <span>Accepted facts merge into the selected contact profile: personal context, tone, concerns, reminders, or internal guidance.</span>
+          </div>
+          <div>
+            <strong>Separate from notes</strong>
+            <span>Company, deal, lead, and raw timeline facts stay in Proposed Notes above unless you choose otherwise.</span>
+          </div>
+          <div>
+            <strong>Review-first safety</strong>
+            <span>Included facts can be edited, excluded, or moved before anything is written.</span>
+          </div>
+        </div>
         <div className="inline-form">
           {relationshipBriefUpdates.length > 0 ? (
             relationshipBriefUpdates.map((update, index) => {
@@ -467,7 +482,7 @@ export function MeetingIntelligenceReview({
                   <div className="meeting-review-item-header">
                     <label className="form-field checkbox-field">
                       <input defaultChecked={update.include} name={`relationship.${index}.include`} type="checkbox" />
-                      <span>Update Relationship Brief</span>
+                      <span>Update Relationship Memory</span>
                     </label>
                     <Badge>{targetDisplayLabel(selectedTarget)}</Badge>
                   </div>
@@ -490,10 +505,18 @@ export function MeetingIntelligenceReview({
                         .filter(({ fact }) => fact.field === section.key);
                       return (
                         <section className="relationship-brief-review-field" key={section.key}>
-                          <CompactTitleRow
-                            actions={<CountBadge className="badge">{fieldFacts.length} facts</CountBadge>}
-                            title={section.label}
-                          />
+                          <div className="relationship-memory-review-field-heading">
+                            <div>
+                              <strong>{section.label}</strong>
+                              <p className="form-hint">{section.description}</p>
+                            </div>
+                            <span className="relationship-brief-usage-badges">
+                              {section.badges.map((badge) => (
+                                <Badge key={badge}>{badge}</Badge>
+                              ))}
+                              <CountBadge className="badge">{fieldFacts.length} facts</CountBadge>
+                            </span>
+                          </div>
                           <div className="relationship-brief-diff-grid">
                             <div className="relationship-brief-diff-column">
                               <strong>Existing</strong>
@@ -507,22 +530,25 @@ export function MeetingIntelligenceReview({
                                 <div className="relationship-brief-fact-list">
                                   {fieldFacts.map(({ fact, factIndex }) => (
                                     <div className="relationship-brief-fact" key={`${fact.id}-${factIndex}`}>
-                                      <label className="form-field checkbox-field">
-                                        <input
-                                          checked={fact.include}
-                                          name={`relationship.${index}.fact.${factIndex}.include`}
-                                          onChange={(event) =>
-                                            onRelationshipFactChange(
-                                              index,
-                                              factIndex,
-                                              { include: event.currentTarget.checked },
-                                              { includeTouched: true }
-                                            )
-                                          }
-                                          type="checkbox"
-                                        />
-                                        <span>Include fact</span>
-                                      </label>
+                                      <div className="relationship-memory-fact-review-header">
+                                        <label className="form-field checkbox-field">
+                                          <input
+                                            checked={fact.include}
+                                            name={`relationship.${index}.fact.${factIndex}.include`}
+                                            onChange={(event) =>
+                                              onRelationshipFactChange(
+                                                index,
+                                                factIndex,
+                                                { include: event.currentTarget.checked },
+                                                { includeTouched: true }
+                                              )
+                                            }
+                                            type="checkbox"
+                                          />
+                                          <span>Include fact</span>
+                                        </label>
+                                        <Badge>{fact.include ? "Will update memory" : "Excluded"}</Badge>
+                                      </div>
                                       <label className="form-field form-field-wide">
                                         <FormFieldLabel>Fact</FormFieldLabel>
                                         <textarea
@@ -586,8 +612,8 @@ export function MeetingIntelligenceReview({
           ) : (
             <EmptyState
               className="empty-state-compact empty-state-panel"
-              description="Relationship Brief suggestions appear only when the meeting contains explicit contact context worth curating."
-              title="No relationship brief updates proposed"
+              description="Relationship Memory suggestions appear only when the meeting contains explicit contact context worth curating."
+              title="No relationship memory updates proposed"
             />
           )}
         </div>
@@ -691,7 +717,7 @@ export function MeetingIntelligenceReview({
           </CompactListItem>
           <CompactListItem className="meeting-apply-safety-note">
             <strong>Review-first safety</strong>
-            <span className="muted">Nothing is written to notes, activities, associations, or Relationship Brief fields until you apply selected updates.</span>
+            <span className="muted">Nothing is written to notes, activities, associations, or Relationship Memory fields until you apply selected updates.</span>
           </CompactListItem>
           {missingTargetCount > 0 ? (
             <CompactListItem className="meeting-apply-warning">
@@ -704,7 +730,7 @@ export function MeetingIntelligenceReview({
       <FormActionBar
         cancelHref={"/meeting-intelligence" as Route}
         cancelLabel="Back"
-        disabledHint="Wait for the selected contact Relationship Brief preview to load, or choose another contact."
+        disabledHint="Wait for the selected contact Relationship Memory preview to load, or choose another contact."
         isSaving={isSaving}
         pendingLabel="Applying..."
         submitDisabled={relationshipBriefPreviewBlocked}
@@ -889,13 +915,7 @@ function activityBadges(activity: ProposedNextStepActivity) {
   return [activity.type, activity.dueAt ? `Due ${isoToDateValue(activity.dueAt)}` : "No due date", targetDisplayLabel(activity.target)];
 }
 
-const relationshipBriefSections = [
-  { key: "relationshipPersonalContext", label: "Personal context" },
-  { key: "relationshipCommunicationStyle", label: "Communication style" },
-  { key: "relationshipBusinessConcerns", label: "Business concerns" },
-  { key: "relationshipFollowUpReminders", label: "Follow-up reminders" },
-  { key: "relationshipInternalGuidance", label: "Internal guidance" }
-] as const satisfies Array<{ key: keyof RelationshipBriefFields; label: string }>;
+const relationshipBriefSections = relationshipBriefUsageItems();
 
 function fieldValue(fields: RelationshipBriefFields, key: keyof RelationshipBriefFields) {
   return fields[key] ?? "";
@@ -929,14 +949,14 @@ function RelationshipBriefTargetStatus({ state, target }: { state: RelationshipB
   if (!target) {
     return (
       <p className="form-hint relationship-brief-target-status">
-        Select a contact to preview existing Relationship Brief values before apply.
+        Select a contact to preview existing Relationship Memory values before apply.
       </p>
     );
   }
   if (state.status === "loading") {
     return (
       <p className="form-hint relationship-brief-target-status relationship-brief-target-status-loading" aria-live="polite">
-        Loading target Relationship Brief for {target.label ?? target.id}...
+        Loading target Relationship Memory for {target.label ?? target.id}...
       </p>
     );
   }
@@ -946,13 +966,13 @@ function RelationshipBriefTargetStatus({ state, target }: { state: RelationshipB
         className="form-hint form-hint-danger relationship-brief-target-status relationship-brief-target-status-failed"
         aria-live="polite"
       >
-        {state.error ?? "Could not load the selected contact Relationship Brief."}
+        {state.error ?? "Could not load the selected contact Relationship Memory."}
       </p>
     );
   }
   return (
     <p className="form-hint relationship-brief-target-status relationship-brief-target-status-ready" aria-live="polite">
-      Previewing current Relationship Brief for {target.label ?? target.id}.
+      Previewing current Relationship Memory for {target.label ?? target.id}.
     </p>
   );
 }
@@ -1276,7 +1296,7 @@ function defaultApplySummary(draft: MeetingIntelligenceDraft) {
   const notes = draft.notes.filter((note) => note.include).length;
   const followUps = draft.nextStepActivities.filter((activity) => activity.include).length;
   const relationshipBriefs = (draft.relationshipBriefUpdates ?? []).filter((update) => update.include).length;
-  return [`${meeting} meeting log`, `${notes} notes`, `${relationshipBriefs} relationship brief updates`, `${followUps} follow-ups`].join(" · ");
+  return [`${meeting} meeting log`, `${notes} notes`, `${relationshipBriefs} relationship memory updates`, `${followUps} follow-ups`].join(" · ");
 }
 
 function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
@@ -1311,7 +1331,7 @@ function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
         <>
           <CompactTitleRow
             actions={<CountBadge className="badge">{result.relationshipBriefChanges.length} fields</CountBadge>}
-            title="Relationship Brief Changes"
+            title="Relationship Memory Changes"
           />
           <div className="relationship-brief-change-list">
             {result.relationshipBriefChanges.map((change, index) => (
@@ -1365,7 +1385,7 @@ function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
 
 function appliedUpdateLabel(type: ApplyMeetingIntelligenceResult["created"][number]["type"]) {
   if (type === "activity") return "Activity created";
-  if (type === "relationship_brief") return "Relationship Brief updated";
+  if (type === "relationship_brief") return "Relationship Memory updated";
   return "Note created";
 }
 

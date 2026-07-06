@@ -54,7 +54,7 @@ export function ManualEmailLogPanel({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const activeTemplates = templates.filter((template) => template.active !== false);
-  const emailWorkspaceLabel = "Open Email workspace to connect or sync email";
+  const emailWorkspaceLabel = "Open Inbox to connect or sync email";
 
   function applyTemplate(templateId: string) {
     const template = activeTemplates.find((item) => item.id === templateId);
@@ -111,7 +111,7 @@ export function ManualEmailLogPanel({
             Save a plain-text record of an email that was already sent or received. This does not send email, sync an
             inbox, or create background jobs. Use{" "}
             <Link aria-label={emailWorkspaceLabel} className="inline-link" href={"/email" as Route} title={emailWorkspaceLabel}>
-              Email
+              Inbox
             </Link>{" "}
             to
             connect Gmail or sync recent matched messages from known contacts.

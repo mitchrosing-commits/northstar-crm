@@ -197,8 +197,9 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Recent intakes" })).toBeVisible();
       }
       if (path === "/email") {
+        await expect(page.getByRole("link", { name: "Current section: Email" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Email Providers" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Gmail" })).toBeVisible();
+        await expect(page.getByRole("heading", { exact: true, name: "Gmail" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Google Workspace" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Microsoft 365" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Outlook" })).toBeVisible();

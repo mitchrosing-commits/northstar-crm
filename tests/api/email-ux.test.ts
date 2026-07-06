@@ -132,11 +132,11 @@ describe("Email UX v1 discoverability", () => {
     ).toBeNull();
   });
 
-  it("adds Email to the authenticated app navigation and protected-route guard", () => {
+  it("adds Inbox to the authenticated app navigation and protected-route guard", () => {
     expect(primaryNav).toContain("Inbox");
     expect(primaryNav).toContain("appShellNavigationManifest");
     expect(navigation).toContain('href: "/email"');
-    expect(navigation).toContain('label: "Email"');
+    expect(navigation).toContain('label: "Inbox"');
     expect(middleware).toContain('"/email"');
     expect(middleware).toContain('loginUrl.pathname = "/login"');
     expect(middleware).toContain('loginUrl.searchParams.set("next"');
@@ -152,8 +152,22 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain("[emailLog.person.firstName, emailLog.person.lastName].filter(Boolean).join(\" \")");
     expect(personName).toContain("export function formatPersonName");
     expect(emailPage).toContain(
-      "Review provider status, sync results, and CRM-linked email activity.",
+      "Work synced mailbox threads, relationship-priority messages, Smart Labels, AI reply drafts, and review-first follow-ups from one place.",
     );
+    expect(emailPage).toContain('className="panel inbox-workflow-map"');
+    expect(emailPage).toContain('aria-label="Inbox workflow map"');
+    expect(emailPage).toContain('title="Inbox Workflows"');
+    expect(emailPage).toContain("Email intelligence lives inside the Inbox workflow.");
+    expect(emailPage).toContain("Nothing here auto-sends, auto-classifies, creates CRM records, or creates follow-ups without review.");
+    expect(emailPage).toContain("Full Inbox");
+    expect(emailPage).toContain("Relationship Inbox");
+    expect(emailPage).toContain("Smart Labels");
+    expect(emailPage).toContain("AI Reply Assistant");
+    expect(emailPage).toContain("Follow-ups");
+    expect(emailPage).toContain("InboxWorkflowItem");
+    expect(globalCss).toContain(".inbox-workflow-map");
+    expect(globalCss).toContain(".inbox-workflow-grid");
+    expect(globalCss).toContain(".inbox-workflow-item");
     expect(emailPage).toContain('const emailSettingsLabel = "Open email connection settings"');
     expect(emailPage).toContain("aria-label={emailSettingsLabel}");
     expect(emailPage).toContain("title={emailSettingsLabel}");
@@ -183,7 +197,11 @@ describe("Email UX v1 discoverability", () => {
     expect(globalCss).not.toContain(".email-section-note");
     expect(globalCss).toContain(".email-status-callout");
     expect(emailPage).toContain("EmptyState");
-    expect(emailPage).toContain('title="No email connected yet"');
+    expect(emailPage).toContain("gmailFullInboxReadiness(gmailProvider)");
+    expect(emailPage).toContain('title: "Gmail setup required"');
+    expect(emailPage).toContain('title: "Reconnect Gmail for Full Inbox"');
+    expect(emailPage).toContain('title: "Token encryption required"');
+    expect(emailPage).toContain("Connect Gmail with Full Inbox scopes");
     expect(emailPage).toContain('className="email-provider-empty"');
     expect(emailPage).not.toContain(
       '<div className="empty-state email-provider-empty">',
@@ -261,6 +279,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Last sync: {formatDate(provider.lastSyncAt)}");
     expect(emailPage).toContain("Last sync issue: {provider.lastError}");
     expect(emailPage).toContain("Background sync: {provider.syncStatusLabel}");
+    expect(emailPage).toContain("formatProviderSyncStatusDetail(provider.syncStatusDetail)");
+    expect(emailPage).toContain("formatProviderSyncStatusDetail(gmailProvider.syncStatusDetail)");
+    expect(emailPage).toContain("Gmail sync status");
     expect(emailConnectionService).toContain("syncStatusLabel?: string | null");
     expect(emailConnectionService).toContain("syncStatusDetail?: string | null");
     expect(emailConnectionService).toContain("gmailSyncJobStatus(syncJob)");
@@ -364,6 +385,10 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Gmail disconnected.");
     expect(emailPage).toContain("Encrypted OAuth tokens were removed");
     expect(emailPage).toContain("email-disconnect-error");
+    expect(emailPage).toContain("fullInboxEmptyStateCopy(gmailProvider, inboxThreads.length)");
+    expect(emailPage).toContain("Sync Gmail to populate Full Inbox");
+    expect(emailPage).toContain("No Gmail threads stored yet");
+    expect(emailPage).toContain("Use Sync Gmail inbox, then run the background worker");
   });
 
   it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
@@ -418,6 +443,7 @@ describe("Email UX v1 discoverability", () => {
       "const emailActionsLabel = `${emailLog.subject} email actions`",
     );
     expect(emailPage).toContain("const followUpDraft = buildEmailFollowUpDraftFromEmailLog(emailLog)");
+    expect(emailPage).toContain("Relationship Inbox is the CRM action queue for stored email.");
     expect(emailPage).toContain("<EmailFollowUpPanel");
     expect(emailPage).toContain(
       "const createDealFromEmailLabel = `Create deal from email ${emailLog.subject}`",
@@ -546,8 +572,8 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain(
       "Log an email manually from a deal, contact, organization, or lead.",
     );
-    expect(emailPage).toContain("After Gmail is connected");
-    expect(emailPage).toContain("Connect Gmail / Google Workspace");
+    expect(emailPage).toContain("Sync Gmail to populate Full Inbox");
+    expect(emailPage).toContain("Relationship Inbox and manual email logging still work without a synced mailbox.");
     expect(emailPage).toContain("Log an email manually");
     expect(manualEmailPanel).toContain("Log Manual Email");
     expect(manualEmailPanel).toContain("description={");
@@ -575,10 +601,11 @@ describe("Email UX v1 discoverability", () => {
     expect(manualEmailPanel).toContain("id={id}");
     expect(manualEmailPanel).toContain('href={"/email" as Route}');
     expect(manualEmailPanel).toContain(
-      'const emailWorkspaceLabel = "Open Email workspace to connect or sync email"',
+      'const emailWorkspaceLabel = "Open Inbox to connect or sync email"',
     );
     expect(manualEmailPanel).toContain("aria-label={emailWorkspaceLabel}");
     expect(manualEmailPanel).toContain("title={emailWorkspaceLabel}");
+    expect(manualEmailPanel).toContain(">\n              Inbox\n            </Link>");
     expect(manualEmailPanel).toContain(
       "sync recent matched messages from known contacts",
     );

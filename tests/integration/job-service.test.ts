@@ -16,10 +16,11 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   fixture = await createIntegrationFixture();
-  await fixture.prisma.job.deleteMany({});
+  await deleteJobServiceTestRows(fixture.prisma);
 });
 
 afterEach(async () => {
+  if (fixture) await deleteJobServiceTestRows(fixture.prisma);
   await fixture?.cleanup();
   fixture = undefined;
 });
@@ -1360,4 +1361,8 @@ describe("database-backed job service foundation", () => {
 function currentFixture() {
   if (!fixture) throw new Error("Integration fixture was not initialized.");
   return fixture;
+}
+
+async function deleteJobServiceTestRows(prisma: Fixture["prisma"]) {
+  await prisma.job.deleteMany({ where: { type: { startsWith: "test." } } });
 }
