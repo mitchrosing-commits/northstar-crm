@@ -220,6 +220,7 @@ export async function listEmailConnectionProviderCards(
   await ensureWorkspaceAccess(actor);
   const connections = await prisma.emailConnection.findMany({
     where: { workspaceId: actor.workspaceId, deletedAt: null },
+    include: { secret: { select: { scopes: true } } },
     orderBy: [{ provider: "asc" }, { updatedAt: "desc" }]
   });
   const gmailSyncJobs = await prisma.job.findMany({
@@ -483,7 +484,7 @@ export async function storeGoogleOAuthConnection({
     throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
   }
 
-  const scopes = normalizeScopes(tokenResponse.scope);
+  const scopes = normalizeGoogleOAuthScopes(tokenResponse.scope);
   const accountEmail = normalizeProviderAccountEmail(profile.email, "Gmail");
   const connection = await prisma.emailConnection.upsert({
     where: {
@@ -987,7 +988,7 @@ export async function syncGmailInboxMessages({
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    assertProviderScopes(connection.scopes, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+    assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
     const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
     const contactByEmail = await buildWorkspaceContactEmailMap(actor.workspaceId);
     const cursor = parseGmailHistoryCursor(connection.lastSyncCursor);
@@ -1064,7 +1065,7 @@ export async function syncOlderGmailInboxMessages({
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    assertProviderScopes(connection.scopes, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+    assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
     const beforeDate = normalizeGmailBeforeDate(before);
     const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
     const contactByEmail = await buildWorkspaceContactEmailMap(actor.workspaceId);
@@ -1140,7 +1141,7 @@ export async function refreshGmailInboxThread({
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    assertProviderScopes(connection.scopes, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+    assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
     const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
     const contactByEmail = await buildWorkspaceContactEmailMap(actor.workspaceId);
     const thread = await getGmailThreadFull({ accessToken, fetchImpl, threadId: providerThreadId });
@@ -1186,7 +1187,7 @@ export async function enqueueGmailInboxSyncJob(actor: WorkspaceActor) {
   if (!connection) {
     throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing inbox messages.", 400);
   }
-  assertProviderScopes(connection.scopes, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+  assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
   return enqueueGmailInboxSyncJobForConnection(actor, connection.id);
 }
 
@@ -1531,7 +1532,7 @@ export async function sendGmailReplyFromEmailLog({
   }
 
   assertEmailConnectionSecretIntegrity(connection, "Gmail");
-  assertProviderScopes(connection.scopes, gmailOAuthScopes, "Reconnect Gmail to enable explicit replies.");
+  assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable explicit replies.");
   const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
   const subject = replySubject(sourceEmail.subject);
   const sentMessage = await sendGmailRawMessage({
@@ -2235,6 +2236,7 @@ function googleProviderCard({
     lastError: string | null;
     lastSyncAt: Date | null;
     scopes: Prisma.JsonValue | null;
+    secret?: { scopes: Prisma.JsonValue | null } | null;
     status: EmailConnectionStatus;
   };
   provider: "GOOGLE_WORKSPACE";
@@ -2242,7 +2244,7 @@ function googleProviderCard({
   tokenEncryptionReady: boolean;
 }): EmailProviderCard {
   const configured = isProviderConfigured(config);
-  const fullInboxScopesReady = connection?.status === "CONNECTED" && hasProviderScopes(connection.scopes, gmailOAuthScopes);
+  const fullInboxScopesReady = connection?.status === "CONNECTED" && hasConnectionProviderScopes(connection, gmailOAuthScopes);
   const syncStatus = gmailSyncJobStatus(syncJob);
 
   if (!configured) {
@@ -2368,6 +2370,14 @@ function normalizeScopes(scope: unknown, fallback: readonly string[] = gmailOAut
   return scopes && scopes.length > 0 ? scopes : [...fallback];
 }
 
+function normalizeGoogleOAuthScopes(scope: unknown) {
+  const scopes = new Set(normalizeScopes(scope));
+  for (const requiredScope of gmailOAuthScopes) {
+    scopes.add(requiredScope);
+  }
+  return [...scopes];
+}
+
 function normalizeStoredScopes(scopes: Prisma.JsonValue | null | undefined) {
   return Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [];
 }
@@ -2452,8 +2462,20 @@ function hasProviderScopes(scopes: Prisma.JsonValue | null | undefined, required
   return requiredScopes.every((scope) => normalized.has(scope));
 }
 
-function assertProviderScopes(scopes: Prisma.JsonValue | null | undefined, requiredScopes: readonly string[], message: string) {
-  if (!hasProviderScopes(scopes, requiredScopes)) {
+function hasConnectionProviderScopes(
+  connection: { scopes: Prisma.JsonValue | null | undefined; secret?: { scopes: Prisma.JsonValue | null | undefined } | null } | null | undefined,
+  requiredScopes: readonly string[]
+) {
+  const normalized = new Set([...normalizeStoredScopes(connection?.scopes), ...normalizeStoredScopes(connection?.secret?.scopes)]);
+  return requiredScopes.every((scope) => normalized.has(scope));
+}
+
+function assertConnectionProviderScopes(
+  connection: { scopes: Prisma.JsonValue | null | undefined; secret?: { scopes: Prisma.JsonValue | null | undefined } | null },
+  requiredScopes: readonly string[],
+  message: string
+) {
+  if (!hasConnectionProviderScopes(connection, requiredScopes)) {
     throw new ApiError("EMAIL_PROVIDER_SCOPES_INSUFFICIENT", message, 400);
   }
 }

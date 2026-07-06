@@ -31,6 +31,8 @@ describe("main navigation visibility", () => {
     expect(primaryNav).toContain("const navItemLabel = primaryNavItemLabel(item.label, isActive);");
     expect(primaryNav).toContain("aria-label={navItemLabel}");
     expect(primaryNav).toContain("title={navItemLabel}");
+    expect(primaryNav).toContain("href={item.href}");
+    expect(primaryNav).toContain("prefetch={true}");
     expect(primaryNav).toContain('className="nav-item-label"');
     expect(primaryNav).toContain("function primaryNavItemLabel(label: string, isActive: boolean)");
     expect(primaryNav).toContain("return isActive ? `Current section: ${label}` : `Go to ${label}`;");
@@ -140,6 +142,7 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("label: \"Inbox\"");
     expect(navigation).toContain("helper: \"Mailbox + priority\"");
     expect(navigation).toContain("Open synced email, Relationship Inbox priorities, Smart Labels, AI reply drafts, and follow-ups.");
+    expect(primaryNav).toContain("pathname === hrefPath || pathname.startsWith(`${hrefPath}/`)");
     expect(navigation).toContain("href: \"/deals?commercial=hasQuote\"");
     expect(navigation).toContain("label: \"Quotes\"");
     expect(navigation).toContain("primary: false");

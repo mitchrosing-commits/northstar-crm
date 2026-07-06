@@ -6,6 +6,11 @@
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="14" fill="url(#northstar-logo-gradient)"/>
-  <path d="M31.8 9.5l5.2 15.7a3.5 3.5 0 0 0 2.2 2.2l15.7 5.2-15.7 5.2a3.5 3.5 0 0 0-2.2 2.2l-5.2 15.7-5.2-15.7a3.5 3.5 0 0 0-2.2-2.2L8.7 32.6l15.7-5.2a3.5 3.5 0 0 0 2.2-2.2L31.8 9.5z" fill="#ffffff"/>
-  <path d="M13.5 12.5v10M8.5 17.5h10M49 44v8M45 48h8" stroke="#ffffff" stroke-width="4.2" stroke-linecap="round"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="5">
+    <path d="M31.8 6.3a1.35 1.35 0 0 1 2.6 0l4.2 16.4a5.3 5.3 0 0 0 3.8 3.8l16.4 4.2a1.35 1.35 0 0 1 0 2.6l-16.4 4.2a5.3 5.3 0 0 0-3.8 3.8l-4.2 16.4a1.35 1.35 0 0 1-2.6 0l-4.2-16.4a5.3 5.3 0 0 0-3.8-3.8L7.4 33.3a1.35 1.35 0 0 1 0-2.6l16.4-4.2a5.3 5.3 0 0 0 3.8-3.8z"/>
+    <path d="M52 8v10"/>
+    <path d="M57 13H47"/>
+    <path d="M12 46v7"/>
+    <path d="M15.5 49.5h-7"/>
+  </g>
 </svg>

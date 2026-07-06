@@ -135,6 +135,9 @@ describe("Email UX v1 discoverability", () => {
   it("adds Inbox to the authenticated app navigation and protected-route guard", () => {
     expect(primaryNav).toContain("Inbox");
     expect(primaryNav).toContain("appShellNavigationManifest");
+    expect(primaryNav).toContain("href={item.href}");
+    expect(primaryNav).toContain("prefetch={true}");
+    expect(primaryNav).toContain("pathname === hrefPath || pathname.startsWith(`${hrefPath}/`)");
     expect(navigation).toContain('href: "/email"');
     expect(navigation).toContain('label: "Inbox"');
     expect(middleware).toContain('"/email"');

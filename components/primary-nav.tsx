@@ -64,6 +64,7 @@ export function PrimaryNav() {
                     aria-label={navItemLabel}
                     className={isActive ? "nav-item nav-item-active" : "nav-item"}
                     href={item.href}
+                    prefetch={true}
                     title={navItemLabel}
                   >
                     <Icon size={17} aria-hidden="true" />

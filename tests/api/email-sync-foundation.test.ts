@@ -51,7 +51,10 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("function safeProviderLastError");
     expect(emailConnectionService).toContain("redactSensitiveText(value ?? undefined)");
     expect(emailConnectionService).toContain("Reconnect required");
-    expect(emailConnectionService).toContain("hasProviderScopes(connection.scopes, gmailOAuthScopes)");
+    expect(emailConnectionService).toContain("include: { secret: { select: { scopes: true } } }");
+    expect(emailConnectionService).toContain("hasConnectionProviderScopes(connection, gmailOAuthScopes)");
+    expect(emailConnectionService).toContain("normalizeStoredScopes(connection?.secret?.scopes)");
+    expect(emailConnectionService).toContain("normalizeGoogleOAuthScopes(tokenResponse.scope)");
     expect(emailConnectionService).toContain("microsoftProviderCard");
     expect(emailConnectionService).toContain("Connect Microsoft");
     expect(emailConnectionService).toContain("href: \"/api/email-connections/microsoft/connect\"");

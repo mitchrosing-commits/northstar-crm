@@ -158,6 +158,78 @@ describe("Gmail metadata sync", () => {
     }
   });
 
+  it("treats Gmail reconnect as ready when current scopes and encrypted credentials are refreshed", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const legacyConnection = await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "alex@example.test",
+          createdById: fixture.userA.id,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.create({
+        data: {
+          accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          accountEmail: "alex@example.test",
+          connectionId: legacyConnection.id,
+          encryptedAccessToken: encryptEmailToken("legacy-access-token", env),
+          encryptedRefreshToken: encryptEmailToken("legacy-refresh-token", env),
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          userId: fixture.userA.id,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      const beforeReconnect = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(beforeReconnect).toMatchObject({
+        status: "Reconnect required",
+        syncAvailable: false
+      });
+
+      const reconnected = await storeGoogleOAuthConnection({
+        actor: fixture.actorA,
+        env,
+        profile: {
+          email: "alex@example.test",
+          name: "Alex Gmail"
+        },
+        tokenResponse: {
+          access_token: "gmail-reconnect-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-reconnect-refresh-token",
+          scope: "openid email"
+        }
+      });
+      expect(reconnected.id).toBe(legacyConnection.id);
+      expect(reconnected.scopes).toEqual(gmailFullInboxScopes);
+
+      const secret = await fixture.prisma.emailConnectionSecret.findUniqueOrThrow({
+        where: { connectionId: reconnected.id }
+      });
+      expect(secret.scopes).toEqual(gmailFullInboxScopes);
+      expect(decryptEmailToken(secret.encryptedAccessToken, env)).toBe("gmail-reconnect-access-token");
+      expect(decryptEmailToken(secret.encryptedRefreshToken as string, env)).toBe("gmail-reconnect-refresh-token");
+
+      const afterReconnect = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(afterReconnect).toMatchObject({
+        accountEmail: "alex@example.test",
+        status: "Connected",
+        syncAvailable: true
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("imports only matched recent Gmail metadata and deduplicates provider message ids", async () => {
     const fixture = await createIntegrationFixture();
     try {

@@ -28,8 +28,10 @@ describe("app metadata icons", () => {
     expect(iconSvg).toContain("northstar-logo-gradient");
     expect(iconSvg).toContain('stop-color="#0f766e"');
     expect(iconSvg).toContain('stop-color="#1d4ed8"');
-    expect(iconSvg).toContain('fill="#ffffff"');
+    expect(iconSvg).toContain('fill="none"');
     expect(iconSvg).toContain('stroke="#ffffff"');
+    expect(iconSvg).toContain('stroke-linejoin="round"');
+    expect(iconSvg).toContain("M31.8 6.3");
     expect(faviconIco.subarray(0, 6).toString("hex")).toBe("000001000300");
     expect([0, 1, 2].map((entryIndex) => faviconIco[6 + entryIndex * 16])).toEqual([16, 32, 48]);
     expect([0, 1, 2].map((entryIndex) => faviconIco[7 + entryIndex * 16])).toEqual([16, 32, 48]);
