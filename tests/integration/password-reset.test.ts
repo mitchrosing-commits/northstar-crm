@@ -20,9 +20,11 @@ let fixture: Fixture | undefined;
 
 beforeEach(async () => {
   fixture = await createIntegrationFixture();
+  await fixture.prisma.job.deleteMany({ where: { type: passwordResetEmailJobType } });
 });
 
 afterEach(async () => {
+  await fixture?.prisma.job.deleteMany({ where: { type: passwordResetEmailJobType } });
   await fixture?.cleanup();
   fixture = undefined;
 });

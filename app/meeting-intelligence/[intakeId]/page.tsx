@@ -72,7 +72,7 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
         <section className="panel">
           <EmptyState
             className="empty-state-compact"
-            description="This intake is waiting for provider extraction. Run the background worker to process queued media jobs, then refresh this page."
+            description="This intake is waiting for provider extraction. Run the background worker to process queued extraction jobs, then refresh this page."
             title="Extraction queued"
           />
           <ProcessorStatusList processorStatus={analysis?.processorStatus} />

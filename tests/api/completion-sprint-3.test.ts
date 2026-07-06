@@ -17,6 +17,7 @@ const quotePage = readFileSync(join(process.cwd(), "app/deals/[dealId]/quotes/[q
 const quotePanel = readFileSync(join(process.cwd(), "components/quote-drafts-panel.tsx"), "utf8");
 const contractPanel = readFileSync(join(process.cwd(), "components/contract-workflow-panel.tsx"), "utf8");
 const emailPage = readFileSync(join(process.cwd(), "app/email/page.tsx"), "utf8");
+const emailFollowUpPanel = readFileSync(join(process.cwd(), "components/email-follow-up-panel.tsx"), "utf8");
 const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
 
 describe("rapid completion sprint 3 polish", () => {
@@ -77,9 +78,10 @@ describe("rapid completion sprint 3 polish", () => {
     expect(leadPage).toContain("move to the new deal timeline, then Northstar opens the converted deal");
     expect(quotePage).toContain("related: { type: \"deal\", id: quote.dealId }");
     expect(quotePage).toContain("returnTo: `/deals/${quote.dealId}/quotes/${quote.id}`");
-    expect(emailPage).toContain("emailLogFollowUpHref");
-    expect(emailPage).toContain("type: \"EMAIL\"");
-    expect(emailPage).toContain("returnTo: \"/email\"");
+    expect(emailPage).toContain("buildEmailFollowUpDraftFromEmailLog(emailLog)");
+    expect(emailPage).toContain("<EmailFollowUpPanel");
+    expect(emailFollowUpPanel).toContain("Nothing is created until you save this follow-up.");
+    expect(emailFollowUpPanel).toContain("Create activity");
   });
 
   it("makes quote and contract workflows more actionable without fake document features", () => {

@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeEmailSyncReview, emailSyncReviewCookieName } from "@/app/email/sync-review";
 
 const mocks = vi.hoisted(() => ({
+  classifyEmailLog: vi.fn(),
   cookieSet: vi.fn(),
+  createEmailFollowUpActivity: vi.fn(),
+  generateEmailReplyDraft: vi.fn(),
   getCurrentWorkspaceContext: vi.fn(),
   redirect: vi.fn(),
   syncRecentGmailMessages: vi.fn(),
@@ -25,11 +28,17 @@ vi.mock("@/lib/auth/request-context", () => ({
 }));
 
 vi.mock("@/lib/services/crm", () => ({
+  classifyEmailLog: mocks.classifyEmailLog,
+  createEmailFollowUpActivity: mocks.createEmailFollowUpActivity,
+  generateEmailReplyDraft: mocks.generateEmailReplyDraft,
   syncRecentGmailMessages: mocks.syncRecentGmailMessages,
   syncRecentMicrosoftMessages: mocks.syncRecentMicrosoftMessages
 }));
 
 import {
+  classifyEmailLogAction,
+  createEmailFollowUpActivityAction,
+  generateEmailReplyDraftAction,
   syncRecentGmailFromEmailPageAction,
   syncRecentMicrosoftFromEmailPageAction
 } from "@/app/email/actions";
@@ -144,5 +153,152 @@ describe("email sync server actions", () => {
     });
 
     expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("generates review-first AI reply drafts through the current workspace context", async () => {
+    mocks.generateEmailReplyDraft.mockResolvedValue({
+      body: "Hi there,\n\nThanks for reaching out.",
+      contextUsed: ["Email subject and body", "Contact"],
+      subjectSuggestion: "Re: Hello",
+      suggestedNextAction: "Create a follow-up activity.",
+      tone: "warm",
+      warnings: ["Review before sending."]
+    });
+    const formData = new FormData();
+    formData.set("emailLogId", " email_log_1 ");
+    formData.set("tone", "warm");
+
+    await expect(generateEmailReplyDraftAction({}, formData)).resolves.toEqual({
+      contextUsed: ["Email subject and body", "Contact"],
+      emailLogId: "email_log_1",
+      message: "AI draft generated. Review and edit before using it.",
+      replyBody: "Hi there,\n\nThanks for reaching out.",
+      subjectSuggestion: "Re: Hello",
+      suggestedNextAction: "Create a follow-up activity.",
+      tone: "warm",
+      warnings: ["Review before sending."]
+    });
+
+    expect(mocks.generateEmailReplyDraft).toHaveBeenCalledWith(actor, {
+      emailLogId: "email_log_1",
+      tone: "warm"
+    });
+  });
+
+  it("redacts AI reply generation errors", async () => {
+    mocks.generateEmailReplyDraft.mockRejectedValue(new Error("provider failed with raw-secret-token"));
+    const formData = new FormData();
+    formData.set("emailLogId", "email_log_1");
+
+    await expect(generateEmailReplyDraftAction({}, formData)).resolves.toEqual({
+      emailLogId: "email_log_1",
+      error: "AI reply draft could not be generated.",
+      tone: "concise"
+    });
+  });
+
+  it("classifies stored emails with smart labels through the current workspace context", async () => {
+    const generatedAt = new Date("2030-01-04T12:00:00.000Z");
+    mocks.classifyEmailLog.mockResolvedValue({
+      category: "CUSTOMER",
+      cautions: ["Suggested label only."],
+      confidence: 0.86,
+      evidence: ["Inbound customer email asks for quote timing."],
+      generatedAt,
+      providerId: "test-provider",
+      providerName: "Test provider",
+      signalEvidence: [
+        {
+          excerpts: ["asks for quote timing"],
+          reason: "The customer asks a direct pricing question.",
+          signal: "PRICING_QUOTE"
+        }
+      ],
+      signals: ["URGENT", "NEEDS_REPLY", "PRICING_QUOTE"],
+      summary: "Urgent customer pricing email that needs a reply."
+    });
+    const formData = new FormData();
+    formData.set("emailLogId", " email_log_2 ");
+
+    await expect(classifyEmailLogAction({}, formData)).resolves.toEqual({
+      classification: {
+        category: "CUSTOMER",
+        cautions: ["Suggested label only."],
+        confidence: 0.86,
+        evidence: ["Inbound customer email asks for quote timing."],
+        generatedAt,
+        providerId: "test-provider",
+        providerName: "Test provider",
+        signalEvidence: [
+          {
+            excerpts: ["asks for quote timing"],
+            reason: "The customer asks a direct pricing question.",
+            signal: "PRICING_QUOTE"
+          }
+        ],
+        signals: ["URGENT", "NEEDS_REPLY", "PRICING_QUOTE"],
+        summary: "Urgent customer pricing email that needs a reply."
+      },
+      emailLogId: "email_log_2",
+      message: "Smart labels generated. Review them before acting."
+    });
+
+    expect(mocks.classifyEmailLog).toHaveBeenCalledWith(actor, { emailLogId: "email_log_2" });
+  });
+
+  it("redacts smart-label classification errors", async () => {
+    mocks.classifyEmailLog.mockRejectedValue(new Error("provider failed with raw-secret-token"));
+    const formData = new FormData();
+    formData.set("emailLogId", "email_log_2");
+
+    await expect(classifyEmailLogAction({}, formData)).resolves.toEqual({
+      emailLogId: "email_log_2",
+      error: "Smart Email Labels could not be generated."
+    });
+  });
+
+  it("creates reviewed email follow-up activities through the current workspace context", async () => {
+    mocks.createEmailFollowUpActivity.mockResolvedValue({
+      activity: { id: "activity_1" },
+      activityHref: "/activities/activity_1/edit?returnTo=%2Femail",
+      target: {
+        href: "/deals/deal_1",
+        label: "Deal: Acme Expansion"
+      }
+    });
+    const formData = new FormData();
+    formData.set("emailLogId", " email_log_3 ");
+    formData.set("title", " Reply to quote question ");
+    formData.set("type", "EMAIL");
+    formData.set("dueAt", "2030-01-07");
+    formData.set("description", " Review pricing first. ");
+
+    await expect(createEmailFollowUpActivityAction({}, formData)).resolves.toEqual({
+      activityHref: "/activities/activity_1/edit?returnTo=%2Femail",
+      activityId: "activity_1",
+      emailLogId: "email_log_3",
+      message: "Follow-up activity created.",
+      targetHref: "/deals/deal_1",
+      targetLabel: "Deal: Acme Expansion"
+    });
+
+    expect(mocks.createEmailFollowUpActivity).toHaveBeenCalledWith(actor, {
+      description: " Review pricing first. ",
+      dueAt: "2030-01-07",
+      emailLogId: "email_log_3",
+      title: " Reply to quote question ",
+      type: "EMAIL"
+    });
+  });
+
+  it("redacts email follow-up creation errors", async () => {
+    mocks.createEmailFollowUpActivity.mockRejectedValue(new Error("activity failed with raw-secret-token"));
+    const formData = new FormData();
+    formData.set("emailLogId", "email_log_3");
+
+    await expect(createEmailFollowUpActivityAction({}, formData)).resolves.toEqual({
+      emailLogId: "email_log_3",
+      error: "Follow-up activity could not be created."
+    });
   });
 });

@@ -3159,6 +3159,79 @@ describe("database-backed CRM service workflows", () => {
     }
   });
 
+  it("edits curated relationship briefs on contacts without weakening workspace scope", async () => {
+    const fx = currentFixture();
+    const personId = fx.recordsA.person.id;
+    const auditCountBefore = await fx.prisma.auditLog.count({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId }
+    });
+
+    const updated = await crm.updatePerson(fx.actorA, personId, {
+      relationshipPersonalContext: "  Rockies fan; mentioned a Colorado trip with family.  ",
+      relationshipCommunicationStyle: "Prefers concise morning emails.",
+      relationshipBusinessConcerns: "Worried about switching costs.",
+      relationshipFollowUpReminders: "Ask how the Colorado trip went.",
+      relationshipInternalGuidance: "Use naturally for thoughtful follow-up; do not over-personalize."
+    });
+    const detail = await crm.getPerson(fx.actorA, personId);
+    const auditCountAfterUpdate = await fx.prisma.auditLog.count({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId }
+    });
+    const noop = await crm.updatePerson(fx.actorA, personId, {
+      relationshipPersonalContext: "Rockies fan; mentioned a Colorado trip with family."
+    });
+    const auditCountAfterNoop = await fx.prisma.auditLog.count({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId }
+    });
+    const cleared = await crm.updatePerson(fx.actorA, personId, {
+      relationshipFollowUpReminders: "   "
+    });
+
+    expect(updated).toMatchObject({
+      relationshipPersonalContext: "Rockies fan; mentioned a Colorado trip with family.",
+      relationshipCommunicationStyle: "Prefers concise morning emails.",
+      relationshipBusinessConcerns: "Worried about switching costs.",
+      relationshipFollowUpReminders: "Ask how the Colorado trip went.",
+      relationshipInternalGuidance: "Use naturally for thoughtful follow-up; do not over-personalize."
+    });
+    expect(detail).toMatchObject({
+      workspaceId: fx.workspaceA.id,
+      relationshipPersonalContext: "Rockies fan; mentioned a Colorado trip with family.",
+      relationshipCommunicationStyle: "Prefers concise morning emails.",
+      relationshipBusinessConcerns: "Worried about switching costs.",
+      relationshipFollowUpReminders: "Ask how the Colorado trip went.",
+      relationshipInternalGuidance: "Use naturally for thoughtful follow-up; do not over-personalize."
+    });
+    expect(auditCountAfterUpdate).toBe(auditCountBefore + 1);
+    expect(noop.relationshipPersonalContext).toBe("Rockies fan; mentioned a Colorado trip with family.");
+    expect(auditCountAfterNoop).toBe(auditCountAfterUpdate);
+    expect(cleared.relationshipFollowUpReminders).toBeNull();
+
+    await expect(
+      crm.updatePerson(fx.actorB, personId, {
+        relationshipPersonalContext: "Cross-workspace memory edit"
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      crm.updatePerson(fx.actorA, personId, {
+        relationshipPersonalContext: { text: "Malformed relationship context" } as never
+      })
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      status: 422,
+      message: "Relationship personal context must be text."
+    });
+    await expect(
+      crm.updatePerson(fx.actorA, personId, {
+        relationshipPersonalContext: "x".repeat(2001)
+      })
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      status: 422,
+      message: "Relationship brief fields must be 2,000 characters or fewer."
+    });
+  });
+
   it("creates and reads plain notes across core records with ordering, workspace scope, and converted-lead locking", async () => {
     const fx = currentFixture();
     const initialNoteCount = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } });

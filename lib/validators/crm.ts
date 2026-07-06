@@ -149,7 +149,12 @@ export const createPersonSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().optional().nullable(),
   email: z.string().email().optional().nullable(),
-  phone: z.string().optional().nullable()
+  phone: z.string().optional().nullable(),
+  relationshipPersonalContext: z.string().max(2000).optional().nullable(),
+  relationshipCommunicationStyle: z.string().max(2000).optional().nullable(),
+  relationshipBusinessConcerns: z.string().max(2000).optional().nullable(),
+  relationshipFollowUpReminders: z.string().max(2000).optional().nullable(),
+  relationshipInternalGuidance: z.string().max(2000).optional().nullable()
 });
 
 export const updatePersonSchema = createPersonSchema.partial();

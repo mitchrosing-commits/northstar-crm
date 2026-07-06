@@ -348,6 +348,26 @@ components:
         phone:
           type: string
           nullable: true
+        relationshipPersonalContext:
+          type: string
+          nullable: true
+          maxLength: 2000
+        relationshipCommunicationStyle:
+          type: string
+          nullable: true
+          maxLength: 2000
+        relationshipBusinessConcerns:
+          type: string
+          nullable: true
+          maxLength: 2000
+        relationshipFollowUpReminders:
+          type: string
+          nullable: true
+          maxLength: 2000
+        relationshipInternalGuidance:
+          type: string
+          nullable: true
+          maxLength: 2000
     OrganizationInput:
       type: object
       required: [name]
@@ -362,7 +382,7 @@ components:
           nullable: true
     MeetingIntakeInput:
       type: object
-      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX/media bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX sources process locally. Image, audio, and provider-capable video sources queue provider extraction when MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL is configured and return clear provider-not-configured, unsupported-media, or provider-failure states otherwise. Northstar includes an internal provider-compatible `/api/internal/meeting-intelligence/media-extract` route that can use OpenAI for image/whiteboard extraction and audio transcription when configured. Scanned PDFs still require OCR/vision support. PPTX and XLSX return clear conversion-required failures until a direct local parser exists.
+      description: Creates a review-first meeting intake. Requests must include pasted text, extracted file text, uploaded PDF/DOCX/provider-backed bytes, or artifact filename/MIME metadata; empty source submissions return 422 before a record is created. Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX sources process locally. Image, scanned/image-only PDF after local text extraction returns empty, audio, and provider-capable video sources are stored in the configured private Meeting Intelligence file storage backend, local filesystem or S3/R2-compatible object storage, and queue provider extraction with a storage reference, not large base64 job payloads, when MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL is configured; they return clear provider-not-configured, unsupported-media, missing/expired-storage, or provider-failure states otherwise. S3/R2-backed deployments can use the direct or multipart upload session endpoints for large provider files so file bytes go directly from the browser to private object storage before the intake is queued. Northstar includes an internal provider-compatible `/api/internal/meeting-intelligence/media-extract` route that can use OpenAI for image/whiteboard extraction and audio transcription when configured; that internal route does not yet process scanned PDFs or video. Relationship Brief proposals are deterministic by default; setting MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER=openai with OPENAI_API_KEY enables semantic matched-contact enrichment with sensitivity guidance while keeping review-first fallback. Relationship Brief review can carry optional fact-level include/edit/field-selection metadata, duplicate markers, and staleness warnings before apply. PPTX and XLSX return clear conversion-required failures until a direct local parser exists.
       properties:
         explicitSourceType:
           type: string
@@ -385,7 +405,7 @@ components:
         fileBase64:
           type: string
           nullable: true
-          description: Base64-encoded file bytes for bounded local PDF/DOCX extraction or queued image/audio/video provider extraction. Original binary files are not stored after extraction.
+          description: Base64-encoded file bytes for bounded local PDF/DOCX extraction or fallback provider-backed image/scanned-PDF/audio/video ingestion. Local processors consume bounded bytes synchronously. Provider-backed bytes are copied into the configured private Meeting Intelligence file storage backend before the background job is queued, and new job payloads store a file reference instead of this base64 value. For large S3/R2-backed provider files, prefer the direct or multipart upload session endpoints so bytes do not enter the app request body.
         hints:
           type: object
           additionalProperties: true
@@ -407,6 +427,258 @@ components:
           items:
             type: object
             additionalProperties: true
+    MeetingIntakeUploadSessionInput:
+      type: object
+      required: [byteLength, sha256]
+      description: Creates an authenticated direct-to-object-storage upload session for large S3/R2-backed Meeting Intelligence provider files. The server creates a draft intake and returns only browser upload instructions, not credentials or stored-file internals. Local filesystem storage and unsupported provider/source configurations fail clearly so clients can use the bounded base64 fallback path.
+      properties:
+        byteLength:
+          type: integer
+          minimum: 1
+        sha256:
+          type: string
+          pattern: "^[A-Fa-f0-9]{64}$"
+        explicitSourceType:
+          type: string
+          enum: [pdf, image, audio, video]
+          nullable: true
+        originalFilename:
+          type: string
+          nullable: true
+        originalMimeType:
+          type: string
+          nullable: true
+    MeetingIntakeUploadSessionFinalizeInput:
+      type: object
+      required: [byteLength, sha256]
+      description: Finalizes a direct upload by validating completion metadata and the private object through the stored-file backend before queueing provider extraction from a stored-file reference. The request does not include file bytes. Size and checksum mismatches return distinct error codes, and a repeated finalize after queueing returns a controlled 409 without creating a duplicate extraction job.
+      properties:
+        byteLength:
+          type: integer
+          minimum: 1
+        sha256:
+          type: string
+          pattern: "^[A-Fa-f0-9]{64}$"
+        explicitSourceType:
+          type: string
+          enum: [pdf, image, audio, video]
+          nullable: true
+        originalFilename:
+          type: string
+          nullable: true
+        originalMimeType:
+          type: string
+          nullable: true
+        contextText:
+          type: string
+          nullable: true
+        hints:
+          type: object
+          additionalProperties: true
+    MeetingIntakeUploadCapabilities:
+      type: object
+      description: Safe authenticated Meeting Intelligence upload policy for the current workspace/environment. Includes storage backend category, direct-upload availability, multipart availability and part policy, max sizes, provider support by source type, local extraction source types, unsupported source guidance, and retention. It must not include credentials, provider URLs/tokens, bucket names, signed URLs, local paths, object keys, stored-file references, filenames, or file payloads.
+      properties:
+        storage:
+          type: object
+          properties:
+            backendCategory:
+              type: string
+              enum: [local-filesystem, s3-compatible]
+            directUploadSupported:
+              type: boolean
+            private:
+              type: boolean
+            retentionDays:
+              type: integer
+        directUpload:
+          type: object
+          properties:
+            available:
+              type: boolean
+            minBytes:
+              type: integer
+            maxBytes:
+              type: integer
+            sourceTypes:
+              type: array
+              items:
+                type: string
+                enum: [pdf, image, audio, video]
+            reason:
+              type: string
+              nullable: true
+        base64Request:
+          type: object
+          properties:
+            available:
+              type: boolean
+            maxEncodedCharacters:
+              type: integer
+            maxDecodedBytes:
+              type: integer
+            providerFallbackMaxBytes:
+              type: integer
+        localExtraction:
+          type: object
+          properties:
+            sourceTypes:
+              type: array
+              items:
+                type: string
+            maxBinaryBytes:
+              type: integer
+            maxTextCharacters:
+              type: integer
+        providerExtraction:
+          type: object
+          additionalProperties: true
+        multipartUpload:
+          type: object
+          properties:
+            supported:
+              type: boolean
+            abortSupported:
+              type: boolean
+            minBytes:
+              type: integer
+            maxBytes:
+              type: integer
+            partSizeBytes:
+              type: integer
+            maxParts:
+              type: integer
+            sourceTypes:
+              type: array
+              items:
+                type: string
+                enum: [pdf, image, audio, video]
+            reason:
+              type: string
+              nullable: true
+            cleanup:
+              type: string
+        unsupportedSourceTypes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        guidance:
+          type: object
+          additionalProperties:
+            type: string
+    MeetingIntakeUploadSession:
+      type: object
+      properties:
+        uploadSessionId:
+          type: string
+        intakeId:
+          type: string
+        acceptedSourceType:
+          type: string
+          enum: [pdf, image, audio, video]
+        maxBytes:
+          type: integer
+        provider:
+          type: object
+          additionalProperties: true
+        upload:
+          type: object
+          properties:
+            method:
+              type: string
+              enum: [PUT]
+            url:
+              type: string
+              description: Short-lived signed object-storage URL. It may contain provider-required signed query parameters and object path information but never storage credentials or secrets.
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            expiresAt:
+              type: string
+              format: date-time
+    MeetingIntakeMultipartUploadSession:
+      type: object
+      properties:
+        uploadSessionId:
+          type: string
+        intakeId:
+          type: string
+        acceptedSourceType:
+          type: string
+          enum: [pdf, image, audio, video]
+        multipart:
+          type: object
+          properties:
+            abortSupported:
+              type: boolean
+            expiresAt:
+              type: string
+              format: date-time
+              description: Stored-file retention expiry for the incomplete multipart session.
+            maxParts:
+              type: integer
+            partCount:
+              type: integer
+            partSizeBytes:
+              type: integer
+            signPartExpiresInSeconds:
+              type: integer
+    MeetingIntakeMultipartUploadPartsInput:
+      type: object
+      required: [partNumbers]
+      properties:
+        partNumbers:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+    MeetingIntakeMultipartUploadParts:
+      type: object
+      properties:
+        uploadSessionId:
+          type: string
+        parts:
+          type: array
+          items:
+            type: object
+            properties:
+              partNumber:
+                type: integer
+              expiresAt:
+                type: string
+                format: date-time
+              upload:
+                type: object
+                properties:
+                  method:
+                    type: string
+                    enum: [PUT]
+                  url:
+                    type: string
+                    description: Short-lived signed object-storage URL scoped to one multipart part. It may contain provider-required signed query parameters and object path information but never storage credentials or secrets.
+                  headers:
+                    type: object
+                    additionalProperties:
+                      type: string
+    MeetingIntakeMultipartUploadCompleteInput:
+      allOf:
+        - $ref: "#/components/schemas/MeetingIntakeUploadSessionFinalizeInput"
+        - type: object
+          required: [parts]
+          properties:
+            parts:
+              type: array
+              items:
+                type: object
+                required: [partNumber, etag]
+                properties:
+                  partNumber:
+                    type: integer
+                    minimum: 1
+                  etag:
+                    type: string
     ProductInput:
       type: object
       required: [name, unitPriceCents]
@@ -1259,7 +1531,7 @@ paths:
           $ref: "#/components/responses/Ok"
     post:
       summary: Create and analyze a meeting intake
-      description: Creates a persisted review record, extracts supported text/markdown/RTF/HTML/CSV/JSON/PDF/DOCX sources synchronously, queues configured image/audio/provider-capable video extraction, matches CRM records, and stores a reviewable proposal without mutating CRM data. The first-party internal media route can use OpenAI for image/whiteboard extraction and audio transcription when the internal route URL, bearer token, provider selector, and OpenAI API key are configured. Failed/provider-required intakes persist detected source type, original filename/MIME when provided, extraction method, conversion mode, required provider, failure code, and warnings in analysis JSON. Empty source submissions return 422 before an intake record is created.
+      description: Creates a persisted review record, extracts supported text/markdown/RTF/HTML/CSV/JSON/PDF/DOCX sources synchronously, queues configured image/scanned-PDF/audio/provider-capable video extraction, matches CRM records, and stores a reviewable proposal without mutating CRM data. Proposals can include notes, a completed meeting activity, follow-up activities, and review-first Relationship Brief updates for matched contacts. Relationship Brief proposal JSON may include individual facts with include flags, destination fields, sensitivity guidance, duplicate markers, and staleness warnings while preserving field-level proposal compatibility. When MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER=openai and OPENAI_API_KEY are configured, semantic Relationship Brief extraction can enrich matched-contact proposals with sensitivity guidance and provider warnings; missing or failed provider config falls back to deterministic proposals. The first-party internal media route can use OpenAI for image/whiteboard extraction and audio transcription when the internal route URL, bearer token, provider selector, and OpenAI API key are configured; scanned PDFs and video require another capable provider. Failed/provider-required intakes persist detected source type, original filename/MIME when provided, extraction method, conversion mode, required provider, failure code, and warnings in analysis JSON. Empty source submissions return 422 before an intake record is created.
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
       requestBody:
@@ -1293,6 +1565,135 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/MeetingIntakeApplyInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/meeting-intake-upload-capabilities:
+    get:
+      summary: Get Meeting Intelligence upload capabilities
+      description: Returns safe upload capability and policy information for the authenticated workspace before file bytes move. The response advertises direct upload availability, multipart availability and part policy, storage backend category, local and provider source support, max direct-upload and bounded app-upload sizes, unsupported source reasons, guidance strings, and retention without returning credentials, signed URLs, object keys, local paths, bucket names, provider tokens, filenames, payloads, or stored-file references.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Upload capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingIntakeUploadCapabilities"
+  /workspaces/{workspaceId}/meeting-intake-upload-sessions:
+    post:
+      summary: Create a Meeting Intelligence direct upload session
+      description: Creates a draft intake and a short-lived signed single-object PUT target for large S3/R2-backed provider files. The response includes upload instructions and limits but no storage credentials, local paths, or stored-file reference payload. Local filesystem storage, missing media provider configuration, and unsupported source/provider combinations fail clearly so clients can use the existing bounded base64 intake fallback.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeUploadSessionInput"
+      responses:
+        "201":
+          description: Direct upload session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingIntakeUploadSession"
+  /workspaces/{workspaceId}/meeting-intake-upload-sessions/{uploadSessionId}/finalize:
+    post:
+      summary: Finalize a Meeting Intelligence direct upload session
+      description: Validates completion metadata against the draft intake and stored-file metadata, reads the private uploaded object through backend/expiry/byte-length/checksum validation, and queues provider extraction with a stored-file reference instead of fileBase64. Missing, expired, wrong-workspace, wrong-intake, wrong-source, wrong-size, or checksum-mismatched content fails before provider work is queued.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: uploadSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeUploadSessionFinalizeInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/meeting-intake-multipart-upload-sessions:
+    post:
+      summary: Create a Meeting Intelligence multipart upload session
+      description: Creates a draft intake, starts a private S3/R2-compatible multipart upload for a provider-backed file, and writes cleanup-visible stored-file metadata. The response includes safe session policy only: upload session id, accepted source type, part size/count, max parts, retention expiry, and per-part signing TTL. It does not return credentials, bucket names, object keys, local paths, signed URLs, stored-file references, filenames, or bytes.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeUploadSessionInput"
+      responses:
+        "201":
+          description: Multipart upload session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingIntakeMultipartUploadSession"
+  /workspaces/{workspaceId}/meeting-intake-multipart-upload-sessions/{uploadSessionId}/parts:
+    post:
+      summary: Sign Meeting Intelligence multipart upload parts
+      description: Validates workspace, draft session state, stored-file metadata, requested part numbers, and expiry before returning short-lived signed PUT targets for specific multipart part numbers.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: uploadSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeMultipartUploadPartsInput"
+      responses:
+        "200":
+          description: Multipart part upload targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingIntakeMultipartUploadParts"
+  /workspaces/{workspaceId}/meeting-intake-multipart-upload-sessions/{uploadSessionId}/complete:
+    post:
+      summary: Complete a Meeting Intelligence multipart upload session
+      description: Completes the object-storage multipart upload from validated part ETags, verifies size/source/checksum/workspace/intake/expiry metadata, and queues provider extraction with storedFile only. Repeated completion after queueing returns 409 and cannot create duplicate extraction jobs.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: uploadSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingIntakeMultipartUploadCompleteInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+  /workspaces/{workspaceId}/meeting-intake-multipart-upload-sessions/{uploadSessionId}/abort:
+    post:
+      summary: Abort a Meeting Intelligence multipart upload session
+      description: Aborts an incomplete S3/R2-compatible multipart upload where supported, deletes stored-file metadata/content, and marks the draft intake failed so later completion is rejected.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: uploadSessionId
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           $ref: "#/components/responses/Ok"

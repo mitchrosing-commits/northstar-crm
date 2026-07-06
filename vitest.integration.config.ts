@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   test: {
     environment: "node",
+    fileParallelism: false,
+    globalSetup: ["./tests/integration/global-setup.ts"],
     include: ["tests/integration/**/*.test.ts"],
     setupFiles: ["tests/integration/setup.ts"],
     globals: true,

@@ -5,8 +5,46 @@ import type { Route } from "next";
 import { cookies } from "next/headers";
 
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { syncRecentGmailMessages, syncRecentMicrosoftMessages } from "@/lib/services/crm";
+import { ApiError } from "@/lib/api/responses";
+import { redactSensitiveText } from "@/lib/security/redaction";
+import {
+  classifyEmailLog,
+  createEmailFollowUpActivity,
+  generateEmailReplyDraft,
+  syncRecentGmailMessages,
+  syncRecentMicrosoftMessages
+} from "@/lib/services/crm";
+import type { EmailSmartClassification } from "@/lib/services/email-classification-service";
 import { emailSyncReviewCookieName, encodeEmailSyncReview } from "./sync-review";
+
+export type ClassifyEmailLogActionState = {
+  classification?: EmailSmartClassification;
+  emailLogId?: string;
+  error?: string;
+  message?: string;
+};
+
+export type CreateEmailFollowUpActionState = {
+  activityHref?: string;
+  activityId?: string;
+  emailLogId?: string;
+  error?: string;
+  message?: string;
+  targetHref?: string;
+  targetLabel?: string;
+};
+
+export type GenerateEmailReplyDraftActionState = {
+  contextUsed?: string[];
+  emailLogId?: string;
+  error?: string;
+  message?: string;
+  replyBody?: string;
+  subjectSuggestion?: string;
+  suggestedNextAction?: string;
+  tone?: string;
+  warnings?: string[];
+};
 
 export async function syncRecentGmailFromEmailPageAction() {
   const { actor } = await getCurrentWorkspaceContext();
@@ -52,6 +90,93 @@ export async function syncRecentMicrosoftFromEmailPageAction() {
   redirect(
     `/email?emailConnection=microsoft-synced&created=${result.created}&duplicates=${result.skippedDuplicates}&skipped=${result.skippedUnmatched}&total=${result.totalFetched}` as Route
   );
+}
+
+export async function generateEmailReplyDraftAction(
+  _previousState: GenerateEmailReplyDraftActionState,
+  formData: FormData
+): Promise<GenerateEmailReplyDraftActionState> {
+  const emailLogId = String(formData.get("emailLogId") ?? "").trim();
+  const tone = String(formData.get("tone") ?? "concise").trim();
+
+  try {
+    const { actor } = await getCurrentWorkspaceContext();
+    const draft = await generateEmailReplyDraft(actor, { emailLogId, tone });
+
+    return {
+      contextUsed: draft.contextUsed,
+      emailLogId,
+      message: "AI draft generated. Review and edit before using it.",
+      replyBody: draft.body,
+      subjectSuggestion: draft.subjectSuggestion,
+      suggestedNextAction: draft.suggestedNextAction,
+      tone: draft.tone,
+      warnings: draft.warnings
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { emailLogId, error: redactSensitiveText(error.message), tone };
+    }
+
+    return { emailLogId, error: "AI reply draft could not be generated.", tone };
+  }
+}
+
+export async function classifyEmailLogAction(
+  _previousState: ClassifyEmailLogActionState,
+  formData: FormData
+): Promise<ClassifyEmailLogActionState> {
+  const emailLogId = String(formData.get("emailLogId") ?? "").trim();
+
+  try {
+    const { actor } = await getCurrentWorkspaceContext();
+    const classification = await classifyEmailLog(actor, { emailLogId });
+
+    return {
+      classification,
+      emailLogId,
+      message: "Smart labels generated. Review them before acting."
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { emailLogId, error: redactSensitiveText(error.message) };
+    }
+
+    return { emailLogId, error: "Smart Email Labels could not be generated." };
+  }
+}
+
+export async function createEmailFollowUpActivityAction(
+  _previousState: CreateEmailFollowUpActionState,
+  formData: FormData
+): Promise<CreateEmailFollowUpActionState> {
+  const emailLogId = String(formData.get("emailLogId") ?? "").trim();
+
+  try {
+    const { actor } = await getCurrentWorkspaceContext();
+    const result = await createEmailFollowUpActivity(actor, {
+      description: formData.get("description"),
+      dueAt: formData.get("dueAt"),
+      emailLogId,
+      title: formData.get("title"),
+      type: formData.get("type")
+    });
+
+    return {
+      activityHref: result.activityHref,
+      activityId: result.activity.id,
+      emailLogId,
+      message: "Follow-up activity created.",
+      targetHref: result.target.href,
+      targetLabel: result.target.label
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { emailLogId, error: redactSensitiveText(error.message) };
+    }
+
+    return { emailLogId, error: "Follow-up activity could not be created." };
+  }
 }
 
 async function setEmailSyncReviewCookie(review: Parameters<typeof encodeEmailSyncReview>[0]) {

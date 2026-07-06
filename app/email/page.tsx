@@ -4,11 +4,15 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 
 import { ActionGroup } from "@/components/action-group";
+import { ActivityCompleteButton } from "@/components/activity-complete-button";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { EmptyState } from "@/components/empty-state";
+import { EmailAiReplyPanel } from "@/components/email-ai-reply-panel";
 import { EmailDraftPanel } from "@/components/email-draft-panel";
+import { EmailFollowUpPanel } from "@/components/email-follow-up-panel";
+import { EmailSmartLabelPanel } from "@/components/email-smart-label-panel";
 import { formatDate } from "@/components/format";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
@@ -16,9 +20,30 @@ import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { StatCard } from "@/components/stat-card";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { formatPersonName } from "@/lib/person-name";
-import { listEmailConnectionProviderCards, listEmailLogs, listEmailTemplates } from "@/lib/services/crm";
+import {
+  buildEmailPriorityQueue,
+  buildEmailPriorityQueueSummary,
+  buildEmailFollowUpDraftFromEmailLog,
+  emailClassificationReadiness,
+  emailFollowUpStateLabel,
+  emailReplyAssistantReadiness,
+  listEmailConnectionProviderCards,
+  listEmailPriorityFollowUpDetails,
+  listEmailLogs,
+  listEmailTemplates,
+  normalizeEmailPriorityQueueFilter,
+  readEmailSmartClassification
+} from "@/lib/services/crm";
+import type { EmailClassificationReadiness } from "@/lib/services/email-classification-service";
+import type {
+  EmailLinkedFollowUpSummary,
+  EmailPriorityFollowUpDetail,
+  EmailPriorityNextBestAction,
+  EmailPriorityQueueExplainer,
+  EmailPriorityQueueEvidenceTrailItem
+} from "@/lib/services/email-priority-queue-service";
+import type { EmailReplyAssistantReadiness } from "@/lib/services/email-reply-assistant-service";
 import type { EmailSyncPreview } from "@/lib/services/email-connection-service";
 import { syncRecentGmailFromEmailPageAction, syncRecentMicrosoftFromEmailPageAction } from "./actions";
 import { decodeEmailSyncReview, emailSyncReviewCookieName } from "./sync-review";
@@ -30,6 +55,7 @@ type EmailPageProps = {
     created?: string;
     duplicates?: string;
     emailConnection?: string;
+    inbox?: string;
     skipped?: string;
     total?: string;
   }>;
@@ -47,12 +73,15 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     listEmailLogs(actor, { limit: 25 }),
     listEmailTemplates(actor, { activeOnly: true })
   ]);
+  const followUpDetails = await listEmailPriorityFollowUpDetails(actor, recentEmailLogs);
   const gmailProvider = providers.find((provider) => provider.provider === "GOOGLE_WORKSPACE");
   const microsoftProvider = providers.find((provider) => provider.provider === "MICROSOFT_365");
   const imapProvider = providers.find((provider) => provider.provider === "IMAP_SMTP");
   const majorProviderCards = buildMajorProviderCards({ gmailProvider, microsoftProvider });
   const statusCopy = emailStatusCopy(resolvedSearchParams);
   const syncSummary = buildSyncSummary(resolvedSearchParams, latestSyncReview, majorProviderCards);
+  const aiReplyReadiness = emailReplyAssistantReadiness(process.env);
+  const smartLabelReadiness = emailClassificationReadiness(process.env);
   const draftTemplates = emailTemplates.map((template) => ({
     body: template.body,
     id: template.id,
@@ -60,6 +89,19 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     subject: template.subject
   }));
   const attentionLogs = recentEmailLogs.filter((emailLog) => emailNeedsAttention(emailLog)).slice(0, 6);
+  const activeInboxFilter = normalizeEmailPriorityQueueFilter(resolvedSearchParams?.inbox);
+  const priorityQueueSummary = buildEmailPriorityQueueSummary(recentEmailLogs);
+  const allPriorityQueueItems = buildEmailPriorityQueue({
+    emailLogs: recentEmailLogs,
+    followUpDetails
+  });
+  const priorityQueueItems = buildEmailPriorityQueue({
+    emailLogs: recentEmailLogs,
+    filter: activeInboxFilter,
+    followUpDetails
+  });
+  const priorityExplainersByEmailId = new Map(allPriorityQueueItems.map((item) => [item.emailLog.id, item.explainer]));
+  const activeInboxFilterLabel = priorityQueueSummary.find((item) => item.id === activeInboxFilter)?.label ?? "All priority";
   const emailSettingsLabel = "Open email connection settings";
 
   return (
@@ -206,12 +248,127 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         </section>
       ) : null}
 
+      <section className="data-card section-separated">
+        <PanelTitleRow
+          actions={
+            <Badge>
+              {priorityQueueSummary[0]?.count
+                ? `${priorityQueueSummary[0].count} priority`
+                : smartLabelReadiness.configured
+                  ? "Ready"
+                  : "Setup needed"}
+            </Badge>
+          }
+          title="Relationship Inbox Queue"
+        />
+        <EmailScopeCallout title="Suggested priorities">
+          Smart Labels are saved only after you classify a stored email. They are suggested relationship signals, not
+          commands: Northstar does not create activities, notes, leads, or profile facts from viewing this queue.
+        </EmailScopeCallout>
+        <ActionGroup className="relationship-inbox-filter-bar" label="Relationship Inbox priority filters">
+          {priorityQueueSummary.map((item) => (
+            <Link
+              aria-current={item.id === activeInboxFilter ? "page" : undefined}
+              aria-label={`Show ${item.label} Relationship Inbox emails`}
+              className={item.id === activeInboxFilter ? "button-primary button-compact" : "button-secondary button-compact"}
+              href={item.href}
+              key={item.id}
+              title={`Show ${item.label} Relationship Inbox emails`}
+            >
+              {item.label} ({item.count})
+            </Link>
+          ))}
+        </ActionGroup>
+        {priorityQueueItems.length > 0 ? (
+          <div className="relationship-inbox-signal-list">
+            {priorityQueueItems.map((item) => {
+              const emailLog = item.emailLog;
+              const reviewHref = `#email-card-${emailLog.id}` as Route;
+              return (
+                <article className="relationship-inbox-signal-row" key={emailLog.id}>
+                  <CompactTitleRow
+                    actions={<Badge>{item.priorityLabel}</Badge>}
+                    description={`${emailLog.direction === "INBOUND" ? "From" : "To"} ${
+                      emailLog.direction === "INBOUND" ? emailLog.fromText ?? "Not recorded" : emailLog.toText ?? "Not recorded"
+                    } · ${formatDate(emailLog.occurredAt)}`}
+                    title={emailLog.subject}
+                  />
+                  <ActionGroup className="filter-actions" label={`${emailLog.subject} relationship inbox smart labels`}>
+                    {item.labels.slice(0, 5).map((label) => (
+                      <Badge key={label}>{label}</Badge>
+                    ))}
+                    {item.classification ? <Badge>{Math.round(item.classification.confidence * 100)}% confidence</Badge> : null}
+                  </ActionGroup>
+                  <div className="relationship-inbox-row-meta">
+                    <span>{item.linkedRecord ? `Linked: ${item.linkedRecord.label}` : "No linked CRM record"}</span>
+                    <span>{emailFollowUpStateLabel(item.followUpState)}</span>
+                    {item.followUps.length > 1 ? <span>{item.followUps.length} linked follow-ups</span> : null}
+                  </div>
+                  <RelationshipInboxQueueExplainer explainer={item.explainer} subject={emailLog.subject} />
+                  <EmailLinkedFollowUps compact followUps={item.followUps} subject={emailLog.subject} workspaceId={workspace.id} />
+                  <RelationshipInboxNextBestAction action={item.nextBestAction} subject={emailLog.subject} workspaceId={workspace.id} />
+                  <p className="form-hint">{item.classification?.summary ?? "No Smart Label saved yet."}</p>
+                  <ActionGroup className="filter-actions" label={`${emailLog.subject} relationship inbox actions`}>
+                    <Link
+                      aria-label={`Review email card for ${emailLog.subject}`}
+                      className="button-secondary button-compact"
+                      href={reviewHref}
+                      title={`Review email card for ${emailLog.subject}`}
+                    >
+                      Review
+                    </Link>
+                    <Link
+                      aria-label={`View full evidence trail for email ${emailLog.subject}`}
+                      className="button-secondary button-compact"
+                      href={item.explainer.detailHref}
+                      title={`View full evidence trail for email ${emailLog.subject}`}
+                    >
+                      View evidence
+                    </Link>
+                    <Link
+                      aria-label={`Draft AI reply for email ${emailLog.subject}`}
+                      className="button-secondary button-compact"
+                      href={reviewHref}
+                      title={`Draft AI reply for email ${emailLog.subject}`}
+                    >
+                      Draft reply
+                    </Link>
+                    <Link
+                      aria-label={`Create or review follow-up for email ${emailLog.subject}`}
+                      className="button-secondary button-compact"
+                      href={item.followUps[0]?.href ?? reviewHref}
+                      title={`Create or review follow-up for email ${emailLog.subject}`}
+                    >
+                      {item.followUps.length > 0 ? "Open follow-up" : "Review follow-up"}
+                    </Link>
+                  </ActionGroup>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <InlineEmptyStateText>
+            No {activeInboxFilterLabel.toLowerCase()} emails in the current Relationship Inbox set. Classify stored emails below
+            or clear the queue filter.
+          </InlineEmptyStateText>
+        )}
+      </section>
+
       {attentionLogs.length > 0 ? (
         <section className="data-card section-separated">
           <PanelTitleRow actions={<Badge>{attentionLogs.length} need attention</Badge>} title="Suggested Follow-ups" />
           <div className="email-command-list">
             {attentionLogs.map((emailLog) => (
-              <EmailLogCard draftTemplates={draftTemplates} emailLog={emailLog} key={emailLog.id} />
+              <EmailLogCard
+                aiReplyReadiness={aiReplyReadiness}
+                draftTemplates={draftTemplates}
+                emailLog={emailLog}
+                key={emailLog.id}
+                followUpDetail={followUpDetails.get(emailLog.id)}
+                smartLabelReadiness={smartLabelReadiness}
+                priorityExplainer={priorityExplainersByEmailId.get(emailLog.id)}
+                workspaceId={workspace.id}
+              />
             ))}
           </div>
         </section>
@@ -222,7 +379,17 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         {recentEmailLogs.length > 0 ? (
           <div className="email-command-list">
             {recentEmailLogs.map((emailLog) => (
-              <EmailLogCard draftTemplates={draftTemplates} emailLog={emailLog} key={emailLog.id} />
+              <EmailLogCard
+                aiReplyReadiness={aiReplyReadiness}
+                draftTemplates={draftTemplates}
+                emailLog={emailLog}
+                key={emailLog.id}
+                followUpDetail={followUpDetails.get(emailLog.id)}
+                smartLabelReadiness={smartLabelReadiness}
+                priorityExplainer={priorityExplainersByEmailId.get(emailLog.id)}
+                showEvidenceAnchor
+                workspaceId={workspace.id}
+              />
             ))}
           </div>
         ) : (
@@ -242,6 +409,86 @@ function EmailScopeCallout({ children, title }: { children: ReactNode; title: st
       {children}
     </FormIntroCallout>
   );
+}
+
+function RelationshipInboxQueueExplainer({
+  explainer,
+  subject
+}: {
+  explainer: EmailPriorityQueueExplainer;
+  subject: string;
+}) {
+  return (
+    <div className="relationship-inbox-explainer" aria-label={`Why ${subject} is in the Relationship Inbox queue`}>
+      <span className="relationship-inbox-explainer-label">Why this?</span>
+      <span className="relationship-inbox-explainer-headline">{explainer.headline}</span>
+      <div className="relationship-inbox-explainer-evidence">
+        {explainer.evidence.slice(0, 7).map((item) => (
+          <Badge
+            className={`badge relationship-inbox-evidence-chip relationship-inbox-evidence-${item.tone}`}
+            key={`${item.source}-${item.label}`}
+            label={`${item.label}. Source: ${emailEvidenceSourceLabel(item.source)}.`}
+          >
+            {item.label}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RelationshipInboxNextBestAction({
+  action,
+  subject,
+  workspaceId
+}: {
+  action: EmailPriorityNextBestAction;
+  subject: string;
+  workspaceId: string;
+}) {
+  const primaryLabel = action.action === "no_action_needed" ? "Review email" : action.label;
+  const isCompletionAction = action.action === "mark_follow_up_complete" && action.followUp?.status === "open";
+  return (
+    <div className="relationship-inbox-next-action">
+      <div>
+        <div className="relationship-inbox-next-action-badges">
+          <Badge>{action.label}</Badge>
+          <Badge>{emailNextBestActionSeverityLabel(action.severity)}</Badge>
+        </div>
+        <p>{action.reason}</p>
+      </div>
+      {isCompletionAction && action.followUp ? (
+        <ActivityCompleteButton
+          activityId={action.followUp.id}
+          ariaLabel={`Mark recommended follow-up activity ${action.followUp.title} complete for ${subject}`}
+          inline
+          workspaceId={workspaceId}
+        />
+      ) : (
+        <Link
+          aria-label={`${primaryLabel} for ${subject}`}
+          className="button-primary button-compact"
+          href={action.href}
+          title={`${primaryLabel} for ${subject}`}
+        >
+          {primaryLabel}
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function emailNextBestActionSeverityLabel(severity: EmailPriorityNextBestAction["severity"]) {
+  if (severity === "high") return "High priority";
+  if (severity === "medium") return "Medium priority";
+  return "Low priority";
+}
+
+function emailEvidenceSourceLabel(source: EmailPriorityQueueExplainer["sources"][number]) {
+  if (source === "smart_label") return "Smart Label";
+  if (source === "crm_link") return "CRM link state";
+  if (source === "durable_follow_up") return "Durable follow-up link";
+  return "Legacy follow-up marker";
 }
 
 type ProviderCard = NonNullable<Awaited<ReturnType<typeof listEmailConnectionProviderCards>>[number]>;
@@ -375,15 +622,33 @@ type DraftTemplate = {
   subject: string;
 };
 
-function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTemplate[]; emailLog: EmailLog }) {
+function EmailLogCard({
+  aiReplyReadiness,
+  draftTemplates,
+  emailLog,
+  followUpDetail,
+  priorityExplainer,
+  showEvidenceAnchor = false,
+  smartLabelReadiness,
+  workspaceId
+}: {
+  aiReplyReadiness: EmailReplyAssistantReadiness;
+  draftTemplates: DraftTemplate[];
+  emailLog: EmailLog;
+  followUpDetail?: EmailPriorityFollowUpDetail;
+  priorityExplainer?: EmailPriorityQueueExplainer;
+  showEvidenceAnchor?: boolean;
+  smartLabelReadiness: EmailClassificationReadiness;
+  workspaceId: string;
+}) {
   const recipientEmail = primaryEmailForDraft(emailLog.direction, emailLog.fromText, emailLog.toText);
-  const followUpHref = emailLogFollowUpHref(emailLog);
   const emailStatusLabel = `${emailLog.subject} email status`;
   const emailActionsLabel = `${emailLog.subject} email actions`;
-  const addFollowUpLabel = `Add follow-up for email ${emailLog.subject}`;
   const createDealFromEmailLabel = `Create deal from email ${emailLog.subject}`;
+  const smartClassification = readEmailSmartClassification(emailLog);
+  const followUpDraft = buildEmailFollowUpDraftFromEmailLog(emailLog);
   return (
-    <article className="email-command-card">
+    <article className="email-command-card" id={`email-card-${emailLog.id}`}>
       <CompactTitleRow
         actions={<Badge>{formatEmailProvider(emailLog.provider)}</Badge>}
         description={
@@ -402,19 +667,24 @@ function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTempl
           </Badge>
         ))}
       </ActionGroup>
+      <EmailSmartLabelPanel
+        emailLogId={emailLog.id}
+        initialClassification={smartClassification}
+        readiness={smartLabelReadiness}
+        subject={emailLog.subject}
+      />
+      <EmailLinkedFollowUps followUps={followUpDetail?.followUps ?? []} subject={emailLog.subject} workspaceId={workspaceId} />
+      {priorityExplainer ? (
+        <RelationshipInboxEvidenceDetail
+          explainer={priorityExplainer}
+          subject={emailLog.subject}
+          targetId={showEvidenceAnchor ? `email-evidence-${emailLog.id}` : undefined}
+        />
+      ) : null}
+      <EmailFollowUpPanel draft={followUpDraft} subject={emailLog.subject} />
       <p className="email-preview">{formatEmailPreview(emailLog.body)}</p>
       <EmailLogLinks emailLog={emailLog} />
       <ActionGroup className="filter-actions" label={emailActionsLabel}>
-        {followUpHref ? (
-          <Link
-            aria-label={addFollowUpLabel}
-            className="button-secondary button-compact"
-            href={followUpHref}
-            title={addFollowUpLabel}
-          >
-            Add follow-up
-          </Link>
-        ) : null}
         {emailLog.person ? (
           <Link
             aria-label={createDealFromEmailLabel}
@@ -436,8 +706,235 @@ function EmailLogCard({ draftTemplates, emailLog }: { draftTemplates: DraftTempl
           }))}
         />
       </ActionGroup>
+      <EmailAiReplyPanel
+        emailLogId={emailLog.id}
+        readiness={aiReplyReadiness}
+        recipientEmail={recipientEmail}
+        subject={emailLog.subject}
+      />
     </article>
   );
+}
+
+function RelationshipInboxEvidenceDetail({
+  explainer,
+  subject,
+  targetId
+}: {
+  explainer: EmailPriorityQueueExplainer;
+  subject: string;
+  targetId?: string;
+}) {
+  const categoryItems = explainer.trail.filter((item) => item.type === "category");
+  const signalItems = explainer.trail.filter((item) => item.type === "signal");
+  const remainingTrailItems = explainer.trail.filter((item) => item.type !== "category" && item.type !== "signal");
+  const savedExcerpts = uniqueEvidenceExcerpts(
+    explainer.trail.flatMap((item) => [...(item.excerpts ?? []), ...(item.excerpt ? [item.excerpt] : [])])
+  );
+  return (
+    <section
+      aria-label={`Full Relationship Inbox evidence for ${subject}`}
+      className="relationship-inbox-evidence-detail"
+      id={targetId}
+    >
+      <div className="relationship-inbox-evidence-detail-header">
+        <div>
+          <span className="relationship-inbox-explainer-label">Relationship Inbox evidence</span>
+          <p>{explainer.headline}</p>
+        </div>
+        <Badge>{emailNextBestActionSeverityLabel(explainer.severity)}</Badge>
+      </div>
+      {categoryItems.length > 0 ? (
+        <div className="relationship-inbox-evidence-group">
+          <span className="relationship-inbox-explainer-label">Category evidence</span>
+          {categoryItems.map((item) => (
+            <RelationshipInboxEvidenceDrilldown item={item} key={item.id} />
+          ))}
+        </div>
+      ) : null}
+      {signalItems.length > 0 ? (
+        <div className="relationship-inbox-evidence-group">
+          <span className="relationship-inbox-explainer-label">Signal evidence</span>
+          {signalItems.map((item) => (
+            <RelationshipInboxEvidenceDrilldown item={item} key={item.id} />
+          ))}
+        </div>
+      ) : null}
+      <div className="relationship-inbox-evidence-trail">
+        <span className="relationship-inbox-explainer-label">CRM, follow-up, and action trail</span>
+        {remainingTrailItems.map((item) => (
+          <RelationshipInboxEvidenceTrailItem item={item} key={item.id} />
+        ))}
+      </div>
+      {savedExcerpts.length > 0 ? (
+        <div className="relationship-inbox-source-excerpts">
+          <span className="relationship-inbox-explainer-label">Supporting excerpts</span>
+          {savedExcerpts.map((item) => (
+            <blockquote className="relationship-inbox-evidence-excerpt" key={`excerpt-${item}`}>
+              {item}
+            </blockquote>
+          ))}
+          <p className="form-hint">
+            These are saved Smart Label excerpts. Exact source text offsets are not stored, so Northstar does not claim
+            character-level highlights.
+          </p>
+        </div>
+      ) : (
+        <p className="form-hint">No saved source excerpts are available for this queue item.</p>
+      )}
+    </section>
+  );
+}
+
+function RelationshipInboxEvidenceDrilldown({ item }: { item: EmailPriorityQueueEvidenceTrailItem }) {
+  const excerpts = item.excerpts ?? [];
+  const targetLabel = item.target?.label ?? "Review evidence";
+  return (
+    <details className="relationship-inbox-evidence-drilldown" open={excerpts.length > 0}>
+      <summary>
+        <Badge
+          className={`badge relationship-inbox-evidence-chip relationship-inbox-evidence-${item.tone}`}
+          label={`${item.label}. Source: ${emailEvidenceSourceLabel(item.source)}.`}
+        >
+          {item.label}
+        </Badge>
+        <span>{item.reason}</span>
+      </summary>
+      {excerpts.length > 0 ? (
+        <div className="relationship-inbox-evidence-drilldown-body">
+          {excerpts.map((excerpt) => (
+            <blockquote className="relationship-inbox-evidence-excerpt" key={`${item.id}-${excerpt}`}>
+              {excerpt}
+            </blockquote>
+          ))}
+        </div>
+      ) : (
+        <p className="form-hint">No signal-specific excerpt is saved for this label; see the flat supporting excerpts below.</p>
+      )}
+      {item.target ? (
+        <Link
+          aria-label={`${targetLabel} for evidence ${item.label}`}
+          className="inline-link"
+          href={item.target.href}
+          title={`${targetLabel} for evidence ${item.label}`}
+        >
+          {targetLabel}
+        </Link>
+      ) : null}
+    </details>
+  );
+}
+
+function RelationshipInboxEvidenceTrailItem({ item }: { item: EmailPriorityQueueEvidenceTrailItem }) {
+  const targetLabel = item.target?.label ?? "Review evidence";
+  return (
+    <div className="relationship-inbox-evidence-trail-item">
+      <div className="relationship-inbox-evidence-trail-main">
+        <Badge
+          className={`badge relationship-inbox-evidence-chip relationship-inbox-evidence-${item.tone}`}
+          label={`${item.label}. Source: ${emailEvidenceSourceLabel(item.source)}.`}
+        >
+          {item.label}
+        </Badge>
+        <p>{item.reason}</p>
+        {item.excerpts?.map((excerpt) => (
+          <blockquote className="relationship-inbox-evidence-excerpt" key={`${item.id}-${excerpt}`}>
+            {excerpt}
+          </blockquote>
+        ))}
+        {item.excerpt ? <blockquote className="relationship-inbox-evidence-excerpt">{item.excerpt}</blockquote> : null}
+        {item.followUp ? (
+          <p className="form-hint">
+            Follow-up: {item.followUp.title} · {item.followUp.status === "completed" ? "Completed" : "Open"}
+            {item.followUp.dueAt ? ` · Due ${formatDate(item.followUp.dueAt)}` : ""}
+            {item.followUp.completedAt ? ` · Completed ${formatDate(item.followUp.completedAt)}` : ""}
+          </p>
+        ) : null}
+      </div>
+      {item.target ? (
+        <Link
+          aria-label={`${targetLabel} for evidence ${item.label}`}
+          className="button-secondary button-compact"
+          href={item.target.href}
+          title={`${targetLabel} for evidence ${item.label}`}
+        >
+          {targetLabel}
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function uniqueEvidenceExcerpts(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean)));
+}
+
+function EmailLinkedFollowUps({
+  compact = false,
+  followUps,
+  subject,
+  workspaceId
+}: {
+  compact?: boolean;
+  followUps: EmailLinkedFollowUpSummary[];
+  subject: string;
+  workspaceId: string;
+}) {
+  if (followUps.length === 0) return null;
+  const visibleFollowUps = compact ? followUps.slice(0, 1) : followUps;
+  const linkedFollowUpsLabel = `${subject} linked follow-up activities`;
+
+  return (
+    <div className={compact ? "email-linked-follow-ups email-linked-follow-ups-compact" : "email-linked-follow-ups"}>
+      <ActionGroup className="filter-actions" label={linkedFollowUpsLabel}>
+        <Badge>{followUps.length === 1 ? "1 linked follow-up" : `${followUps.length} linked follow-ups`}</Badge>
+        {followUps.some((followUp) => followUp.status === "open") ? <Badge>Open follow-up</Badge> : <Badge>Completed</Badge>}
+      </ActionGroup>
+      <div className="email-linked-follow-up-list">
+        {visibleFollowUps.map((followUp) => (
+          <div className="email-linked-follow-up-row" key={followUp.id}>
+            <div className="email-linked-follow-up-main">
+              <span className="email-linked-follow-up-title">{followUp.title}</span>
+              <span className="muted">
+                {emailLinkedFollowUpStatusLabel(followUp)} · {followUp.dueAt ? `Due ${formatDate(followUp.dueAt)}` : "No due date"}
+                {followUp.linkedRecord ? ` · ${followUp.linkedRecord.label}` : ""}
+              </span>
+            </div>
+            <ActionGroup className="filter-actions" label={`${followUp.title} follow-up actions`}>
+              {followUp.source === "legacy" ? <Badge>Legacy match</Badge> : null}
+              <Link
+                aria-label={`Open linked follow-up activity ${followUp.title}`}
+                className="button-secondary button-compact"
+                href={followUp.href}
+                title={`Open linked follow-up activity ${followUp.title}`}
+              >
+                Open follow-up
+              </Link>
+              {followUp.status === "open" ? (
+                <ActivityCompleteButton
+                  activityId={followUp.id}
+                  ariaLabel={`Mark linked follow-up activity ${followUp.title} complete`}
+                  inline
+                  workspaceId={workspaceId}
+                />
+              ) : null}
+            </ActionGroup>
+          </div>
+        ))}
+      </div>
+      {compact && followUps.length > visibleFollowUps.length ? (
+        <p className="form-hint">{followUps.length - visibleFollowUps.length} more linked follow-up activities on the email card.</p>
+      ) : null}
+    </div>
+  );
+}
+
+function emailLinkedFollowUpStatusLabel(followUp: EmailLinkedFollowUpSummary) {
+  return followUp.status === "completed" && followUp.completedAt
+    ? `Completed ${formatDate(followUp.completedAt)}`
+    : followUp.status === "completed"
+      ? "Completed"
+      : "Open";
 }
 
 function EmailPreviewCard({ draftTemplates, preview }: { draftTemplates: DraftTemplate[]; preview: EmailSyncPreview }) {
@@ -510,28 +1007,6 @@ function emailStatusBadges(emailLog: EmailLog) {
   if (emailLog.direction === "INBOUND") badges.push(isOlderThanDays(emailLog.occurredAt, 3) ? "Needs follow-up" : "Follow-up suggested");
   if (emailLog.providerMessageId) badges.push("Synced");
   return badges;
-}
-
-function emailLogFollowUpHref(emailLog: EmailLog) {
-  const title = emailLog.subject ? `Follow up: ${emailLog.subject}` : "Email follow-up";
-  if (emailLog.deal) {
-    return buildActivityFollowUpHref({ related: { type: "deal", id: emailLog.deal.id }, returnTo: "/email", title, type: "EMAIL" });
-  }
-  if (emailLog.lead) {
-    return buildActivityFollowUpHref({ related: { type: "lead", id: emailLog.lead.id }, returnTo: "/email", title, type: "EMAIL" });
-  }
-  if (emailLog.person) {
-    return buildActivityFollowUpHref({ related: { type: "person", id: emailLog.person.id }, returnTo: "/email", title, type: "EMAIL" });
-  }
-  if (emailLog.organization) {
-    return buildActivityFollowUpHref({
-      related: { type: "organization", id: emailLog.organization.id },
-      returnTo: "/email",
-      title,
-      type: "EMAIL"
-    });
-  }
-  return null;
 }
 
 function isOlderThanDays(value: Date | string, days: number) {

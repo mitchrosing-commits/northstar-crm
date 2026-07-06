@@ -83,6 +83,7 @@ model Workspace {
   activities                  Activity[]
   notes                       Note[]
   emailLogs                   EmailLog[]
+  emailLogActivityLinks       EmailLogActivityLink[]
   emailTemplates              EmailTemplate[]
   emailConnections            EmailConnection[]
   emailConnectionSecrets      EmailConnectionSecret[]
@@ -363,26 +364,31 @@ model Lead {
 }
 
 model Person {
-  id                          String                       @id @default(cuid())
-  workspaceId                 String
-  ownerId                     String?
-  organizationId              String?
-  firstName                   String
-  lastName                    String?
-  email                       String?
-  phone                       String?
-  workspace                   Workspace                    @relation(fields: [workspaceId], references: [id])
-  owner                       User?                        @relation("PersonOwner", fields: [ownerId], references: [id])
-  organization                Organization?                @relation(fields: [organizationId], references: [id])
-  deals                       Deal[]
-  leads                       Lead[]
-  activities                  Activity[]
-  meetingActivityAssociations MeetingActivityAssociation[]
-  notes                       Note[]
-  emailLogs                   EmailLog[]
-  createdAt                   DateTime                     @default(now())
-  updatedAt                   DateTime                     @updatedAt
-  deletedAt                   DateTime?
+  id                             String                       @id @default(cuid())
+  workspaceId                    String
+  ownerId                        String?
+  organizationId                 String?
+  firstName                      String
+  lastName                       String?
+  email                          String?
+  phone                          String?
+  relationshipPersonalContext    String?
+  relationshipCommunicationStyle String?
+  relationshipBusinessConcerns   String?
+  relationshipFollowUpReminders  String?
+  relationshipInternalGuidance   String?
+  workspace                      Workspace                    @relation(fields: [workspaceId], references: [id])
+  owner                          User?                        @relation("PersonOwner", fields: [ownerId], references: [id])
+  organization                   Organization?                @relation(fields: [organizationId], references: [id])
+  deals                          Deal[]
+  leads                          Lead[]
+  activities                     Activity[]
+  meetingActivityAssociations    MeetingActivityAssociation[]
+  notes                          Note[]
+  emailLogs                      EmailLog[]
+  createdAt                      DateTime                     @default(now())
+  updatedAt                      DateTime                     @updatedAt
+  deletedAt                      DateTime?
 
   @@index([workspaceId])
   @@index([workspaceId, email])
@@ -432,6 +438,7 @@ model Activity {
   person              Person?                      @relation(fields: [personId], references: [id])
   organization        Organization?                @relation(fields: [organizationId], references: [id])
   meetingAssociations MeetingActivityAssociation[]
+  emailLogLinks       EmailLogActivityLink[]
   createdAt           DateTime                     @default(now())
   updatedAt           DateTime                     @updatedAt
   deletedAt           DateTime?
@@ -465,31 +472,35 @@ model Note {
 }
 
 model EmailLog {
-  id                String                   @id @default(cuid())
-  workspaceId       String
-  createdById       String?
-  dealId            String?
-  leadId            String?
-  personId          String?
-  organizationId    String?
-  subject           String
-  body              String
-  direction         EmailDirection
-  occurredAt        DateTime
-  fromText          String?
-  toText            String?
-  ccText            String?
-  provider          EmailConnectionProvider?
-  providerMessageId String?
-  providerThreadId  String?
-  workspace         Workspace                @relation(fields: [workspaceId], references: [id])
-  createdBy         User?                    @relation("EmailLogCreator", fields: [createdById], references: [id])
-  deal              Deal?                    @relation(fields: [dealId], references: [id])
-  lead              Lead?                    @relation(fields: [leadId], references: [id])
-  person            Person?                  @relation(fields: [personId], references: [id])
-  organization      Organization?            @relation(fields: [organizationId], references: [id])
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
+  id                    String                   @id @default(cuid())
+  workspaceId           String
+  createdById           String?
+  dealId                String?
+  leadId                String?
+  personId              String?
+  organizationId        String?
+  subject               String
+  body                  String
+  direction             EmailDirection
+  occurredAt            DateTime
+  fromText              String?
+  toText                String?
+  ccText                String?
+  provider              EmailConnectionProvider?
+  providerMessageId     String?
+  providerThreadId      String?
+  smartLabelJson        Json?
+  smartLabelProvider    String?
+  smartLabelGeneratedAt DateTime?
+  workspace             Workspace                @relation(fields: [workspaceId], references: [id])
+  createdBy             User?                    @relation("EmailLogCreator", fields: [createdById], references: [id])
+  deal                  Deal?                    @relation(fields: [dealId], references: [id])
+  lead                  Lead?                    @relation(fields: [leadId], references: [id])
+  person                Person?                  @relation(fields: [personId], references: [id])
+  organization          Organization?            @relation(fields: [organizationId], references: [id])
+  activityLinks         EmailLogActivityLink[]
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
 
   @@unique([workspaceId, provider, providerMessageId])
   @@index([workspaceId, occurredAt])
@@ -497,6 +508,22 @@ model EmailLog {
   @@index([workspaceId, leadId])
   @@index([workspaceId, personId])
   @@index([workspaceId, organizationId])
+  @@index([workspaceId, smartLabelGeneratedAt])
+}
+
+model EmailLogActivityLink {
+  id          String   @id @default(cuid())
+  workspaceId String
+  emailLogId  String
+  activityId  String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  emailLog    EmailLog  @relation(fields: [emailLogId], references: [id], onDelete: Cascade)
+  activity    Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([emailLogId, activityId])
+  @@index([workspaceId, emailLogId])
+  @@index([workspaceId, activityId])
 }
 
 model EmailTemplate {

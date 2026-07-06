@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+type EnvInput = Record<string, string | undefined>;
+
 let prepared = false;
 
 export function prepareIntegrationDatabase() {
@@ -19,6 +21,44 @@ export function prepareIntegrationDatabase() {
   prepared = true;
 }
 
+export async function resetIntegrationDatabase() {
+  assertIntegrationResetRuntimeEnv();
+  const testDatabaseUrl = requireSafeTestDatabaseUrl();
+  const { PrismaClient } = await import("@prisma/client");
+  const prisma = new PrismaClient({
+    datasources: {
+      db: {
+        url: testDatabaseUrl
+      }
+    }
+  });
+  try {
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      DECLARE
+        table_names text;
+      BEGIN
+        SELECT string_agg(format('%I.%I', schemaname, tablename), ', ')
+          INTO table_names
+          FROM pg_tables
+         WHERE schemaname = current_schema()
+           AND tablename <> '_prisma_migrations';
+
+        IF table_names IS NOT NULL THEN
+          EXECUTE 'TRUNCATE TABLE ' || table_names || ' RESTART IDENTITY CASCADE';
+        END IF;
+      END $$;
+    `);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+export function assertIntegrationResetRuntimeEnv(env: EnvInput = process.env) {
+  if (env.NODE_ENV === "test" || env.VITEST === "true") return;
+  throw new Error("Integration database reset can only run under Vitest or NODE_ENV=test.");
+}
+
 export function requireSafeTestDatabaseUrl(databaseUrlForComparison = getOriginalDatabaseUrl()) {
   loadDotEnv();
   const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -30,7 +70,7 @@ export function requireSafeTestDatabaseUrl(databaseUrlForComparison = getOrigina
   return testDatabaseUrl;
 }
 
-function assertSafeTestDatabaseUrl(testDatabaseUrl: string, databaseUrl?: string) {
+export function assertSafeTestDatabaseUrl(testDatabaseUrl: string, databaseUrl?: string) {
   let parsed: URL;
   try {
     parsed = new URL(testDatabaseUrl);
@@ -45,9 +85,14 @@ function assertSafeTestDatabaseUrl(testDatabaseUrl: string, databaseUrl?: string
   const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, "")).toLowerCase();
   const schemaName = (parsed.searchParams.get("schema") ?? "").toLowerCase();
   const hasTestMarker = databaseName.includes("test") || schemaName.includes("test");
+  const unsafeMarker = unsafeDatabaseUrlMarker(parsed, databaseName, schemaName);
 
   if (!hasTestMarker) {
     throw new Error("TEST_DATABASE_URL must include 'test' in the database name or schema.");
+  }
+
+  if (unsafeMarker) {
+    throw new Error(`TEST_DATABASE_URL must not contain production/staging/live markers: ${unsafeMarker}.`);
   }
 
   if (databaseUrl && normalizeDatabaseUrl(testDatabaseUrl) === normalizeDatabaseUrl(databaseUrl)) {
@@ -60,6 +105,17 @@ function normalizeDatabaseUrl(value: string) {
   parsed.username = "";
   parsed.password = "";
   return parsed.toString();
+}
+
+function unsafeDatabaseUrlMarker(parsed: URL, databaseName: string, schemaName: string) {
+  return [parsed.hostname, databaseName, schemaName, parsed.username]
+    .map((value) => value.toLowerCase())
+    .find((value) => hasUnsafeEnvironmentToken(value));
+}
+
+function hasUnsafeEnvironmentToken(value: string) {
+  const tokens = value.split(/[^a-z0-9]+/).filter(Boolean);
+  return tokens.some((token) => token === "prod" || token === "production" || token === "staging" || token === "stage" || token === "live");
 }
 
 function loadDotEnv() {

@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 import { ApiError, handleApiError, json } from "@/lib/api/responses";
-import { createOpenAIMediaExtractionProvider, unsupportedVideoError } from "@/lib/meeting-intelligence/openai-media-provider";
+import {
+  createOpenAIMediaExtractionProvider,
+  unsupportedScannedPdfError,
+  unsupportedVideoError
+} from "@/lib/meeting-intelligence/openai-media-provider";
 import type { MediaExtractionProvider } from "@/lib/meeting-intelligence/media-providers";
 
 type InternalMediaRouteOptions = {
@@ -18,7 +22,7 @@ const internalMediaExtractSchema = z.object({
   fileBase64: z.string().trim().min(1),
   filename: z.string().trim().optional(),
   mimeType: z.string().trim().optional(),
-  sourceType: z.enum(["image", "audio", "video"])
+  sourceType: z.enum(["image", "audio", "pdf", "video"])
 });
 
 export async function handleInternalMeetingMediaExtract(request: Request, options: InternalMediaRouteOptions = {}) {
@@ -26,6 +30,7 @@ export async function handleInternalMeetingMediaExtract(request: Request, option
     const env = options.env ?? process.env;
     authorizeInternalRequest(request, env);
     const payload = internalMediaExtractSchema.parse(await readJsonBody(request));
+    if (payload.sourceType === "pdf") throw unsupportedScannedPdfError();
     if (payload.sourceType === "video") throw unsupportedVideoError();
 
     const provider = options.mediaProvider ?? createOpenAIMediaExtractionProvider(env);
@@ -78,7 +83,7 @@ async function readJsonBody(request: Request) {
   });
 }
 
-function decodeBase64(value: string, sourceType: "audio" | "image" | "video") {
+function decodeBase64(value: string, sourceType: "audio" | "image" | "pdf" | "video") {
   const bytes = Buffer.from(value, "base64");
   if (bytes.byteLength === 0) {
     throw new ApiError("MEETING_INTAKE_PROCESSOR_FAILED", `${sourceType.toUpperCase()} file content was empty.`, 422);

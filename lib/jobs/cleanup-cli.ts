@@ -1,3 +1,4 @@
+import type { CleanupStoredMeetingIntelligenceFilesResult } from "@/lib/meeting-intelligence/file-storage";
 import type { CleanupTerminalJobsInput, CleanupTerminalJobsResult } from "@/lib/services/job-service";
 
 type EnvInput = Record<string, string | undefined>;
@@ -22,6 +23,16 @@ export function formatCleanupTerminalJobsSummary(result: CleanupTerminalJobsResu
     `retainDeadDays=${result.retainDeadDays}`,
     `succeededCutoff=${result.succeededCutoff.toISOString()}`,
     `deadCutoff=${result.deadCutoff.toISOString()}`
+  ].join("\n");
+}
+
+export function formatMeetingIntelligenceStoredFilesCleanupSummary(result: CleanupStoredMeetingIntelligenceFilesResult) {
+  return [
+    "Meeting Intelligence stored file cleanup complete",
+    `scanned=${result.scanned}`,
+    `deleted=${result.deleted}`,
+    `skippedActive=${result.skippedActive}`,
+    `failed=${result.failed?.length ?? 0}`
   ].join("\n");
 }
 

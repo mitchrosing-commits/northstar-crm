@@ -143,6 +143,24 @@ describe("internal Meeting Intelligence media extraction route", () => {
     await expectJsonResponse(response, 422, "MEETING_INTAKE_PROVIDER_UNSUPPORTED_MEDIA", /does not process video yet/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("keeps scanned PDFs unsupported on the internal OpenAI route without calling a provider", async () => {
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN", "internal-media-token");
+    vi.stubEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER", "openai");
+    vi.stubEnv("OPENAI_API_KEY", "openai-test-key");
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const response = await postMediaExtract({
+      fileBase64: Buffer.from("fake-scanned-pdf").toString("base64"),
+      filename: "scanned-discovery.pdf",
+      mimeType: "application/pdf",
+      sourceType: "pdf"
+    });
+
+    await expectJsonResponse(response, 422, "MEETING_INTAKE_PROVIDER_UNSUPPORTED_MEDIA", /does not process scanned PDFs yet/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 async function postMediaExtract(body: unknown) {

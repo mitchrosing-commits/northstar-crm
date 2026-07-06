@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dealValueCentsMax, productIntColumnMax, quoteIntColumnMax, sortOrderIntColumnMax } from "@/lib/product-limits";
 import { defaultPipelineName, defaultPipelineStages } from "@/lib/services/pipeline-service";
@@ -24,6 +25,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await fixture?.cleanup();
   fixture = undefined;
 });
@@ -442,6 +445,641 @@ describe("database-backed CRM route handlers", () => {
       message: "Paste meeting notes or upload a meeting artifact before creating an intake."
     });
     await expect(fx.prisma.meetingIntake.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(countBefore);
+  });
+
+  it("reports safe Meeting Intelligence upload capabilities for local/dev storage without provider config", async () => {
+    const fx = currentFixture();
+
+    const response = await invokeWorkspaceApi({
+      method: "GET",
+      workspaceId: fx.workspaceA.id,
+      actorUserId: fx.userA.id,
+      segments: ["meeting-intake-upload-capabilities"]
+    });
+    const capabilities = await readJson<{
+      base64Request: { maxEncodedCharacters: number; providerFallbackMaxBytes: number };
+      directUpload: { available: boolean; reason: string; sourceTypes: string[] };
+      localExtraction: { maxBinaryBytes: number; sourceTypes: string[] };
+      multipartUpload: { supported: boolean };
+      providerExtraction: { configured: boolean; support: Record<string, { available: boolean; reason?: string }>; supportedSourceTypes: string[] };
+      storage: { backendCategory: string; directUploadSupported: boolean; private: boolean };
+      unsupportedSourceTypes: Array<{ sourceType: string }>;
+    }>(response);
+    const serialized = JSON.stringify(capabilities);
+
+    expect(response.status).toBe(200);
+    expect(capabilities).toMatchObject({
+      directUpload: {
+        available: false,
+        sourceTypes: []
+      },
+      multipartUpload: { supported: false },
+      providerExtraction: {
+        configured: false,
+        supportedSourceTypes: []
+      },
+      storage: {
+        backendCategory: "local-filesystem",
+        directUploadSupported: false,
+        private: true
+      }
+    });
+    expect(capabilities.localExtraction.sourceTypes).toContain("docx");
+    expect(capabilities.localExtraction.sourceTypes).toContain("pdf");
+    expect(capabilities.providerExtraction.support.image).toMatchObject({ available: false });
+    expect(capabilities.unsupportedSourceTypes.map((item) => item.sourceType)).toEqual(["pptx", "xlsx", "unsupported"]);
+    expect(serialized).not.toContain("test-secret");
+    expect(serialized).not.toContain("MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY");
+    expect(serialized).not.toContain(".northstar-private");
+    expect(serialized).not.toContain("storedFile");
+    expect(serialized).not.toContain("X-Amz-Signature");
+    expect(serialized).not.toContain("content.bin");
+  });
+
+  it("reports direct upload capabilities only when S3-compatible storage and provider support are configured", async () => {
+    const fx = currentFixture();
+
+    await withS3StorageEnv(async () => {
+      await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+        const response = await invokeWorkspaceApi({
+          method: "GET",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-capabilities"]
+        });
+        const capabilities = await readJson<{
+          directUpload: { available: boolean; maxBytes: number; minBytes: number; sourceTypes: string[] };
+          multipartUpload: {
+            abortSupported: boolean;
+            maxBytes: number;
+            maxParts: number;
+            minBytes: number;
+            partSizeBytes: number;
+            sourceTypes: string[];
+            supported: boolean;
+          };
+          providerExtraction: { configured: boolean; support: Record<string, { available: boolean; directUpload: boolean }>; supportedSourceTypes: string[] };
+          storage: { backendCategory: string; directUploadSupported: boolean };
+        }>(response);
+        const serialized = JSON.stringify(capabilities);
+
+        expect(response.status).toBe(200);
+        expect(capabilities).toMatchObject({
+          directUpload: {
+            available: true,
+            maxBytes: 25 * 1024 * 1024,
+            minBytes: 1024 * 1024
+          },
+          multipartUpload: {
+            abortSupported: true,
+            maxBytes: 50 * 1024 * 1024,
+            maxParts: 10_000,
+            minBytes: 25 * 1024 * 1024 + 1,
+            partSizeBytes: 8 * 1024 * 1024,
+            sourceTypes: ["image", "audio", "video", "pdf"],
+            supported: true
+          },
+          providerExtraction: {
+            configured: true,
+            supportedSourceTypes: ["image", "audio", "video", "pdf"]
+          },
+          storage: {
+            backendCategory: "s3-compatible",
+            directUploadSupported: true
+          }
+        });
+        expect(capabilities.directUpload.sourceTypes).toEqual(["image", "audio", "video", "pdf"]);
+        expect(capabilities.multipartUpload.sourceTypes).toEqual(["image", "audio", "video", "pdf"]);
+        expect(capabilities.providerExtraction.support.pdf).toMatchObject({ available: true, directUpload: true });
+        expect(serialized).not.toContain("test-secret");
+        expect(serialized).not.toContain("provider.example.test");
+        expect(serialized).not.toContain("s3.example.test");
+        expect(serialized).not.toContain("northstar-mi-test");
+        expect(serialized).not.toContain("storedFile");
+        expect(serialized).not.toContain("X-Amz-Signature");
+      });
+    });
+  });
+
+  it("creates and finalizes Meeting Intelligence direct upload sessions without file bytes in job JSON", async () => {
+    const fx = currentFixture();
+    const s3 = mockS3Storage();
+    const bytes = Buffer.from("direct route audio bytes");
+    const sha256 = testSha256(bytes);
+
+    await withS3StorageEnv(async () => {
+      await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+        vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+          const url = requestUrl(input);
+          if (url.hostname === "s3.example.test") return s3.handle(input, init);
+          return new Response(null, { status: 404 });
+        });
+
+        const sessionResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "audio",
+            originalFilename: "direct-route-call.mp3",
+            originalMimeType: "audio/mpeg",
+            sha256
+          }
+        });
+        const session = await readJson<{
+          acceptedSourceType: string;
+          intakeId: string;
+          maxBytes: number;
+          upload: { headers: Record<string, string>; method: "PUT"; url: string };
+          uploadSessionId: string;
+        }>(sessionResponse);
+        const sessionJson = JSON.stringify(session);
+        const uploadUrl = new URL(session.upload.url);
+        const objectKey = decodeURIComponent(uploadUrl.pathname.replace(/^\/northstar-mi-test\/?/, "").replace(/\/content\.bin$/, ""));
+
+        expect(sessionResponse.status).toBe(201);
+        expect(session).toMatchObject({
+          acceptedSourceType: "audio",
+          intakeId: session.uploadSessionId,
+          maxBytes: expect.any(Number),
+          upload: {
+            headers: { "content-type": "audio/mpeg" },
+            method: "PUT"
+          }
+        });
+        expect(sessionJson).not.toContain("test-secret");
+        expect(sessionJson).not.toContain("storedFile");
+        expect(sessionJson).not.toContain(".northstar-private");
+        expect(uploadUrl.searchParams.get("X-Amz-Expires")).toBe("900");
+        expect(s3.objects.has(`${objectKey}/metadata.json`)).toBe(true);
+        expect(s3.objects.has(`${objectKey}/content.bin`)).toBe(false);
+
+        const uploadResponse = await fetch(session.upload.url, {
+          body: bytes,
+          headers: session.upload.headers,
+          method: "PUT"
+        });
+        expect(uploadResponse.status).toBe(200);
+
+        const finalizeResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions", session.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength,
+            contextText: "Meeting date: 2030-06-01",
+            explicitSourceType: "audio",
+            hints: { dealId: fx.recordsA.deal.id },
+            originalFilename: "direct-route-call.mp3",
+            originalMimeType: "audio/mpeg",
+            sha256
+          }
+        });
+        const finalized = await readJson<{ id: string; status: string; workspaceId: string }>(finalizeResponse);
+        expect(finalizeResponse.status).toBe(200);
+        expect(finalized).toMatchObject({ id: session.intakeId, status: "EXTRACTING", workspaceId: fx.workspaceA.id });
+        const queuedIntake = await fx.prisma.meetingIntake.findUniqueOrThrow({
+          where: { id: session.intakeId },
+          select: { analysisJson: true }
+        });
+        const queuedAnalysis = queuedIntake.analysisJson as Record<string, unknown>;
+        expect(queuedAnalysis.directUploadSession).toEqual({ status: "queued" });
+        const job = await fx.prisma.job.findFirstOrThrow({
+          where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" }
+        });
+        const jobPayload = job.payload as Record<string, unknown>;
+
+        expect(jobPayload.fileBase64).toBeUndefined();
+        expect(jobPayload).toMatchObject({
+          sourceType: "audio",
+          storedFile: {
+            backend: "s3-compatible",
+            byteLength: bytes.byteLength,
+            sourceType: "audio",
+            workspaceId: fx.workspaceA.id
+          }
+        });
+        expect(JSON.stringify(jobPayload)).not.toContain(bytes.toString("base64"));
+
+        const repeatedFinalizeResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions", session.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength,
+            contextText: "Meeting date: 2030-06-01",
+            explicitSourceType: "audio",
+            hints: { dealId: fx.recordsA.deal.id },
+            originalFilename: "direct-route-call.mp3",
+            originalMimeType: "audio/mpeg",
+            sha256
+          }
+        });
+        const repeatedFinalizeBody = await readJson<ApiErrorBody>(repeatedFinalizeResponse);
+        expect(repeatedFinalizeResponse.status).toBe(409);
+        expect(repeatedFinalizeBody.error.code).toBe("MEETING_INTAKE_DIRECT_UPLOAD_INVALID_STATE");
+        await expect(
+          fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" } })
+        ).resolves.toBe(1);
+      });
+    });
+  });
+
+  it("creates, signs, completes, and aborts Meeting Intelligence multipart upload sessions without file bytes in job JSON", async () => {
+    const fx = currentFixture();
+    const s3 = mockS3Storage();
+    const bytes = Buffer.concat([
+      Buffer.alloc(8 * 1024 * 1024, "a"),
+      Buffer.alloc(8 * 1024 * 1024, "b"),
+      Buffer.alloc(8 * 1024 * 1024, "c"),
+      Buffer.from("route-tail")
+    ]);
+    const sha256 = testSha256(bytes);
+
+    await withS3StorageEnv(async () => {
+      await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+        vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+          const url = requestUrl(input);
+          if (url.hostname === "s3.example.test") return s3.handle(input, init);
+          return new Response(null, { status: 404 });
+        });
+
+        const sessionResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "audio",
+            originalFilename: "multipart-route-call.mp3",
+            originalMimeType: "audio/mpeg",
+            sha256
+          }
+        });
+        const session = await readJson<{
+          acceptedSourceType: string;
+          intakeId: string;
+          multipart: {
+            abortSupported: boolean;
+            maxParts: number;
+            partCount: number;
+            partSizeBytes: number;
+            signPartExpiresInSeconds: number;
+          };
+          uploadSessionId: string;
+        }>(sessionResponse);
+        const sessionJson = JSON.stringify(session);
+
+        expect(sessionResponse.status).toBe(201);
+        expect(session).toMatchObject({
+          acceptedSourceType: "audio",
+          intakeId: session.uploadSessionId,
+          multipart: {
+            abortSupported: true,
+            maxParts: 10_000,
+            partCount: 4,
+            partSizeBytes: 8 * 1024 * 1024,
+            signPartExpiresInSeconds: 900
+          }
+        });
+        expect(sessionJson).not.toContain("test-secret");
+        expect(sessionJson).not.toContain("storedFile");
+        expect(sessionJson).not.toContain("s3.example.test");
+        expect(sessionJson).not.toContain("northstar-mi-test");
+        expect(sessionJson).not.toContain("multipart-route-call.mp3");
+        expect(s3.multipartUploads.size).toBe(1);
+
+        const invalidPartResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId, "parts"],
+          body: { partNumbers: [999] }
+        });
+        const invalidPartBody = await readJson<ApiErrorBody>(invalidPartResponse);
+        expect(invalidPartResponse.status).toBe(422);
+        expect(invalidPartBody.error.code).toBe("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID");
+
+        const completedParts: Array<{ etag: string; partNumber: number }> = [];
+        for (let partNumber = 1; partNumber <= session.multipart.partCount; partNumber += 1) {
+          const partsResponse = await invokeWorkspaceApi({
+            method: "POST",
+            workspaceId: fx.workspaceA.id,
+            actorUserId: fx.userA.id,
+            segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId, "parts"],
+            body: { partNumbers: [partNumber] }
+          });
+          const signed = await readJson<{
+            parts: Array<{ partNumber: number; upload: { headers: Record<string, string>; method: "PUT"; url: string } }>;
+            uploadSessionId: string;
+          }>(partsResponse);
+          const uploadPart = signed.parts[0];
+          expect(partsResponse.status).toBe(200);
+          expect(uploadPart).toMatchObject({ partNumber });
+          expect(JSON.stringify(signed)).not.toContain("test-secret");
+          expect(JSON.stringify(signed)).not.toContain("multipart-route-call.mp3");
+          const start = (partNumber - 1) * session.multipart.partSizeBytes;
+          const end = Math.min(start + session.multipart.partSizeBytes, bytes.byteLength);
+          const uploadResponse = await fetch(uploadPart.upload.url, {
+            body: bytes.subarray(start, end),
+            headers: uploadPart.upload.headers,
+            method: uploadPart.upload.method
+          });
+          expect(uploadResponse.status).toBe(200);
+          completedParts.push({ etag: uploadResponse.headers.get("etag") ?? "", partNumber });
+        }
+
+        const completeResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId, "complete"],
+          body: {
+            byteLength: bytes.byteLength,
+            contextText: "Meeting date: 2030-06-02",
+            explicitSourceType: "audio",
+            hints: { dealId: fx.recordsA.deal.id },
+            originalFilename: "multipart-route-call.mp3",
+            originalMimeType: "audio/mpeg",
+            parts: completedParts,
+            sha256
+          }
+        });
+        const completed = await readJson<{ id: string; status: string; workspaceId: string }>(completeResponse);
+        expect(completeResponse.status).toBe(200);
+        expect(completed).toMatchObject({ id: session.intakeId, status: "EXTRACTING", workspaceId: fx.workspaceA.id });
+        expect(s3.multipartUploads.size).toBe(0);
+        const job = await fx.prisma.job.findFirstOrThrow({
+          where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" }
+        });
+        const jobPayload = job.payload as Record<string, unknown>;
+        expect(jobPayload.fileBase64).toBeUndefined();
+        expect(jobPayload).toMatchObject({
+          sourceType: "audio",
+          storedFile: {
+            backend: "s3-compatible",
+            byteLength: bytes.byteLength,
+            sourceType: "audio",
+            workspaceId: fx.workspaceA.id
+          }
+        });
+        expect(JSON.stringify(jobPayload)).not.toContain(bytes.toString("base64"));
+
+        const repeatedCompleteResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId, "complete"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "audio",
+            parts: completedParts,
+            sha256
+          }
+        });
+        const repeatedCompleteBody = await readJson<ApiErrorBody>(repeatedCompleteResponse);
+        expect(repeatedCompleteResponse.status).toBe(409);
+        expect(repeatedCompleteBody.error.code).toBe("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE");
+        await expect(
+          fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" } })
+        ).resolves.toBe(1);
+
+        const abortSessionResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "audio",
+            originalFilename: "aborted-multipart-route-call.mp3",
+            originalMimeType: "audio/mpeg",
+            sha256
+          }
+        });
+        const abortSession = await readJson<{ uploadSessionId: string }>(abortSessionResponse);
+        expect(abortSessionResponse.status).toBe(201);
+        expect(s3.multipartUploads.size).toBe(1);
+        const abortResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", abortSession.uploadSessionId, "abort"]
+        });
+        const aborted = await readJson<{ errorMessage: string; status: string }>(abortResponse);
+        expect(abortResponse.status).toBe(200);
+        expect(aborted).toMatchObject({ errorMessage: "Multipart upload was aborted.", status: "FAILED" });
+        expect(s3.multipartUploads.size).toBe(0);
+        const completeAfterAbortResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", abortSession.uploadSessionId, "complete"],
+          body: { byteLength: bytes.byteLength, explicitSourceType: "audio", parts: completedParts, sha256 }
+        });
+        const completeAfterAbortBody = await readJson<ApiErrorBody>(completeAfterAbortResponse);
+        expect(completeAfterAbortResponse.status).toBe(409);
+        expect(completeAfterAbortBody.error.code).toBe("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE");
+      });
+    });
+  });
+
+  it("rejects local direct upload sessions and invalid finalization metadata clearly", async () => {
+    const fx = currentFixture();
+    const bytes = Buffer.from("direct route image bytes");
+    const sha256 = testSha256(bytes);
+    const localCountBefore = await fx.prisma.meetingIntake.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+      const localResponse = await invokeWorkspaceApi({
+        method: "POST",
+        workspaceId: fx.workspaceA.id,
+        actorUserId: fx.userA.id,
+        segments: ["meeting-intake-upload-sessions"],
+        body: {
+          byteLength: bytes.byteLength,
+          explicitSourceType: "image",
+          originalFilename: "whiteboard.png",
+          originalMimeType: "image/png",
+          sha256
+        }
+      });
+      const localBody = await readJson<ApiErrorBody>(localResponse);
+
+      expect(localResponse.status).toBe(422);
+      expect(localBody.error).toMatchObject({
+        code: "MEETING_INTAKE_DIRECT_UPLOAD_UNAVAILABLE"
+      });
+      await expect(fx.prisma.meetingIntake.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(localCountBefore);
+
+      const localMultipartResponse = await invokeWorkspaceApi({
+        method: "POST",
+        workspaceId: fx.workspaceA.id,
+        actorUserId: fx.userA.id,
+        segments: ["meeting-intake-multipart-upload-sessions"],
+        body: {
+          byteLength: bytes.byteLength,
+          explicitSourceType: "image",
+          originalFilename: "whiteboard.png",
+          originalMimeType: "image/png",
+          sha256
+        }
+      });
+      const localMultipartBody = await readJson<ApiErrorBody>(localMultipartResponse);
+
+      expect(localMultipartResponse.status).toBe(422);
+      expect(localMultipartBody.error).toMatchObject({
+        code: "MEETING_INTAKE_MULTIPART_UPLOAD_UNAVAILABLE"
+      });
+      await expect(fx.prisma.meetingIntake.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(localCountBefore);
+    });
+
+    const s3 = mockS3Storage();
+    await withS3StorageEnv(async () => {
+      await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+        vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => s3.handle(input, init));
+        const sessionResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "image",
+            originalFilename: "whiteboard.png",
+            originalMimeType: "image/png",
+            sha256
+          }
+        });
+        const session = await readJson<{ upload: { headers: Record<string, string>; method: "PUT"; url: string }; uploadSessionId: string }>(
+          sessionResponse
+        );
+        await fetch(session.upload.url, { body: bytes, headers: session.upload.headers, method: "PUT" });
+
+        const mismatchResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions", session.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "video",
+            originalFilename: "whiteboard.png",
+            originalMimeType: "image/png",
+            sha256
+          }
+        });
+        const mismatchBody = await readJson<ApiErrorBody>(mismatchResponse);
+
+        expect(mismatchResponse.status).toBe(422);
+        expect(mismatchBody.error).toMatchObject({
+          code: "MEETING_INTAKE_STORED_FILE_INVALID"
+        });
+        const sizeMismatchResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions", session.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength + 1,
+            explicitSourceType: "image",
+            originalFilename: "whiteboard.png",
+            originalMimeType: "image/png",
+            sha256
+          }
+        });
+        const sizeMismatchBody = await readJson<ApiErrorBody>(sizeMismatchResponse);
+        expect(sizeMismatchResponse.status).toBe(422);
+        expect(sizeMismatchBody.error).toMatchObject({
+          code: "MEETING_INTAKE_STORED_FILE_SIZE_MISMATCH"
+        });
+        const checksumMismatchResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions", session.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "image",
+            originalFilename: "whiteboard.png",
+            originalMimeType: "image/png",
+            sha256: testSha256(Buffer.from("different"))
+          }
+        });
+        const checksumMismatchBody = await readJson<ApiErrorBody>(checksumMismatchResponse);
+        expect(checksumMismatchResponse.status).toBe(422);
+        expect(checksumMismatchBody.error).toMatchObject({
+          code: "MEETING_INTAKE_STORED_FILE_CHECKSUM_MISMATCH"
+        });
+        const crossWorkspaceFinalizeResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceB.id,
+          actorUserId: fx.userB.id,
+          segments: ["meeting-intake-upload-sessions", session.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "image",
+            originalFilename: "whiteboard.png",
+            originalMimeType: "image/png",
+            sha256
+          }
+        });
+        const crossWorkspaceFinalizeBody = await readJson<ApiErrorBody>(crossWorkspaceFinalizeResponse);
+        expect(crossWorkspaceFinalizeResponse.status).toBe(404);
+        expect(crossWorkspaceFinalizeBody.error.code).toBe("NOT_FOUND");
+
+        const expiredSessionResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "image",
+            originalFilename: "expired-whiteboard.png",
+            originalMimeType: "image/png",
+            sha256
+          }
+        });
+        const expiredSession = await readJson<{ upload: { headers: Record<string, string>; method: "PUT"; url: string }; uploadSessionId: string }>(
+          expiredSessionResponse
+        );
+        await fetch(expiredSession.upload.url, { body: bytes, headers: expiredSession.upload.headers, method: "PUT" });
+        const expiredObjectKey = decodeURIComponent(
+          new URL(expiredSession.upload.url).pathname.replace(/^\/northstar-mi-test\/?/, "").replace(/\/content\.bin$/, "")
+        );
+        const expiredMetadataKey = `${expiredObjectKey}/metadata.json`;
+        const expiredMetadata = JSON.parse(s3.objects.get(expiredMetadataKey)?.toString("utf8") ?? "{}") as Record<string, unknown>;
+        s3.objects.set(
+          expiredMetadataKey,
+          Buffer.from(JSON.stringify({ ...expiredMetadata, expiresAt: "2000-01-01T00:00:00.000Z" }))
+        );
+        const expiredFinalizeResponse = await invokeWorkspaceApi({
+          method: "POST",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-upload-sessions", expiredSession.uploadSessionId, "finalize"],
+          body: {
+            byteLength: bytes.byteLength,
+            explicitSourceType: "image",
+            originalFilename: "expired-whiteboard.png",
+            originalMimeType: "image/png",
+            sha256
+          }
+        });
+        const expiredFinalizeBody = await readJson<ApiErrorBody>(expiredFinalizeResponse);
+        expect(expiredFinalizeResponse.status).toBe(410);
+        expect(expiredFinalizeBody.error.code).toBe("MEETING_INTAKE_STORED_FILE_EXPIRED");
+        await expect(
+          fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" } })
+        ).resolves.toBe(0);
+      });
+    });
   });
 
   it("validates pipeline and stage sort orders before writing records through the workspace API", async () => {
@@ -3896,4 +4534,141 @@ function restoreEnv(key: string, value: string | undefined) {
     return;
   }
   process.env[key] = value;
+}
+
+async function withMeetingMediaProviderEnv(url: string, callback: () => Promise<void>) {
+  const previousUrl = process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL;
+  const previousToken = process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN;
+  process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL = url;
+  process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN = "test-provider-token";
+  try {
+    await callback();
+  } finally {
+    restoreEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL", previousUrl);
+    restoreEnv("MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN", previousToken);
+  }
+}
+
+async function withS3StorageEnv(callback: () => Promise<void>) {
+  const previousValues = {
+    accessKeyId: process.env.MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID,
+    backend: process.env.MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND,
+    bucket: process.env.MEETING_INTELLIGENCE_S3_BUCKET,
+    endpoint: process.env.MEETING_INTELLIGENCE_S3_ENDPOINT,
+    forcePathStyle: process.env.MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE,
+    region: process.env.MEETING_INTELLIGENCE_S3_REGION,
+    secretAccessKey: process.env.MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY
+  };
+  process.env.MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND = "s3";
+  process.env.MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID = "test-access";
+  process.env.MEETING_INTELLIGENCE_S3_BUCKET = "northstar-mi-test";
+  process.env.MEETING_INTELLIGENCE_S3_ENDPOINT = "https://s3.example.test";
+  process.env.MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE = "true";
+  process.env.MEETING_INTELLIGENCE_S3_REGION = "auto";
+  process.env.MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY = "test-secret";
+  try {
+    await callback();
+  } finally {
+    restoreEnv("MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND", previousValues.backend);
+    restoreEnv("MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID", previousValues.accessKeyId);
+    restoreEnv("MEETING_INTELLIGENCE_S3_BUCKET", previousValues.bucket);
+    restoreEnv("MEETING_INTELLIGENCE_S3_ENDPOINT", previousValues.endpoint);
+    restoreEnv("MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE", previousValues.forcePathStyle);
+    restoreEnv("MEETING_INTELLIGENCE_S3_REGION", previousValues.region);
+    restoreEnv("MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY", previousValues.secretAccessKey);
+  }
+}
+
+function mockS3Storage() {
+  const objects = new Map<string, Buffer>();
+  const multipartUploads = new Map<string, { key: string; parts: Map<number, Buffer> }>();
+  const requests: Array<{ authorization: string; method: string; presigned: boolean; url: string }> = [];
+  async function handle(input: string | URL | Request, init?: RequestInit) {
+    const url = requestUrl(input);
+    const method = init?.method ?? "GET";
+    const headers = new Headers(init?.headers);
+    const presigned = url.searchParams.has("X-Amz-Signature");
+    requests.push({ authorization: headers.get("authorization") ?? "", method, presigned, url: url.toString() });
+    expect(url.pathname.startsWith("/northstar-mi-test")).toBe(true);
+    if (presigned) {
+      expect(url.searchParams.get("X-Amz-Algorithm")).toBe("AWS4-HMAC-SHA256");
+      expect(url.toString()).not.toContain("test-secret");
+    } else {
+      expect(headers.get("authorization")).toContain("AWS4-HMAC-SHA256");
+      expect(headers.get("authorization")).not.toContain("test-secret");
+    }
+
+    if (url.searchParams.get("list-type") === "2") {
+      const prefix = url.searchParams.get("prefix") ?? "";
+      const keys = Array.from(objects.keys()).filter((key) => key.startsWith(prefix));
+      return new Response(
+        [
+          "<ListBucketResult>",
+          "<IsTruncated>false</IsTruncated>",
+          ...keys.map((key) => `<Contents><Key>${xmlEscape(key)}</Key></Contents>`),
+          "</ListBucketResult>"
+        ].join(""),
+        { status: 200 }
+      );
+    }
+
+    const key = decodeURIComponent(url.pathname.replace(/^\/northstar-mi-test\/?/, ""));
+    if (method === "POST" && url.searchParams.has("uploads")) {
+      const uploadId = `upload-${multipartUploads.size + 1}`;
+      multipartUploads.set(uploadId, { key, parts: new Map() });
+      return new Response(`<InitiateMultipartUploadResult><UploadId>${uploadId}</UploadId></InitiateMultipartUploadResult>`, { status: 200 });
+    }
+    if (method === "POST" && url.searchParams.has("uploadId")) {
+      const uploadId = url.searchParams.get("uploadId") ?? "";
+      const upload = multipartUploads.get(uploadId);
+      if (!upload) return new Response(null, { status: 404 });
+      const xml = await new Response(init?.body as BodyInit).text();
+      const partNumbers = Array.from(xml.matchAll(/<PartNumber>(\d+)<\/PartNumber>/g), (match) => Number(match[1]));
+      objects.set(upload.key, Buffer.concat(partNumbers.map((partNumber) => upload.parts.get(partNumber) ?? Buffer.alloc(0))));
+      multipartUploads.delete(uploadId);
+      return new Response("<CompleteMultipartUploadResult />", { status: 200 });
+    }
+    if (method === "PUT") {
+      const uploadId = url.searchParams.get("uploadId");
+      const partNumber = Number(url.searchParams.get("partNumber"));
+      if (uploadId && partNumber) {
+        const upload = multipartUploads.get(uploadId);
+        if (!upload) return new Response(null, { status: 404 });
+        const body = Buffer.from(await new Response(init?.body as BodyInit).arrayBuffer());
+        upload.parts.set(partNumber, body);
+        return new Response(null, { status: 200, headers: { etag: `"part-${partNumber}-${body.byteLength}"` } });
+      }
+      objects.set(key, Buffer.from(await new Response(init?.body as BodyInit).arrayBuffer()));
+      return new Response(null, { status: 200 });
+    }
+    if (method === "GET") {
+      const body = objects.get(key);
+      return body
+        ? new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status: 200 })
+        : new Response(null, { status: 404 });
+    }
+    if (method === "DELETE") {
+      const uploadId = url.searchParams.get("uploadId");
+      if (uploadId) {
+        multipartUploads.delete(uploadId);
+        return new Response(null, { status: 204 });
+      }
+      objects.delete(key);
+      return new Response(null, { status: 204 });
+    }
+    return new Response(null, { status: 405 });
+  }
+  return { handle, multipartUploads, objects, requests };
+}
+
+function requestUrl(input: string | URL | Request) {
+  return new URL(input instanceof Request ? input.url : String(input));
+}
+
+function testSha256(bytes: Buffer) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function xmlEscape(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

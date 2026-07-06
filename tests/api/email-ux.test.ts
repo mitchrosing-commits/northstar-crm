@@ -41,6 +41,10 @@ const emailDraftPanel = readFileSync(
   join(process.cwd(), "components/email-draft-panel.tsx"),
   "utf8",
 );
+const emailFollowUpPanel = readFileSync(
+  join(process.cwd(), "components/email-follow-up-panel.tsx"),
+  "utf8",
+);
 const manualEmailPanel = readFileSync(
   join(process.cwd(), "components/manual-email-log-panel.tsx"),
   "utf8",
@@ -372,16 +376,15 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain(
       "const emailActionsLabel = `${emailLog.subject} email actions`",
     );
-    expect(emailPage).toContain(
-      "const addFollowUpLabel = `Add follow-up for email ${emailLog.subject}`",
-    );
+    expect(emailPage).toContain("const followUpDraft = buildEmailFollowUpDraftFromEmailLog(emailLog)");
+    expect(emailPage).toContain("<EmailFollowUpPanel");
     expect(emailPage).toContain(
       "const createDealFromEmailLabel = `Create deal from email ${emailLog.subject}`",
     );
     expect(emailPage).toContain('<ActionGroup className="filter-actions" label={emailStatusLabel}>');
     expect(emailPage).toContain('<ActionGroup className="filter-actions" label={emailActionsLabel}>');
-    expect(emailPage).toContain("aria-label={addFollowUpLabel}");
-    expect(emailPage).toContain("title={addFollowUpLabel}");
+    expect(emailFollowUpPanel).toContain("Nothing is created until you save this follow-up.");
+    expect(emailFollowUpPanel).toContain("Create activity");
     expect(emailPage).toContain("aria-label={createDealFromEmailLabel}");
     expect(emailPage).toContain("title={createDealFromEmailLabel}");
     expect(emailPage).toContain("Follow-up suggested");

@@ -46,8 +46,15 @@ import {
   reopenDeal,
   revokeQuotePublicLink,
   applyMeetingIntake,
+  abortMeetingIntakeMultipartUploadSession,
+  completeMeetingIntakeMultipartUploadSession,
+  createMeetingIntakeDirectUploadSession,
   createMeetingIntake,
+  createMeetingIntakeMultipartUploadSession,
+  finalizeMeetingIntakeDirectUploadSession,
   getMeetingIntake,
+  getMeetingIntakeUploadCapabilities,
+  signMeetingIntakeMultipartUploadParts,
   setProductActive,
   setEmailTemplateActive,
   softDeleteActivity,
@@ -340,6 +347,34 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
 
     if (resource === "meeting-intakes" && idOrNested && nestedResource === "apply" && !extraSegment) {
       if (method === "POST") return json(await applyMeetingIntake(actor, idOrNested, await body(request)));
+    }
+
+    if (resource === "meeting-intake-upload-capabilities" && !idOrNested) {
+      if (method === "GET") return json(await getMeetingIntakeUploadCapabilities(actor));
+    }
+
+    if (resource === "meeting-intake-upload-sessions" && !idOrNested) {
+      if (method === "POST") return created(await createMeetingIntakeDirectUploadSession(actor, await body(request)));
+    }
+
+    if (resource === "meeting-intake-upload-sessions" && idOrNested && nestedResource === "finalize" && !extraSegment) {
+      if (method === "POST") return json(await finalizeMeetingIntakeDirectUploadSession(actor, idOrNested, await body(request)));
+    }
+
+    if (resource === "meeting-intake-multipart-upload-sessions" && !idOrNested) {
+      if (method === "POST") return created(await createMeetingIntakeMultipartUploadSession(actor, await body(request)));
+    }
+
+    if (resource === "meeting-intake-multipart-upload-sessions" && idOrNested && nestedResource === "parts" && !extraSegment) {
+      if (method === "POST") return json(await signMeetingIntakeMultipartUploadParts(actor, idOrNested, await body(request)));
+    }
+
+    if (resource === "meeting-intake-multipart-upload-sessions" && idOrNested && nestedResource === "complete" && !extraSegment) {
+      if (method === "POST") return json(await completeMeetingIntakeMultipartUploadSession(actor, idOrNested, await body(request)));
+    }
+
+    if (resource === "meeting-intake-multipart-upload-sessions" && idOrNested && nestedResource === "abort" && !extraSegment) {
+      if (method === "POST") return json(await abortMeetingIntakeMultipartUploadSession(actor, idOrNested));
     }
 
     if (resource === "email-logs" && !idOrNested) {

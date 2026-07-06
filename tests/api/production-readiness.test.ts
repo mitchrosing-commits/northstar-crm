@@ -176,6 +176,40 @@ describe("production readiness foundation", () => {
     expect(
       validateRuntimeEnv({
         DATABASE_URL: "postgresql://crm:crm@localhost:5432/crm_mvp",
+        MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND: "s3",
+        MEETING_INTELLIGENCE_S3_ENDPOINT: "https://s3.example.test"
+      })
+    ).toEqual({
+      ok: false,
+      errors: ["Meeting Intelligence S3 storage requires endpoint, region, bucket, access key id, and secret access key."]
+    });
+    expect(
+      validateRuntimeEnv({
+        DATABASE_URL: "postgresql://crm:crm@localhost:5432/crm_mvp",
+        MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND: "local",
+        MEETING_INTELLIGENCE_S3_BUCKET: "northstar-mi"
+      })
+    ).toEqual({
+      ok: false,
+      errors: ["MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND must be s3 when Meeting Intelligence S3 storage env vars are set."]
+    });
+    expect(
+      validateRuntimeEnv({
+        DATABASE_URL: "postgresql://crm:crm@localhost:5432/crm_mvp",
+        MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND: "s3",
+        MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID: "access",
+        MEETING_INTELLIGENCE_S3_BUCKET: "northstar-mi",
+        MEETING_INTELLIGENCE_S3_ENDPOINT: "not-a-url",
+        MEETING_INTELLIGENCE_S3_REGION: "auto",
+        MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY: "secret"
+      })
+    ).toEqual({
+      ok: false,
+      errors: ["MEETING_INTELLIGENCE_S3_ENDPOINT must be a valid URL."]
+    });
+    expect(
+      validateRuntimeEnv({
+        DATABASE_URL: "postgresql://crm:crm@localhost:5432/crm_mvp",
         GOOGLE_OAUTH_CLIENT_ID: "google-client",
         GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
         GOOGLE_OAUTH_REDIRECT_URI: "http://crm.example.test/api/email-connections/google/callback",
@@ -400,6 +434,13 @@ describe("production readiness foundation", () => {
     expect(envExample).toContain("MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL=");
     expect(envExample).toContain("MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN=");
     expect(envExample).toContain("MEETING_INTELLIGENCE_MEDIA_PROVIDER=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_S3_ENDPOINT=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_S3_REGION=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_S3_BUCKET=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY=");
+    expect(envExample).toContain("MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE=");
     expect(envExample).toContain("OPENAI_API_KEY=");
     expect(envExample).toContain("MEETING_INTELLIGENCE_OPENAI_VISION_MODEL=");
     expect(envExample).toContain("MEETING_INTELLIGENCE_OPENAI_TRANSCRIPTION_MODEL=");
@@ -461,7 +502,11 @@ describe("production readiness foundation", () => {
     expect(readme).toContain("The `test:browser` script starts `next start` on port `3100`");
     expect(readme).toContain("They require:");
     expect(readme).toContain("TEST_DATABASE_URL");
+    expect(readme).toContain("The URL must not contain obvious production, staging, or live environment markers.");
     expect(readme).toContain("must not point at the same database/schema as `DATABASE_URL`");
+    expect(readme).toContain("resets app tables in that database once at suite startup while preserving `_prisma_migrations`");
+    expect(readme).toContain("Never point `TEST_DATABASE_URL` at dev, staging, or production data.");
+    expect(readme).toContain("failed or interrupted integration runs cannot leave global jobs");
     expect(readinessDoc).toContain("GET /api/health");
     expect(readinessDoc).toContain("Prisma configuration lives in `prisma.config.ts`");
     expect(readinessDoc).toContain("Do not commit real secrets");

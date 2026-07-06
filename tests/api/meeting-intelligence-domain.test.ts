@@ -6,6 +6,12 @@ import { extractMeetingText } from "@/lib/meeting-intelligence/extractors";
 import { normalizeMeetingMarkdown } from "@/lib/meeting-intelligence/markdown-normalizer";
 import { createConfiguredMeetingMediaProvider, getMeetingMediaProviderReadiness } from "@/lib/meeting-intelligence/media-providers";
 import { deterministicMeetingAnalysisProvider } from "@/lib/meeting-intelligence/providers";
+import {
+  buildSemanticRelationshipBriefPrompt,
+  createOpenAISemanticRelationshipBriefProvider,
+  parseSemanticRelationshipProviderJson,
+  relationshipSemanticExtractionReadiness
+} from "@/lib/meeting-intelligence/relationship-semantic-provider";
 import { detectMeetingSource } from "@/lib/meeting-intelligence/source-detection";
 import { formatMeetingIntakeFailureMessage } from "@/lib/services/meeting-intelligence-service";
 
@@ -200,6 +206,47 @@ describe("meeting intelligence source detection", () => {
     ).rejects.toThrow(/OCR or vision provider integration is required for scanned PDFs/);
   });
 
+  it("can route scanned PDFs through an injected OCR provider without faking local text", async () => {
+    const extracted = await extractMeetingText(
+      {
+        explicitSourceType: "pdf",
+        fileBase64: scannedPdfFixtureBase64,
+        filename: "scanned-meeting.pdf",
+        mimeType: "application/pdf"
+      },
+      {
+        mediaProvider: {
+          id: "test-pdf-ocr",
+          name: "Test PDF OCR provider",
+          supports: (candidate) => candidate === "pdf",
+          async extract(input) {
+            expect(input.sourceType).toBe("pdf");
+            expect(input.mimeType).toBe("application/pdf");
+            return {
+              providerId: "test-pdf-ocr",
+              providerName: "Test PDF OCR provider",
+              text: "Scanned PDF notes.\nAction: send SOW by 2030-04-05.",
+              warnings: ["OCR confidence medium."]
+            };
+          }
+        },
+        preferMediaProvider: true,
+        providerSourceType: "pdf"
+      }
+    );
+
+    expect(extracted.rawText).toContain("Action: send SOW by 2030-04-05.");
+    expect(extracted.metadata).toMatchObject({
+      conversionMode: "provider_required",
+      extractionMethod: "provider-ocr",
+      providerId: "test-pdf-ocr",
+      providerName: "Test PDF OCR provider",
+      requiredProvider: "ocr_or_vision",
+      sourceType: "pdf"
+    });
+    expect(extracted.warnings).toEqual(["OCR confidence medium."]);
+  });
+
   it("fails PDF extraction clearly when file content is missing", async () => {
     await expect(extractMeetingText({ filename: "meeting.pdf", mimeType: "application/pdf" })).rejects.toThrow(
       /PDF extraction requires uploaded PDF file content/
@@ -359,6 +406,250 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.nextStepActivities[0].description).toContain("Owner hint: Sam");
   });
 
+  it("proposes review-first Relationship Brief updates only for matched contacts with explicit safe facts", () => {
+    const draft = analyzeMeetingIntelligence({
+      contextText: "Meeting date: 2030-04-01",
+      markdown: [
+        "# Meeting Intake",
+        "Jane Contact is a Rockies fan and mentioned a Colorado trip with her kids.",
+        "Jane Contact prefers short, concrete follow-up emails.",
+        "Jane Contact is concerned about switching costs and implementation disruption.",
+        "Next personal follow-up: ask how the Colorado trip went.",
+        "Jane Contact mentioned church plans this weekend.",
+        "Alpha Needle Deal has approved budget."
+      ].join("\n"),
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jane Contact",
+          evidenceExcerpt: "Jane Contact",
+          id: "person-1",
+          matchedReason: "Contact name match",
+          objectType: "person"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Needle Deal",
+          evidenceExcerpt: "Alpha Needle Deal",
+          id: "deal-1",
+          matchedReason: "Deal title match",
+          objectType: "deal",
+          status: "OPEN"
+        },
+        {
+          confidence: "ambiguous",
+          displayName: "Jane C.",
+          evidenceExcerpt: "Jane",
+          id: "person-2",
+          matchedReason: "Ambiguous contact name",
+          objectType: "person"
+        }
+      ],
+      unmatchedEntities: []
+    });
+
+    const updates = draft.relationshipBriefUpdates ?? [];
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      confidence: "high",
+      include: true,
+      matchedReason: "Contact name match",
+      target: { id: "person-1", label: "Jane Contact", type: "person" }
+    });
+    expect(updates[0].proposed.relationshipPersonalContext).toContain("Rockies fan");
+    expect(updates[0].proposed.relationshipCommunicationStyle).toContain("prefers short, concrete follow-up emails");
+    expect(updates[0].proposed.relationshipBusinessConcerns).toContain("switching costs");
+    expect(updates[0].proposed.relationshipFollowUpReminders).toContain("ask how the Colorado trip went");
+    expect(updates[0].proposed.relationshipInternalGuidance).toContain("Use personal context naturally");
+    expect(JSON.stringify(updates[0].proposed)).not.toContain("church");
+    expect(updates.some((update) => update.target?.id === "deal-1")).toBe(false);
+    expect(updates.some((update) => update.target?.id === "person-2")).toBe(false);
+  });
+
+  it("does not create noisy empty Relationship Brief proposals", () => {
+    const draft = analyzeMeetingIntelligence({
+      markdown: "Jane Contact reviewed the agenda and confirmed attendance.",
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jane Contact",
+          evidenceExcerpt: "Jane Contact",
+          id: "person-1",
+          matchedReason: "Contact name match",
+          objectType: "person"
+        }
+      ],
+      unmatchedEntities: []
+    });
+
+    expect(draft.relationshipBriefUpdates).toEqual([]);
+  });
+
+  it("keeps semantic Relationship Brief extraction provider-gated with deterministic fallback readiness", () => {
+    expect(relationshipSemanticExtractionReadiness({})).toMatchObject({
+      configured: false,
+      missingEnvNames: ["MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER"],
+      providerId: "none"
+    });
+    expect(relationshipSemanticExtractionReadiness({ MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER: "openai" })).toMatchObject({
+      configured: false,
+      missingEnvNames: ["OPENAI_API_KEY"],
+      providerId: "openai"
+    });
+    expect(
+      relationshipSemanticExtractionReadiness({
+        MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER: "openai",
+        OPENAI_API_KEY: "test-key"
+      })
+    ).toMatchObject({
+      configured: true,
+      missingEnvNames: [],
+      providerId: "openai"
+    });
+  });
+
+  it("builds and parses guarded semantic Relationship Brief provider output", () => {
+    const input = semanticRelationshipInput();
+    const prompt = buildSemanticRelationshipBriefPrompt(input);
+
+    expect(prompt.system).toContain("Do not infer religion, politics, health");
+    expect(prompt.system).toContain("safe_personalization");
+    expect(prompt.user).toContain("Jane Contact");
+    expect(prompt.user).toContain("targetPersonId");
+    expect(prompt.user).toContain("facts");
+
+    const parsed = parseSemanticRelationshipProviderJson(
+      JSON.stringify({
+        proposals: [
+          {
+            confidence: "high",
+            evidence: ["Jane is a Rockies fan and prefers concise emails."],
+            facts: [
+              {
+                field: "relationshipPersonalContext",
+                sensitivity: [
+                  {
+                    category: "safe_personalization",
+                    field: "relationshipPersonalContext",
+                    guidance: "Use naturally and sparingly."
+                  }
+                ],
+                text: "Jane is a Rockies fan."
+              },
+              {
+                field: "relationshipCommunicationStyle",
+                text: "Prefers concise emails with clear next steps."
+              },
+              {
+                field: "relationshipInternalGuidance",
+                text: "Mention church plans directly."
+              }
+            ],
+            proposed: {
+              relationshipCommunicationStyle: "Prefers concise emails with clear next steps.",
+              relationshipInternalGuidance: "Mention church plans directly.",
+              relationshipPersonalContext: "Jane is a Rockies fan."
+            },
+            sensitivity: [
+              {
+                category: "safe_personalization",
+                field: "relationshipPersonalContext",
+                guidance: "Use naturally and sparingly."
+              },
+              {
+                category: "use_cautiously",
+                field: "relationshipCommunicationStyle",
+                guidance: "Keep follow-up concise."
+              }
+            ],
+            targetPersonId: "person-1",
+            warnings: ["Use personal context lightly."]
+          },
+          {
+            proposed: { relationshipPersonalContext: "Unsupported target fact." },
+            targetPersonId: "person-missing"
+          }
+        ],
+        warnings: ["Provider caution."]
+      }),
+      input
+    );
+
+    expect(parsed.proposals).toHaveLength(1);
+    expect(parsed.proposals[0]).toMatchObject({
+      confidence: "high",
+      providerId: "openai",
+      target: { id: "person-1", type: "person" }
+    });
+    expect(parsed.proposals[0].proposed.relationshipPersonalContext).toBe("Jane is a Rockies fan.");
+    expect(parsed.proposals[0].proposed.relationshipCommunicationStyle).toBe("Prefers concise emails with clear next steps.");
+    expect(parsed.proposals[0].proposed.relationshipInternalGuidance).toBeUndefined();
+    expect(parsed.proposals[0].facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "relationshipPersonalContext",
+          sensitivity: expect.arrayContaining([expect.objectContaining({ category: "safe_personalization" })]),
+          text: "Jane is a Rockies fan."
+        }),
+        expect.objectContaining({
+          field: "relationshipCommunicationStyle",
+          text: "Prefers concise emails with clear next steps."
+        })
+      ])
+    );
+    expect(parsed.proposals[0].facts?.some((fact) => fact.text.includes("church"))).toBe(false);
+    expect(parsed.proposals[0].sensitivity).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "safe_personalization" }),
+        expect.objectContaining({ category: "use_cautiously" })
+      ])
+    );
+    expect(parsed.warnings).toEqual(
+      expect.arrayContaining([
+        "Provider caution.",
+        "Protected or sensitive trait detail was excluded from a semantic Relationship Brief fact.",
+        "Protected or sensitive trait detail was excluded from a semantic Relationship Brief proposal.",
+        "Semantic relationship proposal targeted an unavailable contact and was ignored."
+      ])
+    );
+  });
+
+  it("parses mocked OpenAI semantic Relationship Brief responses without calling providers in fallback mode", async () => {
+    const provider = createOpenAISemanticRelationshipBriefProvider(
+      {
+        MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER: "openai",
+        OPENAI_API_KEY: "openai-test-key"
+      },
+      (async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.input[0].content).toContain("Northstar CRM's semantic Relationship Brief extractor");
+        expect(body.input[1].content).toContain("Jane Contact");
+        return Response.json({
+          output_text: JSON.stringify({
+            proposals: [
+              {
+                confidence: "medium",
+                evidence: ["Jane prefers clear follow-up emails."],
+                proposed: { relationshipCommunicationStyle: "Prefers clear follow-up emails." },
+                sensitivity: [{ category: "safe_personalization", guidance: "Use to shape concise follow-up." }],
+                targetPersonId: "person-1"
+              }
+            ]
+          })
+        });
+      }) as typeof fetch
+    );
+
+    await expect(provider?.extract(semanticRelationshipInput())).resolves.toMatchObject({
+      proposals: [
+        expect.objectContaining({
+          proposed: { relationshipCommunicationStyle: "Prefers clear follow-up emails." },
+          providerName: "OpenAI relationship extraction"
+        })
+      ]
+    });
+  });
+
   it("includes evidence, confidence, and supply-chain fact notes in deterministic provider output", async () => {
     const draft = await deterministicMeetingAnalysisProvider.analyzeMeetingMarkdown({
       contextText: "Meeting date: 2030-04-01",
@@ -424,6 +715,36 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.notes.length).toBeLessThanOrEqual(8);
   });
 });
+
+function semanticRelationshipInput() {
+  return {
+    contacts: [
+      {
+        confidence: "high" as const,
+        evidenceExcerpt: "Jane Contact",
+        id: "person-1",
+        label: "Jane Contact",
+        matchedReason: "Exact name match"
+      }
+    ],
+    markdown: [
+      "# Meeting Intake",
+      "Jane Contact is a Rockies fan and mentioned taking her kids to Colorado.",
+      "Jane Contact prefers concise follow-up emails with clear next steps."
+    ].join("\n"),
+    matchedObjects: [
+      {
+        confidence: "high" as const,
+        displayName: "Jane Contact",
+        evidenceExcerpt: "Jane Contact",
+        id: "person-1",
+        matchedReason: "Exact name match",
+        objectType: "person" as const
+      }
+    ],
+    unmatchedEntities: []
+  };
+}
 
 describe("meeting intelligence failure safety", () => {
   it("redacts sensitive values before persisting or returning processor failure reasons", () => {

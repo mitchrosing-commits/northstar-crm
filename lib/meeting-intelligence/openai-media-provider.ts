@@ -109,6 +109,14 @@ export function unsupportedVideoError() {
   );
 }
 
+export function unsupportedScannedPdfError() {
+  return new ApiError(
+    "MEETING_INTAKE_PROVIDER_UNSUPPORTED_MEDIA",
+    "The internal OpenAI media extraction route does not process scanned PDFs yet. Configure a PDF-capable OCR/vision provider or paste extracted notes until scanned PDF extraction is added.",
+    422
+  );
+}
+
 async function extractImageMarkdown(
   input: MediaProviderBinaryInput,
   env: OpenAIMediaProviderEnv,
@@ -218,6 +226,7 @@ function assertSupportedInput(input: MediaProviderBinaryInput) {
     normalizeAudioMimeType(input.mimeType);
     return;
   }
+  if (input.sourceType === "pdf") throw unsupportedScannedPdfError();
   throw unsupportedVideoError();
 }
 

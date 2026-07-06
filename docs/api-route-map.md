@@ -106,7 +106,7 @@ Notes:
 
 - This route implements the Meeting Intelligence provider-neutral media extraction contract for first-party deployments.
 - It requires `Authorization: Bearer ${MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN}` and is intended to be called by the background job worker through `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL`.
-- With `MEETING_INTELLIGENCE_MEDIA_PROVIDER=openai` and `OPENAI_API_KEY`, it performs image/whiteboard OCR/vision extraction and audio transcription. Video returns an explicit unsupported-media response until a safe video audio-extraction/storage path or video-capable provider is added.
+- With `MEETING_INTELLIGENCE_MEDIA_PROVIDER=openai` and `OPENAI_API_KEY`, it performs image/whiteboard OCR/vision extraction and audio transcription. Scanned PDFs and video return explicit unsupported-media responses until safe PDF OCR and video audio-extraction paths, or a provider capable of those source types, are added.
 
 ## Workspaces
 
@@ -210,6 +210,9 @@ PATCH  /api/v1/workspaces/:workspaceId/people/:personId
 DELETE /api/v1/workspaces/:workspaceId/people/:personId
 ```
 
+Notes:
+- Contact create/update accepts optional relationship brief fields for curated context: personal context, communication style, business concerns, follow-up reminders, and internal guidance. These are workspace-scoped contact fields, not raw notes or automated inference.
+
 ## Organizations
 
 ```text
@@ -249,16 +252,30 @@ GET  /api/v1/workspaces/:workspaceId/meeting-intakes
 POST /api/v1/workspaces/:workspaceId/meeting-intakes
 GET  /api/v1/workspaces/:workspaceId/meeting-intakes/:intakeId
 POST /api/v1/workspaces/:workspaceId/meeting-intakes/:intakeId/apply
+GET  /api/v1/workspaces/:workspaceId/meeting-intake-upload-capabilities
+POST /api/v1/workspaces/:workspaceId/meeting-intake-upload-sessions
+POST /api/v1/workspaces/:workspaceId/meeting-intake-upload-sessions/:uploadSessionId/finalize
+POST /api/v1/workspaces/:workspaceId/meeting-intake-multipart-upload-sessions
+POST /api/v1/workspaces/:workspaceId/meeting-intake-multipart-upload-sessions/:uploadSessionId/parts
+POST /api/v1/workspaces/:workspaceId/meeting-intake-multipart-upload-sessions/:uploadSessionId/complete
+POST /api/v1/workspaces/:workspaceId/meeting-intake-multipart-upload-sessions/:uploadSessionId/abort
 ```
 
 Notes:
 
 - `POST /meeting-intakes` requires pasted notes, extracted file text, uploaded PDF/DOCX bytes, or artifact filename/MIME type; empty source submissions return `422 VALIDATION_ERROR` before any intake record is created.
 - Valid `POST /meeting-intakes` submissions create a persistent review record and run supported local extraction/analysis synchronously.
-- Supported sources are pasted text, markdown, text files, RTF, HTML/HTM, CSV, JSON, text-based PDFs, and DOCX files. Images, audio, and video queue `meeting_intake.extract_media` jobs when `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL` is configured; otherwise they fail with clear provider-not-configured messages. Scanned PDFs still require OCR/vision support, PPTX/XLSX require export to a supported local format first, and legacy `.doc` files are unsupported.
-- Intake analysis JSON stores source/extraction metadata, including detected source type, original filename/MIME when provided, extraction method, local/provider-required conversion mode, required provider, failure code, and warnings when applicable.
-- Proposal generation is deterministic by default and does not mutate CRM records. It stores normalized markdown, match results, warnings, proposal evidence, confidence, and proposed notes/activities in review JSON.
-- `POST /meeting-intakes/:intakeId/apply` creates only selected user-approved notes, completed meeting activity, and follow-up activities through the existing note/activity services. The apply payload can carry edited content and manually reassigned targets. Submitted targets are validated in the current workspace before writes; missing, deleted, cross-workspace, closed-deal, converted-lead, or intentionally cleared targets are skipped with clear reasons. Existing workspace scoping, closed-deal locks, converted-lead locks, completed-activity behavior, and audit logs apply.
+- Supported sources are pasted text, markdown, text files, RTF, HTML/HTM, CSV, JSON, text-based PDFs, and DOCX files. Images, scanned/image-only PDFs after local PDF text extraction returns empty, audio, and video are written to the selected private Meeting Intelligence file storage backend, local filesystem or S3/R2-compatible object storage, and queue `meeting_intake.extract_media` jobs with a stored-file reference when `MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL` is configured and the provider supports that source type; otherwise they fail with clear provider-not-configured or unsupported-media messages. PPTX/XLSX require export to a supported local format first, and legacy `.doc` files are unsupported.
+- `GET /meeting-intake-upload-capabilities` returns safe, authenticated workspace/environment upload policy before bytes move: storage backend category, direct-upload availability and max size, multipart availability and part policy, bounded app-upload limits, provider support by source type, local/unsupported source types, retention, and user-facing guidance. Multipart reports supported only for S3/R2-compatible storage with a configured provider that supports the source type. It does not return credentials, signed URLs, object keys, local paths, bucket names, provider URLs/tokens, stored-file refs, filenames, or payloads.
+- `POST /meeting-intake-upload-sessions` creates an authenticated workspace-scoped direct-upload session for S3/R2-backed provider files only. It creates a draft intake, writes cleanup-visible stored-file metadata, and returns a short-lived signed single-object PUT target, required headers, expiry, max size, accepted source type, and upload session id. Local filesystem storage, missing provider config, and unsupported direct-upload source types fail clearly so clients can use the bounded base64 fallback path.
+- `POST /meeting-intake-upload-sessions/:uploadSessionId/finalize` validates completion metadata against the draft intake and stored-file metadata, reads the private object through the same backend/checksum/expiry validation path used by the worker, and queues `meeting_intake.extract_media` with `storedFile` instead of `fileBase64`. Missing, expired, wrong-workspace, wrong-intake, wrong-source, wrong-size, or checksum-mismatched content fails before a provider job is queued. Wrong-size and checksum-mismatched completion metadata return distinct error codes, and repeated finalize calls after queueing return `409 MEETING_INTAKE_DIRECT_UPLOAD_INVALID_STATE` without creating another job.
+- `POST /meeting-intake-multipart-upload-sessions` creates an authenticated workspace-scoped S3/R2 multipart upload for provider-backed files. The response returns only safe session policy: upload session id, accepted source type, part size, part count, max part count, stored-file retention expiry, and per-part signing TTL. It does not return stored-file internals, credentials, bucket names, object keys, filenames, file bytes, or signed URLs.
+- `POST /meeting-intake-multipart-upload-sessions/:uploadSessionId/parts` signs one or more part numbers for the draft multipart session after validating workspace, draft state, stored-file metadata, part bounds, and expiry. Each returned signed PUT URL is short-lived and scoped to one object part.
+- `POST /meeting-intake-multipart-upload-sessions/:uploadSessionId/complete` validates the completed part ETags, size, checksum, source, workspace, intake, filename/MIME consistency, and stored-file expiry before completing the private object and queueing `meeting_intake.extract_media` with `storedFile` only. Repeated completion after queueing returns `409 MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE` and does not create another job.
+- `POST /meeting-intake-multipart-upload-sessions/:uploadSessionId/abort` aborts an incomplete multipart upload where supported, deletes stored-file metadata/content, and marks the draft intake failed so later completion returns `409 MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE`.
+- Intake analysis JSON stores source/extraction metadata, including detected source type, original filename/MIME when provided, extraction method, local/provider-required conversion mode, required provider, temporary stored-file metadata for queued provider-backed extraction, failure code, and warnings when applicable.
+- Proposal generation is deterministic by default and does not mutate CRM records. If `MEETING_INTELLIGENCE_RELATIONSHIP_PROVIDER=openai` and `OPENAI_API_KEY` are configured, semantic Relationship Brief extraction can enrich matched-contact profile proposals with sensitivity guidance and merge previews; provider failures fall back to deterministic proposals. Review JSON stores normalized markdown, match results, warnings, proposal evidence, confidence, proposed notes/activities/profile updates, and optional fact-level Relationship Brief proposal metadata.
+- `POST /meeting-intakes/:intakeId/apply` creates only selected user-approved notes, completed meeting activity, follow-up activities, and Relationship Brief profile updates through existing services. The apply payload can carry edited content, manually reassigned targets, and optional Relationship Brief fact selections with edited text, include flags, and destination fields. Submitted targets are validated in the current workspace before writes; missing, deleted, cross-workspace, closed-deal, converted-lead, or intentionally cleared targets are skipped with clear reasons. Existing workspace scoping, closed-deal locks, converted-lead locks, completed-activity behavior, and audit logs apply.
 - Reapplying an already-applied intake returns the stored apply result and does not create duplicate notes or activities.
 
 ## Notes

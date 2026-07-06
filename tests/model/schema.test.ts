@@ -20,6 +20,7 @@ describe("Prisma CRM schema", () => {
       "Organization",
       "Activity",
       "Note",
+      "EmailLogActivityLink",
       "CustomFieldDefinition",
       "CustomFieldValue",
       "SavedView",
@@ -30,7 +31,7 @@ describe("Prisma CRM schema", () => {
   });
 
   it("requires workspace ownership on major CRM records", () => {
-    for (const model of ["Pipeline", "PipelineStage", "Deal", "Lead", "Person", "Organization", "Activity", "Note", "SavedView"]) {
+    for (const model of ["Pipeline", "PipelineStage", "Deal", "Lead", "Person", "Organization", "Activity", "Note", "EmailLogActivityLink", "SavedView"]) {
       const block = modelBlock(model);
       expect(block).toMatch(/workspaceId\s+String/);
       expect(block).toContain("workspace");

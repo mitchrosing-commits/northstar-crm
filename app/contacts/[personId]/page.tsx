@@ -17,8 +17,10 @@ import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
 import { RelatedDealsTable, RelatedRecordsPanel } from "@/components/related-records-table";
 import { RecordSummary } from "@/components/record-summary";
 import { RecordTimeline } from "@/components/record-timeline";
+import { RelationshipBriefPanel, type RelationshipBriefHistoryItem } from "@/components/relationship-brief-panel";
 import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import type { RelationshipBriefChangeSummary } from "@/lib/meeting-intelligence/types";
 import { formatPersonName } from "@/lib/person-name";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
@@ -48,6 +50,15 @@ export default async function ContactDetailPage({ params }: PageProps) {
   const nextActivity = getNextOpenActivity(person.activities);
   const activityCopy = recordActivitySectionCopy("contact");
   const emailLogCount = timelineItems.filter((item) => item.type === "email").length;
+  const relationshipBrief = {
+    relationshipBusinessConcerns: person.relationshipBusinessConcerns,
+    relationshipCommunicationStyle: person.relationshipCommunicationStyle,
+    relationshipFollowUpReminders: person.relationshipFollowUpReminders,
+    relationshipInternalGuidance: person.relationshipInternalGuidance,
+    relationshipPersonalContext: person.relationshipPersonalContext
+  };
+  const relationshipBriefCount = Object.values(relationshipBrief).filter((value) => Boolean(value?.trim())).length;
+  const relationshipBriefChanges = recentRelationshipBriefChanges(person.auditLogs);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
@@ -87,6 +98,12 @@ export default async function ContactDetailPage({ params }: PageProps) {
             }}
             extraJumps={[
               {
+                href: "#relationship-brief" as Route,
+                label: "Brief",
+                count: relationshipBriefCount,
+                countLabel: { singular: "saved section", plural: "saved sections" }
+              },
+              {
                 href: "#related-deals" as Route,
                 label: "Deals",
                 count: person.deals.length,
@@ -119,6 +136,14 @@ export default async function ContactDetailPage({ params }: PageProps) {
           }
         ]}
         title="Contact workspace"
+      />
+
+      <RelationshipBriefPanel
+        contactName={personName}
+        initialBrief={relationshipBrief}
+        personId={person.id}
+        recentChanges={relationshipBriefChanges}
+        workspaceId={workspace.id}
       />
 
       <section className="detail-grid">
@@ -205,4 +230,52 @@ export default async function ContactDetailPage({ params }: PageProps) {
       />
     </AppShell>
   );
+}
+
+function recentRelationshipBriefChanges(
+  auditLogs: Array<{
+    actor?: { email: string; name: string | null } | null;
+    createdAt: Date;
+    metadata: unknown;
+  }>
+): RelationshipBriefHistoryItem[] {
+  return auditLogs.flatMap((log) => {
+    const changes = relationshipBriefChangesFromMetadata(log.metadata);
+    return changes.map((change) => ({
+      acceptedFactCount: change.acceptedFactCount,
+      actorLabel: log.actor?.name ?? log.actor?.email,
+      changedAt: change.changedAt || log.createdAt.toISOString(),
+      fieldLabel: change.fieldLabel,
+      newValue: change.newValue,
+      previousValue: change.previousValue,
+      sourceLabel: relationshipBriefHistorySourceLabel(change)
+    }));
+  }).slice(0, 5);
+}
+
+function relationshipBriefChangesFromMetadata(metadata: unknown): RelationshipBriefChangeSummary[] {
+  if (!metadata || typeof metadata !== "object") return [];
+  const changes = (metadata as { relationshipBriefChanges?: unknown }).relationshipBriefChanges;
+  if (!Array.isArray(changes)) return [];
+  return changes.filter(isRelationshipBriefChangeSummary);
+}
+
+function isRelationshipBriefChangeSummary(value: unknown): value is RelationshipBriefChangeSummary {
+  if (!value || typeof value !== "object") return false;
+  const input = value as Partial<RelationshipBriefChangeSummary>;
+  return (
+    typeof input.changedAt === "string" &&
+    typeof input.fieldLabel === "string" &&
+    typeof input.target?.id === "string" &&
+    input.target.type === "person" &&
+    (input.previousValue === null || typeof input.previousValue === "string") &&
+    (input.newValue === null || typeof input.newValue === "string")
+  );
+}
+
+function relationshipBriefHistorySourceLabel(change: RelationshipBriefChangeSummary) {
+  if (change.source.type === "meeting_intelligence") {
+    return change.source.title ? `Meeting Intelligence: ${change.source.title}` : "Meeting Intelligence";
+  }
+  return "Manual update";
 }

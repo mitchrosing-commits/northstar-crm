@@ -2763,6 +2763,349 @@ textarea {
   width: min(100%, 560px);
 }
 
+.email-ai-reply-form,
+.email-ai-review {
+  display: grid;
+  gap: 10px;
+}
+
+.email-ai-context-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.email-follow-up-form {
+  display: grid;
+  gap: 10px;
+}
+
+.email-follow-up-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.email-smart-label-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+}
+
+.email-smart-label-row {
+  gap: 6px;
+}
+
+.email-smart-label {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.email-smart-label-critical {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.email-smart-label-attention {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.email-smart-label-positive {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.email-smart-label-body {
+  display: grid;
+  gap: 8px;
+}
+
+.email-smart-label-evidence summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.email-smart-label-evidence p {
+  margin-top: 6px;
+}
+
+.relationship-inbox-signal-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.relationship-inbox-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.relationship-inbox-signal-row {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.relationship-inbox-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.relationship-inbox-explainer {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface-muted);
+}
+
+.relationship-inbox-explainer-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.relationship-inbox-explainer-headline {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.relationship-inbox-explainer-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.relationship-inbox-evidence-chip {
+  max-width: 100%;
+}
+
+.relationship-inbox-evidence-attention {
+  border-color: rgb(180 35 24 / 0.22);
+  background: rgb(180 35 24 / 0.08);
+  color: var(--red);
+}
+
+.relationship-inbox-evidence-success {
+  border-color: rgb(22 101 52 / 0.2);
+  background: rgb(22 101 52 / 0.08);
+  color: var(--green);
+}
+
+.relationship-inbox-evidence-muted {
+  color: var(--muted-strong);
+}
+
+.relationship-inbox-evidence-detail {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+  scroll-margin-top: 20px;
+}
+
+.relationship-inbox-evidence-detail:target {
+  border-color: rgb(37 99 235 / 0.36);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.12);
+}
+
+.relationship-inbox-evidence-detail-header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.relationship-inbox-evidence-detail-header p {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.relationship-inbox-evidence-trail {
+  display: grid;
+  gap: 8px;
+}
+
+.relationship-inbox-evidence-group {
+  display: grid;
+  gap: 8px;
+}
+
+.relationship-inbox-evidence-drilldown {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+.relationship-inbox-evidence-drilldown summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.relationship-inbox-evidence-drilldown-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.relationship-inbox-evidence-trail-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+.relationship-inbox-evidence-trail-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.relationship-inbox-evidence-trail-main p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.relationship-inbox-source-excerpts {
+  display: grid;
+  gap: 8px;
+}
+
+.relationship-inbox-evidence-excerpt {
+  margin: 0;
+  border-left: 3px solid rgb(37 99 235 / 0.28);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgb(37 99 235 / 0.06);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.relationship-inbox-next-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+}
+
+.relationship-inbox-next-action p {
+  margin: 6px 0 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.relationship-inbox-next-action-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .relationship-inbox-evidence-detail-header,
+  .relationship-inbox-evidence-drilldown summary,
+  .relationship-inbox-evidence-trail-item,
+  .relationship-inbox-next-action {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+}
+
+.email-linked-follow-ups {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.email-linked-follow-ups-compact {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.email-linked-follow-up-list {
+  display: grid;
+  gap: 8px;
+}
+
+.email-linked-follow-up-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.email-linked-follow-up-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.email-linked-follow-up-title {
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .email-linked-follow-up-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .provider-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -3651,6 +3994,86 @@ textarea {
   box-shadow: none;
 }
 
+.relationship-brief-review-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.relationship-brief-review-field {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-strong);
+}
+
+.relationship-brief-diff-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr) minmax(0, 0.8fr);
+  gap: 12px;
+}
+
+.relationship-brief-diff-column,
+.relationship-brief-fact,
+.relationship-brief-fact-guidance,
+.relationship-brief-fact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.relationship-brief-preview-text {
+  min-height: 44px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  white-space: pre-wrap;
+}
+
+.relationship-brief-fact {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.relationship-brief-fact-guidance {
+  justify-items: start;
+}
+
+.relationship-brief-change-list {
+  display: grid;
+  gap: 10px;
+}
+
+.relationship-brief-change-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.relationship-brief-change-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 920px) {
+  .relationship-brief-diff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .relationship-brief-change-diff {
+    grid-template-columns: 1fr;
+  }
+}
+
 .meeting-markdown-preview {
   max-height: 420px;
   overflow: auto;
@@ -3805,6 +4228,10 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.form-hint-danger {
+  color: var(--danger);
 }
 
 .inline-form {

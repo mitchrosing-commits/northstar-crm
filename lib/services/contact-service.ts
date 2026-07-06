@@ -21,8 +21,23 @@ type CreatePersonInput = {
   lastName?: unknown;
   email?: unknown;
   phone?: unknown;
+  relationshipPersonalContext?: unknown;
+  relationshipCommunicationStyle?: unknown;
+  relationshipBusinessConcerns?: unknown;
+  relationshipFollowUpReminders?: unknown;
+  relationshipInternalGuidance?: unknown;
 };
 type UpdatePersonInput = Partial<CreatePersonInput>;
+type UpdatePersonOptions = {
+  auditMetadata?: unknown;
+};
+export type PersonRelationshipProfile = {
+  personalContext: string | null;
+  communicationStyle: string | null;
+  businessConcerns: string | null;
+  followUpReminders: string | null;
+  internalGuidance: string | null;
+};
 export type PersonListFilters = CustomFieldListFilters & {
   q?: string;
   organizationId?: string;
@@ -144,6 +159,22 @@ export async function getPerson(actor: WorkspaceActor, personId: string) {
   return { ...scopePersonRelations(actor.workspaceId, person), auditLogs };
 }
 
+export function personRelationshipProfile(person: {
+  relationshipBusinessConcerns: string | null;
+  relationshipCommunicationStyle: string | null;
+  relationshipFollowUpReminders: string | null;
+  relationshipInternalGuidance: string | null;
+  relationshipPersonalContext: string | null;
+}): PersonRelationshipProfile {
+  return {
+    personalContext: person.relationshipPersonalContext,
+    communicationStyle: person.relationshipCommunicationStyle,
+    businessConcerns: person.relationshipBusinessConcerns,
+    followUpReminders: person.relationshipFollowUpReminders,
+    internalGuidance: person.relationshipInternalGuidance
+  };
+}
+
 function scopePersonRelations<T extends { organization: WorkspaceScopedRelation }>(workspaceId: string, person: T) {
   return {
     ...person,
@@ -161,7 +192,7 @@ export async function createPerson(actor: WorkspaceActor, data: unknown) {
   return person;
 }
 
-export async function updatePerson(actor: WorkspaceActor, personId: string, data: unknown) {
+export async function updatePerson(actor: WorkspaceActor, personId: string, data: unknown, options: UpdatePersonOptions = {}) {
   await ensureWorkspaceAccess(actor);
   await assertRecordInWorkspace("person", actor.workspaceId, personId);
   const normalized = normalizeUpdatePersonInput(data);
@@ -175,7 +206,7 @@ export async function updatePerson(actor: WorkspaceActor, personId: string, data
   }
 
   const person = await prisma.person.update({ where: { id: personId }, data: normalized });
-  await writeAuditLog(actor, "person.updated", "Person", person.id);
+  await writeAuditLog(actor, "person.updated", "Person", person.id, options.auditMetadata);
   return person;
 }
 
@@ -194,7 +225,27 @@ function normalizeCreatePersonInput(data: unknown) {
     firstName: normalizeRequiredPersonText(input.firstName, "Contact first name is required."),
     lastName: normalizeOptionalPersonText(input.lastName, "Contact last name must be text."),
     email: normalizeOptionalPersonText(input.email, "Contact email must be text."),
-    phone: normalizeOptionalPersonText(input.phone, "Contact phone must be text.")
+    phone: normalizeOptionalPersonText(input.phone, "Contact phone must be text."),
+    relationshipPersonalContext: normalizeOptionalRelationshipText(
+      input.relationshipPersonalContext,
+      "Relationship personal context must be text."
+    ),
+    relationshipCommunicationStyle: normalizeOptionalRelationshipText(
+      input.relationshipCommunicationStyle,
+      "Relationship communication style must be text."
+    ),
+    relationshipBusinessConcerns: normalizeOptionalRelationshipText(
+      input.relationshipBusinessConcerns,
+      "Relationship business concerns must be text."
+    ),
+    relationshipFollowUpReminders: normalizeOptionalRelationshipText(
+      input.relationshipFollowUpReminders,
+      "Relationship follow-up reminders must be text."
+    ),
+    relationshipInternalGuidance: normalizeOptionalRelationshipText(
+      input.relationshipInternalGuidance,
+      "Relationship internal guidance must be text."
+    )
   });
 }
 
@@ -211,7 +262,22 @@ function normalizeUpdatePersonInput(data: unknown) {
       : undefined,
     lastName: hasInputKey(input, "lastName") ? normalizeOptionalPersonText(input.lastName, "Contact last name must be text.") : undefined,
     email: hasInputKey(input, "email") ? normalizeOptionalPersonText(input.email, "Contact email must be text.") : undefined,
-    phone: hasInputKey(input, "phone") ? normalizeOptionalPersonText(input.phone, "Contact phone must be text.") : undefined
+    phone: hasInputKey(input, "phone") ? normalizeOptionalPersonText(input.phone, "Contact phone must be text.") : undefined,
+    relationshipPersonalContext: hasInputKey(input, "relationshipPersonalContext")
+      ? normalizeOptionalRelationshipText(input.relationshipPersonalContext, "Relationship personal context must be text.")
+      : undefined,
+    relationshipCommunicationStyle: hasInputKey(input, "relationshipCommunicationStyle")
+      ? normalizeOptionalRelationshipText(input.relationshipCommunicationStyle, "Relationship communication style must be text.")
+      : undefined,
+    relationshipBusinessConcerns: hasInputKey(input, "relationshipBusinessConcerns")
+      ? normalizeOptionalRelationshipText(input.relationshipBusinessConcerns, "Relationship business concerns must be text.")
+      : undefined,
+    relationshipFollowUpReminders: hasInputKey(input, "relationshipFollowUpReminders")
+      ? normalizeOptionalRelationshipText(input.relationshipFollowUpReminders, "Relationship follow-up reminders must be text.")
+      : undefined,
+    relationshipInternalGuidance: hasInputKey(input, "relationshipInternalGuidance")
+      ? normalizeOptionalRelationshipText(input.relationshipInternalGuidance, "Relationship internal guidance must be text.")
+      : undefined
   });
 }
 
@@ -243,6 +309,14 @@ function normalizeOptionalPersonText(value: unknown, message: string) {
   return trimmed || null;
 }
 
+function normalizeOptionalRelationshipText(value: unknown, message: string) {
+  const normalized = normalizeOptionalPersonText(value, message);
+  if (normalized && normalized.length > 2000) {
+    throw new ApiError("VALIDATION_ERROR", "Relationship brief fields must be 2,000 characters or fewer.", 422);
+  }
+  return normalized;
+}
+
 function personUpdateChanges(
   input: ReturnType<typeof normalizeUpdatePersonInput>,
   existing: {
@@ -252,6 +326,11 @@ function personUpdateChanges(
     lastName: string | null;
     email: string | null;
     phone: string | null;
+    relationshipBusinessConcerns: string | null;
+    relationshipCommunicationStyle: string | null;
+    relationshipFollowUpReminders: string | null;
+    relationshipInternalGuidance: string | null;
+    relationshipPersonalContext: string | null;
   }
 ) {
   if (input.ownerId !== undefined && input.ownerId !== existing.ownerId) return true;
@@ -260,6 +339,11 @@ function personUpdateChanges(
   if (input.lastName !== undefined && input.lastName !== existing.lastName) return true;
   if (input.email !== undefined && input.email !== existing.email) return true;
   if (input.phone !== undefined && input.phone !== existing.phone) return true;
+  if (input.relationshipPersonalContext !== undefined && input.relationshipPersonalContext !== existing.relationshipPersonalContext) return true;
+  if (input.relationshipCommunicationStyle !== undefined && input.relationshipCommunicationStyle !== existing.relationshipCommunicationStyle) return true;
+  if (input.relationshipBusinessConcerns !== undefined && input.relationshipBusinessConcerns !== existing.relationshipBusinessConcerns) return true;
+  if (input.relationshipFollowUpReminders !== undefined && input.relationshipFollowUpReminders !== existing.relationshipFollowUpReminders) return true;
+  if (input.relationshipInternalGuidance !== undefined && input.relationshipInternalGuidance !== existing.relationshipInternalGuidance) return true;
   return false;
 }
 

@@ -4,6 +4,7 @@ import { isLocalDevelopmentHost, isPublicHttpsUrl } from "@/lib/public-host";
 
 const databaseProtocols = ["postgresql:", "postgres:"] as const;
 const authModes = ["demo", "trusted-header", "local"] as const;
+const meetingIntelligenceStorageBackends = ["local", "local-filesystem", "s3", "s3-compatible"] as const;
 
 export type ValidRuntimeEnv = {
   databaseUrl: string;
@@ -33,6 +34,45 @@ export type EnvValidationResult =
 
 type EnvInput = Record<string, string | undefined>;
 
+function validateMeetingIntelligenceStorageEnv({
+  accessKeyId,
+  backend,
+  bucket,
+  endpoint,
+  errors,
+  region,
+  secretAccessKey
+}: {
+  accessKeyId?: string;
+  backend?: string;
+  bucket?: string;
+  endpoint?: string;
+  errors: string[];
+  region?: string;
+  secretAccessKey?: string;
+}) {
+  if (backend && !meetingIntelligenceStorageBackends.includes(backend as (typeof meetingIntelligenceStorageBackends)[number])) {
+    errors.push(`MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND must be one of: ${meetingIntelligenceStorageBackends.join(", ")}.`);
+  }
+
+  const s3Selected = backend === "s3" || backend === "s3-compatible";
+  const s3AnySet = Boolean(endpoint || region || bucket || accessKeyId || secretAccessKey);
+  if (s3AnySet && !s3Selected) {
+    errors.push("MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND must be s3 when Meeting Intelligence S3 storage env vars are set.");
+  }
+  if (s3Selected && !(endpoint && region && bucket && accessKeyId && secretAccessKey)) {
+    errors.push("Meeting Intelligence S3 storage requires endpoint, region, bucket, access key id, and secret access key.");
+  }
+  if (endpoint) {
+    validateUrl({
+      value: endpoint,
+      name: "MEETING_INTELLIGENCE_S3_ENDPOINT",
+      protocols: ["http:", "https:"],
+      errors
+    });
+  }
+}
+
 export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -55,6 +95,12 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
   const microsoftOauthClientSecret = readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_SECRET) ?? readNonEmpty(env.MICROSOFT_CLIENT_SECRET);
   const microsoftOauthRedirectUri = readNonEmpty(env.MICROSOFT_OAUTH_REDIRECT_URI) ?? readNonEmpty(env.MICROSOFT_REDIRECT_URI);
   const microsoftOauthTenantId = readNonEmpty(env.MICROSOFT_OAUTH_TENANT_ID);
+  const meetingIntelligenceStorageBackend = readNonEmpty(env.MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND);
+  const meetingIntelligenceS3Endpoint = readNonEmpty(env.MEETING_INTELLIGENCE_S3_ENDPOINT);
+  const meetingIntelligenceS3Region = readNonEmpty(env.MEETING_INTELLIGENCE_S3_REGION);
+  const meetingIntelligenceS3Bucket = readNonEmpty(env.MEETING_INTELLIGENCE_S3_BUCKET);
+  const meetingIntelligenceS3AccessKeyId = readNonEmpty(env.MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID);
+  const meetingIntelligenceS3SecretAccessKey = readNonEmpty(env.MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY);
   const parsedAppBaseUrl = appBaseUrl ? parseUrl(appBaseUrl) : null;
 
   if (!databaseUrl) {
@@ -189,6 +235,16 @@ export function validateRuntimeEnv(env: EnvInput = process.env): EnvValidationRe
   if (microsoftOauthTenantId && !isSafeMicrosoftTenantId(microsoftOauthTenantId)) {
     errors.push("MICROSOFT_OAUTH_TENANT_ID must be a tenant id, domain, or one of: common, organizations, consumers.");
   }
+
+  validateMeetingIntelligenceStorageEnv({
+    accessKeyId: meetingIntelligenceS3AccessKeyId,
+    backend: meetingIntelligenceStorageBackend,
+    bucket: meetingIntelligenceS3Bucket,
+    endpoint: meetingIntelligenceS3Endpoint,
+    errors,
+    region: meetingIntelligenceS3Region,
+    secretAccessKey: meetingIntelligenceS3SecretAccessKey
+  });
 
   if (emailTokenEncryptionKey && !canUseEmailTokenEncryptionKey(env)) {
     errors.push("EMAIL_TOKEN_ENCRYPTION_KEY must decode to at least 32 bytes when set.");

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
+import { type Dispatch, FormEvent, type SetStateAction, useMemo, useRef, useState } from "react";
 
 import { ActionGroup } from "@/components/action-group";
 import { Badge } from "@/components/badge";
@@ -22,7 +22,10 @@ import type {
   MeetingIntelligenceDraft,
   MeetingSourceMetadata,
   ProposedNextStepActivity,
-  ProposedNote
+  ProposedNote,
+  ProposedRelationshipBriefFact,
+  RelationshipBriefFields,
+  RelationshipBriefSensitivityCategory
 } from "@/lib/meeting-intelligence/types";
 
 type Option = { id: string; label: string };
@@ -54,21 +57,43 @@ export function MeetingIntelligenceReview({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const targetOptions = useMemo(() => buildTargetOptions(options), [options]);
+  const relationshipOptions = useMemo(() => relationshipTargetOptions(options), [options]);
+  const relationshipBriefUpdates = draft.relationshipBriefUpdates ?? [];
+  const [relationshipFactDrafts, setRelationshipFactDrafts] = useState(() =>
+    relationshipBriefUpdates.map((update) => relationshipFactsForReview(update))
+  );
+  const [selectedRelationshipTargets, setSelectedRelationshipTargets] = useState(() =>
+    relationshipBriefUpdates.map((update) => update.target)
+  );
+  const [relationshipBriefTargetStates, setRelationshipBriefTargetStates] = useState(() =>
+    relationshipBriefUpdates.map((update) => initialRelationshipBriefTargetState(update))
+  );
+  const relationshipFactIncludeTouched = useRef<Set<string>>(new Set());
   const isApplied = status === "APPLIED";
+  const relationshipBriefPreviewBlocked = relationshipBriefTargetStates.some((state, index) =>
+    Boolean(selectedRelationshipTargets[index]) && (state.status === "loading" || state.status === "failed")
+  );
   const warningCount = meetingReviewWarningCount(draft);
-  const proposedUpdateCount = (draft.meetingActivity ? 1 : 0) + draft.notes.length + draft.nextStepActivities.length;
+  const proposedUpdateCount =
+    (draft.meetingActivity ? 1 : 0) + draft.notes.length + draft.nextStepActivities.length + relationshipBriefUpdates.length;
   const selectedUpdateCount =
     (draft.meetingActivity?.include ? 1 : 0) +
     draft.notes.filter((note) => note.include).length +
-    draft.nextStepActivities.filter((activity) => activity.include).length;
+    draft.nextStepActivities.filter((activity) => activity.include).length +
+    relationshipBriefUpdates.filter((update) => update.include).length;
   const missingTargetCount =
     (draft.meetingActivity && draft.meetingActivity.include && !draft.meetingActivity.target ? 1 : 0) +
     draft.notes.filter((note) => note.include && !note.target).length +
-    draft.nextStepActivities.filter((activity) => activity.include && !activity.target).length;
+    draft.nextStepActivities.filter((activity) => activity.include && !activity.target).length +
+    relationshipBriefUpdates.filter((update) => update.include && !update.target).length;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    if (relationshipBriefPreviewBlocked) {
+      setError("Wait for the selected contact Relationship Brief preview to load before applying updates.");
+      return;
+    }
     setIsSaving(true);
     const formData = new FormData(event.currentTarget);
     const payload = {
@@ -98,7 +123,20 @@ export function MeetingIntelligenceReview({
         body: String(formData.get(`note.${index}.body`) ?? ""),
         include: formData.has(`note.${index}.include`),
         target: parseTarget(String(formData.get(`note.${index}.target`) ?? ""))
-      }))
+      })),
+      relationshipBriefUpdates: relationshipBriefUpdates.map((update, index) => {
+        const facts = (relationshipFactDrafts[index] ?? relationshipFactsForReview(update)).map((_fact, factIndex) => ({
+          field: String(formData.get(`relationship.${index}.fact.${factIndex}.field`) ?? ""),
+          include: formData.has(`relationship.${index}.fact.${factIndex}.include`),
+          text: String(formData.get(`relationship.${index}.fact.${factIndex}.text`) ?? "")
+        }));
+        return {
+          facts,
+          include: formData.has(`relationship.${index}.include`),
+          proposed: relationshipProposedFieldsFromReviewFacts(facts),
+          target: parseRelationshipTarget(String(formData.get(`relationship.${index}.target`) ?? ""))
+        };
+      })
     };
 
     const response = await fetch(`/api/v1/workspaces/${workspaceId}/meeting-intakes/${intakeId}/apply`, {
@@ -114,6 +152,85 @@ export function MeetingIntelligenceReview({
     }
     router.refresh();
     setIsSaving(false);
+  }
+
+  async function loadRelationshipTargetBrief(updateIndex: number, target: CrmTarget | null) {
+    if (!target) {
+      setRelationshipBriefTargetStates((current) =>
+        current.map((state, index) => (index === updateIndex ? { existing: {}, status: "idle", targetId: null } : state))
+      );
+      setRelationshipFactDrafts((current) =>
+        current.map((facts, index) =>
+          index === updateIndex ? reconcileRelationshipFactsForExisting(facts, {}, updateIndex, relationshipFactIncludeTouched.current) : facts
+        )
+      );
+      return;
+    }
+
+    setRelationshipBriefTargetStates((current) =>
+      current.map((state, index) =>
+        index === updateIndex
+          ? { existing: {}, status: "loading", targetId: target.id, targetLabel: target.label }
+          : state
+      )
+    );
+
+    try {
+      const response = await fetch(`/api/v1/workspaces/${workspaceId}/people/${target.id}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) throw new Error("Could not load selected contact.");
+      const body = await response.json();
+      const existing = relationshipBriefFieldsFromPersonResponse(body);
+      setRelationshipBriefTargetStates((current) =>
+        current.map((state, index) =>
+          index === updateIndex && state.targetId === target.id
+            ? { existing, status: "ready", targetId: target.id, targetLabel: target.label }
+            : state
+        )
+      );
+      setRelationshipFactDrafts((current) =>
+        current.map((facts, index) =>
+          index === updateIndex
+            ? reconcileRelationshipFactsForExisting(facts, existing, updateIndex, relationshipFactIncludeTouched.current)
+            : facts
+        )
+      );
+    } catch {
+      setRelationshipBriefTargetStates((current) =>
+        current.map((state, index) =>
+          index === updateIndex && state.targetId === target.id
+            ? {
+                existing: {},
+                error: "Could not load the selected contact Relationship Brief. Choose another contact or try again.",
+                status: "failed",
+                targetId: target.id,
+                targetLabel: target.label
+              }
+            : state
+        )
+      );
+    }
+  }
+
+  function onRelationshipTargetChange(updateIndex: number, value: string) {
+    const target = relationshipTargetFromSelectValue(value, relationshipOptions);
+    setSelectedRelationshipTargets((current) => current.map((candidate, index) => (index === updateIndex ? target : candidate)));
+    void loadRelationshipTargetBrief(updateIndex, target);
+  }
+
+  function onRelationshipFactChange(
+    updateIndex: number,
+    factIndex: number,
+    changes: Partial<RelationshipFactDraft>,
+    options: { includeTouched?: boolean } = {}
+  ) {
+    const factKey = relationshipFactKey(updateIndex, factIndex);
+    if (options.includeTouched) relationshipFactIncludeTouched.current.add(factKey);
+    updateRelationshipFact(setRelationshipFactDrafts, updateIndex, factIndex, changes, {
+      existing: relationshipBriefTargetStates[updateIndex]?.existing ?? {},
+      preserveInclude: relationshipFactIncludeTouched.current.has(factKey)
+    });
   }
 
   if (isApplied && applyResult) {
@@ -307,6 +424,152 @@ export function MeetingIntelligenceReview({
         </div>
       </section>
 
+      <section className="panel" aria-labelledby="relationship-brief-heading">
+        <PanelTitleRow
+          actions={<CountBadge className="badge">{relationshipBriefUpdates.length} brief updates</CountBadge>}
+          description="Review-first curated memory for matched contacts. Approved additions are merged into the contact profile; empty fields are ignored."
+          title="Relationship Brief Updates"
+          titleId="relationship-brief-heading"
+        />
+        <div className="inline-form">
+          {relationshipBriefUpdates.length > 0 ? (
+            relationshipBriefUpdates.map((update, index) => {
+              const facts = relationshipFactDrafts[index] ?? relationshipFactsForReview(update);
+              const selectedTarget = selectedRelationshipTargets[index] ?? null;
+              const targetBriefState = relationshipBriefTargetStates[index] ?? initialRelationshipBriefTargetState(update);
+              const existing = relationshipExistingFieldsForPreview(targetBriefState);
+              const mergedPreview = relationshipMergedPreviewFromFacts(existing, facts);
+              return (
+                <div className="data-card meeting-review-item" key={update.id}>
+                  <div className="meeting-review-item-header">
+                    <label className="form-field checkbox-field">
+                      <input defaultChecked={update.include} name={`relationship.${index}.include`} type="checkbox" />
+                      <span>Update Relationship Brief</span>
+                    </label>
+                    <Badge>{targetDisplayLabel(selectedTarget)}</Badge>
+                  </div>
+                  <div className="form-grid">
+                    <label className="form-field">
+                      <FormFieldLabel>Contact</FormFieldLabel>
+                      <TargetSelect
+                        onChange={(value) => onRelationshipTargetChange(index, value)}
+                        value={selectedTarget ? targetValue(selectedTarget) : ""}
+                        name={`relationship.${index}.target`}
+                        options={relationshipOptions}
+                      />
+                    </label>
+                  </div>
+                  <RelationshipBriefTargetStatus state={targetBriefState} target={selectedTarget} />
+                  <div className="relationship-brief-review-grid">
+                    {relationshipBriefSections.map((section) => {
+                      const fieldFacts = facts
+                        .map((fact, factIndex) => ({ fact, factIndex }))
+                        .filter(({ fact }) => fact.field === section.key);
+                      return (
+                        <section className="relationship-brief-review-field" key={section.key}>
+                          <CompactTitleRow
+                            actions={<CountBadge className="badge">{fieldFacts.length} facts</CountBadge>}
+                            title={section.label}
+                          />
+                          <div className="relationship-brief-diff-grid">
+                            <div className="relationship-brief-diff-column">
+                              <strong>Existing</strong>
+                              <p className="relationship-brief-preview-text">
+                                {relationshipExistingPreviewText(targetBriefState, existing, section.key)}
+                              </p>
+                            </div>
+                            <div className="relationship-brief-diff-column">
+                              <strong>Proposed facts</strong>
+                              {fieldFacts.length > 0 ? (
+                                <div className="relationship-brief-fact-list">
+                                  {fieldFacts.map(({ fact, factIndex }) => (
+                                    <div className="relationship-brief-fact" key={`${fact.id}-${factIndex}`}>
+                                      <label className="form-field checkbox-field">
+                                        <input
+                                          checked={fact.include}
+                                          name={`relationship.${index}.fact.${factIndex}.include`}
+                                          onChange={(event) =>
+                                            onRelationshipFactChange(
+                                              index,
+                                              factIndex,
+                                              { include: event.currentTarget.checked },
+                                              { includeTouched: true }
+                                            )
+                                          }
+                                          type="checkbox"
+                                        />
+                                        <span>Include fact</span>
+                                      </label>
+                                      <label className="form-field form-field-wide">
+                                        <FormFieldLabel>Fact</FormFieldLabel>
+                                        <textarea
+                                          name={`relationship.${index}.fact.${factIndex}.text`}
+                                          onChange={(event) =>
+                                            onRelationshipFactChange(index, factIndex, {
+                                              text: event.currentTarget.value
+                                            })
+                                          }
+                                          rows={2}
+                                          value={fact.text}
+                                        />
+                                      </label>
+                                      <label className="form-field">
+                                        <FormFieldLabel>Field</FormFieldLabel>
+                                        <select
+                                          name={`relationship.${index}.fact.${factIndex}.field`}
+                                          onChange={(event) =>
+                                            onRelationshipFactChange(index, factIndex, {
+                                              field: event.currentTarget.value as keyof RelationshipBriefFields
+                                            })
+                                          }
+                                          value={fact.field}
+                                        >
+                                          {relationshipBriefSections.map((option) => (
+                                            <option key={option.key} value={option.key}>
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                      <RelationshipBriefFactGuidance fact={fact} />
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="muted">No proposed facts for this field.</span>
+                              )}
+                            </div>
+                            <div className="relationship-brief-diff-column">
+                              <strong>After apply</strong>
+                              <p className="relationship-brief-preview-text">
+                                {relationshipAfterApplyPreviewText(targetBriefState, mergedPreview, section.key)}
+                              </p>
+                            </div>
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                  <RelationshipBriefGuidance update={update} />
+                  <ProposalEvidence
+                    confidence={update.confidence}
+                    evidence={update.evidence}
+                    matchedReason={update.matchedReason}
+                    targetWarning={update.targetWarning}
+                  />
+                </div>
+              );
+            })
+          ) : (
+            <EmptyState
+              className="empty-state-compact empty-state-panel"
+              description="Relationship Brief suggestions appear only when the meeting contains explicit contact context worth curating."
+              title="No relationship brief updates proposed"
+            />
+          )}
+        </div>
+      </section>
+
       <section className="panel" aria-labelledby="next-steps-heading">
         <PanelTitleRow
           actions={<CountBadge className="badge">{draft.nextStepActivities.length} follow-ups</CountBadge>}
@@ -397,7 +660,9 @@ export function MeetingIntelligenceReview({
             <strong>Default selected updates</strong>
             <span className="muted">{defaultApplySummary(draft)}</span>
           </CompactListItem>
-          {draft.notes.some((note) => !note.target) || draft.nextStepActivities.some((activity) => !activity.target) ? (
+          {draft.notes.some((note) => !note.target) ||
+          draft.nextStepActivities.some((activity) => !activity.target) ||
+          relationshipBriefUpdates.some((update) => !update.target) ? (
             <CompactListItem>
               <Badge>Untargeted selected updates will be skipped.</Badge>
             </CompactListItem>
@@ -408,8 +673,10 @@ export function MeetingIntelligenceReview({
       <FormActionBar
         cancelHref={"/meeting-intelligence" as Route}
         cancelLabel="Back"
+        disabledHint="Wait for the selected contact Relationship Brief preview to load, or choose another contact."
         isSaving={isSaving}
         pendingLabel="Applying..."
+        submitDisabled={relationshipBriefPreviewBlocked}
         submitLabel="Apply selected updates"
       />
     </form>
@@ -441,9 +708,25 @@ function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets
   );
 }
 
-function TargetSelect({ defaultTarget, name, options }: { defaultTarget: CrmTarget | null; name: string; options: TargetOption[] }) {
+function TargetSelect({
+  defaultTarget,
+  name,
+  onChange,
+  options,
+  value
+}: {
+  defaultTarget?: CrmTarget | null;
+  name: string;
+  onChange?: (value: string) => void;
+  options: TargetOption[];
+  value?: string;
+}) {
   return (
-    <select name={name} defaultValue={defaultTarget ? targetValue(defaultTarget) : ""}>
+    <select
+      name={name}
+      {...(value === undefined ? { defaultValue: defaultTarget ? targetValue(defaultTarget) : "" } : { value })}
+      onChange={onChange ? (event) => onChange(event.currentTarget.value) : undefined}
+    >
       <option value="">No target</option>
       {options.map((option) => (
         <option key={option.value} value={option.value}>
@@ -465,11 +748,27 @@ function buildTargetOptions(options: MeetingIntelligenceReviewProps["options"]):
   ];
 }
 
+function relationshipTargetOptions(options: MeetingIntelligenceReviewProps["options"]): TargetOption[] {
+  return options.people.map((option) => ({ label: `Contact: ${option.label}`, value: `person:${option.id}` }));
+}
+
 function parseTarget(value: string): CrmTarget | null {
   const [type, id] = value.split(":");
   if (!id) return null;
   if (type === "deal" || type === "lead" || type === "person" || type === "organization") return { id, type };
   return null;
+}
+
+function parseRelationshipTarget(value: string): CrmTarget | null {
+  const target = parseTarget(value);
+  return target?.type === "person" ? target : null;
+}
+
+function relationshipTargetFromSelectValue(value: string, options: TargetOption[]): CrmTarget | null {
+  const target = parseRelationshipTarget(value);
+  if (!target) return null;
+  const label = options.find((option) => option.value === value)?.label.replace(/^Contact:\s*/, "");
+  return { ...target, label };
 }
 
 function targetValue(target: CrmTarget) {
@@ -522,6 +821,313 @@ function noteKindLabel(kind: ProposedNote["kind"]) {
 
 function activityBadges(activity: ProposedNextStepActivity) {
   return [activity.type, activity.dueAt ? `Due ${isoToDateValue(activity.dueAt)}` : "No due date", targetDisplayLabel(activity.target)];
+}
+
+const relationshipBriefSections = [
+  { key: "relationshipPersonalContext", label: "Personal context" },
+  { key: "relationshipCommunicationStyle", label: "Communication style" },
+  { key: "relationshipBusinessConcerns", label: "Business concerns" },
+  { key: "relationshipFollowUpReminders", label: "Follow-up reminders" },
+  { key: "relationshipInternalGuidance", label: "Internal guidance" }
+] as const satisfies Array<{ key: keyof RelationshipBriefFields; label: string }>;
+
+function fieldValue(fields: RelationshipBriefFields, key: keyof RelationshipBriefFields) {
+  return fields[key] ?? "";
+}
+
+function relationshipExistingFieldsForPreview(state: RelationshipBriefTargetState): RelationshipBriefFields {
+  return state.status === "ready" || state.status === "idle" ? state.existing : {};
+}
+
+function relationshipExistingPreviewText(
+  state: RelationshipBriefTargetState,
+  existing: RelationshipBriefFields,
+  key: keyof RelationshipBriefFields
+) {
+  if (state.status === "loading") return "Loading selected contact brief...";
+  if (state.status === "failed") return "Unable to load selected contact brief.";
+  return fieldValue(existing, key) || "None saved yet";
+}
+
+function relationshipAfterApplyPreviewText(
+  state: RelationshipBriefTargetState,
+  mergedPreview: RelationshipBriefFields,
+  key: keyof RelationshipBriefFields
+) {
+  if (state.status === "loading") return "Waiting for selected contact brief...";
+  if (state.status === "failed") return "Preview unavailable until the selected contact brief loads.";
+  return fieldValue(mergedPreview, key) || "No change";
+}
+
+function RelationshipBriefTargetStatus({ state, target }: { state: RelationshipBriefTargetState; target: CrmTarget | null }) {
+  if (!target) return <p className="form-hint">Select a contact to preview existing Relationship Brief values before apply.</p>;
+  if (state.status === "loading") {
+    return <p className="form-hint" aria-live="polite">Loading target Relationship Brief for {target.label ?? target.id}...</p>;
+  }
+  if (state.status === "failed") {
+    return (
+      <p className="form-hint form-hint-danger" aria-live="polite">
+        {state.error ?? "Could not load the selected contact Relationship Brief."}
+      </p>
+    );
+  }
+  return (
+    <p className="form-hint" aria-live="polite">
+      Previewing current Relationship Brief for {target.label ?? target.id}.
+    </p>
+  );
+}
+
+function relationshipBriefFieldsFromPersonResponse(value: unknown): RelationshipBriefFields {
+  if (!value || typeof value !== "object") return {};
+  const input = value as Record<string, unknown>;
+  return compactRelationshipPreviewFields({
+    relationshipBusinessConcerns: stringField(input.relationshipBusinessConcerns),
+    relationshipCommunicationStyle: stringField(input.relationshipCommunicationStyle),
+    relationshipFollowUpReminders: stringField(input.relationshipFollowUpReminders),
+    relationshipInternalGuidance: stringField(input.relationshipInternalGuidance),
+    relationshipPersonalContext: stringField(input.relationshipPersonalContext)
+  });
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function compactRelationshipPreviewFields(fields: RelationshipBriefFields): RelationshipBriefFields {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => Boolean(value))) as RelationshipBriefFields;
+}
+
+type RelationshipBriefUpdate = NonNullable<MeetingIntelligenceDraft["relationshipBriefUpdates"]>[number];
+type RelationshipFactDraft = ProposedRelationshipBriefFact;
+type ReviewFactInput = { field: string; include: boolean; text: string };
+type RelationshipBriefTargetState = {
+  error?: string;
+  existing: RelationshipBriefFields;
+  status: "failed" | "idle" | "loading" | "ready";
+  targetId: string | null;
+  targetLabel?: string;
+};
+
+function initialRelationshipBriefTargetState(update: RelationshipBriefUpdate): RelationshipBriefTargetState {
+  return {
+    existing: update.target ? update.existing : {},
+    status: update.target ? "ready" : "idle",
+    targetId: update.target?.id ?? null,
+    targetLabel: update.target?.label
+  };
+}
+
+function relationshipFactsForReview(update: RelationshipBriefUpdate): RelationshipFactDraft[] {
+  const facts = update.facts ?? relationshipFactsFromFields(update.proposed, update);
+  return facts.length > 0 ? facts : relationshipFactsFromFields(update.proposed, update);
+}
+
+function relationshipFactsFromFields(
+  fields: RelationshipBriefFields,
+  update: Pick<RelationshipBriefUpdate, "evidence" | "id" | "sensitivity" | "warnings">
+): RelationshipFactDraft[] {
+  return relationshipBriefSections.flatMap((section) =>
+    splitRelationshipFacts(fields[section.key]).map((text, index) => ({
+      evidence: update.evidence,
+      field: section.key,
+      id: `${update.id}-${section.key}-${index + 1}`,
+      include: true,
+      sensitivity: update.sensitivity?.filter((item) => !item.field || item.field === section.key),
+      text,
+      warnings: update.warnings
+    }))
+  );
+}
+
+function updateRelationshipFact(
+  setRelationshipFactDrafts: Dispatch<SetStateAction<RelationshipFactDraft[][]>>,
+  updateIndex: number,
+  factIndex: number,
+  changes: Partial<RelationshipFactDraft>,
+  options: { existing?: RelationshipBriefFields; preserveInclude?: boolean } = {}
+) {
+  setRelationshipFactDrafts((current) =>
+    current.map((facts, index) =>
+      index === updateIndex
+        ? facts.map((fact, candidateIndex) =>
+            candidateIndex === factIndex
+              ? relationshipFactWithTargetPreview({ ...fact, ...changes }, options.existing ?? {}, options.preserveInclude)
+              : fact
+          )
+        : facts
+    )
+  );
+}
+
+function reconcileRelationshipFactsForExisting(
+  facts: RelationshipFactDraft[],
+  existing: RelationshipBriefFields,
+  updateIndex: number,
+  touchedIncludes: Set<string>
+) {
+  return facts.map((fact, factIndex) =>
+    relationshipFactWithTargetPreview(fact, existing, touchedIncludes.has(relationshipFactKey(updateIndex, factIndex)))
+  );
+}
+
+function relationshipFactWithTargetPreview(
+  fact: RelationshipFactDraft,
+  existing: RelationshipBriefFields,
+  preserveInclude = false
+): RelationshipFactDraft {
+  const field = relationshipBriefSections.some((section) => section.key === fact.field)
+    ? fact.field
+    : "relationshipPersonalContext";
+  const text = fact.text.trim();
+  const duplicateOfExisting = Boolean(text && relationshipFactExists(existing[field], text));
+  return {
+    ...fact,
+    duplicateOfExisting,
+    field,
+    include: preserveInclude ? fact.include : Boolean(text && !duplicateOfExisting),
+    staleWarning: relationshipStaleFactWarning(text),
+    text
+  };
+}
+
+function relationshipFactKey(updateIndex: number, factIndex: number) {
+  return `${updateIndex}:${factIndex}`;
+}
+
+function relationshipProposedFieldsFromReviewFacts(facts: ReviewFactInput[]): RelationshipBriefFields {
+  const fields: RelationshipBriefFields = {};
+  for (const section of relationshipBriefSections) {
+    const selectedFacts = facts
+      .filter((fact) => fact.include && fact.field === section.key)
+      .map((fact) => fact.text.trim())
+      .filter(Boolean);
+    if (selectedFacts.length > 0) fields[section.key] = uniqueReviewStrings(selectedFacts).join("\n");
+  }
+  return fields;
+}
+
+function relationshipMergedPreviewFromFacts(
+  existing: RelationshipBriefFields,
+  facts: RelationshipFactDraft[]
+): RelationshipBriefFields {
+  const preview: RelationshipBriefFields = { ...existing };
+  for (const section of relationshipBriefSections) {
+    const existingText = existing[section.key]?.trim();
+    const additions = uniqueReviewStrings(
+      facts
+        .filter((fact) => fact.include && fact.field === section.key)
+        .map((fact) => fact.text.trim())
+        .filter((text) => Boolean(text) && !relationshipFactExists(existingText, text))
+    );
+    if (additions.length === 0) {
+      preview[section.key] = existingText || undefined;
+      continue;
+    }
+    preview[section.key] = [existingText, additions.join("\n")].filter(Boolean).join("\n\n");
+  }
+  return preview;
+}
+
+function RelationshipBriefFactGuidance({ fact }: { fact: RelationshipFactDraft }) {
+  const sensitivity = fact.sensitivity ?? [];
+  const warnings = [...(fact.warnings ?? []), fact.staleWarning].filter((warning): warning is string => Boolean(warning));
+  if (!fact.duplicateOfExisting && sensitivity.length === 0 && warnings.length === 0) return null;
+  return (
+    <div className="relationship-brief-fact-guidance">
+      {fact.duplicateOfExisting ? <Badge className="badge badge-lost">Likely duplicate</Badge> : null}
+      {warnings.map((warning) => (
+        <Badge className="badge badge-lost" key={warning}>
+          {warning}
+        </Badge>
+      ))}
+      {sensitivity.map((item, index) => (
+        <span className="muted" key={`${item.category}-${item.field ?? "all"}-${index}`}>
+          {sensitivityLabel(item.category)}
+          {item.field ? ` (${relationshipBriefFieldLabel(item.field)})` : ""}: {item.guidance}
+          {item.reason ? ` ${item.reason}` : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function splitRelationshipFacts(value: string | undefined) {
+  if (!value) return [];
+  return value
+    .split(/\n{1,}|\s[•]\s/g)
+    .map((item) => item.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function relationshipFactExists(existing: string | undefined, fact: string) {
+  const existingNormalized = normalizeRelationshipText(existing ?? "");
+  const factNormalized = normalizeRelationshipText(fact);
+  return Boolean(factNormalized && existingNormalized.includes(factNormalized));
+}
+
+function normalizeRelationshipText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function relationshipStaleFactWarning(value: string) {
+  if (/\b(next week|tomorrow|today|yesterday|last week|this week|this month|next month)\b/i.test(value)) {
+    return "Time-sensitive fact; review whether it will stay useful.";
+  }
+  if (/\b(?:19|20)\d{2}-\d{2}-\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/i.test(value)) {
+    return "Date-specific fact; review for staleness before saving.";
+  }
+  if (/\btrip|vacation|conference|event|launch|go-live|go live\b/i.test(value)) {
+    return "May become stale; review after the event passes.";
+  }
+  return undefined;
+}
+
+function uniqueReviewStrings(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const text = value.trim();
+    const key = normalizeRelationshipText(text);
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+  }
+  return result;
+}
+
+function RelationshipBriefGuidance({ update }: { update: NonNullable<MeetingIntelligenceDraft["relationshipBriefUpdates"]>[number] }) {
+  const sensitivity = update.sensitivity ?? [];
+  const warnings = update.warnings ?? [];
+  if (!update.providerName && sensitivity.length === 0 && warnings.length === 0) return null;
+  return (
+    <CompactList>
+      <CompactListItem>
+        {update.providerName ? <Badge>{`Provider: ${update.providerName}`}</Badge> : null}
+        {sensitivity.map((item, index) => (
+          <span className="muted" key={`${item.category}-${item.field ?? "all"}-${index}`}>
+            {sensitivityLabel(item.category)}
+            {item.field ? ` (${relationshipBriefFieldLabel(item.field)})` : ""}: {item.guidance}
+            {item.reason ? ` ${item.reason}` : ""}
+          </span>
+        ))}
+        {warnings.map((warning) => (
+          <Badge className="badge badge-lost" key={warning}>{warning}</Badge>
+        ))}
+      </CompactListItem>
+    </CompactList>
+  );
+}
+
+function sensitivityLabel(category: RelationshipBriefSensitivityCategory) {
+  if (category === "do_not_mention_directly") return "Do not mention directly";
+  if (category === "internal_only") return "Internal only";
+  if (category === "use_cautiously") return "Use cautiously";
+  return "Safe personalization";
+}
+
+function relationshipBriefFieldLabel(key: keyof RelationshipBriefFields) {
+  return relationshipBriefSections.find((section) => section.key === key)?.label ?? "Relationship field";
 }
 
 function sourceMetadataDetails(metadata: MeetingSourceMetadata) {
@@ -590,7 +1196,8 @@ function defaultApplySummary(draft: MeetingIntelligenceDraft) {
   const meeting = draft.meetingActivity?.include ? 1 : 0;
   const notes = draft.notes.filter((note) => note.include).length;
   const followUps = draft.nextStepActivities.filter((activity) => activity.include).length;
-  return [`${meeting} meeting log`, `${notes} notes`, `${followUps} follow-ups`].join(" · ");
+  const relationshipBriefs = (draft.relationshipBriefUpdates ?? []).filter((update) => update.include).length;
+  return [`${meeting} meeting log`, `${notes} notes`, `${relationshipBriefs} relationship brief updates`, `${followUps} follow-ups`].join(" · ");
 }
 
 function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
@@ -604,7 +1211,7 @@ function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
         <CompactList>
           {result.created.map((created) => (
             <CompactListItem key={`${created.type}-${created.id}`}>
-              <strong>{created.type === "activity" ? "Activity" : "Note"} created</strong>
+              <strong>{appliedUpdateLabel(created.type)}</strong>
               <Link href={created.href as Route}>{created.label}</Link>
             </CompactListItem>
           ))}
@@ -616,6 +1223,35 @@ function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
           title="No CRM updates created"
         />
       )}
+      {result.relationshipBriefChanges && result.relationshipBriefChanges.length > 0 ? (
+        <>
+          <CompactTitleRow
+            actions={<CountBadge className="badge">{result.relationshipBriefChanges.length} fields</CountBadge>}
+            title="Relationship Brief Changes"
+          />
+          <div className="relationship-brief-change-list">
+            {result.relationshipBriefChanges.map((change, index) => (
+              <div className="relationship-brief-change-card" key={`${change.target.id}-${change.field}-${index}`}>
+                <CompactTitleRow
+                  actions={<Badge>{change.acceptedFactCount} accepted facts</Badge>}
+                  description={relationshipBriefChangeSourceLabel(change)}
+                  title={`${change.target.label} · ${change.fieldLabel}`}
+                />
+                <div className="relationship-brief-change-diff">
+                  <div>
+                    <strong>Previous</strong>
+                    <p className="relationship-brief-preview-text">{relationshipBriefChangeExcerpt(change.previousValue)}</p>
+                  </div>
+                  <div>
+                    <strong>New</strong>
+                    <p className="relationship-brief-preview-text">{relationshipBriefChangeExcerpt(change.newValue)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
       {result.skipped.length > 0 ? (
         <>
           <CompactTitleRow title="Skipped" />
@@ -641,4 +1277,22 @@ function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
       </ActionGroup>
     </section>
   );
+}
+
+function appliedUpdateLabel(type: ApplyMeetingIntelligenceResult["created"][number]["type"]) {
+  if (type === "activity") return "Activity created";
+  if (type === "relationship_brief") return "Relationship Brief updated";
+  return "Note created";
+}
+
+function relationshipBriefChangeSourceLabel(change: NonNullable<ApplyMeetingIntelligenceResult["relationshipBriefChanges"]>[number]) {
+  const title = change.source.title ?? "Meeting Intelligence intake";
+  const date = change.source.occurredAt ? ` · ${isoToDateValue(change.source.occurredAt)}` : "";
+  return `${title}${date}`;
+}
+
+function relationshipBriefChangeExcerpt(value: string | null) {
+  if (!value?.trim()) return "None saved yet";
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length > 220 ? `${normalized.slice(0, 217)}...` : normalized;
 }

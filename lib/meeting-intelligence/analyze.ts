@@ -1,6 +1,12 @@
 import { extractSections } from "./markdown-normalizer";
 import { targetFromMatch } from "./match-records";
-import type { MatchedCrmObject, MeetingIntelligenceDraft, MeetingSourceMetadata, UnmatchedEntity } from "./types";
+import type {
+  MatchedCrmObject,
+  MeetingIntelligenceDraft,
+  MeetingSourceMetadata,
+  RelationshipBriefFields,
+  UnmatchedEntity
+} from "./types";
 
 type AnalyzeMeetingInput = {
   contextText?: string | null;
@@ -13,7 +19,17 @@ type AnalyzeMeetingInput = {
 const companyFactPattern =
   /\b(wms|oms|erp|tms|warehouse|warehouses|dc|dcs|distribution center|distribution|facility|facilities|site|sites|go-live|go live|uat|integration|integrations|data migration|vendor|system|pain|pain point|throughput|inventory|labor|slotting|implementation|implementation phase|hypercare|support|optimization|selection process|sponsor|stakeholder|decision maker)\b/i;
 const personalFactPattern =
-  /\b(birthday|hobby|hobbies|family|spouse|child|children|prefers|preference|likes|communication preference|sponsor|stakeholder|decision maker)\b/i;
+  /\b(birthday|hobby|hobbies|family|spouse|child|children|kid|kids|vacation|trip|travel|fan|sports|game|prefers|preference|likes|communication preference|sponsor|stakeholder|decision maker)\b/i;
+const communicationStylePattern =
+  /\b(prefers?|preference|communication style|concise|short|brief|detailed|email|emails|call|calls|phone|text|morning|afternoon|reply|replies|responds)\b/i;
+const businessConcernPattern =
+  /\b(concerned|concern|worried|worry|switching cost|switching costs|implementation disruption|disruption|risk|risks|blocker|pain|pain point|budget|approval|legal|procurement|timeline)\b/i;
+const relationshipReminderPattern =
+  /\b(next personal follow[- ]?up|personal follow[- ]?up|ask (?:him|her|them|about|how)|remember to ask|follow up .*trip|follow up .*vacation|check in .*family|check in .*kids)\b/i;
+const internalGuidancePattern =
+  /\b(use .*naturally|do not overdo|don't overdo|avoid over-personal|avoid creepy|personalization guidance|internal guidance|use for personalization)\b/i;
+const protectedTraitPattern =
+  /\b(race|ethnicity|religion|religious|church|mosque|synagogue|political|politics|party affiliation|disability|disabled|medical diagnosis|pregnant|pregnancy|sexual orientation|gender identity)\b/i;
 const dealFactPattern = /\b(budget|scope|sow|proposal|buying signal|decision|decision process|stakeholder|risk|timeline|procurement|legal|approval|pilot|renewal|expansion)\b/i;
 
 export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingIntelligenceDraft {
@@ -54,11 +70,106 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     meetingActivity,
     notes: buildNotes(input.matchedObjects, primaryTarget, summary, lines),
     nextStepActivities: buildNextSteps(input.matchedObjects, sections.actionItems),
+    relationshipBriefUpdates: buildRelationshipBriefUpdates(input.matchedObjects, lines),
     sourceMetadata: input.sourceMetadata,
     summary,
     unmatchedEntities: input.unmatchedEntities,
     warnings
   };
+}
+
+function buildRelationshipBriefUpdates(matches: MatchedCrmObject[], lines: string[]) {
+  return matches
+    .filter((match) => match.objectType === "person" && match.confidence !== "ambiguous")
+    .slice(0, 8)
+    .map((match) => {
+      const target = targetFromMatch(match);
+      const safeLines = relationshipLinesForTarget(lines, match.displayName);
+      const proposed: RelationshipBriefFields = {
+        relationshipPersonalContext: summarizeRelationshipLines(safeLines.filter((line) => personalFactPattern.test(line))),
+        relationshipCommunicationStyle: summarizeRelationshipLines(safeLines.filter((line) => communicationStylePattern.test(line))),
+        relationshipBusinessConcerns: summarizeRelationshipLines(safeLines.filter((line) => businessConcernPattern.test(line))),
+        relationshipFollowUpReminders: summarizeRelationshipLines(safeLines.filter((line) => relationshipReminderPattern.test(line))),
+        relationshipInternalGuidance: summarizeInternalGuidance(safeLines)
+      };
+      const populated = compactRelationshipFields(proposed);
+      if (Object.keys(populated).length === 0) return null;
+      return {
+        confidence: match.confidence,
+        evidence: [match.evidenceExcerpt, ...safeLines].filter(Boolean).slice(0, 5),
+        existing: {},
+        id: `relationship-brief-${match.id}`,
+        include: true,
+        matchedReason: match.matchedReason,
+        proposed: populated,
+        target,
+        targetWarning: match.warning
+      };
+    })
+    .filter((proposal): proposal is NonNullable<typeof proposal> => Boolean(proposal));
+}
+
+function relationshipLinesForTarget(lines: string[], displayName: string) {
+  const nameParts = displayName
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((part) => part.length > 2);
+  return lines
+    .filter((line) => !isMeetingMetadataLine(line))
+    .filter((line) => !protectedTraitPattern.test(line))
+    .filter((line) => {
+      const lower = line.toLowerCase();
+      if (nameParts.some((part) => lower.includes(part))) return true;
+      return (
+        personalFactPattern.test(line) ||
+        communicationStylePattern.test(line) ||
+        businessConcernPattern.test(line) ||
+        relationshipReminderPattern.test(line) ||
+        internalGuidancePattern.test(line)
+      );
+    })
+    .slice(0, 12);
+}
+
+function isMeetingMetadataLine(line: string) {
+  return /^(source type|original file|mime type|extracted words|extraction method|conversion|processor|provider|warning):/i.test(
+    line.replace(/^[-*]\s*/, "").trim()
+  );
+}
+
+function summarizeRelationshipLines(lines: string[]) {
+  const unique = uniqueNormalizedLines(lines).slice(0, 3);
+  return unique.length > 0 ? unique.join("\n") : undefined;
+}
+
+function summarizeInternalGuidance(lines: string[]) {
+  const explicit = summarizeRelationshipLines(lines.filter((line) => internalGuidancePattern.test(line)));
+  if (explicit) return explicit;
+  if (lines.some((line) => personalFactPattern.test(line))) {
+    return "Use personal context naturally for thoughtful follow-up; do not overdo personal references.";
+  }
+  return undefined;
+}
+
+function compactRelationshipFields(fields: RelationshipBriefFields) {
+  return Object.fromEntries(
+    Object.entries(fields)
+      .map(([key, value]) => [key, value?.trim()])
+      .filter((entry): entry is [keyof RelationshipBriefFields, string] => Boolean(entry[1]))
+  ) as RelationshipBriefFields;
+}
+
+function uniqueNormalizedLines(lines: string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const line of lines) {
+    const normalized = line.replace(/^[-*]\s*/, "").trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(normalized.slice(0, 600));
+  }
+  return unique;
 }
 
 function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeof pickPrimaryTarget>, summary: string, lines: string[]) {

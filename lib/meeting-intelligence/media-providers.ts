@@ -4,7 +4,7 @@ import type { MeetingSourceType } from "./types";
 
 export const meetingMediaExtractionJobType = "meeting_intake.extract_media";
 
-export type MediaExtractionKind = "audio" | "image" | "video";
+export type MediaExtractionKind = "audio" | "image" | "pdf" | "video";
 
 export type MediaProviderBinaryInput = {
   bytes: Uint8Array;
@@ -71,7 +71,7 @@ export function getMeetingMediaProviderReadiness(env: MeetingMediaProviderEnv = 
     return {
       configured: false,
       message:
-        "Meeting media extraction provider is not configured. Set MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL to enable image OCR and audio/video transcription.",
+        "Meeting media extraction provider is not configured. Set MEETING_INTELLIGENCE_MEDIA_PROVIDER_URL to enable image/scanned PDF OCR and audio/video transcription.",
       supportedSourceTypes: []
     };
   }
@@ -86,7 +86,8 @@ export function getMeetingMediaProviderReadiness(env: MeetingMediaProviderEnv = 
       readNonEmpty(env.MEETING_INTELLIGENCE_MEDIA_PROVIDER) === "openai"
         ? "Internal OpenAI media extraction provider"
         : providerName,
-    supportedSourceTypes: readNonEmpty(env.MEETING_INTELLIGENCE_MEDIA_PROVIDER) === "openai" ? ["image", "audio"] : ["image", "audio", "video"]
+    supportedSourceTypes:
+      readNonEmpty(env.MEETING_INTELLIGENCE_MEDIA_PROVIDER) === "openai" ? ["image", "audio"] : ["image", "audio", "video", "pdf"]
   };
 }
 
@@ -102,7 +103,7 @@ export function createConfiguredMeetingMediaProvider(
     id: providerId,
     name: providerName,
     supports(sourceType) {
-      return sourceType === "image" || sourceType === "audio" || sourceType === "video";
+      return sourceType === "image" || sourceType === "audio" || sourceType === "video" || sourceType === "pdf";
     },
     async extract(input) {
       if (!this.supports(input.sourceType)) {
@@ -159,6 +160,7 @@ export function isMediaProviderSourceType(sourceType: MeetingSourceType): source
 
 export function mediaProviderRequiredMessage(sourceType: MediaExtractionKind) {
   if (sourceType === "image") return "Image and whiteboard extraction requires a configured OCR or vision provider.";
+  if (sourceType === "pdf") return "Scanned PDF extraction requires a configured OCR or vision provider.";
   if (sourceType === "audio") return "Audio transcription requires a configured transcription provider.";
   return "Video transcription requires a configured transcription or media processing provider.";
 }

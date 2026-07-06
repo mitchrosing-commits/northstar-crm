@@ -90,12 +90,14 @@ const routeMap = readFileSync(
 describe("manual email logging and templates foundation", () => {
   it("adds workspace-scoped email log and template models without plaintext provider tokens", () => {
     expect(schema).toContain("model EmailLog");
+    expect(schema).toContain("model EmailLogActivityLink");
     expect(schema).toContain("model EmailTemplate");
     expect(schema).toContain("enum EmailDirection");
     expect(schema).toContain("INBOUND");
     expect(schema).toContain("OUTBOUND");
     expect(schema).toContain("createdBy      User?");
     expect(schema).toMatch(/emailLogs\s+EmailLog\[\]/);
+    expect(schema).toMatch(/emailLogActivityLinks\s+EmailLogActivityLink\[\]/);
     expect(schema).toMatch(/emailTemplates\s+EmailTemplate\[\]/);
     expect(schema).not.toMatch(/\n\s+accessToken\s+String/);
     expect(schema).not.toMatch(/\n\s+refreshToken\s+String/);

@@ -32,11 +32,45 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceForm).toContain(
       "Supported: pasted text, markdown, .txt, .md, .rtf, .html, .csv, .json, text-based PDF, DOCX"
     );
-    expect(meetingIntelligenceForm).toContain("Deferred: PPTX, XLSX, whiteboard images, audio, video, scanned PDFs");
+    expect(meetingIntelligenceForm).toContain("Provider-backed: images, whiteboards, scanned PDFs, audio, video");
+    expect(meetingIntelligenceForm).toContain("Unsupported: PPTX, XLSX, legacy .doc");
     expect(meetingIntelligenceForm).toContain("Text, RTF, HTML, CSV, JSON, and markdown files extract locally before review.");
     expect(meetingIntelligenceForm).toContain("PPTX decks are not locally parsed yet.");
     expect(meetingIntelligenceForm).toContain("Images and whiteboards queue OCR/vision extraction when a provider is configured");
-    expect(meetingIntelligenceForm).toContain("Scanned PDFs stop with an OCR or vision provider requirement.");
+    expect(meetingIntelligenceForm).toContain("Scanned PDFs queue OCR/vision extraction when a PDF-capable provider is configured.");
+    expect(meetingIntelligenceForm).toContain("meetingDirectUploadSourceType");
+    expect(meetingIntelligenceForm).toContain("meeting-intake-upload-capabilities");
+    expect(meetingIntelligenceForm).toContain("uploadCapabilities");
+    expect(meetingIntelligenceForm).toContain("uploadGateForFile");
+    expect(meetingIntelligenceForm).toContain("directUploadDecision");
+    expect(meetingIntelligenceForm).toContain("capabilityAwareFileNotice");
+    expect(meetingIntelligenceForm).toContain("Direct upload will be used for this file.");
+    expect(meetingIntelligenceForm).toContain("Multipart upload will be used for this file.");
+    expect(meetingIntelligenceForm).toContain("This file will use the bounded app upload path before provider extraction.");
+    expect(meetingIntelligenceForm).toContain("Large or scanned PDFs require a PDF-capable provider.");
+    expect(meetingIntelligenceForm).toContain("This provider-backed file type is not available in this environment.");
+    expect(meetingIntelligenceForm).toContain("meeting-intake-upload-sessions");
+    expect(meetingIntelligenceForm).toContain("meeting-intake-multipart-upload-sessions");
+    expect(meetingIntelligenceForm).toContain("tryDirectUploadIntake");
+    expect(meetingIntelligenceForm).toContain("uploadMultipartIntake");
+    expect(meetingIntelligenceForm).toContain("isDirectUploadFallbackError");
+    expect(meetingIntelligenceForm).toContain("Hashing file...");
+    expect(meetingIntelligenceForm).toContain("Creating multipart upload session...");
+    expect(meetingIntelligenceForm).toContain("Requesting direct upload session...");
+    expect(meetingIntelligenceForm).toContain("Uploading file directly...");
+    expect(meetingIntelligenceForm).toContain("Uploading part");
+    expect(meetingIntelligenceForm).toContain("Completing multipart upload...");
+    expect(meetingIntelligenceForm).toContain("Aborting multipart upload...");
+    expect(meetingIntelligenceForm).toContain("Retrying upload...");
+    expect(meetingIntelligenceForm).toContain("Finalizing upload...");
+    expect(meetingIntelligenceForm).toContain("Queued for extraction.");
+    expect(meetingIntelligenceForm).toContain("Direct upload unavailable; using standard upload.");
+    expect(meetingIntelligenceForm).toContain("Upload already finalized; opening intake...");
+    expect(meetingIntelligenceForm).toContain("MEETING_INTAKE_STORED_FILE_SIZE_MISMATCH");
+    expect(meetingIntelligenceForm).toContain("MEETING_INTAKE_STORED_FILE_CHECKSUM_MISMATCH");
+    expect(meetingIntelligenceForm).toContain("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE");
+    expect(meetingIntelligenceForm).toContain("canRetrySignedUpload");
+    expect(meetingIntelligenceForm).toContain("arrayBufferToBase64(await selectedFile.arrayBuffer())");
     expect(meetingIntelligencePage).toContain("import { CompactList }");
     expect(meetingIntelligencePage).toContain(
       '<CompactList className="meeting-intake-list">',
@@ -60,6 +94,7 @@ describe("meeting intelligence UX", () => {
       'title="Meeting Log"',
       'title="Matches and Warnings"',
       'title="Proposed Notes"',
+      'title="Relationship Brief Updates"',
       'title="Follow-Ups"',
       'title="Normalized Markdown"',
       'title="Apply Summary"',
@@ -119,11 +154,58 @@ describe("meeting intelligence UX", () => {
     for (const emptyTitle of [
       'title="No meeting activity proposed"',
       'title="No notes proposed"',
+      'title="No relationship brief updates proposed"',
       'title="No follow-ups proposed"',
       'title="No CRM updates created"',
     ]) {
       expect(meetingIntelligenceReview).toContain(emptyTitle);
     }
+    expect(meetingIntelligenceReview).toContain("relationshipBriefUpdates.map");
+    expect(meetingIntelligenceReview).toContain("relationshipTargetOptions(options)");
+    expect(meetingIntelligenceReview).toContain("parseRelationshipTarget");
+    expect(meetingIntelligenceReview).toContain("relationshipFactDrafts");
+    expect(meetingIntelligenceReview).toContain("selectedRelationshipTargets");
+    expect(meetingIntelligenceReview).toContain("relationshipBriefTargetStates");
+    expect(meetingIntelligenceReview).toContain("loadRelationshipTargetBrief");
+    expect(meetingIntelligenceReview).toContain("/api/v1/workspaces/${workspaceId}/people/${target.id}");
+    expect(meetingIntelligenceReview).toContain("relationshipBriefFieldsFromPersonResponse");
+    expect(meetingIntelligenceReview).toContain("reconcileRelationshipFactsForExisting");
+    expect(meetingIntelligenceReview).toContain("relationshipBriefPreviewBlocked");
+    expect(meetingIntelligenceReview).toContain("Wait for the selected contact Relationship Brief preview to load");
+    expect(meetingIntelligenceReview).toContain("relationshipFactsForReview");
+    expect(meetingIntelligenceReview).toContain("relationshipProposedFieldsFromReviewFacts");
+    expect(meetingIntelligenceReview).toContain("relationshipMergedPreviewFromFacts");
+    expect(meetingIntelligenceReview).toContain("relationshipExistingPreviewText");
+    expect(meetingIntelligenceReview).toContain("relationshipAfterApplyPreviewText");
+    expect(meetingIntelligenceReview).toContain("Loading target Relationship Brief");
+    expect(meetingIntelligenceReview).toContain("Could not load the selected contact Relationship Brief");
+    expect(meetingIntelligenceReview).toContain("relationship.${index}.fact.${factIndex}.include");
+    expect(meetingIntelligenceReview).toContain("relationship.${index}.fact.${factIndex}.text");
+    expect(meetingIntelligenceReview).toContain("relationship.${index}.fact.${factIndex}.field");
+    expect(meetingIntelligenceReview).toContain("Existing");
+    expect(meetingIntelligenceReview).toContain("Proposed facts");
+    expect(meetingIntelligenceReview).toContain("After apply");
+    expect(meetingIntelligenceReview).toContain("Likely duplicate");
+    expect(meetingIntelligenceReview).toContain("staleWarning");
+    expect(meetingIntelligenceReview).toContain("Include fact");
+    expect(meetingIntelligenceReview).toContain("No proposed facts for this field.");
+    expect(meetingIntelligenceReview).toContain("RelationshipBriefGuidance");
+    expect(meetingIntelligenceReview).toContain("RelationshipBriefFactGuidance");
+    expect(meetingIntelligenceReview).toContain("Provider:");
+    expect(meetingIntelligenceReview).toContain("Safe personalization");
+    expect(meetingIntelligenceReview).toContain("Use cautiously");
+    expect(meetingIntelligenceReview).toContain("Do not mention directly");
+    expect(meetingIntelligenceReview).toContain("Personal context");
+    expect(meetingIntelligenceReview).toContain("Communication style");
+    expect(meetingIntelligenceReview).toContain("Business concerns");
+    expect(meetingIntelligenceReview).toContain("Follow-up reminders");
+    expect(meetingIntelligenceReview).toContain("Internal guidance");
+    expect(meetingIntelligenceReview).toContain("Relationship Brief updated");
+    expect(meetingIntelligenceReview).toContain("Relationship Brief Changes");
+    expect(meetingIntelligenceReview).toContain("result.relationshipBriefChanges");
+    expect(meetingIntelligenceReview).toContain("relationshipBriefChangeSourceLabel");
+    expect(meetingIntelligenceReview).toContain("relationshipBriefChangeExcerpt");
+    expect(meetingIntelligenceReview).toContain("accepted facts");
     expect(meetingIntelligenceReview).toContain(
       'className="empty-state-compact empty-state-panel"',
     );

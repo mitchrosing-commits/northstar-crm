@@ -2,11 +2,16 @@ import { ApiError } from "@/lib/api/responses";
 import { parseCsv } from "@/lib/csv";
 import { join } from "node:path";
 
-import { isMediaProviderSourceType, mediaProviderRequiredMessage, type MediaExtractionProvider } from "./media-providers";
+import {
+  isMediaProviderSourceType,
+  mediaProviderRequiredMessage,
+  type MediaExtractionKind,
+  type MediaExtractionProvider
+} from "./media-providers";
 import { detectMeetingSource } from "./source-detection";
 import type { ExtractedMeetingText, MeetingSourceType, SourceDetectionResult } from "./types";
 
-const maxBinaryBytes = 8 * 1024 * 1024;
+export const meetingIntelligenceLocalBinaryMaxBytes = 8 * 1024 * 1024;
 const pdfjsStandardFontDataUrl = `${join(process.cwd(), "node_modules", "pdfjs-dist", "standard_fonts").replaceAll("\\", "/")}/`;
 
 type ExtractMeetingTextInput = {
@@ -20,6 +25,8 @@ type ExtractMeetingTextInput = {
 
 type ExtractMeetingTextOptions = {
   mediaProvider?: MediaExtractionProvider | null;
+  preferMediaProvider?: boolean;
+  providerSourceType?: MediaExtractionKind;
 };
 
 type MeetingSourceProcessor = {
@@ -43,6 +50,10 @@ export async function extractMeetingText(
   });
   const processor = getMeetingSourceProcessor(detection.sourceType);
 
+  if (options.preferMediaProvider && options.providerSourceType) {
+    return extractWithMediaProvider(input, options.providerSourceType, options.mediaProvider, detection.sourceType);
+  }
+
   if (detection.capability !== "supported") {
     if (isMediaProviderSourceType(detection.sourceType)) {
       return extractWithMediaProvider(input, detection.sourceType, options.mediaProvider);
@@ -55,18 +66,19 @@ export async function extractMeetingText(
 
 async function extractWithMediaProvider(
   input: ExtractMeetingTextInput,
-  sourceType: "audio" | "image" | "video",
-  mediaProvider: MediaExtractionProvider | null | undefined
+  providerSourceType: MediaExtractionKind,
+  mediaProvider: MediaExtractionProvider | null | undefined,
+  outputSourceType: MeetingSourceType = providerSourceType
 ): Promise<ExtractedMeetingText> {
-  if (!mediaProvider?.supports(sourceType)) {
-    throw new ApiError("MEETING_INTAKE_PROVIDER_NOT_CONFIGURED", mediaProviderRequiredMessage(sourceType), 422);
+  if (!mediaProvider?.supports(providerSourceType)) {
+    throw new ApiError("MEETING_INTAKE_PROVIDER_NOT_CONFIGURED", mediaProviderRequiredMessage(providerSourceType), 422);
   }
-  const bytes = readFileBytes(input.fileBase64, sourceType.toUpperCase() as "AUDIO" | "IMAGE" | "VIDEO");
+  const bytes = readFileBytes(input.fileBase64, providerSourceType.toUpperCase() as "AUDIO" | "IMAGE" | "PDF" | "VIDEO");
   const result = await mediaProvider.extract({
     bytes: new Uint8Array(bytes),
     filename: readText(input.filename),
     mimeType: readText(input.mimeType),
-    sourceType
+    sourceType: providerSourceType
   });
   const rawText = result.text.trim();
   if (!rawText) throw new ApiError("MEETING_INTAKE_PROVIDER_EMPTY_RESULT", "Meeting media extraction provider returned no text.", 422);
@@ -74,19 +86,20 @@ async function extractWithMediaProvider(
     metadata: {
       byteLength: bytes.byteLength,
       conversionMode: "provider_required",
-      extractionMethod: sourceType === "image" ? "provider-ocr" : "provider-transcription",
+      extractionMethod: providerSourceType === "audio" || providerSourceType === "video" ? "provider-transcription" : "provider-ocr",
       filename: readText(input.filename),
       mimeType: readText(input.mimeType),
       processor: result.providerId,
       processorCapability: "supported",
       providerId: result.providerId,
       providerName: result.providerName,
-      sourceType,
+      requiredProvider: providerSourceType === "audio" ? "transcription" : providerSourceType === "video" ? "media_processing" : "ocr_or_vision",
+      sourceType: outputSourceType,
       warnings: result.warnings,
       wordCount: wordCount(rawText)
     },
     rawText,
-    sourceType,
+    sourceType: outputSourceType,
     warnings: result.warnings
   };
 }
@@ -357,7 +370,7 @@ function readFileBytes(value: unknown, label: "AUDIO" | "DOCX" | "IMAGE" | "PDF"
   if (bytes.byteLength === 0) {
     throw new ApiError("MEETING_INTAKE_PROCESSOR_FAILED", `${label} file content was empty.`, 422);
   }
-  if (bytes.byteLength > maxBinaryBytes) {
+  if (bytes.byteLength > meetingIntelligenceLocalBinaryMaxBytes) {
     throw new ApiError("MEETING_INTAKE_PROCESSOR_FAILED", `${label} files are limited to 8 MB for local extraction.`, 422);
   }
 

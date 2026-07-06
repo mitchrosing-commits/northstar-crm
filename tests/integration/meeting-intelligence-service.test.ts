@@ -1,11 +1,16 @@
-import { JobStatus } from "@prisma/client";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { JobStatus, Prisma } from "@prisma/client";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runJobsOnce } from "@/lib/jobs/run-once";
+import { deleteStoredMeetingIntelligenceFile, storeMeetingIntelligenceFile } from "@/lib/meeting-intelligence/file-storage";
 import { handleInternalMeetingMediaExtract } from "@/lib/meeting-intelligence/internal-media-extract-route";
 import { internalMeetingMediaExtractionRoutePath } from "@/lib/meeting-intelligence/openai-media-provider";
 import {
   applyMeetingIntake,
+  cleanupMeetingIntelligenceStoredFiles,
   createMeetingIntake
 } from "@/lib/services/meeting-intelligence-service";
 import { getRecordTimeline } from "@/lib/services/timeline-service";
@@ -15,6 +20,7 @@ import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
 type Fixture = Awaited<ReturnType<typeof createIntegrationFixture>>;
 
 let fixture: Fixture | undefined;
+let storageDir: string | undefined;
 const pdfFixtureBase64 =
   "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggMTQ3ID4+CnN0cmVhbQpCVCAvRjEgMTIgVGYgNzIgNzIwIFRkIChNZWV0aW5nIGRhdGU6IDIwMzAtMDQtMDEpIFRqIDAgLTE4IFRkIChBY3Rpb246IHNlbmQgU09XIGJ5IDIwMzAtMDQtMDUuKSBUaiAwIC0xOCBUZCAoQ3VycmVudCBXTVMgaGFzIGludmVudG9yeSBwYWluLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMxMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjUwOQolJUVPRgo=";
 const scannedPdfFixtureBase64 =
@@ -22,6 +28,11 @@ const scannedPdfFixtureBase64 =
 
 beforeAll(async () => {
   fixture = await createIntegrationFixture();
+});
+
+beforeEach(async () => {
+  storageDir = await mkdtemp(join(tmpdir(), "northstar-mi-storage-"));
+  process.env.MEETING_INTELLIGENCE_FILE_STORAGE_DIR = storageDir;
 });
 
 afterEach(async () => {
@@ -47,6 +58,24 @@ afterEach(async () => {
   await fixture?.prisma.activity.deleteMany({
     where: { workspaceId: fixture.workspaceA.id, description: { contains: "Source: send SOW" } }
   });
+  await fixture?.prisma.person.deleteMany({
+    where: { workspaceId: fixture.workspaceA.id, email: "retarget-alpha-alt@example.test" }
+  });
+  if (fixture) {
+    await fixture.prisma.person.updateMany({
+      where: { workspaceId: { in: [fixture.workspaceA.id, fixture.workspaceB.id] } },
+      data: {
+        relationshipBusinessConcerns: null,
+        relationshipCommunicationStyle: null,
+        relationshipFollowUpReminders: null,
+        relationshipInternalGuidance: null,
+        relationshipPersonalContext: null
+      }
+    });
+  }
+  if (storageDir) await rm(storageDir, { force: true, recursive: true });
+  storageDir = undefined;
+  delete process.env.MEETING_INTELLIGENCE_FILE_STORAGE_DIR;
 });
 
 afterAll(async () => {
@@ -141,15 +170,22 @@ describe("meeting intelligence service", () => {
     expect(draft.notes.some((note) => note.target?.type === "person" && note.kind === "personal_fact")).toBe(true);
     expect(draft.notes.some((note) => note.target?.type === "organization" && note.kind === "company_fact")).toBe(true);
     expect(draft.notes.some((note) => note.target?.type === "deal" && note.kind === "deal_fact")).toBe(true);
+    expect(draft.relationshipBriefUpdates?.some((update) => update.target?.id === fx.recordsA.person.id)).toBe(true);
 
     const result = await applyMeetingIntake(fx.actorA, intake.id, {
       meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: true } : null,
       notes: draft.notes.map((note) => ({ ...note, include: true })),
-      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true }))
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true })),
+      relationshipBriefUpdates: draft.relationshipBriefUpdates?.map((update) => ({ ...update, include: true })) ?? []
     });
 
     expect(result.created.filter((item) => item.type === "note").length).toBeGreaterThanOrEqual(3);
     expect(result.created.filter((item) => item.type === "activity")).toHaveLength(2);
+    expect(result.created.filter((item) => item.type === "relationship_brief")).toHaveLength(1);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipCommunicationStyle: expect.stringContaining("prefers email"),
+      relationshipPersonalContext: expect.stringContaining("birthday")
+    });
     await expect(
       fx.prisma.note.findFirst({
         where: { body: { contains: "Meeting intelligence personal facts" }, personId: fx.recordsA.person.id, workspaceId: fx.workspaceA.id }
@@ -201,6 +237,472 @@ describe("meeting intelligence service", () => {
     });
     expect(followUp.dueAt?.toISOString()).toBe("2030-04-15T00:00:00.000Z");
     expect(followUp.description).toContain("Source: Action: send SOW by 2030-04-15.");
+  });
+
+  it("hydrates, edits, and merges approved Relationship Brief updates without mutating before apply", async () => {
+    const fx = currentFixture();
+    await fx.prisma.person.update({
+      where: { id: fx.recordsA.person.id },
+      data: {
+        relationshipPersonalContext:
+          "Existing relationship context.\n\nAlpha Contact is a Rockies fan and mentioned a Colorado trip with her kids."
+      }
+    });
+    const beforeApply = await fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } });
+
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-20\nAttendees: Alpha Contact",
+      hints: { personIds: [fx.recordsA.person.id] },
+      text: [
+        "Alpha Contact is a Rockies fan and mentioned a Colorado trip with her kids.",
+        "Alpha Contact prefers short, concrete follow-up emails.",
+        "Alpha Contact is concerned about switching costs and implementation disruption.",
+        "Next personal follow-up: ask how the Colorado trip went."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const proposal = draft.relationshipBriefUpdates?.find((update) => update.target?.id === fx.recordsA.person.id);
+
+    expect(proposal).toBeTruthy();
+    expect(proposal?.existing.relationshipPersonalContext).toContain("Existing relationship context.");
+    expect(proposal?.facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          duplicateOfExisting: true,
+          field: "relationshipPersonalContext",
+          include: false
+        }),
+        expect.objectContaining({
+          field: "relationshipCommunicationStyle",
+          include: true
+        }),
+        expect.objectContaining({
+          field: "relationshipFollowUpReminders",
+          staleWarning: expect.stringContaining("stale")
+        })
+      ])
+    );
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipPersonalContext: beforeApply.relationshipPersonalContext,
+      relationshipCommunicationStyle: null,
+      relationshipFollowUpReminders: null
+    });
+
+    const result = await applyMeetingIntake(fx.actorA, intake.id, {
+      meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: false } : null,
+      notes: draft.notes.map((note) => ({ ...note, include: false })),
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: false })),
+      relationshipBriefUpdates:
+        draft.relationshipBriefUpdates?.map((update) => ({
+          ...update,
+          include: update.target?.id === fx.recordsA.person.id,
+          facts: update.facts?.map((fact) => ({
+            ...fact,
+            include:
+              update.target?.id === fx.recordsA.person.id &&
+              fact.include &&
+              fact.field !== "relationshipPersonalContext" &&
+              fact.field !== "relationshipFollowUpReminders",
+            text:
+              fact.field === "relationshipCommunicationStyle"
+                ? "Edited: prefers concise follow-up emails with concrete next steps."
+                : fact.text
+          }))
+        })) ?? []
+    });
+
+    expect(result.created).toEqual([
+      expect.objectContaining({
+        href: `/contacts/${fx.recordsA.person.id}`,
+        type: "relationship_brief"
+      })
+    ]);
+    expect(result.relationshipBriefChanges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "relationshipBusinessConcerns",
+          fieldLabel: "Business concerns",
+          previousValue: null,
+          newValue: expect.stringContaining("switching costs"),
+          source: expect.objectContaining({
+            intakeId: intake.id,
+            type: "meeting_intelligence"
+          }),
+          target: expect.objectContaining({
+            id: fx.recordsA.person.id,
+            type: "person"
+          })
+        }),
+        expect.objectContaining({
+          field: "relationshipCommunicationStyle",
+          previousValue: null,
+          newValue: "Edited: prefers concise follow-up emails with concrete next steps.",
+          acceptedFactCount: 1
+        })
+      ])
+    );
+    expect(result.relationshipBriefChanges?.some((change) => change.field === "relationshipPersonalContext")).toBe(false);
+    const relationshipAuditLog = await fx.prisma.auditLog.findFirstOrThrow({
+      where: { action: "person.updated", entityId: fx.recordsA.person.id, entityType: "Person", workspaceId: fx.workspaceA.id },
+      orderBy: { createdAt: "desc" }
+    });
+    expect(relationshipAuditLog.metadata).toMatchObject({
+      relationshipBriefChanges: expect.arrayContaining([
+        expect.objectContaining({
+          field: "relationshipBusinessConcerns",
+          previousValue: null,
+          newValue: expect.stringContaining("switching costs")
+        })
+      ]),
+      source: {
+        intakeId: intake.id,
+        title: expect.any(String),
+        type: "meeting_intelligence"
+      }
+    });
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipBusinessConcerns: expect.stringContaining("switching costs"),
+      relationshipCommunicationStyle: "Edited: prefers concise follow-up emails with concrete next steps.",
+      relationshipFollowUpReminders: null,
+      relationshipPersonalContext:
+        "Existing relationship context.\n\nAlpha Contact is a Rockies fan and mentioned a Colorado trip with her kids."
+    });
+    await expect(applyMeetingIntake(fx.actorA, intake.id, {})).resolves.toEqual(result);
+  });
+
+  it("applies retargeted Relationship Brief updates to the newly selected contact only", async () => {
+    const fx = currentFixture();
+    const alternatePerson = await fx.prisma.person.create({
+      data: {
+        email: "retarget-alpha-alt@example.test",
+        firstName: "Retarget",
+        lastName: "Contact",
+        relationshipPersonalContext: "Alpha Contact is a Rockies fan and mentioned a Colorado trip with her kids.",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const originalBefore = await fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } });
+    const originalRelationshipAuditCountBefore = await fx.prisma.auditLog.count({
+      where: {
+        action: "person.updated",
+        entityId: fx.recordsA.person.id,
+        entityType: "Person",
+        metadata: { path: ["relationshipBriefChanges"], not: Prisma.DbNull },
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-04-22\nAttendees: Alpha Contact",
+      hints: { personIds: [fx.recordsA.person.id] },
+      text: [
+        "Alpha Contact is a Rockies fan and mentioned a Colorado trip with her kids.",
+        "Alpha Contact prefers short, concrete follow-up emails.",
+        "Alpha Contact is concerned about switching costs and implementation disruption."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const proposal = draft.relationshipBriefUpdates?.find((update) => update.target?.id === fx.recordsA.person.id);
+
+    expect(proposal).toBeTruthy();
+    const result = await applyMeetingIntake(fx.actorA, intake.id, {
+      meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: false } : null,
+      notes: draft.notes.map((note) => ({ ...note, include: false })),
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: false })),
+      relationshipBriefUpdates: draft.relationshipBriefUpdates?.map((update) => ({
+        ...update,
+        include: update.id === proposal?.id,
+        target: { id: alternatePerson.id, label: "Retarget Contact", type: "person" },
+        facts: update.facts?.map((fact) => ({ ...fact, include: update.id === proposal?.id }))
+      })) ?? []
+    });
+
+    expect(result.created).toEqual([
+      expect.objectContaining({
+        href: `/contacts/${alternatePerson.id}`,
+        type: "relationship_brief"
+      })
+    ]);
+    expect(result.relationshipBriefChanges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "relationshipBusinessConcerns",
+          target: expect.objectContaining({ id: alternatePerson.id, type: "person" })
+        }),
+        expect.objectContaining({
+          field: "relationshipCommunicationStyle",
+          target: expect.objectContaining({ id: alternatePerson.id, type: "person" })
+        })
+      ])
+    );
+    expect(result.relationshipBriefChanges?.every((change) => change.target.id === alternatePerson.id)).toBe(true);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipBusinessConcerns: originalBefore.relationshipBusinessConcerns,
+      relationshipCommunicationStyle: originalBefore.relationshipCommunicationStyle,
+      relationshipPersonalContext: originalBefore.relationshipPersonalContext
+    });
+    await expect(
+      fx.prisma.auditLog.count({
+        where: {
+          action: "person.updated",
+          entityId: fx.recordsA.person.id,
+          entityType: "Person",
+          metadata: { path: ["relationshipBriefChanges"], not: Prisma.DbNull },
+          workspaceId: fx.workspaceA.id
+        }
+      })
+    ).resolves.toBe(originalRelationshipAuditCountBefore);
+    const retargetAuditLog = await fx.prisma.auditLog.findFirstOrThrow({
+      where: { action: "person.updated", entityId: alternatePerson.id, entityType: "Person", workspaceId: fx.workspaceA.id },
+      orderBy: { createdAt: "desc" }
+    });
+    expect(retargetAuditLog.metadata).toMatchObject({
+      relationshipBriefChanges: expect.arrayContaining([
+        expect.objectContaining({
+          target: expect.objectContaining({ id: alternatePerson.id }),
+          source: expect.objectContaining({ intakeId: intake.id, type: "meeting_intelligence" })
+        })
+      ])
+    });
+    const alternateAfter = await fx.prisma.person.findUniqueOrThrow({ where: { id: alternatePerson.id } });
+    expect(alternateAfter).toMatchObject({
+      relationshipBusinessConcerns: expect.stringContaining("switching costs"),
+      relationshipCommunicationStyle: expect.stringContaining("short, concrete follow-up emails")
+    });
+    expect(alternateAfter.relationshipPersonalContext).toContain(
+      "Alpha Contact is a Rockies fan and mentioned a Colorado trip with her kids."
+    );
+    expect(alternateAfter.relationshipPersonalContext?.match(/Rockies fan/g)).toHaveLength(1);
+  });
+
+  it("enriches Relationship Brief proposals with a semantic provider while preserving review-first apply", async () => {
+    const fx = currentFixture();
+    const beforeApply = await fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } });
+    const intake = await createMeetingIntake(
+      fx.actorA,
+      {
+        contextText: "Meeting date: 2030-04-21\nAttendees: Alpha Contact",
+        hints: { personIds: [fx.recordsA.person.id] },
+        text: [
+          "Alpha Contact mentioned taking her kids to Colorado.",
+          "Alpha Contact prefers concise follow-up emails with clear next steps.",
+          "Alpha Contact is worried about implementation disruption."
+        ].join("\n")
+      },
+      {
+        relationshipBriefProvider: {
+          id: "semantic-test",
+          name: "Semantic test relationship provider",
+          async extract(input) {
+            expect(input.contacts).toEqual([
+              expect.objectContaining({
+                id: fx.recordsA.person.id,
+                label: "Alpha Contact"
+              })
+            ]);
+            return {
+              proposals: [
+                {
+                  confidence: "high",
+                  evidence: ["Alpha Contact mentioned taking her kids to Colorado."],
+                  existing: {},
+                  facts: [
+                    {
+                      field: "relationshipPersonalContext",
+                      id: "semantic-fact-personal",
+                      include: true,
+                      sensitivity: [
+                        {
+                          category: "safe_personalization",
+                          field: "relationshipPersonalContext",
+                          guidance: "Use lightly for rapport."
+                        }
+                      ],
+                      text: "Mentioned taking her kids to Colorado."
+                    },
+                    {
+                      field: "relationshipCommunicationStyle",
+                      id: "semantic-fact-style",
+                      include: true,
+                      text: "Prefers concise follow-up emails with clear next steps."
+                    },
+                    {
+                      field: "relationshipBusinessConcerns",
+                      id: "semantic-fact-concern",
+                      include: true,
+                      text: "Concerned about implementation disruption."
+                    },
+                    {
+                      field: "relationshipFollowUpReminders",
+                      id: "semantic-fact-reminder",
+                      include: true,
+                      text: "Ask how the Colorado trip went."
+                    },
+                    {
+                      field: "relationshipInternalGuidance",
+                      id: "semantic-fact-guidance",
+                      include: true,
+                      sensitivity: [
+                        {
+                          category: "use_cautiously",
+                          field: "relationshipInternalGuidance",
+                          guidance: "Keep personalization subtle."
+                        }
+                      ],
+                      text: "Use the Colorado detail naturally; avoid overdoing personal references."
+                    }
+                  ],
+                  id: "semantic-alpha-contact",
+                  include: true,
+                  matchedReason: "Semantic contact relationship extraction",
+                  proposed: {
+                    relationshipBusinessConcerns: "Concerned about implementation disruption.",
+                    relationshipCommunicationStyle: "Prefers concise follow-up emails with clear next steps.",
+                    relationshipFollowUpReminders: "Ask how the Colorado trip went.",
+                    relationshipInternalGuidance: "Use the Colorado detail naturally; avoid overdoing personal references.",
+                    relationshipPersonalContext: "Mentioned taking her kids to Colorado."
+                  },
+                  providerId: "semantic-test",
+                  providerName: "Semantic test relationship provider",
+                  sensitivity: [
+                    {
+                      category: "safe_personalization",
+                      field: "relationshipPersonalContext",
+                      guidance: "Use lightly for rapport."
+                    },
+                    {
+                      category: "use_cautiously",
+                      field: "relationshipInternalGuidance",
+                      guidance: "Keep personalization subtle."
+                    }
+                  ],
+                  target: { id: fx.recordsA.person.id, label: "Alpha Contact", type: "person" },
+                  warnings: ["Review for tone before saving."]
+                }
+              ],
+              warnings: ["Semantic provider returned review cautions."]
+            };
+          }
+        }
+      }
+    );
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const analysis = intake.analysisJson as Record<string, unknown>;
+    const proposal = draft.relationshipBriefUpdates?.find((update) => update.target?.id === fx.recordsA.person.id);
+
+    expect(analysis.relationshipSemanticExtraction).toMatchObject({
+      providerId: "semantic-test",
+      status: "succeeded"
+    });
+    expect(proposal).toMatchObject({
+      providerId: "semantic-test",
+      providerName: "Semantic test relationship provider",
+      facts: expect.arrayContaining([
+        expect.objectContaining({
+          field: "relationshipPersonalContext",
+          sensitivity: expect.arrayContaining([expect.objectContaining({ category: "safe_personalization" })])
+        }),
+        expect.objectContaining({
+          field: "relationshipFollowUpReminders",
+          staleWarning: expect.stringContaining("stale")
+        })
+      ]),
+      proposed: {
+        relationshipBusinessConcerns: expect.stringContaining("implementation disruption"),
+        relationshipCommunicationStyle: expect.stringContaining("concise follow-up emails"),
+        relationshipFollowUpReminders: expect.stringContaining("Colorado trip"),
+        relationshipInternalGuidance: expect.stringContaining("avoid overdoing"),
+        relationshipPersonalContext: expect.stringContaining("kids to Colorado")
+      },
+      sensitivity: expect.arrayContaining([
+        expect.objectContaining({ category: "safe_personalization" }),
+        expect.objectContaining({ category: "use_cautiously" })
+      ]),
+      warnings: ["Review for tone before saving."]
+    });
+    expect(proposal?.mergedPreview?.relationshipPersonalContext).toContain("kids to Colorado");
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipPersonalContext: beforeApply.relationshipPersonalContext
+    });
+
+    const result = await applyMeetingIntake(fx.actorA, intake.id, {
+      meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: false } : null,
+      notes: draft.notes.map((note) => ({ ...note, include: false })),
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: false })),
+      relationshipBriefUpdates: draft.relationshipBriefUpdates?.map((update) => ({ ...update, include: true })) ?? []
+    });
+
+    expect(result.created).toEqual([expect.objectContaining({ type: "relationship_brief" })]);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipBusinessConcerns: expect.stringContaining("implementation disruption"),
+      relationshipCommunicationStyle: expect.stringContaining("concise follow-up emails"),
+      relationshipFollowUpReminders: expect.stringContaining("Colorado trip"),
+      relationshipInternalGuidance: expect.stringContaining("avoid overdoing"),
+      relationshipPersonalContext: expect.stringContaining("kids to Colorado")
+    });
+  });
+
+  it("keeps deterministic Relationship Brief proposals when semantic extraction fails", async () => {
+    const fx = currentFixture();
+    const intake = await createMeetingIntake(
+      fx.actorA,
+      {
+        hints: { personIds: [fx.recordsA.person.id] },
+        text: "Alpha Contact prefers concise email follow-up and is a Rockies fan."
+      },
+      {
+        relationshipBriefProvider: {
+          id: "semantic-failure-test",
+          name: "Semantic failure test provider",
+          async extract() {
+            throw new Error("semantic provider unavailable");
+          }
+        }
+      }
+    );
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    expect(intake.status).toBe("READY_FOR_REVIEW");
+    expect(intake.analysisJson).toMatchObject({
+      relationshipSemanticExtraction: {
+        providerId: "semantic-failure-test",
+        status: "failed_fallback"
+      }
+    });
+    expect(draft.relationshipBriefUpdates?.[0]).toMatchObject({
+      target: { id: fx.recordsA.person.id, type: "person" }
+    });
+    expect(draft.relationshipBriefUpdates?.[0]).not.toHaveProperty("providerId");
+    expect(draft.warnings).toContain("semantic provider unavailable");
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipCommunicationStyle: null,
+      relationshipPersonalContext: null
+    });
+  });
+
+  it("does not update the contact Relationship Brief when the proposal is rejected", async () => {
+    const fx = currentFixture();
+    const intake = await createMeetingIntake(fx.actorA, {
+      hints: { personIds: [fx.recordsA.person.id] },
+      text: "Alpha Contact prefers short email follow-up and is a Rockies fan."
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+    const result = await applyMeetingIntake(fx.actorA, intake.id, {
+      meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: false } : null,
+      notes: draft.notes.map((note) => ({ ...note, include: false })),
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: false })),
+      relationshipBriefUpdates: draft.relationshipBriefUpdates?.map((update) => ({ ...update, include: false })) ?? []
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([expect.objectContaining({ reason: "Not selected for apply.", type: "relationship_brief" })])
+    );
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      relationshipCommunicationStyle: null,
+      relationshipPersonalContext: null
+    });
   });
 
   it("preserves closed-deal locks when applying an approved draft after review", async () => {
@@ -304,8 +806,9 @@ describe("meeting intelligence service", () => {
     const fx = currentFixture();
     const intake = await createMeetingIntake(fx.actorA, {
       contextText: "Meeting date: 2030-04-05",
-      hints: { dealId: fx.recordsA.deal.id },
+      hints: { dealId: fx.recordsA.deal.id, personIds: [fx.recordsA.person.id] },
       text: [
+        `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} prefers concise email follow-up.`,
         `${fx.recordsA.deal.title} needs a recap.`,
         "Current WMS has integration risk.",
         "Action: send recap by 2030-04-09."
@@ -318,11 +821,17 @@ describe("meeting intelligence service", () => {
       label: fx.recordsB.organization.name,
       type: "organization" as const
     };
+    const foreignPersonTarget = { id: fx.recordsB.person.id, label: "Beta Contact", type: "person" as const };
 
     const result = await applyMeetingIntake(fx.actorA, intake.id, {
       meetingActivity: draft.meetingActivity ? { ...draft.meetingActivity, include: true, target: foreignDealTarget } : null,
       notes: draft.notes.map((note) => ({ ...note, include: true, target: foreignOrganizationTarget })),
-      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true, target: foreignDealTarget }))
+      nextStepActivities: draft.nextStepActivities.map((activity) => ({ ...activity, include: true, target: foreignDealTarget })),
+      relationshipBriefUpdates: draft.relationshipBriefUpdates?.map((update) => ({
+        ...update,
+        include: true,
+        target: foreignPersonTarget
+      })) ?? []
     });
 
     expect(result.created).toEqual([]);
@@ -590,6 +1099,11 @@ describe("meeting intelligence service", () => {
           conversionMode: "provider_required",
           extractionMethod: "provider-required",
           message: "Queued for Configured media extraction provider extraction.",
+          storedFile: {
+            backend: "local-filesystem",
+            byteLength: Buffer.byteLength("fake-whiteboard-image"),
+            sourceType: "image"
+          },
           sourceType: "image"
         },
         providerReadiness: {
@@ -598,6 +1112,20 @@ describe("meeting intelligence service", () => {
         }
       });
       await expect(fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, status: JobStatus.PENDING } })).resolves.toBe(1);
+      const job = await fx.prisma.job.findFirstOrThrow({
+        where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" }
+      });
+      const jobPayload = job.payload as Record<string, unknown>;
+      expect(jobPayload.fileBase64).toBeUndefined();
+      expect(jobPayload).toMatchObject({
+        storedFile: {
+          backend: "local-filesystem",
+          byteLength: Buffer.byteLength("fake-whiteboard-image"),
+          sourceType: "image",
+          workspaceId: fx.workspaceA.id
+        }
+      });
+      expect(JSON.stringify(job.payload)).not.toContain(mediaBase64);
       await expect(crmMutationCounts(fx)).resolves.toEqual(before);
 
       await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-test" })).resolves.toMatchObject({
@@ -620,6 +1148,177 @@ describe("meeting intelligence service", () => {
         sourceType: "image"
       });
       expect(draft.warnings).toContain("OCR confidence medium.");
+      expect(JSON.stringify(draft.matchedObjects)).toContain(fx.recordsA.deal.id);
+      await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+    });
+  });
+
+  it("queues provider-backed extraction through S3-compatible storage and lets the worker retrieve the object", async () => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+    const mediaBase64 = Buffer.from("s3-whiteboard-image").toString("base64");
+    const s3 = mockS3Storage();
+
+    await withS3StorageEnv(async () => {
+      await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+        vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+          const url = requestUrl(input);
+          if (url.hostname === "s3.example.test") return s3.handle(input, init);
+          if (url.hostname !== "provider.example.test") return new Response(null, { status: 404 });
+
+          const body = JSON.parse(String(init?.body));
+          expect(body).toMatchObject({
+            fileBase64: mediaBase64,
+            filename: "whiteboard-s3.png",
+            mimeType: "image/png",
+            sourceType: "image"
+          });
+          return Response.json({
+            text: [
+              `S3 whiteboard notes for ${fx.recordsA.deal.title}.`,
+              "Current WMS has inventory pain.",
+              "Action: send SOW by 2030-04-05."
+            ].join("\n")
+          });
+        });
+
+        const intake = await createMeetingIntake(fx.actorA, {
+          contextText: "Meeting date: 2030-04-01\nAttendees: Alpha Contact",
+          fileBase64: mediaBase64,
+          hints: { dealId: fx.recordsA.deal.id },
+          originalFilename: "whiteboard-s3.png",
+          originalMimeType: "image/png"
+        });
+
+        expect(intake.status).toBe("EXTRACTING");
+        expect(intake.analysisJson).toMatchObject({
+          processorStatus: {
+            storedFile: {
+              backend: "s3-compatible",
+              byteLength: Buffer.byteLength("s3-whiteboard-image"),
+              sourceType: "image"
+            }
+          }
+        });
+        const job = await fx.prisma.job.findFirstOrThrow({
+          where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" }
+        });
+        const jobPayload = job.payload as Record<string, unknown>;
+        const storedFile = jobPayload.storedFile as { key: string };
+        expect(jobPayload.fileBase64).toBeUndefined();
+        expect(jobPayload).toMatchObject({
+          storedFile: {
+            backend: "s3-compatible",
+            sourceType: "image",
+            workspaceId: fx.workspaceA.id
+          }
+        });
+        expect(JSON.stringify(job.payload)).not.toContain(mediaBase64);
+        expect(s3.objects.has(`${storedFile.key}/content.bin`)).toBe(true);
+        await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+
+        await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-s3-test" })).resolves.toMatchObject({
+          claimed: 1,
+          failed: 0,
+          succeeded: 1
+        });
+        expect(s3.objects.has(`${storedFile.key}/content.bin`)).toBe(false);
+        expect(s3.objects.has(`${storedFile.key}/metadata.json`)).toBe(false);
+        const reloaded = await fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } });
+        expect(reloaded.status).toBe("READY_FOR_REVIEW");
+        expect(reloaded.rawText).toContain("Action: send SOW by 2030-04-05.");
+        await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+      });
+    });
+  });
+
+  it("queues provider-configured scanned PDF OCR and turns provider text into a reviewable proposal without CRM mutation", async () => {
+    const fx = currentFixture();
+    const before = await crmMutationCounts(fx);
+
+    await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+      vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          fileBase64: scannedPdfFixtureBase64,
+          filename: "scanned-discovery.pdf",
+          mimeType: "application/pdf",
+          sourceType: "pdf"
+        });
+        return Response.json({
+          text: [
+            `Scanned PDF notes for ${fx.recordsA.deal.title}.`,
+            "Current WMS has inventory pain.",
+            "Action: send SOW by 2030-04-05."
+          ].join("\n"),
+          warnings: ["Scanned PDF OCR confidence medium."]
+        });
+      });
+
+      const intake = await createMeetingIntake(fx.actorA, {
+        contextText: "Meeting date: 2030-04-01\nAttendees: Alpha Contact",
+        fileBase64: scannedPdfFixtureBase64,
+        hints: { dealId: fx.recordsA.deal.id },
+        originalFilename: "scanned-discovery.pdf",
+        originalMimeType: "application/pdf"
+      });
+
+      expect(intake.status).toBe("EXTRACTING");
+      expect(intake.analysisJson).toMatchObject({
+        processorStatus: {
+          capability: "provider_required",
+          conversionMode: "provider_required",
+          extractionMethod: "provider-required",
+          requiredProvider: "ocr_or_vision",
+          storedFile: {
+            backend: "local-filesystem",
+            sourceType: "pdf"
+          },
+          sourceType: "pdf"
+        },
+        providerReadiness: {
+          configured: true,
+          providerId: "provider-http",
+          supportedSourceTypes: expect.arrayContaining(["pdf"])
+        }
+      });
+      await expect(fx.prisma.job.count({ where: { workspaceId: fx.workspaceA.id, status: JobStatus.PENDING } })).resolves.toBe(1);
+      const job = await fx.prisma.job.findFirstOrThrow({
+        where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" }
+      });
+      const jobPayload = job.payload as Record<string, unknown>;
+      expect(jobPayload.fileBase64).toBeUndefined();
+      expect(jobPayload).toMatchObject({
+        storedFile: {
+          backend: "local-filesystem",
+          sourceType: "pdf",
+          workspaceId: fx.workspaceA.id
+        }
+      });
+      expect(JSON.stringify(job.payload)).not.toContain(scannedPdfFixtureBase64);
+      await expect(crmMutationCounts(fx)).resolves.toEqual(before);
+
+      await expect(runJobsOnce({ limit: 1, workerId: "meeting-scanned-pdf-test" })).resolves.toMatchObject({
+        claimed: 1,
+        failed: 0,
+        succeeded: 1
+      });
+      const reloaded = await fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } });
+      const draft = reloaded.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+
+      expect(reloaded.status).toBe("READY_FOR_REVIEW");
+      expect(reloaded.errorMessage).toBeNull();
+      expect(reloaded.rawText).toContain("Action: send SOW by 2030-04-05.");
+      expect(reloaded.markdownText).toContain("- Source type: PDF");
+      expect(reloaded.markdownText).toContain("- Provider: Configured media extraction provider");
+      expect(draft.sourceMetadata).toMatchObject({
+        extractionMethod: "provider-ocr",
+        providerId: "provider-http",
+        providerName: "Configured media extraction provider",
+        requiredProvider: "ocr_or_vision",
+        sourceType: "pdf"
+      });
+      expect(draft.warnings).toContain("Scanned PDF OCR confidence medium.");
       expect(JSON.stringify(draft.matchedObjects)).toContain(fx.recordsA.deal.id);
       await expect(crmMutationCounts(fx)).resolves.toEqual(before);
     });
@@ -652,6 +1351,77 @@ describe("meeting intelligence service", () => {
         status: "FAILED"
       });
     });
+  });
+
+  it("fails queued provider extraction clearly when the stored file is missing", async () => {
+    const fx = currentFixture();
+    await withMeetingMediaProviderEnv("https://provider.example.test/meeting-media", async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      const intake = await createMeetingIntake(fx.actorA, {
+        fileBase64: Buffer.from("missing-file-audio").toString("base64"),
+        originalFilename: "call.mp3",
+        originalMimeType: "audio/mpeg"
+      });
+      const job = await fx.prisma.job.findFirstOrThrow({
+        where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" }
+      });
+      const storedFile = (job.payload as { storedFile?: Parameters<typeof deleteStoredMeetingIntelligenceFile>[0] }).storedFile;
+      await deleteStoredMeetingIntelligenceFile(storedFile);
+
+      await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-missing-file-test" })).resolves.toMatchObject({
+        claimed: 1,
+        failed: 1,
+        succeeded: 0
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      await expect(fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } })).resolves.toMatchObject({
+        errorMessage: "Stored meeting file is missing or expired. Upload the meeting artifact again.",
+        status: "FAILED"
+      });
+    });
+  });
+
+  it("cleans expired stored provider files without deleting active extraction job files", async () => {
+    const fx = currentFixture();
+    const expired = await storeMeetingIntelligenceFile({
+      fileBase64: Buffer.from("expired-audio").toString("base64"),
+      intakeId: "expired-intake",
+      now: new Date("2030-01-01T00:00:00.000Z"),
+      sourceType: "audio",
+      workspaceId: fx.workspaceA.id
+    });
+    const active = await storeMeetingIntelligenceFile({
+      fileBase64: Buffer.from("active-audio").toString("base64"),
+      intakeId: "active-intake",
+      now: new Date("2030-01-01T00:00:00.000Z"),
+      sourceType: "audio",
+      workspaceId: fx.workspaceA.id
+    });
+    await fx.prisma.job.create({
+      data: {
+        maxAttempts: 3,
+        payload: {
+          actorUserId: fx.actorA.actorUserId,
+          intakeId: "active-intake",
+          sourceType: "audio",
+          storedFile: active,
+          workspaceId: fx.workspaceA.id
+        },
+        status: JobStatus.PENDING,
+        type: "meeting_intake.extract_media",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    await expect(cleanupMeetingIntelligenceStoredFiles({ now: new Date("2030-01-10T00:00:00.000Z") })).resolves.toEqual({
+      deleted: 1,
+      failed: [],
+      scanned: expect.any(Number),
+      skippedActive: 1
+    });
+    await expect(deleteStoredMeetingIntelligenceFile(active)).resolves.toBe(true);
+    await expect(deleteStoredMeetingIntelligenceFile(expired)).resolves.toBe(true);
   });
 
   it("processes queued audio through the internal OpenAI media route without CRM mutation before review", async () => {
@@ -806,7 +1576,7 @@ describe("meeting intelligence service", () => {
     });
   });
 
-  it("persists scanned PDF failures as OCR provider-required without creating CRM updates", async () => {
+  it("persists scanned PDF failures as provider-required when OCR is not configured without creating CRM updates", async () => {
     const fx = currentFixture();
     const before = await crmMutationCounts(fx);
     const intake = await createMeetingIntake(fx.actorA, {
@@ -816,12 +1586,12 @@ describe("meeting intelligence service", () => {
     });
 
     expect(intake.status).toBe("FAILED");
-    expect(intake.errorMessage).toMatch(/OCR or vision provider integration is required for scanned PDFs/);
+    expect(intake.errorMessage).toMatch(/Scanned PDF extraction requires a configured OCR or vision provider/);
     expect(intake.analysisJson).toMatchObject({
       processorStatus: {
         capability: "provider_required",
         conversionMode: "provider_required",
-        failureCode: "MEETING_INTAKE_OCR_REQUIRED",
+        failureCode: "MEETING_INTAKE_PROVIDER_NOT_CONFIGURED",
         requiredProvider: "ocr_or_vision",
         sourceType: "pdf"
       }
@@ -897,4 +1667,97 @@ async function withMeetingMediaProviderEnv(url: string | undefined, callback: ()
       process.env.MEETING_INTELLIGENCE_MEDIA_PROVIDER_TOKEN = previousToken;
     }
   }
+}
+
+async function withS3StorageEnv(callback: () => Promise<void>) {
+  const previousValues = {
+    accessKeyId: process.env.MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID,
+    backend: process.env.MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND,
+    bucket: process.env.MEETING_INTELLIGENCE_S3_BUCKET,
+    endpoint: process.env.MEETING_INTELLIGENCE_S3_ENDPOINT,
+    forcePathStyle: process.env.MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE,
+    region: process.env.MEETING_INTELLIGENCE_S3_REGION,
+    secretAccessKey: process.env.MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY
+  };
+  process.env.MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND = "s3";
+  process.env.MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID = "test-access";
+  process.env.MEETING_INTELLIGENCE_S3_BUCKET = "northstar-mi-test";
+  process.env.MEETING_INTELLIGENCE_S3_ENDPOINT = "https://s3.example.test";
+  process.env.MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE = "true";
+  process.env.MEETING_INTELLIGENCE_S3_REGION = "auto";
+  process.env.MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY = "test-secret";
+
+  try {
+    await callback();
+  } finally {
+    restoreEnv("MEETING_INTELLIGENCE_FILE_STORAGE_BACKEND", previousValues.backend);
+    restoreEnv("MEETING_INTELLIGENCE_S3_ACCESS_KEY_ID", previousValues.accessKeyId);
+    restoreEnv("MEETING_INTELLIGENCE_S3_BUCKET", previousValues.bucket);
+    restoreEnv("MEETING_INTELLIGENCE_S3_ENDPOINT", previousValues.endpoint);
+    restoreEnv("MEETING_INTELLIGENCE_S3_FORCE_PATH_STYLE", previousValues.forcePathStyle);
+    restoreEnv("MEETING_INTELLIGENCE_S3_REGION", previousValues.region);
+    restoreEnv("MEETING_INTELLIGENCE_S3_SECRET_ACCESS_KEY", previousValues.secretAccessKey);
+  }
+}
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
+
+function mockS3Storage() {
+  const objects = new Map<string, Buffer>();
+  const requests: Array<{ authorization: string; method: string; url: string }> = [];
+  async function handle(input: string | URL | Request, init?: RequestInit) {
+    const url = requestUrl(input);
+    const method = init?.method ?? "GET";
+    const headers = init?.headers as Record<string, string>;
+    requests.push({ authorization: headers.authorization ?? "", method, url: url.toString() });
+    expect(url.pathname.startsWith("/northstar-mi-test")).toBe(true);
+    expect(headers.authorization).toContain("AWS4-HMAC-SHA256");
+    expect(headers.authorization).not.toContain("test-secret");
+
+    if (url.searchParams.get("list-type") === "2") {
+      const prefix = url.searchParams.get("prefix") ?? "";
+      const keys = Array.from(objects.keys()).filter((key) => key.startsWith(prefix));
+      return new Response(
+        [
+          "<ListBucketResult>",
+          "<IsTruncated>false</IsTruncated>",
+          ...keys.map((key) => `<Contents><Key>${xmlEscape(key)}</Key></Contents>`),
+          "</ListBucketResult>"
+        ].join(""),
+        { status: 200 }
+      );
+    }
+
+    const key = decodeURIComponent(url.pathname.replace(/^\/northstar-mi-test\/?/, ""));
+    if (method === "PUT") {
+      objects.set(key, Buffer.from(init?.body as Uint8Array));
+      return new Response(null, { status: 200 });
+    }
+    if (method === "GET") {
+      const body = objects.get(key);
+      return body
+        ? new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status: 200 })
+        : new Response(null, { status: 404 });
+    }
+    if (method === "DELETE") {
+      objects.delete(key);
+      return new Response(null, { status: 204 });
+    }
+    return new Response(null, { status: 405 });
+  }
+  return { handle, objects, requests };
+}
+
+function requestUrl(input: string | URL | Request) {
+  return new URL(input instanceof Request ? input.url : String(input));
+}
+
+function xmlEscape(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

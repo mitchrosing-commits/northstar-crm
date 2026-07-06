@@ -83,7 +83,9 @@ const resourceAreas = [
       "GET /meeting-intakes",
       "POST /meeting-intakes",
       "GET /meeting-intakes/:intakeId",
-      "POST /meeting-intakes/:intakeId/apply"
+      "POST /meeting-intakes/:intakeId/apply",
+      "POST /meeting-intake-upload-sessions",
+      "POST /meeting-intake-upload-sessions/:uploadSessionId/finalize"
     ]
   },
   {

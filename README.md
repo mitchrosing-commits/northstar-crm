@@ -424,9 +424,12 @@ Safeguards:
 
 - `TEST_DATABASE_URL` must be a PostgreSQL URL.
 - The database name or schema must include `test`.
+- The URL must not contain obvious production, staging, or live environment markers.
 - `TEST_DATABASE_URL` must not point at the same database/schema as `DATABASE_URL`.
-- The integration setup runs Prisma migrations against `TEST_DATABASE_URL` before tests.
+- The integration setup runs Prisma migrations against `TEST_DATABASE_URL` before tests, then resets app tables in that database once at suite startup while preserving `_prisma_migrations`.
 - Each test creates isolated workspaces and cleans them up after the test.
+
+Never point `TEST_DATABASE_URL` at dev, staging, or production data. The suite startup reset exists so failed or interrupted integration runs cannot leave global jobs, reset-email rows, or cleanup-sensitive records that make later all-up runs flaky.
 
 Example:
 

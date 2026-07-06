@@ -56,7 +56,7 @@ export async function cleanupIntegrationFixture({
   workspaceIds: string[];
   userIds: string[];
 }) {
-  await prisma.job.deleteMany({ where: { OR: [{ workspaceId: { in: workspaceIds } }, { workspaceId: null }] } });
+  await prisma.job.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.meetingIntake.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.workspaceInvitation.deleteMany({ where: { workspaceId: { in: workspaceIds } } });

@@ -224,7 +224,7 @@ Use Meeting Intelligence when the team has meeting artifacts that should become 
 
 The feature should help identify CRM-ready context such as current WMS/OMS/ERP/TMS, target platforms, facility count, distribution complexity, operational pain, integration complexity, data migration concerns, project phase, go-live timing, UAT, support/hypercare, stakeholders, sponsors, decision makers, budget/timeline signals, risks, open questions, SOW/MSA/NDA/proposal work, and next steps. It should propose evidence-backed notes for matched contacts, organizations, deals, and leads, plus completed meeting activity and follow-up activities that users can edit, exclude, or reassign before apply.
 
-Keep the workflow review-first. Meeting Intelligence should not silently create records, overwrite fields, run project plans, manage tickets, store binary documents, or become a transcription product. Text-based PDFs and DOCX files can be extracted locally, but scanned PDFs, images, audio, and video should fail clearly with an OCR/transcription/provider requirement unless a reviewed provider integration is added.
+Keep the workflow review-first. Meeting Intelligence should not silently create records, overwrite fields, run project plans, manage tickets, store binary documents, or become a transcription product. Text-based PDFs and DOCX files can be extracted locally; scanned PDFs, images, audio, and video must either run through a reviewed provider integration or fail clearly with an OCR/transcription/provider requirement.
 
 Use the Activities queue for due/overdue work and the Deals/Leads follow-up filters to find records with no next activity. Keep implementation task breakdowns in the delivery system.
 

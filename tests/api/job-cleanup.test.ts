@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatCleanupTerminalJobsSummary,
+  formatMeetingIntelligenceStoredFilesCleanupSummary,
   readCleanupTerminalJobsCliOptions
 } from "@/lib/jobs/cleanup-cli";
 
@@ -68,10 +69,34 @@ describe("job cleanup command", () => {
     expect(output).not.toContain("secret");
   });
 
+  it("formats Meeting Intelligence stored-file cleanup output without file details", () => {
+    const output = formatMeetingIntelligenceStoredFilesCleanupSummary({
+      deleted: 2,
+      failed: [{ key: "workspaces/ws/intakes/intake/private-key", reason: "/tmp/private/file/content.bin failed" }],
+      scanned: 4,
+      skippedActive: 1
+    });
+
+    expect(output).toContain("Meeting Intelligence stored file cleanup complete");
+    expect(output).toContain("scanned=4");
+    expect(output).toContain("deleted=2");
+    expect(output).toContain("skippedActive=1");
+    expect(output).toContain("failed=1");
+    expect(output).not.toContain("workspaces/ws");
+    expect(output).not.toContain("/tmp/private");
+    expect(output).not.toContain("content.bin");
+    expect(output).not.toContain("private-key");
+    expect(output).not.toContain("payload");
+    expect(output).not.toContain("token");
+    expect(output).not.toContain("secret");
+  });
+
   it("keeps the cleanup CLI aggregate-only", () => {
     expect(packageJson).toContain("\"jobs:cleanup\": \"tsx scripts/jobs-cleanup.ts\"");
     expect(scriptSource).toContain("cleanupTerminalJobs(readCleanupTerminalJobsCliOptions())");
-    expect(scriptSource).toContain("formatCleanupTerminalJobsSummary(result)");
+    expect(scriptSource).toContain("cleanupMeetingIntelligenceStoredFiles()");
+    expect(scriptSource).toContain("formatCleanupTerminalJobsSummary(jobsResult)");
+    expect(scriptSource).toContain("formatMeetingIntelligenceStoredFilesCleanupSummary(storedFilesResult)");
     expect(scriptSource).toContain("Job cleanup failed.");
     expect(scriptSource).not.toContain("job.payload");
     expect(scriptSource).not.toContain("payload");
@@ -88,7 +113,7 @@ describe("job cleanup command", () => {
       "It does not delete `PENDING` retryable jobs, `RUNNING` jobs, or non-terminal `FAILED` rows."
     );
     expect(deploymentReadiness).toContain(
-      "Cleanup output is aggregate-only and does not print payloads, reset URLs, invitation URLs, tokens, recipient emails, dedupe keys, `lastError`, or secrets."
+      "Cleanup output is aggregate-only and does not print payloads, reset URLs, invitation URLs, tokens, recipient emails, dedupe keys, `lastError`, object keys, filenames, file paths, bucket names, or secrets."
     );
     expect(deploymentReadiness).toContain(
       "The status, run-once, continuous-worker, and cleanup commands print summary counts only and do not print payloads, reset URLs, invitation URLs, tokens, recipient emails, or secrets."
