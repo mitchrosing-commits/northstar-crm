@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Wand2 } from "lucide-react";
+import { FileText, ShieldCheck, UploadCloud, Wand2 } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -35,6 +35,7 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
   const [isSaving, setIsSaving] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadCapabilities, setUploadCapabilities] = useState<MeetingUploadCapabilities | null>(null);
+  const [multipartResumeState, setMultipartResumeState] = useState<MultipartResumeState | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -45,6 +46,42 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
       })
       .catch(() => {
         if (isMounted) setUploadCapabilities(null);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const localState = readMultipartResumeState(workspaceId);
+    if (!localState) return;
+    if (multipartResumeStateIsExpired(localState)) {
+      clearMultipartResumeState(workspaceId);
+      setUploadStatus("Previous multipart upload expired. Choose the file again to start a new upload.");
+      return;
+    }
+    inspectMultipartResumeState(workspaceId, localState)
+      .then((inspected) => {
+        if (!isMounted) return;
+        if (inspected.status === "queued") {
+          clearMultipartResumeState(workspaceId);
+          setMultipartResumeState(null);
+          setUploadStatus("Previous multipart upload is already queued for extraction.");
+          return;
+        }
+        if (inspected.status === "awaiting_parts" && inspected.resumeAllowed) {
+          const merged = mergeMultipartResumeState(localState, inspected);
+          persistMultipartResumeState(merged);
+          setMultipartResumeState(merged);
+        }
+      })
+      .catch(() => {
+        clearMultipartResumeState(workspaceId);
+        if (isMounted) {
+          setMultipartResumeState(null);
+          setUploadStatus("Previous multipart upload can no longer be resumed.");
+        }
       });
     return () => {
       isMounted = false;
@@ -311,80 +348,173 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
       })
     });
     const session = await sessionResponse.json().catch(() => null) as MultipartUploadSessionResponse | null;
-    if (!sessionResponse.ok || !session?.uploadSessionId || !session.multipart?.partCount || !session.multipart.partSizeBytes) {
+    if (!sessionResponse.ok || !session?.uploadSessionId || !session.multipart?.partCount || !session.multipart.partSizeBytes || !session.multipart.expiresAt) {
       throw new Error(directUploadErrorMessage(session?.error, "Could not create a multipart upload session."));
     }
 
-    try {
-      const completedParts: MultipartCompletedPart[] = [];
-      for (let partNumber = 1; partNumber <= session.multipart.partCount; partNumber += 1) {
-        const partsResponse = await fetch(
-          `/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${session.uploadSessionId}/parts`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ partNumbers: [partNumber] })
-          }
-        );
-        const signedParts = await partsResponse.json().catch(() => null) as MultipartUploadPartsResponse | null;
-        const part = signedParts?.parts?.[0];
-        if (!partsResponse.ok || !part || part.partNumber !== partNumber) {
-          throw new Error(directUploadErrorMessage(signedParts?.error, "Could not prepare multipart upload parts."));
-        }
+    const resumeState: MultipartResumeState = {
+      byteLength: file.size,
+      createdAt: new Date().toISOString(),
+      expiresAt: session.multipart.expiresAt,
+      fileLabel: file.name || `${directSourceType.toUpperCase()} upload`,
+      originalFilename: file.name,
+      originalMimeType: file.type,
+      partCount: session.multipart.partCount,
+      partSizeBytes: session.multipart.partSizeBytes,
+      sha256,
+      sourceType: directSourceType,
+      uploadedParts: [],
+      uploadSessionId: session.uploadSessionId,
+      workspaceId
+    };
+    persistMultipartResumeState(resumeState);
+    setMultipartResumeState(resumeState);
+    return continueMultipartUpload(file, input, resumeState);
+  }
 
-        const start = (partNumber - 1) * session.multipart.partSizeBytes;
-        const end = Math.min(start + session.multipart.partSizeBytes, file.size);
-        setUploadStatus(`Uploading part ${partNumber} of ${session.multipart.partCount}...`);
-        const response = await fetch(part.upload.url, {
-          body: file.slice(start, end),
-          headers: part.upload.headers,
-          method: part.upload.method
-        });
-        if (!response.ok) throw new Error(`Multipart upload failed on part ${partNumber}.`);
-        const etag = response.headers.get("etag") ?? response.headers.get("ETag");
-        if (!etag) throw new Error("Multipart upload part response did not include an ETag.");
-        completedParts.push({ etag, partNumber });
-      }
-
-      setUploadStatus("Completing multipart upload...");
-      const completeResponse = await fetch(
-        `/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${session.uploadSessionId}/complete`,
+  async function continueMultipartUpload(
+    file: File,
+    input: {
+      contextText: string;
+      hints: {
+        dealId: string;
+        leadId: string;
+        organizationId: string;
+        personIds: string[];
+      };
+      sourceType: string;
+    },
+    resumeState: MultipartResumeState
+  ) {
+    const completedParts = new Map(resumeState.uploadedParts.map((part) => [part.partNumber, part]));
+    for (let partNumber = 1; partNumber <= resumeState.partCount; partNumber += 1) {
+      if (completedParts.has(partNumber)) continue;
+      const partsResponse = await fetch(
+        `/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${resumeState.uploadSessionId}/parts`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            byteLength: file.size,
-            contextText: input.contextText,
-            explicitSourceType: directSourceType,
-            hints: input.hints,
-            originalFilename: file.name,
-            originalMimeType: file.type,
-            parts: completedParts,
-            sha256
-          })
+          body: JSON.stringify({ partNumbers: [partNumber] })
         }
       );
-      const completed = await completeResponse.json().catch(() => null) as DirectUploadFinalizeResponse | null;
-      if (completeResponse.status === 409 && completed?.error?.code === "MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE") {
-        setUploadStatus("Upload already finalized; opening intake...");
-        router.push(`/meeting-intelligence/${session.uploadSessionId}` as Route);
-        router.refresh();
-        return true;
+      const signedParts = await partsResponse.json().catch(() => null) as MultipartUploadPartsResponse | null;
+      const part = signedParts?.parts?.[0];
+      if (!partsResponse.ok || !part || part.partNumber !== partNumber) {
+        throw new Error(directUploadErrorMessage(signedParts?.error, "Could not prepare multipart upload parts."));
       }
-      if (!completeResponse.ok || !completed?.id) {
-        throw new Error(directUploadErrorMessage(completed?.error, "Could not complete the multipart upload."));
+
+      const start = (partNumber - 1) * resumeState.partSizeBytes;
+      const end = Math.min(start + resumeState.partSizeBytes, file.size);
+      setUploadStatus(`Uploading part ${partNumber} of ${resumeState.partCount}...`);
+      const response = await fetch(part.upload.url, {
+        body: file.slice(start, end),
+        headers: part.upload.headers,
+        method: part.upload.method
+      });
+      if (!response.ok) throw new Error(`Multipart upload failed on part ${partNumber}.`);
+      const etag = response.headers.get("etag") ?? response.headers.get("ETag");
+      if (!etag) throw new Error("Multipart upload part response did not include an ETag.");
+      completedParts.set(partNumber, { etag, partNumber });
+      const updatedState = {
+        ...resumeState,
+        uploadedParts: Array.from(completedParts.values()).sort((a, b) => a.partNumber - b.partNumber)
+      };
+      persistMultipartResumeState(updatedState);
+      setMultipartResumeState(updatedState);
+    }
+
+    const parts = Array.from(completedParts.values()).sort((a, b) => a.partNumber - b.partNumber);
+    setUploadStatus("Completing multipart upload...");
+    const completeResponse = await fetch(
+      `/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${resumeState.uploadSessionId}/complete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          byteLength: file.size,
+          contextText: input.contextText,
+          explicitSourceType: resumeState.sourceType,
+          hints: input.hints,
+          originalFilename: file.name,
+          originalMimeType: file.type,
+          parts,
+          sha256: resumeState.sha256
+        })
       }
-      setUploadStatus("Queued for extraction.");
-      router.push(`/meeting-intelligence/${completed.id}` as Route);
+    );
+    const completed = await completeResponse.json().catch(() => null) as DirectUploadFinalizeResponse | null;
+    if (completeResponse.status === 409 && completed?.error?.code === "MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE") {
+      clearMultipartResumeState(workspaceId);
+      setMultipartResumeState(null);
+      setUploadStatus("Upload already finalized; opening intake...");
+      router.push(`/meeting-intelligence/${resumeState.uploadSessionId}` as Route);
       router.refresh();
       return true;
-    } catch (error) {
-      setUploadStatus("Aborting multipart upload...");
-      await fetch(
-        `/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${session.uploadSessionId}/abort`,
+    }
+    if (!completeResponse.ok || !completed?.id) {
+      throw new Error(directUploadErrorMessage(completed?.error, "Could not complete the multipart upload."));
+    }
+    clearMultipartResumeState(workspaceId);
+    setMultipartResumeState(null);
+    setUploadStatus("Queued for extraction.");
+    router.push(`/meeting-intelligence/${completed.id}` as Route);
+    router.refresh();
+    return true;
+  }
+
+  async function onResumeMultipartUpload(form: HTMLFormElement | null) {
+    if (!multipartResumeState) return;
+    setError(null);
+    if (!selectedFile) {
+      setError("Choose the same file to resume the interrupted multipart upload.");
+      return;
+    }
+    if (selectedFile.size !== multipartResumeState.byteLength) {
+      setError("The selected file size does not match the interrupted multipart upload.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      setUploadStatus("Verifying selected file...");
+      const sha256 = await fileSha256(selectedFile);
+      if (sha256 !== multipartResumeState.sha256) {
+        throw new Error("The selected file checksum does not match the interrupted multipart upload.");
+      }
+      const inspected = await inspectMultipartResumeState(workspaceId, multipartResumeState);
+      if (inspected.status === "queued") {
+        clearMultipartResumeState(workspaceId);
+        setMultipartResumeState(null);
+        setUploadStatus("Previous multipart upload is already queued for extraction.");
+        setIsSaving(false);
+        return;
+      }
+      const merged = mergeMultipartResumeState(multipartResumeState, inspected);
+      persistMultipartResumeState(merged);
+      setMultipartResumeState(merged);
+      await continueMultipartUpload(selectedFile, formInputFromForm(form), merged);
+    } catch (resumeError) {
+      setError(formatDirectUploadError(resumeError));
+      setIsSaving(false);
+    }
+  }
+
+  async function onCancelMultipartUpload() {
+    if (!multipartResumeState) return;
+    setError(null);
+    setUploadStatus("Aborting multipart upload...");
+    try {
+      const response = await fetch(
+        `/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${multipartResumeState.uploadSessionId}/abort`,
         { method: "POST" }
-      ).catch(() => undefined);
-      throw error;
+      );
+      const body = await response.json().catch(() => null) as DirectUploadFinalizeResponse | null;
+      if (!response.ok) throw new Error(directUploadErrorMessage(body?.error, "Could not abort the multipart upload."));
+      clearMultipartResumeState(workspaceId);
+      setMultipartResumeState(null);
+      setUploadStatus("Multipart upload canceled.");
+    } catch (abortError) {
+      setError(formatDirectUploadError(abortError));
+      setUploadStatus("Multipart upload is still resumable.");
     }
   }
 
@@ -424,6 +554,33 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
   return (
     <form className="inline-form" onSubmit={onSubmit}>
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {multipartResumeState ? (
+        <div className="form-banner meeting-resume-banner" role="status">
+          <strong>Interrupted upload: {multipartResumeState.fileLabel}</strong>
+          <small className="form-hint">
+            {multipartResumeState.uploadedParts.length} of {multipartResumeState.partCount} parts uploaded. Expires {formatResumeExpiry(multipartResumeState.expiresAt)}.
+          </small>
+          <progress
+            aria-label="Multipart upload resume progress"
+            className="meeting-upload-progress"
+            max={multipartResumeState.partCount}
+            value={multipartResumeState.uploadedParts.length}
+          />
+          <div className="panel-actions-row">
+            <button
+              className="button-primary button-compact"
+              disabled={isSaving}
+              onClick={(event) => onResumeMultipartUpload(event.currentTarget.form)}
+              type="button"
+            >
+              Resume
+            </button>
+            <button className="button-secondary button-compact" disabled={isSaving} onClick={onCancelMultipartUpload} type="button">
+              Cancel upload
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="form-grid">
         <label className="form-field">
           <FormFieldLabel>Source type</FormFieldLabel>
@@ -450,9 +607,13 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
             onChange={(event) => onFileChange(event.target.files?.[0])}
             type="file"
           />
-          {fileNotice ? <small className="form-hint">{fileNotice}</small> : null}
+          {fileNotice ? <small className="form-hint form-hint-info">{fileNotice}</small> : null}
           {uploadCapabilities ? <small className="form-hint">{uploadCapabilities.guidance.summary}</small> : null}
-          {uploadStatus ? <small className="form-hint">{uploadStatus}</small> : null}
+          {uploadStatus ? (
+            <small className="form-hint form-hint-status" role="status" aria-live="polite">
+              {uploadStatus}
+            </small>
+          ) : null}
         </label>
         <label className="form-field form-field-wide">
           <FormFieldLabel>Meeting notes or transcript</FormFieldLabel>
@@ -510,7 +671,7 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
           </select>
         </label>
       </div>
-      <div className="panel-actions-row" aria-label="Meeting Intelligence file support">
+      <div className="panel-actions-row meeting-file-support-row" aria-label="Meeting Intelligence file support">
         <Badge>
           <FileText size={14} aria-hidden="true" /> Supported: pasted text, markdown, .txt, .md, .rtf, .html, .csv, .json, text-based PDF, DOCX
         </Badge>{" "}
@@ -521,6 +682,7 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
           <FileText size={14} aria-hidden="true" /> Unsupported: PPTX, XLSX, legacy .doc
         </Badge>
       </div>
+      <UploadCapabilityGuide capabilities={uploadCapabilities} />
       <FormActionBar
         disabledHint="Add pasted notes or choose a file."
         isSaving={isSaving}
@@ -528,6 +690,52 @@ export function MeetingIntelligenceForm({ options, workspaceId }: MeetingIntelli
         submitLabel="Analyze intake"
       />
     </form>
+  );
+}
+
+function UploadCapabilityGuide({ capabilities }: { capabilities: MeetingUploadCapabilities | null }) {
+  const directUploadSummary = capabilities?.directUpload.available
+    ? `Direct upload ready for ${sourceTypeList(capabilities.directUpload.sourceTypes)} up to ${formatBytes(capabilities.directUpload.maxBytes)}.`
+    : capabilities?.directUpload.reason ?? "Direct upload status is loading; local notes and small supported files can still be analyzed.";
+  const multipartSummary = capabilities?.multipartUpload.supported
+    ? `Multipart upload resumes interrupted provider files from ${formatBytes(capabilities.multipartUpload.minBytes)} to ${formatBytes(capabilities.multipartUpload.maxBytes)}.`
+    : capabilities?.multipartUpload.reason ?? "Multipart upload status is loading.";
+  const providerSummary = capabilities?.providerExtraction.configured
+    ? `Provider extraction is configured for ${sourceTypeList(capabilities.providerExtraction.supportedSourceTypes)}.`
+    : "Images, whiteboards, scanned PDFs, audio, and video require a configured provider before they can be extracted or transcribed.";
+  const localLimit = capabilities ? `Local binary extraction limit: ${formatBytes(capabilities.localExtraction.maxBinaryBytes)}.` : "Local extraction limits are loading.";
+
+  return (
+    <div className="meeting-intake-upload-capabilities" aria-label="Meeting Intelligence upload capability guidance">
+      <div className="meeting-upload-capability-card">
+        <strong>
+          <FileText size={15} aria-hidden="true" /> Local extraction
+        </strong>
+        <span>Text, markdown, RTF, HTML, CSV, JSON, text-based PDF, and DOCX are converted before review.</span>
+        <small>{localLimit}</small>
+      </div>
+      <div className="meeting-upload-capability-card">
+        <strong>
+          <UploadCloud size={15} aria-hidden="true" /> Direct and multipart upload
+        </strong>
+        <span>{directUploadSummary}</span>
+        <small>{multipartSummary}</small>
+      </div>
+      <div className="meeting-upload-capability-card">
+        <strong>
+          <Wand2 size={15} aria-hidden="true" /> Provider extraction
+        </strong>
+        <span>{providerSummary}</span>
+        <small>Scanned PDF or video without provider support is blocked with a clear provider/file message.</small>
+      </div>
+      <div className="meeting-upload-capability-card">
+        <strong>
+          <ShieldCheck size={15} aria-hidden="true" /> Review-first apply
+        </strong>
+        <span>Analysis creates editable proposals first; nothing is written to CRM records until you apply selected updates.</span>
+        <small>{capabilities?.guidance.unsupported ?? "Unsupported files are blocked before upload."}</small>
+      </div>
+    </div>
   );
 }
 
@@ -578,6 +786,139 @@ function formatDirectUploadError(error: unknown) {
 function canRetrySignedUpload(expiresAt: string | undefined) {
   if (!expiresAt) return false;
   return Date.parse(expiresAt) - Date.now() > 30_000;
+}
+
+function formInputFromForm(form: HTMLFormElement | null) {
+  const formData = form ? new FormData(form) : new FormData();
+  return {
+    contextText: String(formData.get("contextText") ?? ""),
+    hints: {
+      dealId: String(formData.get("dealId") ?? ""),
+      leadId: String(formData.get("leadId") ?? ""),
+      organizationId: String(formData.get("organizationId") ?? ""),
+      personIds: formData.getAll("personIds").map(String)
+    },
+    sourceType: String(formData.get("sourceType") ?? "")
+  };
+}
+
+function multipartResumeStorageKey(workspaceId: string) {
+  return `northstar:meeting-intelligence:multipart-resume:${workspaceId}`;
+}
+
+function readMultipartResumeState(workspaceId: string): MultipartResumeState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return normalizeMultipartResumeState(JSON.parse(window.localStorage.getItem(multipartResumeStorageKey(workspaceId)) ?? "null"), workspaceId);
+  } catch {
+    clearMultipartResumeState(workspaceId);
+    return null;
+  }
+}
+
+function persistMultipartResumeState(state: MultipartResumeState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(multipartResumeStorageKey(state.workspaceId), JSON.stringify(state));
+}
+
+function clearMultipartResumeState(workspaceId: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(multipartResumeStorageKey(workspaceId));
+}
+
+function normalizeMultipartResumeState(value: unknown, workspaceId: string): MultipartResumeState | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const uploadedParts = Array.isArray(input.uploadedParts)
+    ? input.uploadedParts.map(normalizeMultipartCompletedPart).filter((part): part is MultipartCompletedPart => Boolean(part))
+    : [];
+  const state = {
+    byteLength: integerInput(input.byteLength),
+    createdAt: stringInput(input.createdAt),
+    expiresAt: stringInput(input.expiresAt),
+    fileLabel: stringInput(input.fileLabel),
+    originalFilename: stringInput(input.originalFilename),
+    originalMimeType: stringInput(input.originalMimeType),
+    partCount: integerInput(input.partCount),
+    partSizeBytes: integerInput(input.partSizeBytes),
+    sha256: stringInput(input.sha256),
+    sourceType: input.sourceType,
+    uploadedParts,
+    uploadSessionId: stringInput(input.uploadSessionId),
+    workspaceId: stringInput(input.workspaceId)
+  };
+  if (
+    state.workspaceId !== workspaceId ||
+    !state.uploadSessionId ||
+    !state.fileLabel ||
+    !state.createdAt ||
+    !state.expiresAt ||
+    !state.byteLength ||
+    !state.partCount ||
+    !state.partSizeBytes ||
+    !/^[a-f0-9]{64}$/i.test(state.sha256 ?? "") ||
+    !(state.sourceType === "audio" || state.sourceType === "image" || state.sourceType === "pdf" || state.sourceType === "video")
+  ) {
+    return null;
+  }
+  return state as MultipartResumeState;
+}
+
+function normalizeMultipartCompletedPart(value: unknown): MultipartCompletedPart | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const partNumber = integerInput(input.partNumber);
+  const etag = stringInput(input.etag);
+  if (!partNumber || !etag || etag.length > 200 || /[\r\n<>]/.test(etag)) return null;
+  return { etag, partNumber };
+}
+
+function multipartResumeStateIsExpired(state: MultipartResumeState) {
+  return Date.parse(state.expiresAt) <= Date.now();
+}
+
+async function inspectMultipartResumeState(workspaceId: string, state: MultipartResumeState): Promise<MultipartInspectResponse> {
+  const response = await fetch(`/api/v1/workspaces/${workspaceId}/meeting-intake-multipart-upload-sessions/${state.uploadSessionId}`);
+  const body = await response.json().catch(() => null) as (MultipartInspectResponse & { error?: DirectUploadError }) | null;
+  if (!response.ok || !body) {
+    throw new Error(body?.error?.message ?? "Could not inspect the interrupted multipart upload.");
+  }
+  return body;
+}
+
+function mergeMultipartResumeState(localState: MultipartResumeState, inspected: MultipartInspectAwaitingResponse): MultipartResumeState {
+  const parts = new Map(localState.uploadedParts.map((part) => [part.partNumber, part]));
+  for (const part of inspected.multipart.uploadedParts) {
+    parts.set(part.partNumber, { etag: part.etag, partNumber: part.partNumber });
+  }
+  return {
+    ...localState,
+    byteLength: inspected.byteLength,
+    expiresAt: inspected.multipart.expiresAt,
+    originalFilename: inspected.originalFilename ?? localState.originalFilename,
+    originalMimeType: inspected.originalMimeType ?? localState.originalMimeType,
+    partCount: inspected.multipart.partCount,
+    partSizeBytes: inspected.multipart.partSizeBytes,
+    sha256: inspected.sha256,
+    sourceType: inspected.acceptedSourceType,
+    uploadedParts: Array.from(parts.values())
+      .filter((part) => part.partNumber >= 1 && part.partNumber <= inspected.multipart.partCount)
+      .sort((a, b) => a.partNumber - b.partNumber)
+  };
+}
+
+function formatResumeExpiry(expiresAt: string) {
+  const parsed = Date.parse(expiresAt);
+  if (!Number.isFinite(parsed)) return "soon";
+  return new Date(parsed).toLocaleString();
+}
+
+function stringInput(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function integerInput(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function capabilityAwareFileNotice(message: string, file: File, capabilities: MeetingUploadCapabilities | null) {
@@ -709,6 +1050,10 @@ function formatBytes(bytes: number) {
   return `${bytes} bytes`;
 }
 
+function sourceTypeList(sourceTypes: string[]) {
+  return sourceTypes.length > 0 ? sourceTypes.join(", ") : "no provider-backed source types";
+}
+
 type DirectUploadError = {
   code?: string;
   message?: string;
@@ -735,6 +1080,7 @@ type DirectUploadInstruction = {
 type MultipartUploadSessionResponse = {
   error?: DirectUploadError;
   multipart?: {
+    expiresAt: string;
     partCount: number;
     partSizeBytes: number;
   };
@@ -753,6 +1099,55 @@ type MultipartCompletedPart = {
   etag: string;
   partNumber: number;
 };
+
+type MultipartResumeState = {
+  byteLength: number;
+  createdAt: string;
+  expiresAt: string;
+  fileLabel: string;
+  originalFilename?: string;
+  originalMimeType?: string;
+  partCount: number;
+  partSizeBytes: number;
+  sha256: string;
+  sourceType: "audio" | "image" | "pdf" | "video";
+  uploadedParts: MultipartCompletedPart[];
+  uploadSessionId: string;
+  workspaceId: string;
+};
+
+type MultipartInspectQueuedResponse = {
+  abortAllowed: false;
+  error?: DirectUploadError;
+  intakeId: string;
+  resumeAllowed: false;
+  status: "queued";
+  uploadSessionId: string;
+};
+
+type MultipartInspectAwaitingResponse = {
+  abortAllowed: true;
+  acceptedSourceType: "audio" | "image" | "pdf" | "video";
+  byteLength: number;
+  error?: DirectUploadError;
+  intakeId: string;
+  multipart: {
+    expiresAt: string;
+    maxParts: number;
+    partCount: number;
+    partSizeBytes: number;
+    uploadedPartCount: number;
+    uploadedParts: Array<MultipartCompletedPart & { sizeBytes?: number }>;
+  };
+  originalFilename?: string;
+  originalMimeType?: string;
+  resumeAllowed: true;
+  sha256: string;
+  status: "awaiting_parts";
+  uploadSessionId: string;
+};
+
+type MultipartInspectResponse = MultipartInspectAwaitingResponse | MultipartInspectQueuedResponse;
 
 type MeetingUploadCapabilities = {
   base64Request: {

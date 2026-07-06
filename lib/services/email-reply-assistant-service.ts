@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { formatPersonName } from "@/lib/person-name";
+import { relationshipBriefPromptFact } from "@/lib/relationship-brief-usage";
 import { personRelationshipProfile } from "./contact-service";
 import { emailLogAttachmentRelationsWhere } from "./record-guards";
 import { ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
@@ -267,6 +268,7 @@ export function buildEmailReplyPrompt({ context, tone }: { context: EmailReplyCo
     "Draft a thoughtful customer reply for a salesperson to review and edit.",
     "Never claim the email was sent. Never instruct the system to send. Never auto-send.",
     "Use only the provided email and CRM context. Do not invent pricing, discounts, legal commitments, contract terms, dates, delivery promises, or approvals.",
+    "Relationship Brief facts include field-level usage guidance. Do not quote fields marked internal-only or do-not-mention-directly.",
     "If context is missing, write cautiously and ask the user to fill the missing details.",
     "For pricing or quote questions, reference only provided quote/product facts and recommend confirming details before committing.",
     "Return strict JSON with keys: subjectSuggestion, body, contextUsed, warnings, suggestedNextAction."
@@ -461,11 +463,11 @@ async function getRelationshipProfileFacts(actor: WorkspaceActor, linkedIds: Rec
 
   const profile = personRelationshipProfile(person);
   return [
-    profile.personalContext ? `Personal context: ${profile.personalContext}` : null,
-    profile.communicationStyle ? `Communication style: ${profile.communicationStyle}` : null,
-    profile.businessConcerns ? `Business concern: ${profile.businessConcerns}` : null,
-    profile.followUpReminders ? `Follow-up reminder: ${profile.followUpReminders}` : null,
-    profile.internalGuidance ? `Internal guidance: ${profile.internalGuidance}` : null
+    relationshipBriefPromptFact("relationshipPersonalContext", profile.personalContext),
+    relationshipBriefPromptFact("relationshipCommunicationStyle", profile.communicationStyle),
+    relationshipBriefPromptFact("relationshipBusinessConcerns", profile.businessConcerns),
+    relationshipBriefPromptFact("relationshipFollowUpReminders", profile.followUpReminders),
+    relationshipBriefPromptFact("relationshipInternalGuidance", profile.internalGuidance)
   ].filter((value): value is string => Boolean(value));
 }
 

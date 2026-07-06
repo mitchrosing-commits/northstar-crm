@@ -50,7 +50,8 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("lastError: safeProviderLastError(connection?.lastError)");
     expect(emailConnectionService).toContain("function safeProviderLastError");
     expect(emailConnectionService).toContain("redactSensitiveText(value ?? undefined)");
-    expect(emailConnectionService).toContain("connection.lastError ? \"Sync issue\" : \"Connected\"");
+    expect(emailConnectionService).toContain("Reconnect required");
+    expect(emailConnectionService).toContain("hasProviderScopes(connection.scopes, gmailOAuthScopes)");
     expect(emailConnectionService).toContain("microsoftProviderCard");
     expect(emailConnectionService).toContain("Connect Microsoft");
     expect(emailConnectionService).toContain("href: \"/api/email-connections/microsoft/connect\"");
@@ -131,5 +132,51 @@ describe("email sync provider foundation", () => {
     expect(fixture).toContain("emailConnectionSecret.deleteMany");
     expect(currentStatus).toContain("Email connection status foundation");
     expect(currentStatus).toContain("OAuth access and refresh tokens are stored only in encrypted");
+  });
+
+  it("adds Full Inbox provider metadata, Gmail read/send scopes, and explicit reply UI", () => {
+    const fullInboxMigration = readFileSync(
+      join(process.cwd(), "prisma/migrations/20260706130000_email_full_inbox_metadata/migration.sql"),
+      "utf8"
+    );
+    const emailPage = readFileSync(join(process.cwd(), "app/email/page.tsx"), "utf8");
+    const emailActions = readFileSync(join(process.cwd(), "app/email/actions.ts"), "utf8");
+
+    expect(schema).toContain("providerLabels        Json?");
+    expect(schema).toContain("providerSnippet       String?");
+    expect(fullInboxMigration).toContain("ADD COLUMN \"providerLabels\" JSONB");
+    expect(fullInboxMigration).toContain("ADD COLUMN \"providerSnippet\" TEXT");
+    expect(emailConnectionService).toContain("https://www.googleapis.com/auth/gmail.readonly");
+    expect(emailConnectionService).toContain("https://www.googleapis.com/auth/gmail.send");
+    expect(emailConnectionService).toContain("export async function syncGmailInboxMessages");
+    expect(emailConnectionService).toContain('export const gmailInboxSyncJobType = "email.gmail_sync"');
+    expect(emailConnectionService).toContain("export async function enqueueGmailInboxSyncJob");
+    expect(emailConnectionService).toContain("export async function processGmailInboxSyncJob");
+    expect(emailConnectionService).toContain("export async function syncOlderGmailInboxMessages");
+    expect(emailConnectionService).toContain("export async function refreshGmailInboxThread");
+    expect(emailConnectionService).toContain("parseGmailHistoryCursor(connection.lastSyncCursor)");
+    expect(emailConnectionService).toContain("formatGmailHistoryCursor(syncResult.historyId)");
+    expect(emailConnectionService).toContain("listGmailInboxHistoryMessages");
+    expect(emailConnectionService).toContain("listOlderGmailInboxMessages");
+    expect(emailConnectionService).toContain("getGmailThreadFull");
+    expect(emailConnectionService).toContain("EMAIL_GMAIL_HISTORY_EXPIRED");
+    expect(emailConnectionService).toContain("syncRecentGmailInboxMessagesForConnection");
+    expect(emailConnectionService).toContain("enqueueGmailInboxSyncJobForConnection(actor, connection.id)");
+    expect(emailConnectionService).toContain("export async function listEmailInboxThreads");
+    expect(emailConnectionService).toContain("export async function sendGmailReplyFromEmailLog");
+    expect(emailConnectionService).toContain("export async function disconnectEmailConnection");
+    expect(emailConnectionService).toContain("emailConnectionSecret.deleteMany");
+    expect(emailConnectionService).toContain("deletedAt: null");
+    expect(emailConnectionService).toContain("messages/send");
+    expect(emailPage).toContain("title=\"Full Inbox\"");
+    expect(emailPage).toContain("EmailInboxThreadList");
+    expect(emailPage).toContain("Background sync: {provider.syncStatusLabel}");
+    expect(emailPage).toContain("gmail-sync-queued");
+    expect(emailPage).toContain("Send Gmail reply");
+    expect(emailPage).toContain("Disconnect");
+    expect(emailActions).toContain("syncGmailInboxFromEmailPageAction");
+    expect(emailActions).toContain("sendGmailReplyFromEmailPageAction");
+    expect(emailActions).toContain("disconnectEmailProviderFromEmailPageAction");
+    expect(emailActions).not.toContain("sendGmailReplyFromEmailPageAction()");
   });
 });

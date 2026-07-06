@@ -10,6 +10,7 @@ const pipelineBoard = readFileSync(join(process.cwd(), "components/pipeline-boar
 const pipelineService = readFileSync(join(process.cwd(), "lib/services/pipeline-service.ts"), "utf8");
 const dealDetailPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/page.tsx"), "utf8");
 const salesAssistant = readFileSync(join(process.cwd(), "lib/sales-assistant.ts"), "utf8");
+const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 
 describe("Sales Assistant / Needs Attention v1", () => {
   it("classifies deterministic deal attention badges without AI or background jobs", () => {
@@ -82,6 +83,13 @@ describe("Sales Assistant / Needs Attention v1", () => {
     expect(pipelineBoard).toContain("deal-card-badges");
     expect(pipelineBoard).toContain('import { AttentionBadge } from "@/components/attention-badge"');
     expect(pipelineBoard).toContain('classNamePrefix="deal-attention-badge"');
+    expect(globalStyles).toContain(".stage-column");
+    expect(globalStyles).toContain("min-width: 276px");
+    expect(globalStyles).toContain(".stage-title");
+    expect(globalStyles).toContain(".deal-card-detail strong");
+    expect(globalStyles).toContain("-webkit-line-clamp: 2");
+    expect(globalStyles).toContain(".pipeline-card-move");
+    expect(globalStyles).toContain(".pipeline-card-move .button-compact");
     expect(salesAssistant).toContain("No next activity");
   });
 
@@ -95,5 +103,9 @@ describe("Sales Assistant / Needs Attention v1", () => {
     expect(dealDetailPage).toContain("Review contract workflow");
     expect(dealDetailPage).toContain("title=\"Quote follow-up\"");
     expect(dealDetailPage).toContain("A sent quote is waiting for a response");
+    expect(globalStyles).toContain(".deal-next-step-cue");
+    expect(globalStyles).toContain(".deal-next-step-card > strong");
+    expect(globalStyles).toContain(".deal-next-step-card .empty-copy");
+    expect(globalStyles).toContain(".deal-context-metrics strong");
   });
 });

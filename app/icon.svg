@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Northstar CRM icon">
+  <rect width="64" height="64" rx="14" fill="#0f766e"/>
+  <path d="M32 9l4.9 18.1L55 32l-18.1 4.9L32 55l-4.9-18.1L9 32l18.1-4.9L32 9z" fill="#ffffff"/>
+  <circle cx="32" cy="32" r="8.5" fill="#0f766e"/>
+  <path d="M32 21.5l2.8 7.7 7.7 2.8-7.7 2.8-2.8 7.7-2.8-7.7-7.7-2.8 7.7-2.8 2.8-7.7z" fill="#d9f99d"/>
+  <path d="M21 48h22" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity=".92"/>
+</svg>

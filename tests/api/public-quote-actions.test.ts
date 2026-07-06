@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/responses";
 
 const publicQuotePage = readFileSync(join(process.cwd(), "app/q/[token]/page.tsx"), "utf8");
+const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 
 const mocks = vi.hoisted(() => ({
   acceptPublicQuoteByToken: vi.fn(),
@@ -134,5 +135,18 @@ describe("public quote actions", () => {
     expect(publicQuotePage).toContain('const acceptedRedirectConfirmed = query?.accepted === "1" && showAcceptedConfirmation');
     expect(publicQuotePage).toContain("FormSuccessMessage");
     expect(publicQuotePage).toContain("Quote acceptance recorded.");
+  });
+
+  it("keeps the public quote table readable on narrow screens", () => {
+    expect(publicQuotePage).toContain('className="table quote-print-table"');
+    expect(publicQuotePage).toContain("<TableScroll");
+    for (const dataLabel of ["Item", "Qty", "Unit price", "Total"]) {
+      expect(publicQuotePage).toContain(`data-label="${dataLabel}"`);
+    }
+    expect(globalStyles).toContain(".quote-print-table td::before");
+    expect(globalStyles).toContain('content: attr(data-label)');
+    expect(globalStyles).toContain(".quote-print-header > *");
+    expect(globalStyles).toContain(".quote-print-context > *");
+    expect(globalStyles).toContain(".quote-print-totals > *");
   });
 });

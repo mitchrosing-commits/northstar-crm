@@ -174,6 +174,7 @@ describe("settings admin UX patterns", () => {
     expect(settingsPage).not.toContain('<span className="muted">Owner removal blocked</span>');
     expect(settingsPage).not.toContain('<span className="muted">Last admin</span>');
     expect(globalStyles).toContain(".settings-member-action-status");
+    expect(globalStyles).toContain(".table-row-actions form");
     expect(settingsPage).toContain("label={`${status.label}: ${status.configured ? \"Configured\" : \"Needs setup\"}`}");
     expect(settingsPage).not.toContain('<span\n              className={status.configured ? "badge badge-qualified" : "badge"}');
     expect(settingsPage).toContain(

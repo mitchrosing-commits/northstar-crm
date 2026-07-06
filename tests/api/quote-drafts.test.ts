@@ -946,6 +946,11 @@ describe("quote draft MVP", () => {
     expect(publicQuotePage).toContain(
       "aria-label={`${quote.number} public quote items table`}",
     );
+    expect(globalStyles).toContain(".table.quote-print-table");
+    expect(globalStyles).toContain(".quote-print-table td::before");
+    expect(globalStyles).toContain('content: attr(data-label)');
+    expect(globalStyles).toContain(".quote-print-header > *");
+    expect(globalStyles).toContain(".quote-print-totals div");
     expect(publicQuotePage).toContain("quote.items.map((item, index)");
     expect(publicQuotePage).toContain(
       "key={`${item.name}-${item.quantity}-${item.lineTotalCents}-${index}`}",
@@ -1198,6 +1203,9 @@ describe("quote draft MVP", () => {
     expect(globalStyles).toContain(".quote-print-sheet");
     expect(globalStyles).toContain(".quote-print-notice");
     expect(globalStyles).toContain(".no-print");
+    expect(globalStyles).toContain(".quote-print-table thead");
+    expect(globalStyles).toContain(".quote-print-table td:first-child");
+    expect(globalStyles).toContain("display: table-row-group");
   });
 
   it("adds an authenticated on-demand quote PDF export without storage", () => {

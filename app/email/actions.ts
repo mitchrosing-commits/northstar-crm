@@ -10,7 +10,12 @@ import { redactSensitiveText } from "@/lib/security/redaction";
 import {
   classifyEmailLog,
   createEmailFollowUpActivity,
+  disconnectEmailConnection,
+  enqueueGmailInboxSyncJob,
   generateEmailReplyDraft,
+  refreshGmailInboxThread,
+  sendGmailReplyFromEmailLog,
+  syncOlderGmailInboxMessages,
   syncRecentGmailMessages,
   syncRecentMicrosoftMessages
 } from "@/lib/services/crm";
@@ -45,6 +50,65 @@ export type GenerateEmailReplyDraftActionState = {
   tone?: string;
   warnings?: string[];
 };
+
+export async function syncGmailInboxFromEmailPageAction() {
+  const { actor } = await getCurrentWorkspaceContext();
+
+  try {
+    await enqueueGmailInboxSyncJob(actor);
+  } catch {
+    redirect("/email?emailConnection=gmail-sync-error" as Route);
+  }
+
+  redirect("/email?emailConnection=gmail-sync-queued" as Route);
+}
+
+export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData) {
+  const before = String(formData.get("before") ?? "").trim();
+  const threadId = String(formData.get("threadId") ?? "").trim();
+  const { actor } = await getCurrentWorkspaceContext();
+  let result: Awaited<ReturnType<typeof syncOlderGmailInboxMessages>>;
+
+  try {
+    result = await syncOlderGmailInboxMessages({ actor, before });
+  } catch {
+    const params = new URLSearchParams({ emailConnection: "gmail-load-more-error" });
+    if (threadId) params.set("thread", threadId);
+    redirect(`/email?${params.toString()}` as Route);
+  }
+
+  const params = new URLSearchParams({
+    created: String(result.created),
+    duplicates: String(result.skippedDuplicates),
+    emailConnection: "gmail-loaded-more",
+    total: String(result.totalFetched)
+  });
+  if (threadId) params.set("thread", threadId);
+  redirect(`/email?${params.toString()}` as Route);
+}
+
+export async function refreshGmailThreadFromEmailPageAction(formData: FormData) {
+  const threadId = String(formData.get("threadId") ?? "").trim();
+  const { actor } = await getCurrentWorkspaceContext();
+  let result: Awaited<ReturnType<typeof refreshGmailInboxThread>>;
+
+  try {
+    result = await refreshGmailInboxThread({ actor, threadId });
+  } catch {
+    const params = new URLSearchParams({ emailConnection: "gmail-thread-refresh-error" });
+    if (threadId) params.set("thread", threadId);
+    redirect(`/email?${params.toString()}` as Route);
+  }
+
+  const params = new URLSearchParams({
+    created: String(result.created),
+    duplicates: String(result.skippedDuplicates),
+    emailConnection: "gmail-thread-refreshed",
+    thread: threadId,
+    total: String(result.totalFetched)
+  });
+  redirect(`/email?${params.toString()}` as Route);
+}
 
 export async function syncRecentGmailFromEmailPageAction() {
   const { actor } = await getCurrentWorkspaceContext();
@@ -90,6 +154,43 @@ export async function syncRecentMicrosoftFromEmailPageAction() {
   redirect(
     `/email?emailConnection=microsoft-synced&created=${result.created}&duplicates=${result.skippedDuplicates}&skipped=${result.skippedUnmatched}&total=${result.totalFetched}` as Route
   );
+}
+
+export async function sendGmailReplyFromEmailPageAction(formData: FormData) {
+  const emailLogId = String(formData.get("emailLogId") ?? "").trim();
+  const threadId = String(formData.get("threadId") ?? "").trim();
+
+  try {
+    const { actor } = await getCurrentWorkspaceContext();
+    await sendGmailReplyFromEmailLog({
+      actor,
+      body: formData.get("body"),
+      emailLogId
+    });
+  } catch {
+    const params = new URLSearchParams({ emailConnection: "gmail-reply-error" });
+    if (threadId) params.set("thread", threadId);
+    redirect(`/email?${params.toString()}` as Route);
+  }
+
+  const params = new URLSearchParams({ emailConnection: "gmail-reply-sent" });
+  if (threadId) params.set("thread", threadId);
+  redirect(`/email?${params.toString()}` as Route);
+}
+
+export async function disconnectEmailProviderFromEmailPageAction(formData: FormData) {
+  const provider = String(formData.get("provider") ?? "").trim();
+  let status: "gmail-disconnected" | "microsoft-disconnected";
+
+  try {
+    const { actor } = await getCurrentWorkspaceContext();
+    const result = await disconnectEmailConnection(actor, provider);
+    status = result.provider === "MICROSOFT_365" ? "microsoft-disconnected" : "gmail-disconnected";
+  } catch {
+    redirect("/email?emailConnection=email-disconnect-error" as Route);
+  }
+
+  redirect(`/email?emailConnection=${status}` as Route);
 }
 
 export async function generateEmailReplyDraftAction(

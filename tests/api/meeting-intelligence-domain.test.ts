@@ -694,6 +694,112 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.warnings).not.toContain("No deal or lead was confidently matched.");
   });
 
+  it("routes noteworthy facts to Relationship Briefs or object-specific notes without forcing everything onto contacts", () => {
+    const draft = analyzeMeetingIntelligence({
+      markdown: [
+        "# Meeting Intake",
+        "Jane Contact is a Rockies fan and mentioned her kids play soccer.",
+        "Jane Contact prefers concise morning emails.",
+        "Alpha Orbit Organization is replacing its WMS and has inventory pain across 4 DCs.",
+        "Alpha Needle Deal has legal approval risk and a SOW timeline concern.",
+        "Alpha Expansion Lead has strong pilot interest and a qualification timeline.",
+        "Action: send recap by 2030-04-05."
+      ].join("\n"),
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jane Contact",
+          evidenceExcerpt: "Jane Contact",
+          id: "person-1",
+          matchedReason: "Exact name match",
+          objectType: "person"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Orbit Organization",
+          evidenceExcerpt: "Alpha Orbit Organization",
+          id: "org-1",
+          matchedReason: "Exact organization match",
+          objectType: "organization"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Needle Deal",
+          evidenceExcerpt: "Alpha Needle Deal",
+          id: "deal-1",
+          matchedReason: "Deal title match",
+          objectType: "deal",
+          status: "OPEN"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Expansion Lead",
+          evidenceExcerpt: "Alpha Expansion Lead",
+          id: "lead-1",
+          matchedReason: "Lead title match",
+          objectType: "lead",
+          status: "NEW"
+        }
+      ],
+      unmatchedEntities: []
+    });
+    const personNote = draft.notes.find((note) => note.target?.id === "person-1");
+    const organizationNote = draft.notes.find((note) => note.target?.id === "org-1");
+    const dealNote = draft.notes.find((note) => note.target?.id === "deal-1");
+    const leadNote = draft.notes.find((note) => note.target?.id === "lead-1");
+
+    expect(personNote).toMatchObject({ kind: "personal_fact", target: { type: "person" } });
+    expect(personNote?.body).toContain("kids play soccer");
+    expect(organizationNote).toMatchObject({ kind: "company_fact", target: { type: "organization" } });
+    expect(organizationNote?.body).toContain("replacing its WMS");
+    expect(organizationNote?.body).not.toContain("legal approval risk");
+    expect(dealNote).toMatchObject({ kind: "deal_fact", target: { type: "deal" } });
+    expect(dealNote?.body).toContain("SOW timeline concern");
+    expect(dealNote?.body).not.toContain("replacing its WMS");
+    expect(leadNote).toMatchObject({ kind: "lead_fact", target: { type: "lead" } });
+    expect(leadNote?.body).toContain("qualification timeline");
+    expect(draft.relationshipBriefUpdates).toEqual([
+      expect.objectContaining({
+        proposed: expect.objectContaining({
+          relationshipCommunicationStyle: expect.stringContaining("prefers concise morning emails"),
+          relationshipPersonalContext: expect.stringContaining("kids play soccer")
+        }),
+        target: { id: "person-1", label: "Jane Contact", type: "person" }
+      })
+    ]);
+  });
+
+  it("excludes protected-trait lines from curated Relationship Brief and fact-note suggestions", () => {
+    const draft = analyzeMeetingIntelligence({
+      markdown: [
+        "# Meeting Intake",
+        "Jane Contact discussed religion during the meeting.",
+        "Jane Contact prefers concise morning emails.",
+        "Action: send recap by 2030-04-05."
+      ].join("\n"),
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jane Contact",
+          evidenceExcerpt: "Jane Contact",
+          id: "person-1",
+          matchedReason: "Exact name match",
+          objectType: "person"
+        }
+      ],
+      unmatchedEntities: []
+    });
+    const curatedSuggestions = JSON.stringify({
+      notes: draft.notes,
+      relationshipBriefUpdates: draft.relationshipBriefUpdates,
+      summary: draft.summary
+    });
+
+    expect(draft.warnings).toContain("Protected or sensitive trait details were excluded from curated Relationship Brief and fact-note suggestions.");
+    expect(curatedSuggestions).not.toContain("religion");
+    expect(draft.relationshipBriefUpdates?.[0]?.proposed.relationshipCommunicationStyle).toContain("prefers concise morning emails");
+  });
+
   it("keeps deterministic proposal counts bounded for noisy transcript-like text", () => {
     const draft = analyzeMeetingIntelligence({
       markdown: Array.from({ length: 30 }, (_, index) => `Action: follow up on warehouse item ${index + 1} by 2030-04-05.`).join("\n"),

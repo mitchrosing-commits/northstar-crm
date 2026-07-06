@@ -6,12 +6,13 @@ type EnvInput = Record<string, string | undefined>;
 
 let prepared = false;
 
-export function prepareIntegrationDatabase() {
+export function prepareIntegrationDatabase({ deployMigrations = true }: { deployMigrations?: boolean } = {}) {
   loadDotEnv();
   const databaseUrlForComparison = getOriginalDatabaseUrl();
   const testDatabaseUrl = requireSafeTestDatabaseUrl(databaseUrlForComparison);
   process.env.DATABASE_URL = testDatabaseUrl;
 
+  if (!deployMigrations) return;
   if (prepared) return;
   execFileSync("npx", ["prisma", "migrate", "deploy"], {
     cwd: process.cwd(),

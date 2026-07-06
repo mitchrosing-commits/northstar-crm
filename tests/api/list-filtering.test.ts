@@ -593,6 +593,7 @@ describe("query-driven list filtering and sorting", () => {
     expect(listNextActivitySummary).toContain("next-activity-summary-link");
     expect(listNextActivitySummary).toContain("ActivityDueBadge");
     expect(globalStyles).toContain(".next-activity-summary-link");
+    expect(globalStyles).toContain("min-width: min(100%, 180px)");
     expect(globalStyles).toContain(".inline-empty-state-text");
     expect(globalStyles).toContain("overflow-wrap: anywhere");
     expect(contactsPage).toContain("person.activities[0]");

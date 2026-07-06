@@ -458,6 +458,7 @@ describe("Deal Reporting v1", () => {
     expect(reportsPage).toContain('aria-label="Forecast deal detail table"');
     expect(globalStyles).toContain(".table-scroll");
     expect(globalStyles).toContain(".empty-state-panel");
+    expect(globalStyles).toContain(".report-scope-note");
     expect(globalStyles).toContain("overscroll-behavior-x: contain;");
     expect(globalStyles).toContain("-webkit-overflow-scrolling: touch;");
     expect(globalStyles).toContain("min-width: 680px;");

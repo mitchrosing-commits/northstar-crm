@@ -13,6 +13,8 @@ import {
   cleanupMeetingIntelligenceStoredFiles,
   createMeetingIntake
 } from "@/lib/services/meeting-intelligence-service";
+import { buildEmailReplyContext } from "@/lib/services/email-reply-assistant-service";
+import { updateActivity } from "@/lib/services/activity-service";
 import { getRecordTimeline } from "@/lib/services/timeline-service";
 import type { MeetingIntelligenceDraft } from "@/lib/meeting-intelligence/types";
 import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
@@ -56,7 +58,10 @@ afterEach(async () => {
     where: { workspaceId: fixture.workspaceA.id, title: { contains: "Meeting:" } }
   });
   await fixture?.prisma.activity.deleteMany({
-    where: { workspaceId: fixture.workspaceA.id, description: { contains: "Source: send SOW" } }
+    where: {
+      workspaceId: fixture.workspaceA.id,
+      OR: [{ description: { contains: "Source: send SOW" } }, { description: { contains: "Source: Meeting Intelligence" } }]
+    }
   });
   await fixture?.prisma.person.deleteMany({
     where: { workspaceId: fixture.workspaceA.id, email: "retarget-alpha-alt@example.test" }
@@ -151,6 +156,7 @@ describe("meeting intelligence service", () => {
       contextText: "Meeting date: 2030-04-10\nAttendees: Alpha Contact",
       hints: {
         dealId: fx.recordsA.deal.id,
+        leadId: fx.recordsA.lead.id,
         organizationId: fx.recordsA.organization.id,
         personIds: [fx.recordsA.person.id]
       },
@@ -159,6 +165,7 @@ describe("meeting intelligence service", () => {
         `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} prefers email and mentioned a birthday on 2030-05-01.`,
         `${fx.recordsA.organization.name} has WMS inventory pain and a data migration blocker.`,
         `${fx.recordsA.deal.title} has approved budget, SOW risk, and legal approval timing pressure.`,
+        `${fx.recordsA.lead.title} has pilot interest and a qualification timeline.`,
         "Action: send SOW by 2030-04-15."
       ].join("\n")
     });
@@ -170,6 +177,7 @@ describe("meeting intelligence service", () => {
     expect(draft.notes.some((note) => note.target?.type === "person" && note.kind === "personal_fact")).toBe(true);
     expect(draft.notes.some((note) => note.target?.type === "organization" && note.kind === "company_fact")).toBe(true);
     expect(draft.notes.some((note) => note.target?.type === "deal" && note.kind === "deal_fact")).toBe(true);
+    expect(draft.notes.some((note) => note.target?.type === "lead" && note.kind === "lead_fact")).toBe(true);
     expect(draft.relationshipBriefUpdates?.some((update) => update.target?.id === fx.recordsA.person.id)).toBe(true);
 
     const result = await applyMeetingIntake(fx.actorA, intake.id, {
@@ -179,7 +187,7 @@ describe("meeting intelligence service", () => {
       relationshipBriefUpdates: draft.relationshipBriefUpdates?.map((update) => ({ ...update, include: true })) ?? []
     });
 
-    expect(result.created.filter((item) => item.type === "note").length).toBeGreaterThanOrEqual(3);
+    expect(result.created.filter((item) => item.type === "note").length).toBeGreaterThanOrEqual(4);
     expect(result.created.filter((item) => item.type === "activity")).toHaveLength(2);
     expect(result.created.filter((item) => item.type === "relationship_brief")).toHaveLength(1);
     await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
@@ -203,6 +211,11 @@ describe("meeting intelligence service", () => {
     await expect(
       fx.prisma.note.findFirst({
         where: { body: { contains: "Meeting intelligence deal facts" }, dealId: fx.recordsA.deal.id, workspaceId: fx.workspaceA.id }
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      fx.prisma.note.findFirst({
+        where: { body: { contains: "Meeting intelligence lead facts" }, leadId: fx.recordsA.lead.id, workspaceId: fx.workspaceA.id }
       })
     ).resolves.toBeTruthy();
     const meeting = await fx.prisma.activity.findFirstOrThrow({
@@ -236,7 +249,34 @@ describe("meeting intelligence service", () => {
       where: { dealId: fx.recordsA.deal.id, title: { contains: "send SOW" }, type: "TASK", workspaceId: fx.workspaceA.id }
     });
     expect(followUp.dueAt?.toISOString()).toBe("2030-04-15T00:00:00.000Z");
+    expect(followUp.description).toContain("Source: Meeting Intelligence next-step activity.");
     expect(followUp.description).toContain("Source: Action: send SOW by 2030-04-15.");
+    await expect(
+      fx.prisma.emailLogActivityLink.count({ where: { activityId: followUp.id, workspaceId: fx.workspaceA.id } })
+    ).resolves.toBe(0);
+
+    const emailLog = await fx.prisma.emailLog.create({
+      data: {
+        body: "Can you remind me what came out of our meeting and whether the SOW is coming?",
+        dealId: fx.recordsA.deal.id,
+        direction: "INBOUND",
+        fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
+        occurredAt: new Date("2030-04-11T12:00:00.000Z"),
+        personId: fx.recordsA.person.id,
+        subject: "Meeting follow-up",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const replyContext = await buildEmailReplyContext(fx.actorA, emailLog.id);
+    expect(replyContext.activities.join("\n")).toContain("Source: Meeting Intelligence next-step activity.");
+    expect(replyContext.activities.join("\n")).toContain("send SOW");
+    expect(replyContext.meetingSummaries.join("\n")).toContain("Action: send SOW by 2030-04-15.");
+
+    const completedFollowUp = await updateActivity(fx.actorA, followUp.id, {
+      completedAt: new Date("2030-04-12T12:00:00.000Z")
+    });
+    expect(completedFollowUp.completedAt?.toISOString()).toBe("2030-04-12T12:00:00.000Z");
   });
 
   it("hydrates, edits, and merges approved Relationship Brief updates without mutating before apply", async () => {

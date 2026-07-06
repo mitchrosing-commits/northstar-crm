@@ -55,6 +55,8 @@ describe("hosted email OAuth redirects", () => {
       "https://northstar.example.test/api/email-connections/google/callback"
     );
     expect(url.searchParams.get("redirect_uri")).not.toContain("localhost");
+    expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/gmail.readonly");
+    expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/gmail.send");
   });
 
   it("keeps legacy local dev redirect behavior when only legacy env is configured", () => {

@@ -314,6 +314,16 @@ describe("Relationship Inbox email follow-up workflow", () => {
         reason: expect.stringContaining("All linked follow-ups are completed")
       },
       explainer: {
+        actionExplanation: {
+          action: "no_action_needed",
+          followUpState: expect.objectContaining({
+            completedCount: 1,
+            openCount: 0,
+            source: "durable",
+            state: "completed"
+          }),
+          reason: expect.stringContaining("durably linked")
+        },
         evidence: expect.arrayContaining([
           expect.objectContaining({ label: "Durable linked follow-up detected", source: "durable_follow_up" }),
           expect.objectContaining({ label: "All linked follow-ups completed", source: "durable_follow_up" })
@@ -340,6 +350,7 @@ describe("Relationship Inbox email follow-up workflow", () => {
     expect(durableQueue[0].explainer.trail).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ label: "Legacy follow-up marker detected", source: "legacy_follow_up" })])
     );
+    expect(durableQueue[0].explainer.actionExplanation.reason).not.toContain("legacy marker-matched");
   });
 
   it("uses conservative defaults without provider configuration or saved labels", async () => {

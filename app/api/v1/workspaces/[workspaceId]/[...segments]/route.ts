@@ -54,6 +54,7 @@ import {
   finalizeMeetingIntakeDirectUploadSession,
   getMeetingIntake,
   getMeetingIntakeUploadCapabilities,
+  inspectMeetingIntakeMultipartUploadSession,
   signMeetingIntakeMultipartUploadParts,
   setProductActive,
   setEmailTemplateActive,
@@ -363,6 +364,10 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
 
     if (resource === "meeting-intake-multipart-upload-sessions" && !idOrNested) {
       if (method === "POST") return created(await createMeetingIntakeMultipartUploadSession(actor, await body(request)));
+    }
+
+    if (resource === "meeting-intake-multipart-upload-sessions" && idOrNested && !nestedResource) {
+      if (method === "GET") return json(await inspectMeetingIntakeMultipartUploadSession(actor, idOrNested));
     }
 
     if (resource === "meeting-intake-multipart-upload-sessions" && idOrNested && nestedResource === "parts" && !extraSegment) {

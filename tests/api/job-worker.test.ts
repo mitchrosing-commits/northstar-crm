@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   internalNoopJobType,
   jobHandlers,
+  gmailInboxSyncJobType,
   meetingMediaExtractionJobType,
   parsePasswordResetEmailJobPayload,
   parseWorkspaceInvitationEmailJobPayload,
@@ -38,11 +39,13 @@ const packageJson = readFileSync(join(process.cwd(), "package.json"), "utf8");
 describe("single-run job worker shell", () => {
   it("keeps the handler registry explicit and limited to intended job types", () => {
     expect(internalNoopJobType).toBe("internal.noop");
+    expect(gmailInboxSyncJobType).toBe("email.gmail_sync");
     expect(meetingMediaExtractionJobType).toBe("meeting_intake.extract_media");
     expect(passwordResetEmailJobType).toBe("auth.password_reset_email");
     expect(workspaceInvitationEmailJobType).toBe("workspace.invitation_email");
     expect(Object.keys(jobHandlers)).toEqual([
       internalNoopJobType,
+      gmailInboxSyncJobType,
       meetingMediaExtractionJobType,
       passwordResetEmailJobType,
       workspaceInvitationEmailJobType

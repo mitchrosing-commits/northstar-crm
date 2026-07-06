@@ -63,7 +63,8 @@ describe("Relationship Inbox priority queue", () => {
       "urgent_1",
       "quote_1"
     ]);
-    expect(buildEmailPriorityQueue({ emailLogs, filter: "urgent", followUpDetails, followUpStates })[0]).toMatchObject({
+    const urgentItem = buildEmailPriorityQueue({ emailLogs, filter: "urgent", followUpDetails, followUpStates })[0];
+    expect(urgentItem).toMatchObject({
       followUps: [
         {
           href: "/activities/activity_urgent/edit?returnTo=%2Femail",
@@ -75,6 +76,18 @@ describe("Relationship Inbox priority queue", () => {
       followUpState: "created",
       labels: ["Customer", "Urgent", "Needs reply"],
       explainer: {
+        actionExplanation: {
+          action: "draft_reply",
+          category: expect.objectContaining({ key: "CUSTOMER", label: "Customer" }),
+          contributingSignals: expect.arrayContaining([
+            expect.objectContaining({ key: "URGENT", label: "Urgent" }),
+            expect.objectContaining({ key: "NEEDS_REPLY", label: "Needs reply" })
+          ]),
+          crmState: expect.objectContaining({ label: "Linked to deal: Deal urgent_1", linked: true }),
+          followUpState: expect.objectContaining({ openCount: 1, source: "durable", state: "created" }),
+          headline: "Draft reply because Customer appears to need a response.",
+          reason: expect.stringContaining("reviewed reply draft")
+        },
         evidence: expect.arrayContaining([
           expect.objectContaining({ label: "Category: Customer", source: "smart_label" }),
           expect.objectContaining({ label: "Signal: Urgent", source: "smart_label" }),
@@ -84,36 +97,7 @@ describe("Relationship Inbox priority queue", () => {
         ]),
         detailHref: "#email-evidence-urgent_1",
         headline: "Queued by reply-sensitive saved labels.",
-        sources: expect.arrayContaining(["smart_label", "crm_link", "durable_follow_up"]),
-        trail: expect.arrayContaining([
-          expect.objectContaining({
-            id: "category-CUSTOMER",
-            category: "CUSTOMER",
-            reason: expect.stringContaining("Saved Smart Label category"),
-            type: "category"
-          }),
-          expect.objectContaining({
-            id: "signal-URGENT",
-            signal: "URGENT",
-            reason: expect.stringContaining("Saved Smart Label signal"),
-            target: expect.objectContaining({ href: "#email-evidence-urgent_1", kind: "email_evidence" }),
-            type: "signal"
-          }),
-          expect.objectContaining({
-            followUp: expect.objectContaining({ id: "activity_urgent", source: "durable", status: "open" }),
-            reason: expect.stringContaining("EmailLogActivityLink"),
-            target: expect.objectContaining({
-              href: "/activities/activity_urgent/edit?returnTo=%2Femail",
-              kind: "linked_follow_up"
-            }),
-            type: "follow_up"
-          }),
-          expect.objectContaining({
-            label: "Recommended action: Draft reply",
-            reason: expect.stringContaining("Urgent email"),
-            type: "next_best_action"
-          })
-        ])
+        sources: expect.arrayContaining(["smart_label", "crm_link", "durable_follow_up"])
       },
       nextBestAction: {
         action: "draft_reply",
@@ -124,6 +108,37 @@ describe("Relationship Inbox priority queue", () => {
       },
       priorityLabel: "Urgent"
     });
+    expect(urgentItem.explainer.trail).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "CUSTOMER",
+          id: "category-CUSTOMER",
+          reason: expect.stringContaining("Saved Smart Label category"),
+          type: "category"
+        }),
+        expect.objectContaining({
+          id: "signal-URGENT",
+          reason: expect.stringContaining("Saved Smart Label signal"),
+          signal: "URGENT",
+          target: expect.objectContaining({ href: "#email-evidence-urgent_1", kind: "email_evidence" }),
+          type: "signal"
+        }),
+        expect.objectContaining({
+          followUp: expect.objectContaining({ id: "activity_urgent", source: "durable", status: "open" }),
+          reason: expect.stringContaining("EmailLogActivityLink"),
+          target: expect.objectContaining({
+            href: "/activities/activity_urgent/edit?returnTo=%2Femail",
+            kind: "linked_follow_up"
+          }),
+          type: "follow_up"
+        }),
+        expect.objectContaining({
+          label: "Recommended action: Draft reply",
+          reason: expect.stringContaining("reviewed reply draft"),
+          type: "next_best_action"
+        })
+      ])
+    );
   });
 
   it("recommends deterministic next-best actions from labels, CRM links, and follow-up state", () => {
@@ -185,6 +200,12 @@ describe("Relationship Inbox priority queue", () => {
       priorityLabel: "Unclassified"
     });
     expect(byId.get("unclassified_1")?.explainer).toMatchObject({
+      actionExplanation: {
+        action: "classify_email",
+        contributingSignals: [],
+        headline: "Classify first before choosing a relationship action.",
+        reason: expect.stringContaining("No Smart Label snapshot exists yet")
+      },
       evidence: expect.arrayContaining([
         expect.objectContaining({ label: "Unclassified email", source: "smart_label" }),
         expect.objectContaining({ label: "Linked to deal: Deal unclassified_1", source: "crm_link" })
@@ -213,10 +234,22 @@ describe("Relationship Inbox priority queue", () => {
         expect.objectContaining({ label: "No CRM record linked", source: "crm_link" })
       ])
     );
+    expect(byId.get("lead_1")?.explainer.actionExplanation).toMatchObject({
+      action: "review_potential_lead",
+      contributingSignals: [expect.objectContaining({ key: "POTENTIAL_LEAD", label: "Potential lead" })],
+      crmState: expect.objectContaining({ linked: false }),
+      headline: "Review potential lead and link CRM context before acting.",
+      reason: expect.stringContaining("linking CRM context before action")
+    });
     expect(byId.get("reply_1")?.nextBestAction).toMatchObject({
       action: "draft_reply",
       label: "Draft reply",
       severity: "medium"
+    });
+    expect(byId.get("reply_1")?.explainer.actionExplanation).toMatchObject({
+      action: "draft_reply",
+      contributingSignals: [expect.objectContaining({ key: "NEEDS_REPLY", label: "Needs reply" })],
+      reason: expect.stringContaining("reviewed reply draft")
     });
     expect(byId.get("commercial_1")?.explainer.evidence).toEqual(
       expect.arrayContaining([
@@ -254,10 +287,31 @@ describe("Relationship Inbox priority queue", () => {
         })
       ])
     );
+    expect(byId.get("commercial_1")?.explainer.actionExplanation.contributingSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          excerpts: ["Signal excerpt for URGENT."],
+          key: "URGENT",
+          reason: "Signal reason for URGENT."
+        }),
+        expect.objectContaining({
+          excerpts: ["Signal excerpt for PRICING_QUOTE."],
+          key: "PRICING_QUOTE",
+          reason: "Signal reason for PRICING_QUOTE."
+        })
+      ])
+    );
     expect(byId.get("follow_1")?.nextBestAction).toMatchObject({
       action: "review_follow_up",
       label: "Review follow-up",
       reason: expect.stringContaining("no linked follow-up exists yet")
+    });
+    expect(byId.get("follow_1")?.explainer.actionExplanation).toMatchObject({
+      action: "review_follow_up",
+      contributingSignals: [expect.objectContaining({ key: "FOLLOW_UP_NEEDED", label: "Follow-up needed" })],
+      followUpState: expect.objectContaining({ openCount: 0, state: "unknown" }),
+      headline: "Review follow-up because suggested work has no linked activity yet.",
+      reason: expect.stringContaining("no linked follow-up activity exists yet")
     });
     expect(byId.get("open_1")?.nextBestAction).toMatchObject({
       action: "mark_follow_up_complete",
@@ -271,6 +325,13 @@ describe("Relationship Inbox priority queue", () => {
         expect.objectContaining({ label: "Open durable linked follow-up exists", source: "durable_follow_up" })
       ])
     );
+    expect(byId.get("open_1")?.explainer.actionExplanation).toMatchObject({
+      action: "mark_follow_up_complete",
+      contributingSignals: [expect.objectContaining({ key: "FOLLOW_UP_NEEDED" })],
+      followUpState: expect.objectContaining({ openCount: 1, source: "durable", state: "created" }),
+      headline: "Mark complete because linked follow-up work is still open.",
+      reason: expect.stringContaining("instead of creating a duplicate")
+    });
     expect(byId.get("completed_1")?.nextBestAction).toMatchObject({
       action: "no_action_needed",
       label: "No action needed",
@@ -293,6 +354,11 @@ describe("Relationship Inbox priority queue", () => {
         })
       ])
     );
+    expect(byId.get("completed_1")?.explainer.actionExplanation).toMatchObject({
+      action: "no_action_needed",
+      followUpState: expect.objectContaining({ completedCount: 1, openCount: 0, source: "durable", state: "completed" }),
+      reason: expect.stringContaining("no duplicate follow-up is recommended")
+    });
     expect(byId.get("legacy_1")?.explainer.evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Legacy follow-up marker detected", source: "legacy_follow_up" })
@@ -308,12 +374,23 @@ describe("Relationship Inbox priority queue", () => {
         })
       ])
     );
+    expect(byId.get("legacy_1")?.explainer.actionExplanation).toMatchObject({
+      action: "mark_follow_up_complete",
+      followUpState: expect.objectContaining({ source: "legacy" }),
+      reason: expect.stringContaining("legacy marker-matched")
+    });
     expect(byId.get("risk_1")?.nextBestAction).toMatchObject({
       action: "review_relationship_risk",
       label: "Review relationship risk",
       severity: "high"
     });
     expect(byId.get("risk_1")?.explainer).toMatchObject({
+      actionExplanation: {
+        action: "review_relationship_risk",
+        contributingSignals: [expect.objectContaining({ key: "RELATIONSHIP_RISK", label: "Relationship risk" })],
+        headline: "Review relationship risk before drafting or advancing the deal.",
+        reason: expect.stringContaining("reviewing relationship context")
+      },
       evidence: expect.arrayContaining([
         expect.objectContaining({ label: "Signal: Relationship risk", source: "smart_label" })
       ]),
@@ -357,7 +434,9 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailPage).toContain("RelationshipInboxEvidenceDetail");
     expect(emailPage).toContain("RelationshipInboxEvidenceTrailItem");
     expect(emailPage).toContain("RelationshipInboxEvidenceDrilldown");
+    expect(emailPage).toContain("RelationshipInboxActionExplanationDetail");
     expect(emailPage).toContain("Why this?");
+    expect(emailPage).toContain("Why this action?");
     expect(emailPage).toContain("View evidence");
     expect(emailPage).toContain("priorityExplainersByEmailId");
     expect(emailPage).toContain("showEvidenceAnchor");
@@ -366,12 +445,17 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailPage).toContain("Category evidence");
     expect(emailPage).toContain("Signal evidence");
     expect(emailPage).toContain("CRM, follow-up, and action trail");
+    expect(emailPage).toContain("Signals contributing to recommended action");
+    expect(emailPage).toContain("Follow-up state");
     expect(emailPage).toContain("Supporting excerpts");
     expect(emailPage).toContain("Exact source text offsets are not stored");
     expect(emailPage).toContain("No signal-specific excerpt is saved");
     expect(emailPage).toContain("relationship-inbox-explainer");
     expect(emailPage).toContain("relationship-inbox-evidence-detail");
     expect(emailPage).toContain("relationship-inbox-evidence-drilldown");
+    expect(emailPage).toContain("relationship-inbox-action-detail");
+    expect(emailPage).toContain("relationship-inbox-action-chain");
+    expect(emailPage).toContain("relationship-inbox-action-signal-map");
     expect(emailPage).toContain("uniqueEvidenceExcerpts");
     expect(emailPage).toContain("relationship-inbox-evidence-trail");
     expect(emailPage).toContain("relationship-inbox-evidence-excerpt");
@@ -380,6 +464,8 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailPage).toContain("relationship-inbox-next-action");
     expect(emailPage).toContain("relationship-inbox-next-action-badges");
     expect(emailPage).toContain("item.nextBestAction");
+    expect(emailPage).toContain("item.explainer.actionExplanation");
+    expect(emailPage).toContain("actionExplanation.contributingSignals");
     expect(emailPage).toContain("workspaceId={workspace.id}");
     expect(emailPage).toContain("emailNextBestActionSeverityLabel");
     expect(emailPage).toContain('action.action === "mark_follow_up_complete"');
@@ -396,9 +482,14 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailPriorityQueueService).toContain("listEmailPriorityFollowUpDetails");
     expect(emailPriorityQueueService).toContain("EmailPriorityNextBestAction");
     expect(emailPriorityQueueService).toContain("EmailPriorityQueueExplainer");
+    expect(emailPriorityQueueService).toContain("EmailPriorityActionExplanation");
     expect(emailPriorityQueueService).toContain("EmailPriorityQueueEvidenceTrailItem");
     expect(emailPriorityQueueService).toContain("EmailPriorityQueueEvidenceTarget");
     expect(emailPriorityQueueService).toContain("emailPriorityQueueExplainer");
+    expect(emailPriorityQueueService).toContain("emailPriorityActionExplanation");
+    expect(emailPriorityQueueService).toContain("actionContributingSignals");
+    expect(emailPriorityQueueService).toContain("emailPriorityActionReason");
+    expect(emailPriorityQueueService).toContain("no duplicate follow-up is recommended");
     expect(emailPriorityQueueService).toContain("trail.push");
     expect(emailPriorityQueueService).toContain("detailHref");
     expect(emailPriorityQueueService).toContain("emailEvidenceHref");

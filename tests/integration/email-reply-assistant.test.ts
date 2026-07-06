@@ -93,11 +93,12 @@ describe("AI email reply assistant service", () => {
     expect(observed?.notes.join("\n")).toContain("Alpha pricing must be verified");
     expect(observed?.notes.join("\n")).not.toContain("Beta cross-workspace");
     expect(observed?.relationshipProfileFacts).toEqual([
-      "Personal context: Rockies fan",
-      "Communication style: Prefers concise morning emails",
-      "Follow-up reminder: Ask how the Colorado trip went",
-      "Internal guidance: Use naturally; do not over-personalize."
+      "Personal context (May inform warm personalization when voluntarily shared, but avoid protected traits or overly sensitive details.): Rockies fan",
+      "Communication style (Use for tone, cadence, and level of detail. Usually adapt the reply rather than quoting the preference.): Prefers concise morning emails",
+      "Follow-up reminders (Use as operational next-step context. Do not quote as a stored reminder.): Ask how the Colorado trip went",
+      "Internal guidance: present but withheld from customer-facing AI context. Internal-only handling guidance. Do not include the stored text in customer-facing AI drafts."
     ]);
+    expect(observed?.relationshipProfileFacts.join("\n")).not.toContain("Use naturally; do not over-personalize.");
   });
 
   it("fails closed when no AI provider is configured without mutating email logs", async () => {

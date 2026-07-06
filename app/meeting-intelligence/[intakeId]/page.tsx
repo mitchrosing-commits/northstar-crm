@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { MeetingIntelligenceReview } from "@/components/meeting-intelligence-review";
 import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { StatusBadge } from "@/components/status-badge";
 import type { ApplyMeetingIntelligenceResult, MeetingIntelligenceDraft } from "@/lib/meeting-intelligence/types";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
@@ -45,7 +46,12 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
       </PageHeader>
 
       {intake.status === "FAILED" ? (
-        <section className="panel">
+        <section className="panel meeting-processing-state" aria-labelledby="meeting-intake-failed-heading">
+          <PanelTitleRow
+            description="No CRM records were changed. Fix the source/provider issue, then create a new intake."
+            title="Intake could not be processed"
+            titleId="meeting-intake-failed-heading"
+          />
           <FormErrorMessage>{intake.errorMessage ?? "Meeting intake failed."}</FormErrorMessage>
           <ProcessorStatusList processorStatus={analysis?.processorStatus} />
           <ActionGroup className="form-actions" label={failedActionsLabel}>
@@ -59,6 +65,26 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
             </Link>
           </ActionGroup>
         </section>
+      ) : intake.status === "DRAFT" ? (
+        <section className="panel meeting-processing-state" aria-labelledby="meeting-upload-waiting-heading">
+          <EmptyState
+            className="empty-state-compact"
+            description="This upload session is waiting for direct or multipart file upload completion. Return to the intake form to resume or cancel an interrupted upload before analysis can start."
+            title="Upload waiting to finish"
+            titleId="meeting-upload-waiting-heading"
+          />
+          <ProcessorStatusList processorStatus={analysis?.processorStatus} />
+          <ActionGroup className="form-actions" label="Draft upload session actions">
+            <Link
+              aria-label={createAnotherActionLabel}
+              className="button-primary"
+              href={"/meeting-intelligence" as Route}
+              title={createAnotherActionLabel}
+            >
+              Back to intake form
+            </Link>
+          </ActionGroup>
+        </section>
       ) : draft ? (
         <MeetingIntelligenceReview
           applyResult={applyResult}
@@ -69,21 +95,24 @@ export default async function MeetingIntelligenceDetailPage({ params }: PageProp
           workspaceId={workspace.id}
         />
       ) : intake.status === "EXTRACTING" ? (
-        <section className="panel">
+        <section className="panel meeting-processing-state" aria-labelledby="meeting-extraction-queued-heading">
           <EmptyState
             className="empty-state-compact"
             description="This intake is waiting for provider extraction. Run the background worker to process queued extraction jobs, then refresh this page."
             title="Extraction queued"
+            titleId="meeting-extraction-queued-heading"
           />
           <ProcessorStatusList processorStatus={analysis?.processorStatus} />
         </section>
       ) : (
-        <section className="panel">
+        <section className="panel meeting-processing-state" aria-labelledby="meeting-no-proposal-heading">
           <EmptyState
             className="empty-state-compact"
             description="This intake does not have a reviewable proposal yet. Try refreshing after processing finishes, or create another intake if the source text was empty."
             title="No reviewable proposal yet"
+            titleId="meeting-no-proposal-heading"
           />
+          <ProcessorStatusList processorStatus={analysis?.processorStatus} />
         </section>
       )}
     </AppShell>
@@ -123,8 +152,8 @@ function parseAnalysis(value: unknown): IntakeAnalysisJson | null {
 function ProcessorStatusList({ processorStatus }: { processorStatus?: IntakeAnalysisJson["processorStatus"] }) {
   if (!processorStatus) return null;
   return (
-    <CompactList>
-      <CompactListItem>
+    <CompactList className="meeting-processor-status-list">
+      <CompactListItem className="meeting-processor-status-item">
         <strong>{processorStatus.capability === "provider_required" ? "Provider boundary" : "Source details"}</strong>
         <span className="muted">
           {[processorStatus.sourceType ? sourceTypeLabel(processorStatus.sourceType) : null, processorStatus.originalFilename, processorStatus.originalMimeType]
@@ -132,7 +161,7 @@ function ProcessorStatusList({ processorStatus }: { processorStatus?: IntakeAnal
             .join(" · ")}
         </span>
       </CompactListItem>
-      <CompactListItem>
+      <CompactListItem className="meeting-processor-status-item">
         <strong>Processor status</strong>
         <span className="muted">
           {[capabilityLabel(processorStatus.capability), conversionLabel(processorStatus.conversionMode), processorStatus.extractionMethod]
@@ -141,25 +170,25 @@ function ProcessorStatusList({ processorStatus }: { processorStatus?: IntakeAnal
         </span>
       </CompactListItem>
       {processorStatus.requiredProvider ? (
-        <CompactListItem>
+        <CompactListItem className="meeting-processor-status-item">
           <strong>Required provider</strong>
           <span className="muted">{providerLabel(processorStatus.requiredProvider)}</span>
         </CompactListItem>
       ) : null}
       {processorStatus.failureCode ? (
-        <CompactListItem>
+        <CompactListItem className="meeting-processor-status-item">
           <strong>Failure code</strong>
           <span className="muted">{processorStatus.failureCode}</span>
         </CompactListItem>
       ) : null}
       {processorStatus.message ? (
-        <CompactListItem>
+        <CompactListItem className="meeting-processor-status-item">
           <strong>Status message</strong>
           <span className="muted">{processorStatus.message}</span>
         </CompactListItem>
       ) : null}
       {processorStatus.warnings?.map((warning) => (
-        <CompactListItem key={warning}>
+        <CompactListItem className="meeting-processor-status-item" key={warning}>
           <Badge>{warning}</Badge>
         </CompactListItem>
       ))}

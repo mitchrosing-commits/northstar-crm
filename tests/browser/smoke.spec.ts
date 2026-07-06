@@ -189,6 +189,10 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "New intake" })).toBeVisible();
         await expect(page.getByLabel("Source type")).toBeVisible();
         await expect(page.getByLabel("Meeting notes or transcript")).toBeVisible();
+        await expect(page.getByLabel("Meeting Intelligence upload capability guidance")).toBeVisible();
+        await expect(page.getByText("Local extraction")).toBeVisible();
+        await expect(page.getByText("Direct and multipart upload")).toBeVisible();
+        await expect(page.getByText("Review-first apply")).toBeVisible();
         await expect(page.getByRole("button", { name: "Analyze intake" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Recent intakes" })).toBeVisible();
       }
@@ -286,12 +290,65 @@ test.describe("Northstar CRM browser smoke", () => {
     await expectPageReady(page, `/meeting-intelligence/${intake.id}`);
     await expect(page.getByRole("heading", { name: "Review Intake" })).toBeVisible();
     await expect(page.getByLabel("Status: Ready for review")).toBeVisible();
+    await expect(page.getByLabel("Meeting Intelligence review summary")).toBeVisible();
+    await expect(page.getByText("Editable proposals only until you apply.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Meeting Log" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Matches and Warnings" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Proposed Notes" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Follow-Ups" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Normalized Markdown" })).toBeVisible();
+    await expect(page.getByText("Review-first safety")).toBeVisible();
+    await expect(page.getByText("Nothing is written to notes, activities, associations, or Relationship Brief fields")).toBeVisible();
     await expect(page.getByText("Evidence:").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Apply selected updates" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Apply reviewed Meeting Intelligence updates" })).toBeVisible();
+  });
+
+  test("renders Relationship Brief guidance, history filters, and source details", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const browserFlowSuffix = registerBrowserFlowSuffix();
+    const contact = await createRelationshipBriefSmokeContact(browserFlowSuffix);
+    const auditCountBefore = await prisma.auditLog.count({
+      where: { action: "person.updated", entityId: contact.id, entityType: "Person", workspaceId: smokeAuth.workspaceId }
+    });
+
+    await expectPageReady(page, contact.path);
+    const panel = page.locator("#relationship-brief");
+    await expect(panel.getByRole("heading", { exact: true, name: "Relationship Brief" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: /Edit relationship brief for/ })).toBeVisible();
+    await expect(panel.getByText("Rockies fan; prefers implementation stories.")).toBeVisible();
+
+    const usageGuidance = panel.locator(".relationship-brief-usage-details");
+    await usageGuidance.getByText("Usage guidance").click();
+    const usageBadges = usageGuidance.locator(".badge");
+    await expect(usageBadges.getByText("Safe personalization", { exact: true })).toBeVisible();
+    await expect(usageBadges.getByText("Use for tone", { exact: true })).toBeVisible();
+    await expect(usageBadges.getByText("Use cautiously", { exact: true })).toBeVisible();
+    await expect(usageBadges.getByText("Internal only", { exact: true })).toBeVisible();
+    await expect(usageBadges.getByText("Do not mention directly", { exact: true }).first()).toBeVisible();
+
+    await expect(panel.getByRole("heading", { name: "Recent Relationship Brief Changes" })).toBeVisible();
+    await expect(panel.locator(".relationship-brief-history-source-filter").getByText("Source", { exact: true })).toBeVisible();
+    const fieldFilter = panel.locator(".relationship-brief-history-field-filter select");
+    await expect(fieldFilter).toBeVisible();
+    await fieldFilter.selectOption({ label: "Communication style" });
+    await expect(panel.locator(".relationship-brief-change-card").filter({ hasText: "Communication style" })).toBeVisible();
+
+    await panel.getByRole("button", { name: "Manual" }).click();
+    await expect(panel.getByText("No Relationship Brief changes match these filters.")).toBeVisible();
+    await panel.getByRole("button", { name: "Meeting Intelligence" }).click();
+    const changeCard = panel.locator(".relationship-brief-change-card").filter({ hasText: "Communication style" }).first();
+    await expect(changeCard).toBeVisible();
+
+    await changeCard.getByText("View source details").click();
+    await expect(changeCard.getByText("Review-first Meeting Intelligence provenance")).toBeVisible();
+    await expect(changeCard.getByText("Browser Relationship Brief review", { exact: true })).toBeVisible();
+    await expect(changeCard.getByText("Accepted reviewed facts")).toBeVisible();
+    await expect(changeCard.getByText("Prefers concise morning email summaries.", { exact: true }).first()).toBeVisible();
+
+    const auditCountAfter = await prisma.auditLog.count({
+      where: { action: "person.updated", entityId: contact.id, entityType: "Person", workspaceId: smokeAuth.workspaceId }
+    });
+    expect(auditCountAfter, "Opening Relationship Brief guidance and source details should not mutate CRM history").toBe(auditCountBefore);
   });
 
   test("creates linked CRM records and completes a follow-up from the UI", async ({ page }) => {
@@ -1131,6 +1188,64 @@ async function communicationDealDetailPath() {
     select: { id: true }
   });
   return `/deals/${deal.id}`;
+}
+
+async function createRelationshipBriefSmokeContact(suffix: string) {
+  const contact = await prisma.person.create({
+    data: {
+      email: `browser-flow-${suffix}@example.test`,
+      firstName: "Browser",
+      lastName: `Relationship Brief ${suffix}`,
+      ownerId: smokeAuth.actorUserId,
+      relationshipBusinessConcerns: "Wants proof that onboarding will not disrupt active customer work.",
+      relationshipCommunicationStyle: "Prefers concise morning email summaries.",
+      relationshipFollowUpReminders: "Ask whether the enablement team has finished the rollout checklist.",
+      relationshipInternalGuidance: "Keep the implementation-risk discussion internal unless the contact raises it.",
+      relationshipPersonalContext: "Rockies fan; prefers implementation stories.",
+      workspaceId: smokeAuth.workspaceId
+    },
+    select: { id: true, firstName: true, lastName: true }
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: "person.updated",
+      actorId: smokeAuth.actorUserId,
+      entityId: contact.id,
+      entityType: "Person",
+      metadata: {
+        relationshipBriefChanges: [
+          {
+            acceptedFactCount: 1,
+            acceptedFacts: ["Prefers concise morning email summaries."],
+            changedAt: "2030-06-01T15:30:00.000Z",
+            field: "relationshipCommunicationStyle",
+            fieldLabel: "Communication style",
+            newValue: "Prefers concise morning email summaries.",
+            previousValue: null,
+            source: {
+              intakeId: `browser-relationship-brief-${suffix}`,
+              occurredAt: "2030-06-01T14:00:00.000Z",
+              title: "Browser Relationship Brief review",
+              type: "meeting_intelligence"
+            },
+            target: {
+              id: contact.id,
+              label: `${contact.firstName} ${contact.lastName}`,
+              type: "person"
+            }
+          }
+        ],
+        source: { type: "meeting_intelligence" }
+      },
+      workspaceId: smokeAuth.workspaceId
+    }
+  });
+
+  return {
+    id: contact.id,
+    name: `${contact.firstName} ${contact.lastName}`,
+    path: `/contacts/${contact.id}`
+  };
 }
 
 async function demoWorkspaceId() {

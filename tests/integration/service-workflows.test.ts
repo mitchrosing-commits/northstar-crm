@@ -3177,6 +3177,10 @@ describe("database-backed CRM service workflows", () => {
     const auditCountAfterUpdate = await fx.prisma.auditLog.count({
       where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId }
     });
+    const updateAuditLog = await fx.prisma.auditLog.findFirstOrThrow({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId },
+      orderBy: { createdAt: "desc" }
+    });
     const noop = await crm.updatePerson(fx.actorA, personId, {
       relationshipPersonalContext: "Rockies fan; mentioned a Colorado trip with family."
     });
@@ -3185,6 +3189,13 @@ describe("database-backed CRM service workflows", () => {
     });
     const cleared = await crm.updatePerson(fx.actorA, personId, {
       relationshipFollowUpReminders: "   "
+    });
+    const auditCountAfterClear = await fx.prisma.auditLog.count({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId }
+    });
+    const clearAuditLog = await fx.prisma.auditLog.findFirstOrThrow({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId },
+      orderBy: { createdAt: "desc" }
     });
 
     expect(updated).toMatchObject({
@@ -3203,9 +3214,55 @@ describe("database-backed CRM service workflows", () => {
       relationshipInternalGuidance: "Use naturally for thoughtful follow-up; do not over-personalize."
     });
     expect(auditCountAfterUpdate).toBe(auditCountBefore + 1);
+    expect(updateAuditLog.metadata).toMatchObject({
+      relationshipBriefChanges: expect.arrayContaining([
+        expect.objectContaining({
+          acceptedFactCount: 0,
+          acceptedFacts: [],
+          actorId: fx.userA.id,
+          field: "relationshipPersonalContext",
+          fieldLabel: "Personal context",
+          newValue: "Rockies fan; mentioned a Colorado trip with family.",
+          previousValue: null,
+          source: { type: "manual" },
+          target: expect.objectContaining({
+            id: personId,
+            label: expect.any(String),
+            type: "person"
+          })
+        }),
+        expect.objectContaining({
+          field: "relationshipInternalGuidance",
+          fieldLabel: "Internal guidance",
+          source: { type: "manual" }
+        })
+      ]),
+      source: { type: "manual" }
+    });
+    expect(JSON.stringify(detail.auditLogs)).toContain("relationshipBriefChanges");
     expect(noop.relationshipPersonalContext).toBe("Rockies fan; mentioned a Colorado trip with family.");
     expect(auditCountAfterNoop).toBe(auditCountAfterUpdate);
     expect(cleared.relationshipFollowUpReminders).toBeNull();
+    expect(auditCountAfterClear).toBe(auditCountAfterNoop + 1);
+    expect(clearAuditLog.metadata).toMatchObject({
+      relationshipBriefChanges: [
+        expect.objectContaining({
+          field: "relationshipFollowUpReminders",
+          fieldLabel: "Follow-up reminders",
+          newValue: null,
+          previousValue: "Ask how the Colorado trip went.",
+          source: { type: "manual" }
+        })
+      ],
+      source: { type: "manual" }
+    });
+    const detailAfterHistoryRead = await crm.getPerson(fx.actorA, personId);
+    const auditCountAfterHistoryRead = await fx.prisma.auditLog.count({
+      where: { workspaceId: fx.workspaceA.id, action: "person.updated", entityType: "Person", entityId: personId }
+    });
+    expect(auditCountAfterHistoryRead).toBe(auditCountAfterClear);
+    expect(JSON.stringify(detailAfterHistoryRead.auditLogs)).toContain("relationshipBriefChanges");
+    expect(JSON.stringify(detailAfterHistoryRead.auditLogs)).toContain("manual");
 
     await expect(
       crm.updatePerson(fx.actorB, personId, {

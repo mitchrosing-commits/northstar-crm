@@ -138,7 +138,7 @@ export type ProposedNote = {
   evidence: string[];
   id: string;
   include: boolean;
-  kind: "meeting_summary" | "personal_fact" | "company_fact" | "deal_fact";
+  kind: "meeting_summary" | "personal_fact" | "company_fact" | "deal_fact" | "lead_fact";
   matchedReason?: string;
   target: CrmTarget | null;
   targetWarning?: string;

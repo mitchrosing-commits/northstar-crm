@@ -295,6 +295,7 @@ describe("dashboard summary behavior", () => {
     expect(globalStyles).toContain(".dashboard-action-list");
     expect(globalStyles).toContain(".dashboard-action-card");
     expect(globalStyles).toContain(".dashboard-action-card-critical");
+    expect(globalStyles).toContain(".dashboard-action-copy small");
     expect(dashboardPage).toContain("Recent Won / Lost Movement");
     expect(dashboardPage).toContain('title="Recent Won / Lost Movement"');
     expect(dashboardPage).toContain(
@@ -328,6 +329,12 @@ describe("dashboard summary behavior", () => {
     );
     expect(globalStyles).toContain(".needs-attention-item .panel-title-row");
     expect(globalStyles).toContain(".needs-attention-item .compact-title");
+    expect(globalStyles).toContain(".content-grid > *");
+    expect(globalStyles).toContain(".dashboard-action-count");
+    expect(globalStyles).toContain("width: 42px");
+    expect(globalStyles).toContain(".command-card strong");
+    expect(globalStyles).toContain(".pipeline-summary div");
+    expect(globalStyles).toContain("min-height: 82px");
     expect(globalStyles).not.toContain(".needs-attention-item h3");
     expect(dashboardPage).toContain("function DashboardCommandCard");
     expect(dashboardPage).toContain("function dashboardWorkQueueHref");

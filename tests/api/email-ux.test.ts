@@ -189,16 +189,12 @@ describe("Email UX v1 discoverability", () => {
       '<div className="empty-state email-provider-empty">',
     );
     expect(emailPage).toContain('className="data-card section-separated"');
-    expect(emailPage).toContain(
-      "Northstar syncs recent email metadata/snippets from connected providers",
-    );
-    expect(emailPage).toContain("does not import");
-    expect(emailPage).toContain("full inboxes");
-    expect(emailPage).toContain("attachments");
-    expect(emailPage).toContain("full message bodies");
-    expect(emailPage).toContain("send email yet");
+    expect(emailPage).toContain("Gmail Full Inbox sync stores recent inbox messages and full readable bodies");
+    expect(emailPage).toContain("Replies");
+    expect(emailPage).toContain("are sent only from an explicit user action");
+    expect(emailPage).toContain("Microsoft sync remains metadata-focused and CRM-matched for now.");
     expect(emailPage).toContain("Unmatched");
-    expect(emailPage).toContain("messages are skipped.");
+    expect(emailPage).toContain("Northstar is not storing unmatched inbox history.");
     expect(emailPage).toContain("majorProviderCards.map");
     expect(emailPage).toContain("provider.name");
     expect(emailPage).toContain(
@@ -233,25 +229,41 @@ describe("Email UX v1 discoverability", () => {
       "const providerSyncLabel = provider.syncLabel ?? \"Sync recent Gmail\"",
     );
     expect(emailPage).toContain(
-      "const providerSyncActionLabel = `${providerSyncLabel}: import recent matched ${provider.name} messages`",
+      "const providerDisconnectLabel = `Disconnect ${provider.name} account ${provider.accountEmail ?? \"\"}`.trim()",
     );
+    expect(emailPage).toContain(
+      "const providerSyncActionLabel =",
+    );
+    expect(emailPage).toContain("const showDisconnect = shouldShowProviderDisconnect(provider)");
+    expect(emailPage).toContain("`${providerSyncLabel}: import recent matched ${provider.name} messages`");
+    expect(emailPage).toContain("`${providerSyncLabel}: store recent Gmail inbox threads`");
     expect(emailPage).toContain("import { ActionGroup }");
     expect(emailPage).toContain('<ActionGroup className="filter-actions" label={providerActionsLabel}>');
     expect(emailPage).toContain("aria-label={providerPrimaryActionLabel}");
     expect(emailPage).toContain("title={providerPrimaryActionLabel}");
     expect(emailPage).toContain("aria-label={providerSyncActionLabel}");
     expect(emailPage).toContain("title={providerSyncActionLabel}");
+    expect(emailPage).toContain("aria-label={providerDisconnectLabel}");
+    expect(emailPage).toContain("title={providerDisconnectLabel}");
     expect(emailPage).toContain("provider.syncAvailable");
-    expect(emailPage).toContain("syncRecentGmailFromEmailPageAction");
+    expect(emailPage).toContain("provider.disconnectAvailable");
+    expect(emailPage).toContain("syncGmailInboxFromEmailPageAction");
     expect(emailPage).toContain("syncRecentMicrosoftFromEmailPageAction");
-    expect(emailPage).toContain("Sync recent Gmail");
-    expect(emailPage).toContain("Sync recent Google Workspace");
+    expect(emailPage).toContain("disconnectEmailProviderFromEmailPageAction");
+    expect(emailPage).toContain('value={provider.provider}');
+    expect(emailPage).toContain("Disconnect");
+    expect(emailPage).toContain("Sync Gmail inbox");
+    expect(emailPage).toContain("Sync Google Workspace inbox");
     expect(emailPage).toContain("Sync recent Microsoft 365 mail");
     expect(emailPage).toContain("Sync recent Outlook mail");
     expect(emailPage).toContain("href={provider.href as Route}");
     expect(emailPage).toContain("Connected account: {provider.accountEmail}");
     expect(emailPage).toContain("Last sync: {formatDate(provider.lastSyncAt)}");
     expect(emailPage).toContain("Last sync issue: {provider.lastError}");
+    expect(emailPage).toContain("Background sync: {provider.syncStatusLabel}");
+    expect(emailConnectionService).toContain("syncStatusLabel?: string | null");
+    expect(emailConnectionService).toContain("syncStatusDetail?: string | null");
+    expect(emailConnectionService).toContain("gmailSyncJobStatus(syncJob)");
     expect(emailConnectionService).toContain("Connect Gmail");
     expect(emailConnectionService).toContain("Reconnect Gmail");
     expect(emailConnectionService).toContain("Connect Microsoft");
@@ -264,6 +276,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain(
       "if (provider.syncAvailable) return `Reconnect ${label}`",
     );
+    expect(emailPage).toContain("function shouldShowProviderDisconnect");
+    expect(emailPage).toContain('provider.name === "Gmail"');
+    expect(emailPage).toContain('provider.name === "Microsoft 365"');
     expect(emailPage).toContain(
       "Microsoft 365 uses the Microsoft Graph provider path.",
     );
@@ -278,6 +293,11 @@ describe("Email UX v1 discoverability", () => {
     expect(emailConnectionService).toContain(
       "Add the Microsoft OAuth client id, client secret, redirect URI, and token encryption key",
     );
+    expect(emailConnectionService).toContain("export async function disconnectEmailConnection");
+    expect(emailConnectionService).toContain("emailConnectionSecret.deleteMany");
+    expect(emailConnectionService).toContain('status: "DISCONNECTED"');
+    expect(emailConnectionService).toContain("deletedAt: new Date()");
+    expect(emailConnectionService).toContain("email_connection.disconnected");
     expect(emailConnectionService).toContain(
       "Planned fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, custom domains, and hosting-provider email.",
     );
@@ -288,6 +308,12 @@ describe("Email UX v1 discoverability", () => {
 
   it("runs manual Gmail sync from the email page and reports matched, duplicate, and skipped counts", () => {
     expect(emailActions).toContain('"use server"');
+    expect(emailActions).toContain("enqueueGmailInboxSyncJob(actor)");
+    expect(emailActions).toContain("/email?emailConnection=gmail-sync-queued");
+    expect(emailActions).toContain("syncOlderGmailInboxMessages({ actor, before })");
+    expect(emailActions).toContain("refreshGmailInboxThread({ actor, threadId })");
+    expect(emailActions).toContain("emailConnection: \"gmail-loaded-more\"");
+    expect(emailActions).toContain("emailConnection: \"gmail-thread-refreshed\"");
     expect(emailActions).toContain(
       "syncRecentGmailMessages({ actor, maxResults: 10 })",
     );
@@ -329,9 +355,15 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain("style={{ marginBottom: 12 }}");
     expect(emailPage).not.toContain("style={{ marginTop: 8 }}");
     expect(emailPage).not.toContain("style={{ marginTop: 12 }}");
-    expect(emailPage).toContain("Recent Gmail sync finished.");
+    expect(emailPage).toContain("Gmail Full Inbox sync finished.");
+    expect(emailPage).toContain("Gmail Full Inbox sync was queued.");
+    expect(emailPage).toContain("Older Gmail messages loaded.");
+    expect(emailPage).toContain("Gmail thread refreshed.");
     expect(emailPage).toContain("skipped ${searchParams.skipped");
     expect(emailPage).toContain("duplicate");
+    expect(emailPage).toContain("Gmail disconnected.");
+    expect(emailPage).toContain("Encrypted OAuth tokens were removed");
+    expect(emailPage).toContain("email-disconnect-error");
   });
 
   it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
@@ -354,6 +386,15 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain("<h3>{preview.subject}</h3>");
     expect(globalCss).toContain(".email-command-card .panel-title-row");
     expect(globalCss).toContain(".email-command-card .compact-title");
+    expect(globalCss).toContain(".email-inbox-thread-detail .email-inbox-thread-subject");
+    expect(globalCss).toContain(".email-inbox-load-more");
+    expect(globalCss).toContain(".email-inbox-message-list .email-preview");
+    expect(emailPage).toContain("Load older messages");
+    expect(emailPage).toContain("Refresh thread");
+    expect(emailPage).toContain("oldestInboxMessageDate(inboxThreads)");
+    expect(globalCss).toContain(".email-draft-panel summary");
+    expect(globalCss).toContain(".email-linked-follow-up-row > *");
+    expect(globalCss).toContain(".email-linked-follow-up-title {\n    white-space: normal;");
     expect(globalCss).not.toContain(".email-command-card-header");
     expect(globalCss).not.toContain(".email-command-card h3");
     expect(emailPage).toContain("formatEmailProvider(emailLog.provider)");
@@ -402,6 +443,11 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain(
       '<span className="muted">No linked CRM record</span>',
     );
+    expect(globalCss).toContain(".relationship-inbox-evidence-excerpt");
+    expect(globalCss).toContain(".relationship-inbox-evidence-chip");
+    expect(globalCss).toContain(".relationship-inbox-action-detail > p");
+    expect(globalCss).toContain(".relationship-inbox-next-action p");
+    expect(globalCss).toContain("overflow-wrap: anywhere;");
     expect(inlineEmptyStateText).toContain("inline-empty-state-text");
     expect(emailPage).toContain("Create deal");
     expect(emailPage).toContain(
@@ -450,7 +496,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("No matches yet");
   });
 
-  it("adds follow-up drafting without send scopes or provider sending", () => {
+  it("keeps draft-only follow-up separate from explicit Gmail replies", () => {
     expect(emailPage).toContain("EmailDraftPanel");
     expect(emailDraftPanel).toContain(
       "Draft only. Northstar does not send this email or request send scopes.",
@@ -487,7 +533,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailDraftPanel).toContain("Checking in");
     expect(emailDraftPanel).toContain("Quote / proposal follow-up");
     expect(emailConnectionService).not.toContain("Mail.Send");
-    expect(emailConnectionService).not.toContain("gmail.send");
+    expect(emailConnectionService).toContain("gmail.send");
+    expect(emailPage).toContain("Explicit send only.");
+    expect(emailPage).toContain("sendGmailReplyFromEmailPageAction");
   });
 
   it("keeps empty email state and record-page email cues clear", () => {

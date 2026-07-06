@@ -1,37 +1,40 @@
-import { ActivityType, MembershipRole, PrismaClient } from "@prisma/client";
+import { ActivityType, MembershipRole, Prisma, PrismaClient } from "@prisma/client";
 
 type IntegrationFixture = Awaited<ReturnType<typeof createIntegrationFixture>>;
 
 export async function createIntegrationFixture() {
   const prisma = await getPrisma();
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const [userA, userB] = await Promise.all([
-    prisma.user.create({
+
+  const { recordsA, recordsB, userA, userB, workspaceA, workspaceB } = await prisma.$transaction(async (tx) => {
+    const userA = await tx.user.create({
       data: { email: `integration-a-${suffix}@example.test`, name: "Integration A" }
-    }),
-    prisma.user.create({
+    });
+    const userB = await tx.user.create({
       data: { email: `integration-b-${suffix}@example.test`, name: "Integration B" }
-    })
-  ]);
+    });
 
-  const workspaceA = await prisma.workspace.create({
-    data: {
-      name: `Integration A ${suffix}`,
-      slug: `integration-a-${suffix}`,
-      memberships: { create: { userId: userA.id, role: MembershipRole.OWNER } }
-    }
+    const workspaceA = await tx.workspace.create({
+      data: {
+        name: `Integration A ${suffix}`,
+        slug: `integration-a-${suffix}`,
+        memberships: { create: { role: MembershipRole.OWNER, user: { connect: { id: userA.id } } } }
+      }
+    });
+
+    const workspaceB = await tx.workspace.create({
+      data: {
+        name: `Integration B ${suffix}`,
+        slug: `integration-b-${suffix}`,
+        memberships: { create: { role: MembershipRole.OWNER, user: { connect: { id: userB.id } } } }
+      }
+    });
+
+    const recordsA = await createWorkspaceGraph(tx, workspaceA.id, userA.id, "Alpha");
+    const recordsB = await createWorkspaceGraph(tx, workspaceB.id, userB.id, "Beta");
+
+    return { recordsA, recordsB, userA, userB, workspaceA, workspaceB };
   });
-
-  const workspaceB = await prisma.workspace.create({
-    data: {
-      name: `Integration B ${suffix}`,
-      slug: `integration-b-${suffix}`,
-      memberships: { create: { userId: userB.id, role: MembershipRole.OWNER } }
-    }
-  });
-
-  const recordsA = await createWorkspaceGraph(prisma, workspaceA.id, userA.id, "Alpha");
-  const recordsB = await createWorkspaceGraph(prisma, workspaceB.id, userB.id, "Beta");
 
   return {
     prisma,
@@ -93,7 +96,12 @@ export async function getPrisma() {
   return prisma;
 }
 
-async function createWorkspaceGraph(prisma: PrismaClient, workspaceId: string, ownerId: string, label: string) {
+async function createWorkspaceGraph(
+  prisma: PrismaClient | Prisma.TransactionClient,
+  workspaceId: string,
+  ownerId: string,
+  label: string
+) {
   const pipeline = await prisma.pipeline.create({
     data: {
       workspaceId,

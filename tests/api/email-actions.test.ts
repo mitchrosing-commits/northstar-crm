@@ -6,9 +6,14 @@ const mocks = vi.hoisted(() => ({
   classifyEmailLog: vi.fn(),
   cookieSet: vi.fn(),
   createEmailFollowUpActivity: vi.fn(),
+  disconnectEmailConnection: vi.fn(),
+  enqueueGmailInboxSyncJob: vi.fn(),
   generateEmailReplyDraft: vi.fn(),
   getCurrentWorkspaceContext: vi.fn(),
+  refreshGmailInboxThread: vi.fn(),
+  sendGmailReplyFromEmailLog: vi.fn(),
   redirect: vi.fn(),
+  syncOlderGmailInboxMessages: vi.fn(),
   syncRecentGmailMessages: vi.fn(),
   syncRecentMicrosoftMessages: vi.fn()
 }));
@@ -30,7 +35,12 @@ vi.mock("@/lib/auth/request-context", () => ({
 vi.mock("@/lib/services/crm", () => ({
   classifyEmailLog: mocks.classifyEmailLog,
   createEmailFollowUpActivity: mocks.createEmailFollowUpActivity,
+  disconnectEmailConnection: mocks.disconnectEmailConnection,
+  enqueueGmailInboxSyncJob: mocks.enqueueGmailInboxSyncJob,
   generateEmailReplyDraft: mocks.generateEmailReplyDraft,
+  refreshGmailInboxThread: mocks.refreshGmailInboxThread,
+  sendGmailReplyFromEmailLog: mocks.sendGmailReplyFromEmailLog,
+  syncOlderGmailInboxMessages: mocks.syncOlderGmailInboxMessages,
   syncRecentGmailMessages: mocks.syncRecentGmailMessages,
   syncRecentMicrosoftMessages: mocks.syncRecentMicrosoftMessages
 }));
@@ -38,7 +48,11 @@ vi.mock("@/lib/services/crm", () => ({
 import {
   classifyEmailLogAction,
   createEmailFollowUpActivityAction,
+  disconnectEmailProviderFromEmailPageAction,
   generateEmailReplyDraftAction,
+  loadOlderGmailInboxFromEmailPageAction,
+  refreshGmailThreadFromEmailPageAction,
+  syncGmailInboxFromEmailPageAction,
   syncRecentGmailFromEmailPageAction,
   syncRecentMicrosoftFromEmailPageAction
 } from "@/app/email/actions";
@@ -72,7 +86,22 @@ describe("email sync server actions", () => {
     });
   });
 
-  it("syncs Gmail, stores a temporary httpOnly review cookie, and redirects with aggregate counts", async () => {
+  it("queues a Full Inbox Gmail sync from the email page without writing a review cookie", async () => {
+    mocks.enqueueGmailInboxSyncJob.mockResolvedValue({
+      dedupeKey: "gmail-inbox-sync:connection_1",
+      jobId: "job_1"
+    });
+
+    await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?emailConnection=gmail-sync-queued"
+    });
+
+    expect(mocks.enqueueGmailInboxSyncJob).toHaveBeenCalledWith(actor);
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("keeps the legacy matched Gmail sync action available for settings", async () => {
     mocks.syncRecentGmailMessages.mockResolvedValue({
       created: 1,
       skippedDuplicates: 2,
@@ -106,6 +135,54 @@ describe("email sync server actions", () => {
       totalFetched: 6,
       unmatchedPreviews: [unmatchedPreview("GOOGLE_WORKSPACE")]
     });
+  });
+
+  it("loads older Gmail inbox messages without writing a review cookie", async () => {
+    mocks.syncOlderGmailInboxMessages.mockResolvedValue({
+      created: 2,
+      skippedDuplicates: 1,
+      skippedUnmatched: 0,
+      totalFetched: 3,
+      unmatchedPreviews: []
+    });
+    const formData = new FormData();
+    formData.set("before", "2030-01-02T00:00:00.000Z");
+    formData.set("threadId", "GOOGLE_WORKSPACE:thread_1");
+
+    await expect(loadOlderGmailInboxFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?created=2&duplicates=1&emailConnection=gmail-loaded-more&total=3&thread=GOOGLE_WORKSPACE%3Athread_1"
+    });
+
+    expect(mocks.syncOlderGmailInboxMessages).toHaveBeenCalledWith({
+      actor,
+      before: "2030-01-02T00:00:00.000Z"
+    });
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a selected Gmail thread without writing a review cookie", async () => {
+    mocks.refreshGmailInboxThread.mockResolvedValue({
+      created: 1,
+      skippedDuplicates: 2,
+      skippedUnmatched: 0,
+      threadId: "thread_1",
+      totalFetched: 3,
+      unmatchedPreviews: []
+    });
+    const formData = new FormData();
+    formData.set("threadId", "GOOGLE_WORKSPACE:thread_1");
+
+    await expect(refreshGmailThreadFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?created=1&duplicates=2&emailConnection=gmail-thread-refreshed&thread=GOOGLE_WORKSPACE%3Athread_1&total=3"
+    });
+
+    expect(mocks.refreshGmailInboxThread).toHaveBeenCalledWith({
+      actor,
+      threadId: "GOOGLE_WORKSPACE:thread_1"
+    });
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
   });
 
   it("syncs Microsoft mail into the same temporary review-cookie flow", async () => {
@@ -144,6 +221,17 @@ describe("email sync server actions", () => {
     expect(mocks.cookieSet).not.toHaveBeenCalled();
   });
 
+  it("redirects queued Gmail sync failures without writing stale review cookies", async () => {
+    mocks.enqueueGmailInboxSyncJob.mockRejectedValue(new Error("provider token raw-secret-token"));
+
+    await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?emailConnection=gmail-sync-error"
+    });
+
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
   it("redirects Microsoft sync failures without writing stale review cookies", async () => {
     mocks.syncRecentMicrosoftMessages.mockRejectedValue(new Error("provider token raw-secret-token"));
 
@@ -153,6 +241,33 @@ describe("email sync server actions", () => {
     });
 
     expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("disconnects an email provider through a workspace-scoped server action", async () => {
+    mocks.disconnectEmailConnection.mockResolvedValue({
+      accountEmail: "alex@example.test",
+      provider: "GOOGLE_WORKSPACE"
+    });
+    const formData = new FormData();
+    formData.set("provider", "GOOGLE_WORKSPACE");
+
+    await expect(disconnectEmailProviderFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?emailConnection=gmail-disconnected"
+    });
+
+    expect(mocks.disconnectEmailConnection).toHaveBeenCalledWith(actor, "GOOGLE_WORKSPACE");
+  });
+
+  it("redirects email disconnect failures without leaking provider details", async () => {
+    mocks.disconnectEmailConnection.mockRejectedValue(new Error("raw-oauth-token"));
+    const formData = new FormData();
+    formData.set("provider", "GOOGLE_WORKSPACE");
+
+    await expect(disconnectEmailProviderFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?emailConnection=email-disconnect-error"
+    });
   });
 
   it("generates review-first AI reply drafts through the current workspace context", async () => {

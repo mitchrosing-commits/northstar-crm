@@ -74,6 +74,11 @@ export function MeetingIntelligenceReview({
     Boolean(selectedRelationshipTargets[index]) && (state.status === "loading" || state.status === "failed")
   );
   const warningCount = meetingReviewWarningCount(draft);
+  const matchedObjectGroups = matchGroups(draft.matchedObjects);
+  const hasMatchReviewSignals = Boolean(draft.sourceMetadata) ||
+    matchedObjectGroups.length > 0 ||
+    draft.warnings.length > 0 ||
+    draft.unmatchedEntities.length > 0;
   const proposedUpdateCount =
     (draft.meetingActivity ? 1 : 0) + draft.notes.length + draft.nextStepActivities.length + relationshipBriefUpdates.length;
   const selectedUpdateCount =
@@ -241,9 +246,17 @@ export function MeetingIntelligenceReview({
     <form className="inline-form" onSubmit={onSubmit}>
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
 
-      <section className="panel" aria-labelledby="meeting-proposal-heading">
+      <ReviewOrientationSummary
+        missingTargetCount={missingTargetCount}
+        proposedUpdateCount={proposedUpdateCount}
+        selectedUpdateCount={selectedUpdateCount}
+        warningCount={warningCount}
+      />
+
+      <section className="panel meeting-review-section" aria-labelledby="meeting-proposal-heading">
         <PanelTitleRow
           actions={<Badge>{draft.meetingActivity?.include ? "Selected" : "Review only"}</Badge>}
+          description="Edit the completed meeting activity before it becomes CRM timeline history."
           title="Meeting Log"
           titleId="meeting-proposal-heading"
         />
@@ -313,68 +326,78 @@ export function MeetingIntelligenceReview({
         )}
       </section>
 
-      <section className="panel" aria-labelledby="matches-heading">
+      <section className="panel meeting-review-section" aria-labelledby="matches-heading">
         <PanelTitleRow
           actions={<CountBadge className="badge">{warningCount} warnings</CountBadge>}
+          description="Confirm the source details, matched CRM records, and any ambiguous or unmatched mentions."
           title="Matches and Warnings"
           titleId="matches-heading"
         />
-        <CompactList>
-          {draft.sourceMetadata ? (
-            <CompactListItem>
-              <strong>Source metadata</strong>
-              <span className="muted">
-                {sourceMetadataDetails(draft.sourceMetadata).join(" · ")}
-              </span>
-              {draft.sourceMetadata.warnings?.map((warning) => (
-                <Badge key={warning}>
-                  {warning}
-                </Badge>
-              ))}
-            </CompactListItem>
-          ) : null}
-          {matchGroups(draft.matchedObjects).map((group) => (
-            <CompactListItem key={group.label}>
-              <strong>{group.label}</strong>
-              <CompactList>
-                {group.matches.map((match) => (
-                  <CompactListItem key={`${match.objectType}-${match.id}`}>
-                    <strong>{match.displayName}</strong>
-                    <span className="muted">
-                      {match.confidence} · {match.matchedReason}
-                    </span>
-                    <span className="muted">{match.evidenceExcerpt}</span>
-                    {match.warning ? <Badge>{match.warning}</Badge> : null}
-                  </CompactListItem>
+        {hasMatchReviewSignals ? (
+          <CompactList className="meeting-match-review-list">
+            {draft.sourceMetadata ? (
+              <CompactListItem>
+                <strong>Source metadata</strong>
+                <span className="muted">
+                  {sourceMetadataDetails(draft.sourceMetadata).join(" · ")}
+                </span>
+                {draft.sourceMetadata.warnings?.map((warning) => (
+                  <Badge key={warning}>
+                    {warning}
+                  </Badge>
                 ))}
-              </CompactList>
-            </CompactListItem>
-          ))}
-          {draft.warnings.map((warning) => (
-            <CompactListItem key={warning}>
-              <Badge>{warning}</Badge>
-            </CompactListItem>
-          ))}
-          {draft.unmatchedEntities.length > 0 ? (
-            <CompactListItem>
-              <strong>Unmatched mentions</strong>
-              <CompactList>
-                {draft.unmatchedEntities.map((entity) => (
-                  <CompactListItem key={`${entity.entityType}-${entity.name}`}>
-                    <strong>{entity.name}</strong>
-                    <span className="muted">{entity.reason}</span>
-                    <span className="muted">{entity.evidenceExcerpt}</span>
-                  </CompactListItem>
-                ))}
-              </CompactList>
-            </CompactListItem>
-          ) : null}
-        </CompactList>
+              </CompactListItem>
+            ) : null}
+            {matchedObjectGroups.map((group) => (
+              <CompactListItem key={group.label}>
+                <strong>{group.label}</strong>
+                <CompactList>
+                  {group.matches.map((match) => (
+                    <CompactListItem key={`${match.objectType}-${match.id}`}>
+                      <strong>{match.displayName}</strong>
+                      <span className="muted">
+                        {match.confidence} · {match.matchedReason}
+                      </span>
+                      <span className="muted">{match.evidenceExcerpt}</span>
+                      {match.warning ? <Badge>{match.warning}</Badge> : null}
+                    </CompactListItem>
+                  ))}
+                </CompactList>
+              </CompactListItem>
+            ))}
+            {draft.warnings.map((warning) => (
+              <CompactListItem key={warning}>
+                <Badge>{warning}</Badge>
+              </CompactListItem>
+            ))}
+            {draft.unmatchedEntities.length > 0 ? (
+              <CompactListItem>
+                <strong>Unmatched mentions</strong>
+                <CompactList>
+                  {draft.unmatchedEntities.map((entity) => (
+                    <CompactListItem key={`${entity.entityType}-${entity.name}`}>
+                      <strong>{entity.name}</strong>
+                      <span className="muted">{entity.reason}</span>
+                      <span className="muted">{entity.evidenceExcerpt}</span>
+                    </CompactListItem>
+                  ))}
+                </CompactList>
+              </CompactListItem>
+            ) : null}
+          </CompactList>
+        ) : (
+          <EmptyState
+            className="empty-state-compact empty-state-panel"
+            description="No confident CRM matches or warnings were found. You can still choose targets manually in each proposal section."
+            title="No match signals found"
+          />
+        )}
       </section>
 
-      <section className="panel" aria-labelledby="notes-heading">
+      <section className="panel meeting-review-section" aria-labelledby="notes-heading">
         <PanelTitleRow
           actions={<CountBadge className="badge">{draft.notes.length} notes</CountBadge>}
+          description="Choose which contact, company, deal, or lead timeline notes to keep and confirm the record each note should land on."
           title="Proposed Notes"
           titleId="notes-heading"
         />
@@ -424,7 +447,7 @@ export function MeetingIntelligenceReview({
         </div>
       </section>
 
-      <section className="panel" aria-labelledby="relationship-brief-heading">
+      <section className="panel meeting-review-section" aria-labelledby="relationship-brief-heading">
         <PanelTitleRow
           actions={<CountBadge className="badge">{relationshipBriefUpdates.length} brief updates</CountBadge>}
           description="Review-first curated memory for matched contacts. Approved additions are merged into the contact profile; empty fields are ignored."
@@ -570,9 +593,10 @@ export function MeetingIntelligenceReview({
         </div>
       </section>
 
-      <section className="panel" aria-labelledby="next-steps-heading">
+      <section className="panel meeting-review-section" aria-labelledby="next-steps-heading">
         <PanelTitleRow
           actions={<CountBadge className="badge">{draft.nextStepActivities.length} follow-ups</CountBadge>}
+          description="Confirm owner, due date, and target before creating follow-up tasks."
           title="Follow-Ups"
           titleId="next-steps-heading"
         />
@@ -643,12 +667,17 @@ export function MeetingIntelligenceReview({
         </div>
       </section>
 
-      <section className="panel" aria-labelledby="markdown-preview-heading">
-        <PanelTitleRow actions={<Badge>Source preview</Badge>} title="Normalized Markdown" titleId="markdown-preview-heading" />
+      <section className="panel meeting-review-section" aria-labelledby="markdown-preview-heading">
+        <PanelTitleRow
+          actions={<Badge>Source preview</Badge>}
+          description="This is the normalized markdown that powered the proposal. Use it to spot extraction or transcription misses before apply."
+          title="Normalized Markdown"
+          titleId="markdown-preview-heading"
+        />
         <pre className="meeting-markdown-preview">{draft.markdown}</pre>
       </section>
 
-      <section className="panel" aria-labelledby="apply-summary-heading">
+      <section className="panel meeting-review-section" aria-labelledby="apply-summary-heading">
         <PanelTitleRow
           actions={<CountBadge className="badge">{selectedUpdateCount} selected</CountBadge>}
           description={`${proposedUpdateCount} proposed updates. ${missingTargetCount} selected updates missing targets.`}
@@ -660,10 +689,12 @@ export function MeetingIntelligenceReview({
             <strong>Default selected updates</strong>
             <span className="muted">{defaultApplySummary(draft)}</span>
           </CompactListItem>
-          {draft.notes.some((note) => !note.target) ||
-          draft.nextStepActivities.some((activity) => !activity.target) ||
-          relationshipBriefUpdates.some((update) => !update.target) ? (
-            <CompactListItem>
+          <CompactListItem className="meeting-apply-safety-note">
+            <strong>Review-first safety</strong>
+            <span className="muted">Nothing is written to notes, activities, associations, or Relationship Brief fields until you apply selected updates.</span>
+          </CompactListItem>
+          {missingTargetCount > 0 ? (
+            <CompactListItem className="meeting-apply-warning">
               <Badge>Untargeted selected updates will be skipped.</Badge>
             </CompactListItem>
           ) : null}
@@ -677,15 +708,49 @@ export function MeetingIntelligenceReview({
         isSaving={isSaving}
         pendingLabel="Applying..."
         submitDisabled={relationshipBriefPreviewBlocked}
+        submitActionLabel="Apply reviewed Meeting Intelligence updates"
         submitLabel="Apply selected updates"
       />
     </form>
   );
 }
 
+function ReviewOrientationSummary({
+  missingTargetCount,
+  proposedUpdateCount,
+  selectedUpdateCount,
+  warningCount
+}: {
+  missingTargetCount: number;
+  proposedUpdateCount: number;
+  selectedUpdateCount: number;
+  warningCount: number;
+}) {
+  return (
+    <section className="meeting-review-overview" aria-label="Meeting Intelligence review summary">
+      <div className="meeting-review-overview-item">
+        <strong>Review-first</strong>
+        <span>Editable proposals only until you apply.</span>
+      </div>
+      <div className="meeting-review-overview-item">
+        <strong>{selectedUpdateCount}/{proposedUpdateCount} selected</strong>
+        <span>Notes, logs, follow-ups, and brief updates stay optional.</span>
+      </div>
+      <div className="meeting-review-overview-item">
+        <strong>{warningCount} warnings</strong>
+        <span>Check source, match, and sensitivity signals.</span>
+      </div>
+      <div className="meeting-review-overview-item">
+        <strong>{missingTargetCount} need targets</strong>
+        <span>Selected untargeted updates are skipped at apply.</span>
+      </div>
+    </section>
+  );
+}
+
 function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets: CrmTarget[]; summary: string }) {
   return (
-    <CompactList>
+    <CompactList className="meeting-proposal-evidence">
       <CompactListItem>
         <strong>Meeting summary</strong>
         <span className="muted">{summary}</span>
@@ -816,6 +881,7 @@ function noteKindLabel(kind: ProposedNote["kind"]) {
   if (kind === "personal_fact") return "Personal facts";
   if (kind === "company_fact") return "Company facts";
   if (kind === "deal_fact") return "Deal facts";
+  if (kind === "lead_fact") return "Lead facts";
   return "Meeting summary";
 }
 
@@ -860,19 +926,32 @@ function relationshipAfterApplyPreviewText(
 }
 
 function RelationshipBriefTargetStatus({ state, target }: { state: RelationshipBriefTargetState; target: CrmTarget | null }) {
-  if (!target) return <p className="form-hint">Select a contact to preview existing Relationship Brief values before apply.</p>;
+  if (!target) {
+    return (
+      <p className="form-hint relationship-brief-target-status">
+        Select a contact to preview existing Relationship Brief values before apply.
+      </p>
+    );
+  }
   if (state.status === "loading") {
-    return <p className="form-hint" aria-live="polite">Loading target Relationship Brief for {target.label ?? target.id}...</p>;
+    return (
+      <p className="form-hint relationship-brief-target-status relationship-brief-target-status-loading" aria-live="polite">
+        Loading target Relationship Brief for {target.label ?? target.id}...
+      </p>
+    );
   }
   if (state.status === "failed") {
     return (
-      <p className="form-hint form-hint-danger" aria-live="polite">
+      <p
+        className="form-hint form-hint-danger relationship-brief-target-status relationship-brief-target-status-failed"
+        aria-live="polite"
+      >
         {state.error ?? "Could not load the selected contact Relationship Brief."}
       </p>
     );
   }
   return (
-    <p className="form-hint" aria-live="polite">
+    <p className="form-hint relationship-brief-target-status relationship-brief-target-status-ready" aria-live="polite">
       Previewing current Relationship Brief for {target.label ?? target.id}.
     </p>
   );
@@ -1206,7 +1285,12 @@ function ApplyResult({ result }: { result: ApplyMeetingIntelligenceResult }) {
 
   return (
     <section className="panel" aria-labelledby="applied-updates-heading">
-      <PanelTitleRow title="Applied Updates" titleId="applied-updates-heading" />
+      <PanelTitleRow
+        description="Created updates are linked below. Skipped items did not mutate CRM data."
+        title="Applied Updates"
+        titleId="applied-updates-heading"
+      />
+      <p className="compact-success meeting-apply-success">Meeting Intelligence apply complete. Review created CRM records below.</p>
       {result.created.length > 0 ? (
         <CompactList>
           {result.created.map((created) => (

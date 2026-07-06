@@ -17,6 +17,9 @@
   --red: #b42318;
   --blue: #2563eb;
   --green: #166534;
+  --brand: var(--accent);
+  --border: var(--line);
+  --danger: var(--red);
   --shadow: 0 1px 2px rgb(23 33 29 / 0.06), 0 10px 28px rgb(23 33 29 / 0.08);
   --shadow-soft: 0 1px 2px rgb(23 33 29 / 0.05);
 }
@@ -727,7 +730,7 @@ textarea {
 
 .search-action-panel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 14px;
   margin-top: 14px;
 }
@@ -760,6 +763,7 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   align-items: start;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-muted);
@@ -795,6 +799,7 @@ textarea {
 
 .search-action-link strong {
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .search-action-link-copy span {
@@ -817,6 +822,11 @@ textarea {
   width: 100%;
 }
 
+.search-empty-create-actions > *,
+.search-empty-list-actions > * {
+  max-width: 100%;
+}
+
 .search-empty-list-actions > span {
   color: var(--muted);
   font-size: 12px;
@@ -827,7 +837,7 @@ textarea {
 
 .search-result-overview {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 104px), 1fr));
   gap: 8px;
   margin-top: 14px;
   padding: 12px;
@@ -912,6 +922,8 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
@@ -947,11 +959,18 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+}
+
+.search-result-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .search-result-status {
   display: inline-flex;
   flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .search-result-side {
@@ -959,6 +978,8 @@ textarea {
   flex: 0 0 auto;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .result-row-actions {
@@ -966,6 +987,8 @@ textarea {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .result-row-actions .button-compact {
@@ -986,6 +1009,11 @@ textarea {
 .stat-card {
   padding: 16px;
   min-height: 94px;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 
 .stat-card-link {
@@ -1037,6 +1065,10 @@ textarea {
   margin-bottom: 14px;
 }
 
+.content-grid > * {
+  min-width: 0;
+}
+
 .command-strip,
 .pipeline-summary {
   display: grid;
@@ -1073,7 +1105,9 @@ textarea {
 
 .command-card {
   display: grid;
-  gap: 4px;
+  align-content: start;
+  gap: 6px;
+  min-height: 108px;
   padding: 16px;
 }
 
@@ -1102,11 +1136,14 @@ textarea {
   color: var(--text);
   font-size: 24px;
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .command-card small {
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-action-list {
@@ -1117,7 +1154,7 @@ textarea {
 
 .dashboard-action-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: 42px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   border: 1px solid var(--line);
@@ -1148,8 +1185,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 34px;
-  min-height: 34px;
+  width: 42px;
+  min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -1168,12 +1205,14 @@ textarea {
   color: var(--text);
   font-size: 14px;
   line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-action-copy small {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .pipeline-summary {
@@ -1182,8 +1221,11 @@ textarea {
 
 .pipeline-summary div {
   display: grid;
-  gap: 5px;
+  align-content: start;
+  gap: 6px;
+  min-height: 82px;
   padding: 14px;
+  background: linear-gradient(180deg, var(--surface), var(--surface-strong));
 }
 
 .record-summary {
@@ -1203,6 +1245,7 @@ textarea {
   margin: 0;
   font-size: 18px;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .record-summary-heading {
@@ -1218,13 +1261,19 @@ textarea {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .record-summary-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
+}
+
+.record-summary-actions > * {
   max-width: 100%;
 }
 
@@ -1232,6 +1281,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1265,6 +1315,7 @@ textarea {
 
 .record-panel-jump-link {
   gap: 6px;
+  min-width: 0;
 }
 
 .record-panel-jump-link-muted {
@@ -1283,6 +1334,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   min-width: 18px;
   min-height: 18px;
   border-radius: 999px;
@@ -1295,7 +1347,7 @@ textarea {
 
 .record-summary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 10px;
   margin: 0;
 }
@@ -1559,6 +1611,10 @@ textarea {
   align-items: start;
 }
 
+.api-reference-grid > * {
+  min-width: 0;
+}
+
 .api-resource-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1570,16 +1626,22 @@ textarea {
   display: grid;
   gap: 10px;
   align-content: start;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
   background: #fff;
 }
 
+.api-resource-card .compact-title {
+  overflow-wrap: anywhere;
+}
+
 .api-resource-card p {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .endpoint-list {
@@ -1589,6 +1651,11 @@ textarea {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.endpoint-list li {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .endpoint-list code,
@@ -1919,6 +1986,12 @@ textarea {
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.table-row-actions form {
+  min-width: 0;
 }
 
 .crm-list-table {
@@ -2042,6 +2115,7 @@ textarea {
 
 .needs-attention-item .compact-title {
   font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 .needs-attention-item .empty-copy {
@@ -2165,6 +2239,7 @@ textarea {
 }
 
 .stage-column {
+  min-width: 276px;
   min-height: 520px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2182,9 +2257,15 @@ textarea {
   min-height: 40px;
 }
 
+.stage-header > div {
+  min-width: 0;
+}
+
 .stage-title {
   margin: 0 0 2px;
   font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .stage-meta {
@@ -2192,12 +2273,17 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .stage-total {
+  max-width: 38%;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2230,6 +2316,7 @@ textarea {
 .deal-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
   padding: 0;
   box-shadow: var(--shadow-soft);
   transition:
@@ -2255,6 +2342,7 @@ textarea {
 .deal-card-link {
   display: grid;
   gap: 8px;
+  min-width: 0;
   border-radius: 8px;
   padding: 12px 12px 0;
   cursor: pointer;
@@ -2274,7 +2362,12 @@ textarea {
 .deal-card .compact-title {
   font-size: 14px;
   line-height: 1.3;
+  overflow-wrap: anywhere;
   transition: color 140ms ease;
+}
+
+.deal-card .panel-title-actions {
+  flex: 0 0 auto;
 }
 
 .deal-meta {
@@ -2286,15 +2379,23 @@ textarea {
   min-width: 0;
 }
 
+.deal-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .deal-card-badges,
 .deal-next-step-cues {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .deal-next-step-cue {
+  max-width: 100%;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Settings, automation, and sample data panels */
@@ -2396,7 +2497,7 @@ textarea {
 
 .activity-agenda-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 12px;
 }
 
@@ -2404,9 +2505,11 @@ textarea {
   display: grid;
   align-content: start;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface-muted);
+  background: linear-gradient(180deg, var(--surface), var(--surface-muted));
   padding: 12px;
 }
 
@@ -2702,13 +2805,14 @@ textarea {
 
 .email-command-card {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
   background: var(--surface);
   overflow: hidden;
+  box-shadow: var(--shadow-soft);
 }
 
 .email-command-card-unmatched {
@@ -2739,6 +2843,115 @@ textarea {
   line-height: 1.55;
 }
 
+.email-inbox-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.38fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.email-inbox-thread-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.email-inbox-thread-list-shell,
+.email-inbox-load-more {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.email-inbox-load-more {
+  align-items: start;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.email-inbox-thread-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  color: inherit;
+  text-decoration: none;
+  background: var(--surface);
+}
+
+.email-inbox-thread-row.active,
+.email-inbox-thread-row[aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.email-inbox-thread-row:hover {
+  border-color: var(--accent);
+}
+
+.email-inbox-thread-main,
+.email-inbox-thread-meta,
+.email-inbox-thread-detail,
+.email-inbox-thread-header {
+  min-width: 0;
+}
+
+.email-inbox-thread-main {
+  display: grid;
+  gap: 4px;
+}
+
+.email-inbox-thread-subject {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-inbox-thread-detail .email-inbox-thread-subject {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.email-inbox-thread-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.email-inbox-thread-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.email-inbox-thread-header {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.email-inbox-message-list .email-preview {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.email-inbox-reply-panel form {
+  margin-top: 10px;
+}
+
 .email-draft-panel {
   min-width: min(100%, 260px);
   max-width: 100%;
@@ -2747,6 +2960,7 @@ textarea {
 .email-draft-panel summary {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -2755,6 +2969,7 @@ textarea {
   cursor: pointer;
   font-size: 13px;
   font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
 .email-draft-panel[open] {
@@ -2797,8 +3012,8 @@ textarea {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px;
-  background: var(--surface-muted);
+  padding: 11px;
+  background: linear-gradient(180deg, var(--surface-strong), var(--surface-muted));
 }
 
 .email-smart-label-row {
@@ -2842,6 +3057,7 @@ textarea {
 
 .email-smart-label-evidence p {
   margin-top: 6px;
+  overflow-wrap: anywhere;
 }
 
 .relationship-inbox-signal-list {
@@ -2860,20 +3076,35 @@ textarea {
 
 .relationship-inbox-signal-row {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
   background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.relationship-inbox-signal-row .panel-title-row {
+  margin-bottom: 0;
+}
+
+.relationship-inbox-signal-row .compact-title {
+  font-size: 16px;
 }
 
 .relationship-inbox-row-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 14px;
+  min-width: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.relationship-inbox-row-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .relationship-inbox-explainer {
@@ -2881,7 +3112,7 @@ textarea {
   gap: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px;
   background: var(--surface-muted);
 }
 
@@ -2897,6 +3128,7 @@ textarea {
   color: var(--text);
   font-size: 13px;
   font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
 .relationship-inbox-explainer-evidence {
@@ -2907,6 +3139,7 @@ textarea {
 }
 
 .relationship-inbox-evidence-chip {
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -2931,7 +3164,7 @@ textarea {
   gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px;
+  padding: 12px;
   background: var(--surface-muted);
   scroll-margin-top: 20px;
 }
@@ -2953,6 +3186,7 @@ textarea {
   color: var(--text);
   font-size: 13px;
   font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
 .relationship-inbox-evidence-trail {
@@ -2982,6 +3216,11 @@ textarea {
   font-size: 13px;
 }
 
+.relationship-inbox-evidence-drilldown summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .relationship-inbox-evidence-drilldown-body {
   display: grid;
   gap: 8px;
@@ -3009,6 +3248,7 @@ textarea {
   margin: 0;
   color: var(--muted-strong);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .relationship-inbox-source-excerpts {
@@ -3025,6 +3265,45 @@ textarea {
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.relationship-inbox-action-detail {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.relationship-inbox-action-detail > p,
+.relationship-inbox-action-explanation p {
+  margin: 4px 0 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.relationship-inbox-action-chain {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.relationship-inbox-action-chain > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface-muted);
+}
+
+.relationship-inbox-action-signal-map {
+  display: grid;
+  gap: 8px;
 }
 
 .relationship-inbox-next-action {
@@ -3034,14 +3313,15 @@ textarea {
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px;
-  background: var(--surface-muted);
+  padding: 12px;
+  background: linear-gradient(180deg, #f8fbff, var(--surface-muted));
 }
 
 .relationship-inbox-next-action p {
   margin: 6px 0 0;
   color: var(--muted-strong);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .relationship-inbox-next-action-badges {
@@ -3052,6 +3332,7 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .relationship-inbox-action-chain,
   .relationship-inbox-evidence-detail-header,
   .relationship-inbox-evidence-drilldown summary,
   .relationship-inbox-evidence-trail-item,
@@ -3099,10 +3380,43 @@ textarea {
   white-space: nowrap;
 }
 
+.email-linked-follow-up-row > * {
+  max-width: 100%;
+}
+
 @media (max-width: 760px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-actions {
+    justify-content: flex-start;
+  }
+
+  .form-action-hint {
+    text-align: left;
+  }
+
+  .email-inbox-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .email-inbox-thread-row {
+    grid-template-columns: 1fr;
+  }
+
+  .email-inbox-thread-meta {
+    justify-content: flex-start;
+  }
+
   .email-linked-follow-up-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .email-linked-follow-up-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -3213,8 +3527,10 @@ textarea {
 /* Deal cards, pipeline movement, activities, and notes */
 .deal-card-detail {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
 }
 
 .deal-card-detail span {
@@ -3230,7 +3546,11 @@ textarea {
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .deal-card-open {
@@ -3252,6 +3572,7 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;
+  line-height: 1.3;
   text-transform: uppercase;
 }
 
@@ -3309,6 +3630,25 @@ textarea {
   border-bottom: 0;
 }
 
+.activity-agenda-section .activity-item {
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+  box-shadow: var(--shadow-soft);
+}
+
+.activity-agenda-section .activity-item:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-agenda-section .activity-icon {
+  width: 30px;
+  height: 30px;
+}
+
 .activity-item-completed {
   opacity: 0.78;
 }
@@ -3341,6 +3681,7 @@ textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .activity-title-group {
@@ -3375,9 +3716,11 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   margin-top: 9px;
+  min-width: 0;
 }
 
 .activity-related-links .field-link {
+  min-width: 0;
   padding: 8px 9px;
 }
 
@@ -3430,6 +3773,7 @@ textarea {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -3440,6 +3784,8 @@ textarea {
 .activity-due {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  max-width: 100%;
   min-height: 22px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -3448,6 +3794,10 @@ textarea {
   color: var(--text);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
 }
 
 .activity-due-overdue {
@@ -3531,7 +3881,8 @@ textarea {
 
 .next-activity-summary {
   display: grid;
-  min-width: 180px;
+  min-width: min(100%, 180px);
+  max-width: 100%;
   gap: 6px;
 }
 
@@ -3556,8 +3907,17 @@ textarea {
   display: grid;
   align-content: start;
   gap: 10px;
+  min-width: 0;
   border-color: #b9d8d4;
   background: linear-gradient(180deg, #f7fcfb, var(--surface));
+}
+
+.deal-next-step-card > strong {
+  overflow-wrap: anywhere;
+}
+
+.deal-next-step-card .empty-copy {
+  overflow-wrap: anywhere;
 }
 
 .deal-context-metrics {
@@ -3572,6 +3932,7 @@ textarea {
   padding: 10px;
   background: var(--surface);
   box-shadow: var(--shadow-soft);
+  min-width: 0;
 }
 
 .deal-context-metrics span {
@@ -3586,6 +3947,7 @@ textarea {
   display: block;
   margin-top: 4px;
   font-size: 18px;
+  overflow-wrap: anywhere;
 }
 
 /* Detail layouts, fields, custom fields, and empty states */
@@ -3844,11 +4206,17 @@ textarea {
 }
 
 .form-card {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   padding: 20px;
   box-shadow: var(--shadow);
+}
+
+.report-scope-note {
+  border-color: #d9e4f7;
+  background: #f8fbff;
 }
 
 .form-intro-copy,
@@ -3861,6 +4229,7 @@ textarea {
 }
 
 .form-callout {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
@@ -3870,10 +4239,21 @@ textarea {
 .form-callout strong {
   display: block;
   margin-bottom: 4px;
+  overflow-wrap: anywhere;
 }
 
 .form-intro-copy .form-callout-copy {
   margin: 0;
+}
+
+.form-prefill-notice {
+  display: block;
+  margin: 0 0 14px;
+  border: 1px solid #d9e4f7;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #f8fbff;
+  color: var(--muted-strong);
 }
 
 .locked-panel-notice {
@@ -3959,10 +4339,109 @@ textarea {
   font-size: 12px;
 }
 
+.meeting-resume-banner {
+  border-color: #f1d18a;
+}
+
+.meeting-upload-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: #f3ead5;
+}
+
+.meeting-upload-progress::-webkit-progress-bar {
+  background: #f3ead5;
+}
+
+.meeting-upload-progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.meeting-upload-progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.meeting-intake-upload-capabilities {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.meeting-upload-capability-card {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px;
+  background: var(--surface-muted);
+}
+
+.meeting-upload-capability-card strong {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.meeting-upload-capability-card span,
+.meeting-upload-capability-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.meeting-review-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.meeting-review-overview-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: var(--surface-muted);
+}
+
+.meeting-review-overview-item strong {
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.meeting-review-overview-item span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.meeting-review-section {
+  min-width: 0;
+}
+
 .meeting-review-item {
   display: grid;
-  gap: 12px;
+  gap: 14px;
+  min-width: 0;
   padding: 14px;
+  border-color: #cfd9d5;
+  background: linear-gradient(180deg, var(--surface), #fbfdfc);
   box-shadow: none;
 }
 
@@ -3981,6 +4460,11 @@ textarea {
 
 .meeting-review-item-header {
   justify-content: space-between;
+  min-width: 0;
+}
+
+.meeting-review-item-header > * {
+  max-width: 100%;
 }
 
 .meeting-review-item-header .checkbox-field {
@@ -3994,6 +4478,47 @@ textarea {
   box-shadow: none;
 }
 
+.meeting-match-review-list > .compact-list-item,
+.meeting-proposal-evidence > .compact-list-item,
+.meeting-processor-status-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+}
+
+.meeting-proposal-evidence {
+  margin-top: 0;
+  padding-left: 0;
+}
+
+.meeting-processor-status-list {
+  padding-left: 0;
+}
+
+.meeting-processing-state {
+  display: grid;
+  gap: 12px;
+}
+
+.meeting-apply-safety-note {
+  border: 1px solid #b7e4c7;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f4fbf6;
+}
+
+.meeting-apply-warning {
+  border: 1px solid #f1d18a;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fffaf0;
+}
+
+.meeting-apply-success {
+  margin-bottom: 12px;
+}
+
 .relationship-brief-review-grid {
   display: grid;
   gap: 14px;
@@ -4002,10 +4527,37 @@ textarea {
 .relationship-brief-review-field {
   display: grid;
   gap: 10px;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
   background: var(--surface-strong);
+}
+
+.relationship-brief-target-status {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--surface-muted);
+}
+
+.relationship-brief-target-status-ready {
+  border-color: #b7e4c7;
+  background: #f4fbf6;
+  color: var(--green);
+}
+
+.relationship-brief-target-status-loading {
+  border-color: #d9e4f7;
+  background: #f2f6ff;
+  color: var(--blue);
+}
+
+.relationship-brief-target-status-failed {
+  border-color: #f2b8b5;
+  background: #fff0ef;
+  color: var(--red);
 }
 
 .relationship-brief-diff-grid {
@@ -4030,10 +4582,13 @@ textarea {
   padding: 10px;
   background: var(--surface-muted);
   color: var(--muted-strong);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .relationship-brief-fact {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
@@ -4044,6 +4599,88 @@ textarea {
   justify-items: start;
 }
 
+.relationship-brief-guidance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.relationship-brief-usage-details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-muted);
+}
+
+.relationship-brief-usage-details summary {
+  cursor: pointer;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.relationship-brief-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.relationship-brief-usage-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.relationship-brief-usage-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.relationship-brief-history-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.35fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.relationship-brief-history-source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.relationship-brief-history-source-filter legend {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.relationship-brief-history-field-filter {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.relationship-brief-history-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .relationship-brief-change-list {
   display: grid;
   gap: 10px;
@@ -4052,10 +4689,12 @@ textarea {
 .relationship-brief-change-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px;
+  padding: 12px;
   background: var(--surface);
+  box-shadow: var(--shadow-soft);
 }
 
 .relationship-brief-change-diff {
@@ -4064,12 +4703,79 @@ textarea {
   gap: 10px;
 }
 
+.relationship-brief-change-details {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.relationship-brief-change-details summary {
+  cursor: pointer;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.relationship-brief-source-detail {
+  display: grid;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.relationship-brief-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.relationship-brief-source-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface-muted);
+}
+
+.relationship-brief-source-grid dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.relationship-brief-source-grid dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.relationship-brief-source-facts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
 @media (max-width: 920px) {
+  .meeting-intake-upload-capabilities,
+  .meeting-review-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .relationship-brief-diff-grid {
     grid-template-columns: 1fr;
   }
 
-  .relationship-brief-change-diff {
+  .relationship-brief-change-diff,
+  .relationship-brief-history-toolbar,
+  .relationship-brief-usage-grid,
+  .relationship-brief-source-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -4111,11 +4817,13 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  min-width: 0;
 }
 
 .form-field {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .form-field-wide {
@@ -4166,6 +4874,8 @@ textarea {
 .form-field input,
 .form-field select,
 .form-field textarea {
+  min-width: 0;
+  max-width: 100%;
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -4200,8 +4910,11 @@ textarea {
 .form-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -4222,12 +4935,31 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .form-hint {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.form-hint-info,
+.form-hint-status {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: var(--surface-muted);
+}
+
+.form-hint-status {
+  border-color: #d9e4f7;
+  background: #f2f6ff;
+  color: var(--blue);
+  font-weight: 750;
 }
 
 .form-hint-danger {
@@ -4237,6 +4969,27 @@ textarea {
 .inline-form {
   display: grid;
   gap: 12px;
+}
+
+.form-banner {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fffaf0;
+  padding: 12px;
+}
+
+.meeting-file-support-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.meeting-file-support-row .badge {
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .form-error {
@@ -4296,6 +5049,7 @@ textarea {
 .timeline-item {
   display: grid;
   gap: 3px;
+  min-width: 0;
   border-left: 2px solid var(--line);
   padding: 0 0 10px 12px;
 }
@@ -4344,6 +5098,7 @@ textarea {
 
 .timeline-meta-chip {
   display: inline-flex;
+  min-width: 0;
   max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -4353,6 +5108,7 @@ textarea {
   font-size: 12px;
   overflow-wrap: anywhere;
   line-height: 1.35;
+  white-space: normal;
 }
 
 .timeline-item .muted,
@@ -4364,7 +5120,13 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 4px;
+}
+
+.timeline-item-actions > * {
+  max-width: 100%;
 }
 
 .quote-print-page {
@@ -4375,6 +5137,7 @@ textarea {
 
 .quote-print-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   max-width: 920px;
@@ -4389,6 +5152,7 @@ textarea {
   background: #ffffff;
   box-shadow: var(--shadow);
   padding: 36px;
+  min-width: 0;
 }
 
 .quote-print-header,
@@ -4408,7 +5172,14 @@ textarea {
 .quote-print-company {
   display: grid;
   gap: 4px;
+  min-width: 0;
   text-align: right;
+}
+
+.quote-print-header > *,
+.quote-print-context > *,
+.quote-print-totals > * {
+  min-width: 0;
 }
 
 .quote-print-company span,
@@ -4417,6 +5188,12 @@ textarea {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.quote-print-company strong,
+.quote-print-totals strong {
+  overflow-wrap: anywhere;
 }
 
 .quote-print-notice {
@@ -4448,7 +5225,7 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 32px;
-  min-width: 260px;
+  min-width: min(100%, 260px);
   border-top: 1px solid var(--line);
   padding-top: 10px;
 }
@@ -4526,6 +5303,19 @@ textarea {
 
   .panel-title-actions {
     justify-content: flex-start;
+  }
+
+  .meeting-intake-row,
+  .meeting-intake-upload-capabilities,
+  .meeting-review-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .meeting-review-item,
+  .meeting-upload-capability-card,
+  .meeting-review-overview-item,
+  .meeting-processor-status-item {
+    padding: 10px;
   }
 
   .header-actions {
@@ -4702,6 +5492,115 @@ textarea {
     justify-content: flex-start;
   }
 
+  .quote-print-page {
+    padding: 12px;
+  }
+
+  .quote-print-actions {
+    justify-content: flex-start;
+  }
+
+  .quote-print-actions .button-compact,
+  .quote-print-actions .button-secondary {
+    width: 100%;
+  }
+
+  .quote-print-sheet {
+    padding: 18px;
+  }
+
+  .quote-print-header,
+  .quote-print-context {
+    grid-template-columns: 1fr;
+  }
+
+  .quote-print-company {
+    text-align: left;
+  }
+
+  .quote-print-totals {
+    justify-content: stretch;
+  }
+
+  .quote-print-totals div {
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .table.quote-print-table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .quote-print-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+
+  .quote-print-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .quote-print-table tbody tr {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .quote-print-table tbody tr:hover {
+    background: var(--surface);
+  }
+
+  .quote-print-table th,
+  .quote-print-table td {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .quote-print-table td {
+    display: grid;
+    grid-template-columns: minmax(94px, 34%) minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .quote-print-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .quote-print-table td:first-child {
+    grid-template-columns: 1fr;
+    background: var(--surface-strong);
+    padding-top: 12px;
+  }
+
+  .quote-print-table td:first-child::before {
+    display: none;
+  }
+
+  .quote-print-table tr:last-child td {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .quote-print-table td:last-child {
+    border-bottom: 0;
+  }
+
   .button-primary,
   .button-secondary {
     width: 100%;
@@ -4731,6 +5630,30 @@ textarea {
 
   .kanban {
     max-width: calc(100vw - 32px);
+  }
+
+  .stage-column {
+    min-height: auto;
+  }
+
+  .pipeline-card-move {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .pipeline-card-move .button-compact {
+    width: 100%;
+  }
+
+  .needs-attention-item,
+  .automation-template-item {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .needs-attention-item .button-compact,
+  .automation-template-item .button-compact {
+    width: 100%;
   }
 
   .result-row,
@@ -4763,6 +5686,17 @@ textarea {
 
   .record-panel-jump-link {
     flex: 0 0 auto;
+  }
+
+  .record-summary-actions,
+  .timeline-item-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .record-summary-actions .button-compact,
+  .timeline-item-actions .button-compact {
+    width: 100%;
   }
 
   .activity-row-header {
@@ -4798,5 +5732,42 @@ textarea {
     display: table;
     white-space: normal;
     min-width: 0;
+    border-collapse: collapse;
+  }
+
+  .quote-print-table thead {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+    clip-path: none;
+  }
+
+  .quote-print-table tbody {
+    display: table-row-group;
+  }
+
+  .quote-print-table tbody tr {
+    display: table-row;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .quote-print-table th,
+  .quote-print-table td {
+    display: table-cell;
+  }
+
+  .quote-print-table td:first-child {
+    background: transparent;
+    padding-top: 11px;
+  }
+
+  .quote-print-table td::before {
+    display: none;
+    content: none;
   }
 }

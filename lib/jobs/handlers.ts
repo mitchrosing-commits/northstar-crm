@@ -12,11 +12,12 @@ import {
 import { meetingMediaExtractionJobType } from "@/lib/meeting-intelligence/media-providers";
 import { enqueueJob } from "@/lib/services/job-service";
 import { processMeetingIntakeMediaExtractionJob } from "@/lib/services/meeting-intelligence-service";
+import { gmailInboxSyncJobType, processGmailInboxSyncJob } from "@/lib/services/email-connection-service";
 
 export const internalNoopJobType = "internal.noop";
 export const passwordResetEmailJobType = "auth.password_reset_email";
 export const workspaceInvitationEmailJobType = "workspace.invitation_email";
-export { meetingMediaExtractionJobType };
+export { gmailInboxSyncJobType, meetingMediaExtractionJobType };
 
 export type JobHandlerInput = {
   job: Pick<Job, "attempts" | "id" | "maxAttempts" | "type" | "workspaceId">;
@@ -29,6 +30,7 @@ export type JobHandlerRegistry = Record<string, JobHandler>;
 
 export const jobHandlers = {
   [internalNoopJobType]: handleInternalNoopJob,
+  [gmailInboxSyncJobType]: handleGmailInboxSyncJob,
   [meetingMediaExtractionJobType]: handleMeetingMediaExtractionJob,
   [passwordResetEmailJobType]: handlePasswordResetEmailJob,
   [workspaceInvitationEmailJobType]: handleWorkspaceInvitationEmailJob
@@ -86,6 +88,10 @@ async function handleInternalNoopJob({ payload }: JobHandlerInput) {
 
 async function handleMeetingMediaExtractionJob({ payload }: JobHandlerInput) {
   await processMeetingIntakeMediaExtractionJob(payload);
+}
+
+async function handleGmailInboxSyncJob({ payload }: JobHandlerInput) {
+  await processGmailInboxSyncJob(payload);
 }
 
 async function handlePasswordResetEmailJob({ now, payload }: JobHandlerInput) {

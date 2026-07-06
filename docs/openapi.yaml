@@ -625,6 +625,57 @@ components:
               type: integer
             signPartExpiresInSeconds:
               type: integer
+    MeetingIntakeMultipartUploadInspection:
+      type: object
+      description: Safe reload-recovery status for a multipart upload session. Does not include credentials, signed URLs, bucket names, object keys, stored-file internals, filenames, payloads, or bytes.
+      properties:
+        uploadSessionId:
+          type: string
+        intakeId:
+          type: string
+        status:
+          type: string
+          enum: [awaiting_parts, queued]
+        resumeAllowed:
+          type: boolean
+        abortAllowed:
+          type: boolean
+        acceptedSourceType:
+          type: string
+          enum: [pdf, image, audio, video]
+        byteLength:
+          type: integer
+        sha256:
+          type: string
+          pattern: "^[A-Fa-f0-9]{64}$"
+        originalMimeType:
+          type: string
+          nullable: true
+        multipart:
+          type: object
+          properties:
+            expiresAt:
+              type: string
+              format: date-time
+            maxParts:
+              type: integer
+            partCount:
+              type: integer
+            partSizeBytes:
+              type: integer
+            uploadedPartCount:
+              type: integer
+            uploadedParts:
+              type: array
+              items:
+                type: object
+                properties:
+                  partNumber:
+                    type: integer
+                  etag:
+                    type: string
+                  sizeBytes:
+                    type: integer
     MeetingIntakeMultipartUploadPartsInput:
       type: object
       required: [partNumbers]
@@ -753,7 +804,7 @@ components:
     EmailLogInput:
       type: object
       required: [subject, body, direction, occurredAt]
-      description: Manual email logging only. This does not send email, sync inboxes, process inbound email, or create background jobs.
+      description: Manual email logging only. This REST input does not send email, sync inboxes, process inbound email, or create background jobs. Gmail Full Inbox sync and explicit Gmail replies are authenticated browser workflows on /email, backed by encrypted provider connections rather than this manual log route.
       properties:
         dealId:
           type: string
@@ -1639,6 +1690,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MeetingIntakeMultipartUploadSession"
+  /workspaces/{workspaceId}/meeting-intake-multipart-upload-sessions/{uploadSessionId}:
+    get:
+      summary: Inspect a Meeting Intelligence multipart upload session
+      description: Returns safe workspace-scoped reload-recovery status for an existing multipart upload session. Draft sessions include resume/abort flags, source type, byte length, checksum, MIME type, retention expiry, part policy, and uploaded part summaries reconciled from S3/R2 ListParts when available. Already queued sessions return a non-resumable queued status so clients can clear local resume state. The response does not include credentials, provider tokens, local paths, bucket names, object keys, stored-file internals, filenames, signed URLs, payloads, or bytes.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: uploadSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Multipart upload session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingIntakeMultipartUploadInspection"
   /workspaces/{workspaceId}/meeting-intake-multipart-upload-sessions/{uploadSessionId}/parts:
     post:
       summary: Sign Meeting Intelligence multipart upload parts

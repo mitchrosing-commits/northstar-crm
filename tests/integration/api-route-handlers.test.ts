@@ -754,6 +754,16 @@ describe("database-backed CRM route handlers", () => {
         expect(sessionJson).not.toContain("multipart-route-call.mp3");
         expect(s3.multipartUploads.size).toBe(1);
 
+        const crossWorkspaceInspectResponse = await invokeWorkspaceApi({
+          method: "GET",
+          workspaceId: fx.workspaceB.id,
+          actorUserId: fx.userB.id,
+          segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId]
+        });
+        const crossWorkspaceInspectBody = await readJson<ApiErrorBody>(crossWorkspaceInspectResponse);
+        expect(crossWorkspaceInspectResponse.status).toBe(404);
+        expect(crossWorkspaceInspectBody.error.code).toBe("NOT_FOUND");
+
         const invalidPartResponse = await invokeWorkspaceApi({
           method: "POST",
           workspaceId: fx.workspaceA.id,
@@ -794,6 +804,46 @@ describe("database-backed CRM route handlers", () => {
           completedParts.push({ etag: uploadResponse.headers.get("etag") ?? "", partNumber });
         }
 
+        const inspectResponse = await invokeWorkspaceApi({
+          method: "GET",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId]
+        });
+        const inspected = await readJson<{
+          abortAllowed: boolean;
+          byteLength: number;
+          multipart: {
+            partCount: number;
+            uploadedPartCount: number;
+            uploadedParts: Array<{ etag: string; partNumber: number; sizeBytes: number }>;
+          };
+          resumeAllowed: boolean;
+          status: string;
+        }>(inspectResponse);
+        const inspectedJson = JSON.stringify(inspected);
+        expect(inspectResponse.status).toBe(200);
+        expect(inspected).toMatchObject({
+          abortAllowed: true,
+          byteLength: bytes.byteLength,
+          multipart: {
+            partCount: 4,
+            uploadedPartCount: 4,
+            uploadedParts: completedParts.map((part, index) => ({
+              etag: part.etag,
+              partNumber: part.partNumber,
+              sizeBytes: index === 3 ? Buffer.byteLength("route-tail") : 8 * 1024 * 1024
+            }))
+          },
+          resumeAllowed: true,
+          status: "awaiting_parts"
+        });
+        expect(inspectedJson).not.toContain("test-secret");
+        expect(inspectedJson).not.toContain("storedFile");
+        expect(inspectedJson).not.toContain("s3.example.test");
+        expect(inspectedJson).not.toContain("northstar-mi-test");
+        expect(inspectedJson).not.toContain("multipart-route-call.mp3");
+
         const completeResponse = await invokeWorkspaceApi({
           method: "POST",
           workspaceId: fx.workspaceA.id,
@@ -829,6 +879,20 @@ describe("database-backed CRM route handlers", () => {
           }
         });
         expect(JSON.stringify(jobPayload)).not.toContain(bytes.toString("base64"));
+
+        const inspectQueuedResponse = await invokeWorkspaceApi({
+          method: "GET",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", session.uploadSessionId]
+        });
+        const inspectQueued = await readJson<{ resumeAllowed: boolean; status: string; uploadSessionId: string }>(inspectQueuedResponse);
+        expect(inspectQueuedResponse.status).toBe(200);
+        expect(inspectQueued).toMatchObject({
+          resumeAllowed: false,
+          status: "queued",
+          uploadSessionId: session.uploadSessionId
+        });
 
         const repeatedCompleteResponse = await invokeWorkspaceApi({
           method: "POST",
@@ -885,6 +949,15 @@ describe("database-backed CRM route handlers", () => {
         const completeAfterAbortBody = await readJson<ApiErrorBody>(completeAfterAbortResponse);
         expect(completeAfterAbortResponse.status).toBe(409);
         expect(completeAfterAbortBody.error.code).toBe("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE");
+        const inspectAfterAbortResponse = await invokeWorkspaceApi({
+          method: "GET",
+          workspaceId: fx.workspaceA.id,
+          actorUserId: fx.userA.id,
+          segments: ["meeting-intake-multipart-upload-sessions", abortSession.uploadSessionId]
+        });
+        const inspectAfterAbortBody = await readJson<ApiErrorBody>(inspectAfterAbortResponse);
+        expect(inspectAfterAbortResponse.status).toBe(409);
+        expect(inspectAfterAbortBody.error.code).toBe("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE");
       });
     });
   });
@@ -4627,6 +4700,26 @@ function mockS3Storage() {
       objects.set(upload.key, Buffer.concat(partNumbers.map((partNumber) => upload.parts.get(partNumber) ?? Buffer.alloc(0))));
       multipartUploads.delete(uploadId);
       return new Response("<CompleteMultipartUploadResult />", { status: 200 });
+    }
+    if (method === "GET" && url.searchParams.has("uploadId")) {
+      const uploadId = url.searchParams.get("uploadId") ?? "";
+      const upload = multipartUploads.get(uploadId);
+      if (!upload) return new Response(null, { status: 404 });
+      return new Response(
+        [
+          "<ListPartsResult>",
+          "<IsTruncated>false</IsTruncated>",
+          ...Array.from(upload.parts.entries()).map(([partNumber, body]) => [
+            "<Part>",
+            `<PartNumber>${partNumber}</PartNumber>`,
+            `<ETag>${xmlEscape(`"part-${partNumber}-${body.byteLength}"`)}</ETag>`,
+            `<Size>${body.byteLength}</Size>`,
+            "</Part>"
+          ].join("")),
+          "</ListPartsResult>"
+        ].join(""),
+        { status: 200 }
+      );
     }
     if (method === "PUT") {
       const uploadId = url.searchParams.get("uploadId");

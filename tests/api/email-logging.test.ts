@@ -325,14 +325,23 @@ describe("manual email logging and templates foundation", () => {
     expect(settingsPage).not.toContain("Connect Outlook");
   });
 
-  it("documents the manual-only email boundary", () => {
+  it("documents the manual logging and provider inbox boundaries", () => {
     expect(currentStatus).toContain("Manual email logs can be created");
-    expect(currentStatus).toContain("Gmail/Outlook background sync");
-    expect(currentStatus).toContain("manual recent metadata sync actions");
+    expect(currentStatus).toContain("Gmail Full Inbox v1 uses the background job worker");
+    expect(currentStatus).toContain("connecting/reconnecting Gmail and the `/email` Sync Gmail inbox action enqueue an `email.gmail_sync` job");
+    expect(currentStatus).toContain("The `/email` Load older messages action uses a user-triggered bounded Gmail `before:` inbox search");
+    expect(currentStatus).toContain("neither path mutates the stored history cursor");
+    expect(currentStatus).toContain("never stores OAuth tokens or message bodies in job payloads");
+    expect(currentStatus).toContain("Microsoft/Outlook whole-mailbox or background sync");
+    expect(currentStatus).toContain("Gmail Full Inbox requires Gmail read/send scopes");
     expect(architecture).toContain(
       "Manual email logs are workspace-scoped plain-text records",
     );
-    expect(architecture).toContain("do not send email");
+    expect(architecture).toContain("Gmail Full Inbox sync runs through the explicit `email.gmail_sync` job handler");
+    expect(architecture).toContain("selected-thread refresh calls Gmail thread detail for a provider thread id that already has a same-workspace `EmailLog`");
+    expect(architecture).toContain("deliberately leave `lastSyncCursor` unchanged");
+    expect(architecture).toContain("Explicit Gmail replies use the connected account and Gmail `messages.send`");
+    expect(routeMap).toContain("Gmail Full Inbox sync, older-message load-more, selected-thread refresh, and explicit Gmail reply actions");
     expect(routeMap).toContain("/api/v1/workspaces/:workspaceId/email-logs");
     expect(routeMap).toContain(
       "/api/v1/workspaces/:workspaceId/email-templates",

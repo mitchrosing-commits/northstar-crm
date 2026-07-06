@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -46,5 +47,13 @@ describe("integration test database safety", () => {
         /TEST_DATABASE_URL must not contain production\/staging\/live markers:/
       );
     }
+  });
+
+  it("keeps migration deploy and destructive reset in global setup only", () => {
+    expect(readFileSync("tests/integration/setup.ts", "utf8")).toContain(
+      "prepareIntegrationDatabase({ deployMigrations: false })"
+    );
+    expect(readFileSync("tests/integration/global-setup.ts", "utf8")).toContain("prepareIntegrationDatabase()");
+    expect(readFileSync("tests/integration/global-setup.ts", "utf8")).toContain("resetIntegrationDatabase()");
   });
 });

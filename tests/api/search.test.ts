@@ -270,9 +270,11 @@ describe("global workspace search", () => {
     expect(globalStyles).toContain(".search-action-link-copy");
     expect(globalStyles).toContain("grid-template-columns: auto minmax(0, 1fr);");
     expect(globalStyles).toContain(".search-result-overview");
-    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));");
+    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(min(100%, 104px), 1fr));");
     expect(globalStyles).toContain(".search-result-overview-item-muted");
-    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));");
+    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));");
+    expect(globalStyles).toContain(".search-result-meta span");
+    expect(globalStyles).toContain(".search-empty-create-actions > *");
     expect(globalStyles).toContain(".result-row-actions .button-compact");
     expect(globalStyles).toContain(".search-result-side {\n    width: 100%;");
     expect(globalStyles).not.toContain(".section-heading");

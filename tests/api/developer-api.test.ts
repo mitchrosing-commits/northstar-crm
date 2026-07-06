@@ -35,6 +35,9 @@ describe("Developer/API settings surface", () => {
     expect(developerPage).not.toContain("<h3>{surface.title}</h3>");
     expect(compactTitleRow).toContain("export function CompactTitleRow");
     expect(globalStyles).toContain(".api-resource-card .panel-title-row");
+    expect(globalStyles).toContain(".api-reference-grid > *");
+    expect(globalStyles).toContain(".api-resource-card .compact-title");
+    expect(globalStyles).toContain(".endpoint-list li");
     expect(globalStyles).toContain(".provider-card .panel-title-row");
     expect(developerPage).toContain("title=\"Resource Areas\"");
     expect(developerPage).toContain("const importExportActionLabel = \"Open import and export settings from developer API\"");

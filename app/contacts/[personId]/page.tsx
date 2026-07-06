@@ -32,6 +32,26 @@ type PageProps = {
   params: Promise<{ personId: string }>;
 };
 
+type ParsedRelationshipBriefChange = {
+  acceptedFactCount?: number;
+  acceptedFacts?: string[];
+  changedAt?: string;
+  field?: string;
+  fieldLabel: string;
+  newValue?: string | null;
+  previousValue?: string | null;
+  source?: {
+    intakeId?: string;
+    occurredAt?: string;
+    title?: string;
+    type?: string;
+  };
+  target?: {
+    id?: string;
+    type?: string;
+  };
+};
+
 export default async function ContactDetailPage({ params }: PageProps) {
   const { personId } = await params;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
@@ -58,7 +78,7 @@ export default async function ContactDetailPage({ params }: PageProps) {
     relationshipPersonalContext: person.relationshipPersonalContext
   };
   const relationshipBriefCount = Object.values(relationshipBrief).filter((value) => Boolean(value?.trim())).length;
-  const relationshipBriefChanges = recentRelationshipBriefChanges(person.auditLogs);
+  const relationshipBriefChanges = recentRelationshipBriefChanges(person.auditLogs, person.id);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
@@ -237,45 +257,100 @@ function recentRelationshipBriefChanges(
     actor?: { email: string; name: string | null } | null;
     createdAt: Date;
     metadata: unknown;
-  }>
+  }>,
+  personId: string
 ): RelationshipBriefHistoryItem[] {
   return auditLogs.flatMap((log) => {
     const changes = relationshipBriefChangesFromMetadata(log.metadata);
-    return changes.map((change) => ({
-      acceptedFactCount: change.acceptedFactCount,
-      actorLabel: log.actor?.name ?? log.actor?.email,
-      changedAt: change.changedAt || log.createdAt.toISOString(),
-      fieldLabel: change.fieldLabel,
-      newValue: change.newValue,
-      previousValue: change.previousValue,
-      sourceLabel: relationshipBriefHistorySourceLabel(change)
-    }));
+    const changedAtFallback = log.createdAt.toISOString();
+    return changes.flatMap((change) => {
+      if (change.target?.id && change.target.id !== personId) return [];
+      return [{
+        acceptedFactCount: relationshipBriefAcceptedFactCount(change),
+        acceptedFacts: relationshipBriefAcceptedFacts(change),
+        actorLabel: log.actor?.name ?? log.actor?.email,
+        auditBacked: true,
+        changedAt: change.changedAt || changedAtFallback,
+        fieldKey: relationshipBriefHistoryFieldKey(change),
+        fieldLabel: change.fieldLabel,
+        newValue: change.newValue ?? null,
+        previousValue: change.previousValue ?? null,
+        sourceIntakeId: relationshipBriefSourceString(change.source?.intakeId),
+        sourceLabel: relationshipBriefHistorySourceLabel(change),
+        sourceOccurredAt: relationshipBriefSourceString(change.source?.occurredAt),
+        sourceTitle: relationshipBriefSourceString(change.source?.title),
+        sourceType: relationshipBriefHistorySourceType(change)
+      }];
+    });
   }).slice(0, 5);
 }
 
-function relationshipBriefChangesFromMetadata(metadata: unknown): RelationshipBriefChangeSummary[] {
+function relationshipBriefChangesFromMetadata(metadata: unknown): ParsedRelationshipBriefChange[] {
   if (!metadata || typeof metadata !== "object") return [];
   const changes = (metadata as { relationshipBriefChanges?: unknown }).relationshipBriefChanges;
   if (!Array.isArray(changes)) return [];
   return changes.filter(isRelationshipBriefChangeSummary);
 }
 
-function isRelationshipBriefChangeSummary(value: unknown): value is RelationshipBriefChangeSummary {
+function isRelationshipBriefChangeSummary(value: unknown): value is ParsedRelationshipBriefChange {
   if (!value || typeof value !== "object") return false;
-  const input = value as Partial<RelationshipBriefChangeSummary>;
+  const input = value as Partial<RelationshipBriefChangeSummary> & {
+    source?: { intakeId?: unknown; occurredAt?: unknown; title?: unknown; type?: unknown };
+    target?: { id?: unknown; type?: unknown };
+  };
+  if (input.changedAt !== undefined && typeof input.changedAt !== "string") return false;
+  if (input.field !== undefined && typeof input.field !== "string") return false;
+  if (input.target && (input.target.type !== "person" || typeof input.target.id !== "string")) return false;
+  if (input.source?.type !== undefined && typeof input.source.type !== "string") return false;
   return (
-    typeof input.changedAt === "string" &&
     typeof input.fieldLabel === "string" &&
-    typeof input.target?.id === "string" &&
-    input.target.type === "person" &&
-    (input.previousValue === null || typeof input.previousValue === "string") &&
-    (input.newValue === null || typeof input.newValue === "string")
+    (input.previousValue === undefined || input.previousValue === null || typeof input.previousValue === "string") &&
+    (input.newValue === undefined || input.newValue === null || typeof input.newValue === "string")
   );
 }
 
-function relationshipBriefHistorySourceLabel(change: RelationshipBriefChangeSummary) {
-  if (change.source.type === "meeting_intelligence") {
-    return change.source.title ? `Meeting Intelligence: ${change.source.title}` : "Meeting Intelligence";
+function relationshipBriefHistorySourceLabel(change: ParsedRelationshipBriefChange) {
+  const sourceType = relationshipBriefHistorySourceType(change);
+  if (sourceType === "meeting_intelligence") {
+    const sourceTitle = relationshipBriefSourceString(change.source?.title);
+    return sourceTitle ? `Meeting Intelligence: ${sourceTitle}` : "Meeting Intelligence";
   }
-  return "Manual update";
+  if (sourceType === "manual") return "Manual update";
+  return "Relationship Brief update";
+}
+
+function relationshipBriefHistorySourceType(change: ParsedRelationshipBriefChange): RelationshipBriefHistoryItem["sourceType"] | undefined {
+  if (change.source?.type === "meeting_intelligence" || change.source?.type === "manual") return change.source.type;
+  return undefined;
+}
+
+function relationshipBriefHistoryFieldKey(change: ParsedRelationshipBriefChange): RelationshipBriefHistoryItem["fieldKey"] {
+  if (
+    change.field === "relationshipPersonalContext" ||
+    change.field === "relationshipCommunicationStyle" ||
+    change.field === "relationshipBusinessConcerns" ||
+    change.field === "relationshipFollowUpReminders" ||
+    change.field === "relationshipInternalGuidance"
+  ) {
+    return change.field;
+  }
+  if (change.fieldLabel === "Personal context") return "relationshipPersonalContext";
+  if (change.fieldLabel === "Communication style") return "relationshipCommunicationStyle";
+  if (change.fieldLabel === "Business concerns") return "relationshipBusinessConcerns";
+  if (change.fieldLabel === "Follow-up reminders") return "relationshipFollowUpReminders";
+  if (change.fieldLabel === "Internal guidance") return "relationshipInternalGuidance";
+  return undefined;
+}
+
+function relationshipBriefAcceptedFactCount(change: ParsedRelationshipBriefChange) {
+  if (typeof change.acceptedFactCount === "number" && Number.isFinite(change.acceptedFactCount)) return Math.max(0, change.acceptedFactCount);
+  return relationshipBriefAcceptedFacts(change).length;
+}
+
+function relationshipBriefAcceptedFacts(change: ParsedRelationshipBriefChange) {
+  return Array.isArray(change.acceptedFacts) ? change.acceptedFacts.filter((fact): fact is string => typeof fact === "string") : [];
+}
+
+function relationshipBriefSourceString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

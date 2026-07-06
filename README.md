@@ -177,7 +177,7 @@ Railway setup:
 6. Set `AUTH_SESSION_SECRET` to a new random 32+ character secret.
 7. Set `APP_BASE_URL` to the public Railway app URL after Railway assigns it.
 8. Set `EMAIL_TOKEN_ENCRYPTION_KEY` to a new random 32+ byte secret if Gmail, Google Workspace, Microsoft 365, or Outlook OAuth will be enabled.
-9. Optional Gmail / Google Workspace OAuth: rotate the Google OAuth client secret before hosted use, set the Google redirect URI to `https://<host>/api/email-connections/google/callback`, then set the Google OAuth env vars in Railway.
+9. Optional Gmail / Google Workspace OAuth: rotate the Google OAuth client secret before hosted use, set the Google redirect URI to `https://<host>/api/email-connections/google/callback` (for the current Railway production URL: `https://northstar-crm-production-7edf.up.railway.app/api/email-connections/google/callback`), then set the Google OAuth env vars in Railway.
 10. Optional Microsoft 365 / Outlook OAuth: create a Microsoft Entra app registration, set its web redirect URI to `https://<host>/api/email-connections/microsoft/callback`, create a client secret, then set the Microsoft OAuth env vars in Railway.
 11. Deploy. Railway should install dependencies, run the configured build, run `npm run prisma:deploy`, start the app through `npm run railway:start`, and health-check `/api/health`.
 12. Optional demo data: run `npm run prisma:seed` once from a Railway shell or one-off command only for a demo environment. Do not run seed against a real-use database after users create data because the seed script resets the seeded demo workspace.
@@ -359,7 +359,7 @@ The seed script resets tenant-owned demo data for the sample workspace before re
 
 ## Background Jobs
 
-Background jobs v1 is used for queued password-reset email delivery when Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or `AUTH_EMAIL_WEBHOOK_URL` is configured. It is not a general automation, reminder, integration, or webhook platform.
+Background jobs v1 is used for queued password-reset email delivery when Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or `AUTH_EMAIL_WEBHOOK_URL` is configured, workspace invitation email delivery, Meeting Intelligence provider media extraction, and Gmail Full Inbox background sync. It is not a general automation, reminder, integration, or webhook platform.
 
 Useful commands:
 
@@ -372,7 +372,7 @@ npm run jobs:cleanup
 
 - `jobs:status` prints aggregate queue counts only, with registered-safe job types named and any other job types collapsed under `unregistered`.
 - `jobs:run-once` processes one due batch and exits.
-- `jobs:work` runs a continuous worker, recovers retryable stale running jobs after the configured timeout, dead-letters stale jobs that already reached `maxAttempts`, and marks expired or no-longer-current password-reset email jobs complete without sending dead reset links.
+- `jobs:work` runs a continuous worker, recovers retryable stale running jobs after the configured timeout, dead-letters stale jobs that already reached `maxAttempts`, processes queued Gmail Full Inbox sync jobs, and marks expired or no-longer-current password-reset email jobs complete without sending dead reset links.
 - `jobs:cleanup` deletes old terminal succeeded/dead rows according to retention settings.
 
 Production password reset email delivery needs `APP_BASE_URL`, either Resend (`RESEND_API_KEY` plus `AUTH_EMAIL_FROM`) or `AUTH_EMAIL_WEBHOOK_URL`, and either a continuous `npm run jobs:work` process or scheduled `npm run jobs:run-once`.
@@ -383,7 +383,7 @@ On Railway, use a second service from the same repo for continuous password rese
 RAILWAY_SERVICE_ROLE=worker
 ```
 
-The shared `railway.json` start command runs `npm run railway:start`; that dispatcher runs `next start` for the web service and `npm run jobs:work` when `RAILWAY_SERVICE_ROLE=worker`. The worker should share the same `DATABASE_URL`, `APP_BASE_URL`, `AUTH_MODE`, `AUTH_SESSION_SECRET`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and any `AUTH_EMAIL_*` webhook variables as the web service. It does not need a public domain. If the worker is not running, forgot-password remains account-enumeration-safe but reset email jobs stay queued and no email is sent. For Resend testing before a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
+The shared `railway.json` start command runs `npm run railway:start`; that dispatcher runs `next start` for the web service and `npm run jobs:work` when `RAILWAY_SERVICE_ROLE=worker`. The worker should share the same `DATABASE_URL`, `APP_BASE_URL`, `AUTH_MODE`, `AUTH_SESSION_SECRET`, `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, any `AUTH_EMAIL_*` webhook variables, and email OAuth/token encryption env vars used by the web service. It does not need a public domain. If the worker is not running, forgot-password remains account-enumeration-safe but reset email jobs stay queued and no email is sent, and Gmail Full Inbox sync jobs remain queued until `jobs:work` or scheduled `jobs:run-once` processes them. For Resend testing before a verified custom domain, `AUTH_EMAIL_FROM=Northstar <onboarding@resend.dev>` can be used if accepted by the Resend account.
 
 ## Quality Checks
 
@@ -441,12 +441,12 @@ TEST_DATABASE_URL="postgresql://crm:crm@localhost:5432/crm_mvp_test?schema=publi
 
 - Docker and Docker Compose are not currently included. The supported downloadable path is local Node.js plus PostgreSQL using the commands above.
 - Local login and signup are available, but SSO, OAuth providers, 2FA, email change, account deletion, and billing are not implemented.
-- Password reset email delivery is queued, Resend-or-webhook, and password-reset-only. `npm run jobs:work` can process queued jobs continuously, recover retryable stale `RUNNING` jobs after a timeout, and dead-letter stale jobs that already reached `maxAttempts`; `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored sent-email table, general SMTP sending, or Gmail/Outlook background sync.
-- Gmail / Google Workspace, Microsoft 365 / Outlook, and IMAP / SMTP cards are visible in Email and Settings. Gmail / Google Workspace and Microsoft 365 / Outlook can connect through OAuth when provider env vars and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured, and OAuth tokens are stored only as encrypted payloads. Connected accounts can run manual recent metadata sync that imports only matched known-contact messages as conservative email logs. IMAP / SMTP remains planned/disabled, and there is no whole-mailbox sync.
+- Password reset email delivery is queued, Resend-or-webhook, and password-reset-only. `npm run jobs:work` can process queued jobs continuously, recover retryable stale `RUNNING` jobs after a timeout, and dead-letter stale jobs that already reached `maxAttempts`; `npm run jobs:run-once` remains available for one-batch processing, and `npm run jobs:cleanup` removes old terminal job rows. There is no stored auth-email sent table, general SMTP sending, or Outlook background sync.
+- Gmail / Google Workspace, Microsoft 365 / Outlook, and IMAP / SMTP cards are visible in Email and Settings. Gmail / Google Workspace and Microsoft 365 / Outlook can connect through OAuth when provider env vars and `EMAIL_TOKEN_ENCRYPTION_KEY` are configured, and OAuth tokens are stored only as encrypted payloads. Gmail / Google Workspace uses Gmail read/send scopes for job-backed Full Inbox sync, stores inbox messages as email logs with provider labels/snippets/message ids/thread ids, prefers Gmail history cursors after the first recent sync, and falls back to a recent inbox batch when history is missing or expired. The `/email` Sync Gmail inbox action queues the same background job, and reconnecting Gmail queues an initial sync. Gmail sends replies only from an explicit user-submitted reply form. Active Gmail or Microsoft provider connections can be disconnected from `/email`, which removes the encrypted OAuth secret without deleting already-synced email-log snapshots. Microsoft 365 / Outlook remains on manual recent metadata sync for matched known-contact messages. IMAP / SMTP remains planned/disabled.
 - Production access logs should redact query strings for OAuth callback routes, especially `/api/email-connections/google/callback` and `/api/email-connections/microsoft/callback`; short-lived authorization codes should not be retained in application, proxy, CDN, or platform logs.
 - Workspace switching only supports existing memberships plus workspaces the signed-in user creates or accepts by invitation. Invitation email delivery, advanced role policy, workspace deletion, and billing are not implemented.
 - Member removal does not delete user accounts or CRM records, and the service blocks removing the last owner/admin.
-- Price books, inventory, line-item discounts beyond quote-level adjustments, tax rules/jurisdictions, subscriptions, stored PDF files, background Gmail/Outlook sync, general SMTP sending, inbound email processing, payments, e-signature, document generation, and approvals are not implemented.
+- Price books, inventory, line-item discounts beyond quote-level adjustments, tax rules/jurisdictions, subscriptions, stored PDF files, Outlook background sync, general SMTP sending beyond explicit Gmail replies, inbound email processing beyond Gmail Full Inbox snapshots, payments, e-signature, document generation, and approvals are not implemented.
 - Quote acceptance from a public link does not update the linked deal automatically. Accepted quote sync is explicit, authenticated, and manual; quote PDFs are generated on demand and not stored.
 - Deal line item totals do not overwrite deal value or reporting totals.
 - Workspace roles are modeled but not used for advanced permissions.
@@ -456,5 +456,5 @@ TEST_DATABASE_URL="postgresql://crm:crm@localhost:5432/crm_mvp_test?schema=publi
 - Custom field list filtering is limited to one supported custom field at a time with `equals`, text-only `contains`, `is_empty`, and `is_not_empty` operators. Multiple custom-field filters, number/date comparisons, select filtering, and custom field reporting beyond Deal Reporting's existing Deals-query-state support are not implemented yet.
 - Forecasting v1 and Goals v1 are lightweight Reports features only. Forecasting has no history/snapshots/charts, Goals are workspace-level monthly won-revenue only, and neither feature includes owner/team targets, quarterly/activity goals, dashboard widgets, FX conversion, saved reports, or scheduled reports.
 - CSV import is limited to Deals, Contacts, Organizations, and Leads using pasted CSV text. Custom field import, Activities/Notes/Products/Quotes import, file upload/storage, and background import jobs are not implemented.
-- Email/calendar sync, automations, webhooks, API keys, and broader product background jobs are not implemented. The current background job runtime is limited to internal worker mechanics and queued password-reset email delivery.
+- Calendar sync, automations, webhooks, API keys, and broader product background jobs are not implemented. The current background job runtime is limited to internal worker mechanics plus explicit handlers for auth email, workspace invitations, Meeting Intelligence media extraction, and Gmail Full Inbox sync.
 - OpenAPI is an MVP reference document, not a generated contract.

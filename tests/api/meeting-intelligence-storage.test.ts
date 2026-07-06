@@ -14,6 +14,7 @@ import {
   createMeetingIntelligenceMultipartUploadTarget,
   deleteStoredMeetingIntelligenceFile,
   finalizeMeetingIntelligenceDirectUpload,
+  inspectMeetingIntelligenceMultipartUpload,
   readStoredMeetingIntelligenceFile,
   storeMeetingIntelligenceFile
 } from "@/lib/meeting-intelligence/file-storage";
@@ -419,6 +420,16 @@ describe("Meeting Intelligence file storage", () => {
       expect(response.status).toBe(200);
       completedParts.push({ etag: response.headers.get("etag") ?? "", partNumber: part.partNumber });
     }
+    await expect(inspectMeetingIntelligenceMultipartUpload(target.storedFile, { env })).resolves.toMatchObject({
+      maxParts: 10_000,
+      partCount: 3,
+      partSizeBytes: 8 * 1024 * 1024,
+      parts: completedParts.map((part, index) => ({
+        etag: part.etag,
+        partNumber: part.partNumber,
+        sizeBytes: index === 2 ? Buffer.byteLength("tail") : 8 * 1024 * 1024
+      }))
+    });
 
     await expect(
       completeMeetingIntelligenceMultipartUpload(
@@ -639,6 +650,26 @@ function mockS3Storage(): MockS3Storage {
       objects.set(upload.key, Buffer.concat(partNumbers.map((partNumber) => upload.parts.get(partNumber) ?? Buffer.alloc(0))));
       multipartUploads.delete(uploadId);
       return new Response("<CompleteMultipartUploadResult />", { status: 200 });
+    }
+    if (method === "GET" && url.searchParams.has("uploadId")) {
+      const uploadId = url.searchParams.get("uploadId") ?? "";
+      const upload = multipartUploads.get(uploadId);
+      if (!upload) return new Response(null, { status: 404 });
+      return new Response(
+        [
+          "<ListPartsResult>",
+          "<IsTruncated>false</IsTruncated>",
+          ...Array.from(upload.parts.entries()).map(([partNumber, body]) => [
+            "<Part>",
+            `<PartNumber>${partNumber}</PartNumber>`,
+            `<ETag>${xmlEscape(`"part-${partNumber}-${body.byteLength}"`)}</ETag>`,
+            `<Size>${body.byteLength}</Size>`,
+            "</Part>"
+          ].join("")),
+          "</ListPartsResult>"
+        ].join(""),
+        { status: 200 }
+      );
     }
     if (method === "PUT") {
       const uploadId = url.searchParams.get("uploadId");

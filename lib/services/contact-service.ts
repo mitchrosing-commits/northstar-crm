@@ -2,6 +2,9 @@ import { Prisma } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
+import type { RelationshipBriefChangeSummary, RelationshipBriefFields } from "@/lib/meeting-intelligence/types";
+import { formatPersonName } from "@/lib/person-name";
+import { relationshipBriefFieldLabel as sharedRelationshipBriefFieldLabel, type RelationshipBriefFieldKey } from "@/lib/relationship-brief-usage";
 import { resolvePagination, type PaginationInput } from "@/lib/list-page-query";
 import { listCustomFieldFilteredEntityIds, type CustomFieldListFilters } from "./custom-field-service";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
@@ -31,6 +34,12 @@ type UpdatePersonInput = Partial<CreatePersonInput>;
 type UpdatePersonOptions = {
   auditMetadata?: unknown;
 };
+type RelationshipBriefPersonSnapshot = {
+  email: string | null;
+  firstName: string;
+  id: string;
+  lastName: string | null;
+} & Record<keyof RelationshipBriefFields, string | null>;
 export type PersonRelationshipProfile = {
   personalContext: string | null;
   communicationStyle: string | null;
@@ -206,7 +215,16 @@ export async function updatePerson(actor: WorkspaceActor, personId: string, data
   }
 
   const person = await prisma.person.update({ where: { id: personId }, data: normalized });
-  await writeAuditLog(actor, "person.updated", "Person", person.id, options.auditMetadata);
+  const auditMetadata =
+    options.auditMetadata ??
+    manualRelationshipBriefAuditMetadata({
+      actor,
+      changedAt: new Date().toISOString(),
+      existing,
+      next: person,
+      normalized
+    });
+  await writeAuditLog(actor, "person.updated", "Person", person.id, auditMetadata);
   return person;
 }
 
@@ -345,6 +363,85 @@ function personUpdateChanges(
   if (input.relationshipFollowUpReminders !== undefined && input.relationshipFollowUpReminders !== existing.relationshipFollowUpReminders) return true;
   if (input.relationshipInternalGuidance !== undefined && input.relationshipInternalGuidance !== existing.relationshipInternalGuidance) return true;
   return false;
+}
+
+function manualRelationshipBriefAuditMetadata({
+  actor,
+  changedAt,
+  existing,
+  next,
+  normalized
+}: {
+  actor: WorkspaceActor;
+  changedAt: string;
+  existing: RelationshipBriefPersonSnapshot;
+  next: RelationshipBriefPersonSnapshot;
+  normalized: ReturnType<typeof normalizeUpdatePersonInput>;
+}) {
+  const relationshipBriefChanges = manualRelationshipBriefChangeSummaries({ actor, changedAt, existing, next, normalized });
+  if (relationshipBriefChanges.length === 0) return undefined;
+  return {
+    relationshipBriefChanges,
+    source: {
+      type: "manual"
+    }
+  };
+}
+
+function manualRelationshipBriefChangeSummaries({
+  actor,
+  changedAt,
+  existing,
+  next,
+  normalized
+}: {
+  actor: WorkspaceActor;
+  changedAt: string;
+  existing: RelationshipBriefPersonSnapshot;
+  next: RelationshipBriefPersonSnapshot;
+  normalized: ReturnType<typeof normalizeUpdatePersonInput>;
+}): RelationshipBriefChangeSummary[] {
+  const target = {
+    id: next.id,
+    label: relationshipBriefPersonLabel(next),
+    type: "person" as const
+  };
+  return relationshipBriefFieldKeys.flatMap((field) => {
+    if (normalized[field] === undefined) return [];
+    const previousValue = existing[field]?.trim() || null;
+    const newValue = next[field]?.trim() || null;
+    if (previousValue === newValue) return [];
+    return [{
+      acceptedFactCount: 0,
+      acceptedFacts: [],
+      actorId: actor.actorUserId,
+      changedAt,
+      field,
+      fieldLabel: relationshipBriefFieldLabel(field),
+      newValue,
+      previousValue,
+      source: {
+        type: "manual"
+      },
+      target
+    }];
+  });
+}
+
+const relationshipBriefFieldKeys = [
+  "relationshipPersonalContext",
+  "relationshipCommunicationStyle",
+  "relationshipBusinessConcerns",
+  "relationshipFollowUpReminders",
+  "relationshipInternalGuidance"
+] satisfies Array<keyof RelationshipBriefFields>;
+
+function relationshipBriefFieldLabel(field: keyof RelationshipBriefFields) {
+  return sharedRelationshipBriefFieldLabel(field as RelationshipBriefFieldKey);
+}
+
+function relationshipBriefPersonLabel(person: Pick<RelationshipBriefPersonSnapshot, "email" | "firstName" | "lastName">) {
+  return formatPersonName(person) ?? person.email ?? "Unnamed contact";
 }
 
 function hasInputKey(input: Record<string, unknown>, key: string) {

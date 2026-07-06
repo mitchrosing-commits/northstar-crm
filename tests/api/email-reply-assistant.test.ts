@@ -14,6 +14,7 @@ const assistantService = readFileSync(join(process.cwd(), "lib/services/email-re
 const emailPage = readFileSync(join(process.cwd(), "app/email/page.tsx"), "utf8");
 const emailAiReplyPanel = readFileSync(join(process.cwd(), "components/email-ai-reply-panel.tsx"), "utf8");
 const emailActions = readFileSync(join(process.cwd(), "app/email/actions.ts"), "utf8");
+const architecture = readFileSync(join(process.cwd(), "docs/architecture.md"), "utf8");
 const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
 
 describe("AI email reply assistant", () => {
@@ -38,12 +39,17 @@ describe("AI email reply assistant", () => {
 
     expect(prompt.system).toContain("Never auto-send");
     expect(prompt.system).toContain("Do not invent pricing, discounts, legal commitments, contract terms, dates");
+    expect(prompt.system).toContain("Relationship Brief facts include field-level usage guidance");
     expect(prompt.system).toContain("Return strict JSON");
     expect(prompt.user).toContain("Tone option: answer pricing or quote questions carefully.");
     expect(prompt.user).toContain("Acme Expansion (OPEN, Proposal stage");
     expect(prompt.user).toContain("Quote Q-100: SENT");
-    expect(prompt.user).toContain("Personal context: Rockies fan");
-    expect(prompt.user).toContain("Communication style: Prefers concise morning emails");
+    expect(prompt.user).toContain("Meeting Intelligence:");
+    expect(prompt.user).toContain("Decision: Maya wants a proposal this week");
+    expect(prompt.user).toContain("Personal context (May inform warm personalization");
+    expect(prompt.user).toContain("Communication style (Use for tone");
+    expect(prompt.user).toContain("Internal guidance: present but withheld from customer-facing AI context");
+    expect(prompt.user).not.toContain("Never mention procurement escalation");
   });
 
   it("parses OpenAI Responses JSON output without logging or sending email", async () => {
@@ -96,9 +102,13 @@ describe("AI email reply assistant", () => {
 
   it("keeps the relationship profile hook explicit for future personalization", () => {
     expect(assistantService).toContain("personRelationshipProfile(person)");
+    expect(assistantService).toContain("relationshipBriefPromptFact");
+    expect(assistantService).toContain("Do not quote fields marked internal-only or do-not-mention-directly.");
     expect(assistantService).toContain("getRelationshipProfileFacts");
     expect(assistantService).toContain("Approved relationship profile facts");
     expect(assistantService).toContain("Use only the provided email and CRM context");
+    expect(currentStatus).toContain("Meeting Intelligence meeting summaries and approved follow-up activities can appear as CRM context");
+    expect(architecture).toContain("AI Email Reply Assistant prompt assembly consumes relevant Meeting Intelligence summaries");
     expect(currentStatus).toContain("AI Email Reply Assistant");
   });
 });
@@ -122,6 +132,10 @@ function sampleContext(): EmailReplyContext {
     notes: ["2030-01-01: Procurement needs careful review."],
     organization: "Acme (acme.example)",
     productsAndQuotes: ["Quote Q-100: SENT, total $12,000.00, 2 items"],
-    relationshipProfileFacts: ["Personal context: Rockies fan", "Communication style: Prefers concise morning emails"]
+    relationshipProfileFacts: [
+      "Personal context (May inform warm personalization when voluntarily shared, but avoid protected traits or overly sensitive details.): Rockies fan",
+      "Communication style (Use for tone, cadence, and level of detail. Usually adapt the reply rather than quoting the preference.): Prefers concise morning emails",
+      "Internal guidance: present but withheld from customer-facing AI context. Internal-only handling guidance. Do not include the stored text in customer-facing AI drafts."
+    ]
   };
 }

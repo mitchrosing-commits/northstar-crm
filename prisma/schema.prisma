@@ -489,6 +489,8 @@ model EmailLog {
   provider              EmailConnectionProvider?
   providerMessageId     String?
   providerThreadId      String?
+  providerLabels        Json?
+  providerSnippet       String?
   smartLabelJson        Json?
   smartLabelProvider    String?
   smartLabelGeneratedAt DateTime?

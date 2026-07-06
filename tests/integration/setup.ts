@@ -1,3 +1,3 @@
 import { prepareIntegrationDatabase } from "./test-db";
 
-prepareIntegrationDatabase();
+prepareIntegrationDatabase({ deployMigrations: false });

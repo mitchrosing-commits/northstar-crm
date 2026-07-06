@@ -101,6 +101,18 @@ export type MeetingIntelligenceMultipartUploadPart = {
   partNumber: number;
 };
 
+export type MeetingIntelligenceMultipartUploadedPart = MeetingIntelligenceMultipartUploadPart & {
+  sizeBytes?: number;
+};
+
+export type MeetingIntelligenceMultipartUploadStatus = {
+  expiresAt: string;
+  maxParts: number;
+  partCount: number;
+  partSizeBytes: number;
+  parts: MeetingIntelligenceMultipartUploadedPart[];
+};
+
 export type MeetingIntelligenceMultipartUploadPartTarget = {
   expiresAt: string;
   partNumber: number;
@@ -396,6 +408,33 @@ export async function abortMeetingIntelligenceMultipartUpload(
   return true;
 }
 
+export async function inspectMeetingIntelligenceMultipartUpload(
+  ref: StoredMeetingIntelligenceFileRef,
+  options: { now?: Date; env?: MeetingIntelligenceFileStorageEnv } = {}
+): Promise<MeetingIntelligenceMultipartUploadStatus> {
+  const config = getMeetingIntelligenceFileStorageConfig(options.env ?? process.env);
+  if (config.backend !== s3MeetingIntelligenceFileStorageBackend || ref.backend !== s3MeetingIntelligenceFileStorageBackend) {
+    throw new ApiError(
+      "MEETING_INTAKE_MULTIPART_UPLOAD_UNAVAILABLE",
+      "Multipart Meeting Intelligence uploads require S3-compatible file storage.",
+      422
+    );
+  }
+  const metadata = await readS3MultipartMetadata(config, ref.key);
+  validateStoredMetadata(metadata, ref, options.now ?? new Date());
+  const uploadId = metadata.multipartUpload?.uploadId;
+  const multipartUpload = metadata.multipartUpload;
+  if (!uploadId || !multipartUpload) throw new ApiError("MEETING_INTAKE_MULTIPART_UPLOAD_INVALID", "Multipart upload session is invalid.", 422);
+  const parts = await listS3MultipartUploadParts(config, ref.key, uploadId);
+  return {
+    expiresAt: metadata.expiresAt,
+    maxParts: multipartUpload.maxParts,
+    partCount: multipartUpload.partCount,
+    partSizeBytes: multipartUpload.partSizeBytes,
+    parts: parts.filter((part) => part.partNumber >= 1 && part.partNumber <= multipartUpload.partCount)
+  };
+}
+
 export async function finalizeMeetingIntelligenceDirectUpload(
   ref: StoredMeetingIntelligenceFileRef,
   options: { now?: Date; env?: MeetingIntelligenceFileStorageEnv } = {}
@@ -652,6 +691,32 @@ async function abortS3MultipartUpload(config: MeetingIntelligenceFileStorageConf
   if (!response.ok && response.status !== 404) throw storageUnavailableError();
 }
 
+async function listS3MultipartUploadParts(
+  config: MeetingIntelligenceFileStorageConfig,
+  key: string,
+  uploadId: string
+): Promise<MeetingIntelligenceMultipartUploadedPart[]> {
+  const parts: MeetingIntelligenceMultipartUploadedPart[] = [];
+  let partNumberMarker: string | undefined;
+  do {
+    const response = await s3Request(config, {
+      method: "GET",
+      objectKey: contentObjectKey(key),
+      query: {
+        uploadId,
+        "part-number-marker": partNumberMarker
+      }
+    });
+    if (response.status === 404) throw missingStoredFileError();
+    if (!response.ok) throw storageUnavailableError();
+    const list = parseS3ListPartsResponse(await response.text());
+    parts.push(...list.parts);
+    partNumberMarker = list.nextPartNumberMarker;
+    if (!list.truncated) partNumberMarker = undefined;
+  } while (partNumberMarker);
+  return parts.sort((a, b) => a.partNumber - b.partNumber);
+}
+
 async function cleanupExpiredS3Files(
   config: MeetingIntelligenceFileStorageConfig,
   activeKeys: Set<string>,
@@ -855,6 +920,21 @@ function parseS3ListObjectsResponse(xml: string) {
   return {
     keys: Array.from(xml.matchAll(/<Key>([\s\S]*?)<\/Key>/g), (match) => xmlDecode(match[1] ?? "")),
     nextContinuationToken: readXmlTag(xml, "NextContinuationToken"),
+    truncated: readXmlTag(xml, "IsTruncated") === "true"
+  };
+}
+
+function parseS3ListPartsResponse(xml: string) {
+  return {
+    nextPartNumberMarker: readXmlTag(xml, "NextPartNumberMarker") ?? readXmlTag(xml, "NextMarker"),
+    parts: Array.from(xml.matchAll(/<Part>([\s\S]*?)<\/Part>/g), (match) => {
+      const partXml = match[1] ?? "";
+      return {
+        etag: xmlDecode(readXmlTag(partXml, "ETag") ?? ""),
+        partNumber: Number(readXmlTag(partXml, "PartNumber") ?? 0),
+        sizeBytes: Number(readXmlTag(partXml, "Size") ?? 0) || undefined
+      };
+    }).filter((part) => Number.isInteger(part.partNumber) && part.partNumber > 0 && normalizeEtag(part.etag)),
     truncated: readXmlTag(xml, "IsTruncated") === "true"
   };
 }

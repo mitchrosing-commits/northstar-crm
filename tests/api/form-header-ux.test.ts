@@ -218,6 +218,8 @@ describe("CRM form header UX", () => {
     expect(formActionBar).toContain("isSaving ? resolvedPendingLabel : submitLabel");
     expect(globalStyles).toContain(".form-action-hint");
     expect(globalStyles).toContain(".form-actions-compact");
+    expect(globalStyles).toContain("justify-content: flex-end;");
+    expect(globalStyles).toContain("text-align: right;");
     expect(globalStyles).toContain("flex-basis: 100%;");
     expect(globalStyles).toContain("max-width: 100%;");
     expect(globalStyles).toContain(".button-primary,\n.button-secondary");
@@ -270,6 +272,12 @@ describe("CRM form header UX", () => {
     expect(formFieldLabel).toContain("required ? \"Required\" : \"Optional\"");
     expect(globalStyles).toContain(".form-field .form-field-label");
     expect(globalStyles).toContain(".form-field .form-field-label .badge");
+    expect(globalStyles).toContain(".form-grid");
+    expect(globalStyles).toContain(".form-field {\n  display: grid;\n  gap: 6px;\n  min-width: 0;");
+    expect(globalStyles).toContain(".form-field input,\n.form-field select,\n.form-field textarea {\n  min-width: 0;\n  max-width: 100%;");
+    expect(globalStyles).toContain("@media (max-width: 760px) {\n  .form-grid {\n    grid-template-columns: 1fr;");
+    expect(globalStyles).toContain(".form-actions {\n    justify-content: flex-start;");
+    expect(globalStyles).toContain(".form-action-hint {\n    text-align: left;");
 
     for (const form of [dealForm, contactForm, organizationForm, leadForm, activityForm, activityEditForm]) {
       expect(form).toContain("FormFieldLabel");
@@ -338,8 +346,14 @@ describe("CRM form header UX", () => {
     expect(formIntroCallout).toContain("details={details}");
     expect(formIntroCallout).not.toContain("\"form-callout form-intro-copy\"");
     expect(globalStyles).toContain(".form-intro-copy .form-callout-copy");
+    expect(globalStyles).toContain(".form-callout {\n  min-width: 0;");
+    expect(globalStyles).toContain(".form-callout strong");
+    expect(globalStyles).toContain("overflow-wrap: anywhere;");
     expect(formPrefillNotice).toContain("export function FormPrefillNotice");
     expect(formPrefillNotice).toContain("form-prefill-notice");
+    expect(globalStyles).toContain(".form-prefill-notice");
+    expect(globalStyles).toContain("background: #f8fbff;");
+    expect(globalStyles).toContain("color: var(--muted-strong);");
 
     for (const form of [dealForm, contactForm, organizationForm, leadForm, newActivityPage, editActivityPage]) {
       expect(form).toContain("FormIntroCallout");

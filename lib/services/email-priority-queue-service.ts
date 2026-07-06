@@ -111,12 +111,45 @@ export type EmailPriorityQueueEvidenceTrailItem = EmailPriorityQueueEvidence & {
 };
 
 export type EmailPriorityQueueExplainer = {
+  actionExplanation: EmailPriorityActionExplanation;
   evidence: EmailPriorityQueueEvidence[];
   detailHref: Route;
   headline: string;
   severity: EmailPriorityNextBestAction["severity"];
   sources: EmailPriorityQueueEvidenceSource[];
   trail: EmailPriorityQueueEvidenceTrailItem[];
+};
+
+export type EmailPriorityActionExplanation = {
+  action: EmailPriorityNextBestAction["action"];
+  category?: {
+    excerpts: string[];
+    key: EmailSmartCategory;
+    label: string;
+    reason?: string;
+  };
+  contributingSignals: Array<{
+    excerpts: string[];
+    key: EmailSmartSignal;
+    label: string;
+    reason?: string;
+  }>;
+  crmState: {
+    label: string;
+    linked: boolean;
+    record?: EmailPriorityQueueItem["linkedRecord"];
+  };
+  followUpState: {
+    completedCount: number;
+    label: string;
+    openCount: number;
+    source?: EmailLinkedFollowUpSource;
+    state: EmailFollowUpState;
+  };
+  headline: string;
+  label: string;
+  reason: string;
+  severity: EmailPriorityNextBestAction["severity"];
 };
 
 export type EmailPriorityNextBestAction = {
@@ -528,6 +561,13 @@ function emailPriorityQueueExplainer({
     kind: "email_evidence",
     label: "View full Relationship Inbox evidence"
   };
+  const actionExplanation = emailPriorityActionExplanation({
+    classification,
+    followUps,
+    followUpState,
+    linkedRecord,
+    nextBestAction
+  });
 
   if (!classification) {
     trail.push({
@@ -684,7 +724,7 @@ function emailPriorityQueueExplainer({
   trail.push({
     id: `next-best-action-${nextBestAction.action}`,
     label: `Recommended action: ${nextBestAction.label}`,
-    reason: nextBestAction.reason,
+    reason: actionExplanation.reason,
     source: nextBestAction.followUp?.source === "legacy" ? "legacy_follow_up" : nextBestAction.target === "linked_follow_up" ? "durable_follow_up" : "smart_label",
     target: {
       href: nextBestAction.href,
@@ -696,6 +736,7 @@ function emailPriorityQueueExplainer({
   });
 
   return {
+    actionExplanation,
     detailHref,
     evidence: trail.map(({ label, source, tone }) => ({ label, source, tone })),
     headline: emailPriorityExplainerHeadline(nextBestAction),
@@ -703,6 +744,162 @@ function emailPriorityQueueExplainer({
     sources: uniqueEvidenceSources(trail),
     trail
   };
+}
+
+function emailPriorityActionExplanation({
+  classification,
+  followUps,
+  followUpState,
+  linkedRecord,
+  nextBestAction
+}: {
+  classification: EmailSmartClassification | null;
+  followUps: EmailLinkedFollowUpSummary[];
+  followUpState: EmailFollowUpState;
+  linkedRecord: EmailPriorityQueueItem["linkedRecord"];
+  nextBestAction: EmailPriorityNextBestAction;
+}): EmailPriorityActionExplanation {
+  const contributingSignals = actionContributingSignals(classification, nextBestAction.action).map((signal) => {
+    const evidence = classification?.signalEvidence.find((item) => item.signal === signal);
+    return {
+      excerpts: evidence?.excerpts ?? [],
+      key: signal,
+      label: emailSmartSignalLabel(signal),
+      ...(evidence?.reason ? { reason: evidence.reason } : {})
+    };
+  });
+  const category = classification
+    ? {
+        excerpts: classification.categoryEvidence?.excerpts ?? [],
+        key: classification.category,
+        label: emailSmartCategoryLabel(classification.category),
+        ...(classification.categoryEvidence?.reason ? { reason: classification.categoryEvidence.reason } : {})
+      }
+    : undefined;
+  const openCount = followUps.filter((followUp) => followUp.status === "open").length;
+  const completedCount = followUps.filter((followUp) => followUp.status === "completed").length;
+  const durableFollowUps = followUps.filter((followUp) => followUp.source === "durable");
+  const legacyFollowUps = followUps.filter((followUp) => followUp.source === "legacy");
+  const followUpSource = durableFollowUps.length > 0 ? "durable" : legacyFollowUps.length > 0 ? "legacy" : undefined;
+
+  return {
+    action: nextBestAction.action,
+    ...(category ? { category } : {}),
+    contributingSignals,
+    crmState: linkedRecord
+      ? { label: `Linked to ${linkedRecord.type}: ${linkedRecord.label}`, linked: true, record: linkedRecord }
+      : { label: "No CRM record linked", linked: false },
+    followUpState: {
+      completedCount,
+      label: emailFollowUpStateLabel(followUpState),
+      openCount,
+      ...(followUpSource ? { source: followUpSource } : {}),
+      state: followUpState
+    },
+    headline: emailPriorityActionHeadline(nextBestAction, classification, linkedRecord),
+    label: `Why this action? ${nextBestAction.label}`,
+    reason: emailPriorityActionReason({
+      classification,
+      completedCount,
+      contributingSignals,
+      followUpSource,
+      linkedRecord,
+      nextBestAction,
+      openCount
+    }),
+    severity: nextBestAction.severity
+  };
+}
+
+function actionContributingSignals(
+  classification: EmailSmartClassification | null,
+  action: EmailPriorityNextBestAction["action"]
+): EmailSmartSignal[] {
+  if (!classification) return [];
+  const signals = new Set(classification.signals);
+  const selected = (values: EmailSmartSignal[]) => values.filter((signal) => signals.has(signal));
+  if (action === "draft_reply") return selected(["URGENT", "NEEDS_REPLY", "PRICING_QUOTE", "CONTRACT_LEGAL"]);
+  if (action === "review_follow_up" || action === "mark_follow_up_complete" || action === "no_action_needed") {
+    return selected(["FOLLOW_UP_NEEDED", "WAITING_ON_CUSTOMER"]);
+  }
+  if (action === "review_relationship_risk") return selected(["RELATIONSHIP_RISK", "OBJECTION_CONCERN"]);
+  if (action === "review_potential_lead") return selected(["POTENTIAL_LEAD", "POSITIVE_BUYING_SIGNAL"]);
+  if (action === "link_crm_record") return classification.signals.slice(0, 3);
+  return [];
+}
+
+function emailPriorityActionHeadline(
+  action: EmailPriorityNextBestAction,
+  classification: EmailSmartClassification | null,
+  linkedRecord: EmailPriorityQueueItem["linkedRecord"]
+) {
+  const category = classification ? emailSmartCategoryLabel(classification.category) : undefined;
+  if (action.action === "classify_email") return "Classify first before choosing a relationship action.";
+  if (action.action === "draft_reply") return `Draft reply because ${category ?? "the email"} appears to need a response.`;
+  if (action.action === "review_follow_up") return "Review follow-up because suggested work has no linked activity yet.";
+  if (action.action === "mark_follow_up_complete") return "Mark complete because linked follow-up work is still open.";
+  if (action.action === "review_relationship_risk") return "Review relationship risk before drafting or advancing the deal.";
+  if (action.action === "review_potential_lead") {
+    return linkedRecord ? "Review potential-lead context before next steps." : "Review potential lead and link CRM context before acting.";
+  }
+  if (action.action === "link_crm_record") return "Link CRM context before replying or creating follow-up work.";
+  if (action.action === "no_action_needed") return "No immediate action because current signals do not call for new work.";
+  return "Open the linked follow-up to review existing work.";
+}
+
+function emailPriorityActionReason({
+  classification,
+  completedCount,
+  contributingSignals,
+  followUpSource,
+  linkedRecord,
+  nextBestAction,
+  openCount
+}: {
+  classification: EmailSmartClassification | null;
+  completedCount: number;
+  contributingSignals: EmailPriorityActionExplanation["contributingSignals"];
+  followUpSource?: EmailLinkedFollowUpSource;
+  linkedRecord: EmailPriorityQueueItem["linkedRecord"];
+  nextBestAction: EmailPriorityNextBestAction;
+  openCount: number;
+}) {
+  const signalLabels = contributingSignals.map((signal) => signal.label);
+  const category = classification ? emailSmartCategoryLabel(classification.category) : undefined;
+  const signalCopy = signalLabels.length ? signalLabels.join(", ") : "the saved labels";
+  const linkedCopy = linkedRecord ? `linked to ${linkedRecord.label}` : "not linked to a CRM record";
+  const followUpSourceCopy = followUpSource === "legacy" ? "legacy marker-matched" : "durably linked";
+
+  if (nextBestAction.action === "classify_email") {
+    return "No Smart Label snapshot exists yet, so Northstar recommends classifying the email before choosing reply, follow-up, or CRM-linking work.";
+  }
+  if (nextBestAction.action === "draft_reply") {
+    return `${signalCopy} plus ${category ?? "CRM relevance"} and ${linkedCopy} point to a reviewed reply draft instead of automatic sending.`;
+  }
+  if (nextBestAction.action === "review_follow_up") {
+    return `${signalCopy} suggests follow-up work, and no linked follow-up activity exists yet, so Northstar recommends reviewing the follow-up draft before creating anything.`;
+  }
+  if (nextBestAction.action === "mark_follow_up_complete") {
+    return `An open ${followUpSourceCopy} follow-up already exists, so Northstar recommends completing that exact activity instead of creating a duplicate.`;
+  }
+  if (nextBestAction.action === "no_action_needed" && completedCount > 0 && openCount === 0) {
+    return `All ${completedCount} ${followUpSourceCopy} follow-up ${completedCount === 1 ? "activity is" : "activities are"} completed, so no duplicate follow-up is recommended.`;
+  }
+  if (nextBestAction.action === "no_action_needed") {
+    return `${signalCopy} does not require a new reply or follow-up right now; review remains available from the email card.`;
+  }
+  if (nextBestAction.action === "review_relationship_risk") {
+    return `${signalCopy} is higher risk, so Northstar recommends reviewing relationship context before drafting a reply or advancing deal work.`;
+  }
+  if (nextBestAction.action === "review_potential_lead") {
+    return linkedRecord
+      ? `${signalCopy} is saved with CRM context, so Northstar recommends reviewing the potential lead before deciding the next step.`
+      : `${signalCopy} is saved but no CRM record is linked, so Northstar recommends reviewing the potential lead and linking CRM context before action.`;
+  }
+  if (nextBestAction.action === "link_crm_record") {
+    return `${signalCopy} may be relationship-relevant, but no CRM record is linked, so Northstar recommends linking context before reply or follow-up work.`;
+  }
+  return nextBestAction.reason;
 }
 
 function emailPriorityExplainerHeadline(action: EmailPriorityNextBestAction) {

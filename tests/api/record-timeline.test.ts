@@ -367,6 +367,11 @@ describe("unified record timeline", () => {
     expect(recordTimeline).toContain("aria-label={`Review audit history for ${event.label}`}");
     expect(recordTimeline).toContain("title={`Review audit history for ${event.label}`}");
     expect(globalStyles).toContain(".timeline-item-actions");
+    expect(globalStyles).toContain(".timeline-item {\n  display: grid;\n  gap: 3px;\n  min-width: 0;");
+    expect(globalStyles).toContain(".timeline-meta-chip {\n  display: inline-flex;\n  min-width: 0;\n  max-width: 100%;");
+    expect(globalStyles).toContain("white-space: normal;");
+    expect(globalStyles).toContain(".timeline-item-actions {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 6px;\n  min-width: 0;\n  max-width: 100%;");
+    expect(globalStyles).toContain(".timeline-item-actions > *");
   });
 
   it("uses shared record panel jump navigation for workspace sections", () => {
@@ -434,6 +439,15 @@ describe("unified record timeline", () => {
     expect(globalStyles).toContain("list-style: none");
     expect(globalStyles).toContain("overscroll-behavior-x: contain");
     expect(globalStyles).toContain("-webkit-overflow-scrolling: touch");
+    expect(globalStyles).toContain(".record-summary h2");
+    expect(globalStyles).toContain(".record-summary-description");
+    expect(globalStyles).toContain(".record-summary-actions > *");
+    expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));");
+    expect(globalStyles).toContain(".record-panel-jump-nav {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  min-width: 0;");
+    expect(globalStyles).toContain(".record-panel-jump-link {\n  gap: 6px;\n  min-width: 0;");
+    expect(globalStyles).toContain(".record-panel-jump-count {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  flex: 0 0 auto;");
+    expect(globalStyles).toContain(".record-summary-actions,\n  .timeline-item-actions {\n    width: 100%;");
+    expect(globalStyles).toContain(".record-summary-actions .button-compact,\n  .timeline-item-actions .button-compact {\n    width: 100%;");
   });
 
   it("surfaces next-step and history context on deal detail pages", () => {

@@ -3,8 +3,17 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/responses";
 import { decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
 import {
+  disconnectEmailConnection,
+  enqueueGmailInboxSyncJob,
+  gmailInboxSyncJobType,
+  listEmailInboxThreads,
   listEmailConnectionProviderCards,
+  processGmailInboxSyncJob,
+  refreshGmailInboxThread,
+  sendGmailReplyFromEmailLog,
   storeGoogleOAuthConnection,
+  syncGmailInboxMessages,
+  syncOlderGmailInboxMessages,
   syncRecentGmailMessages
 } from "@/lib/services/email-connection-service";
 import { createIntegrationFixture } from "./fixtures";
@@ -15,6 +24,12 @@ const env = {
   GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
   GOOGLE_OAUTH_REDIRECT_URI: "https://crm.example.test/api/email-connections/google/callback"
 };
+const gmailFullInboxScopes = [
+  "openid",
+  "email",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send"
+];
 
 describe("Gmail metadata sync", () => {
   it("keeps provider readiness cards scoped and honest across configuration states", async () => {
@@ -26,7 +41,7 @@ describe("Gmail metadata sync", () => {
           createdById: fixture.userB.id,
           lastError: "Other workspace failure with Bearer other-workspace-token for founder@example.test",
           provider: "GOOGLE_WORKSPACE",
-          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          scopes: gmailFullInboxScopes,
           status: "CONNECTED",
           workspaceId: fixture.workspaceB.id
         }
@@ -114,7 +129,7 @@ describe("Gmail metadata sync", () => {
           access_token: "gmail-access-token",
           expires_in: { seconds: 3600 } as unknown as number,
           refresh_token: "gmail-refresh-token",
-          scope: { value: "openid email https://www.googleapis.com/auth/gmail.metadata" } as unknown as string
+          scope: { value: "openid email" } as unknown as string
         }
       });
       const secret = await fixture.prisma.emailConnectionSecret.findUniqueOrThrow({
@@ -124,11 +139,20 @@ describe("Gmail metadata sync", () => {
       expect(connection.accountEmail).toBe("alex@example.test");
       expect(secret.accountEmail).toBe("alex@example.test");
       expect(secret.accessTokenExpiresAt).toBeNull();
-      expect(secret.scopes).toEqual(["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"]);
+      expect(secret.scopes).toEqual(gmailFullInboxScopes);
       expect(secret.encryptedAccessToken).not.toContain("gmail-access-token");
       expect(secret.encryptedRefreshToken).not.toContain("gmail-refresh-token");
       expect(decryptEmailToken(secret.encryptedAccessToken, env)).toBe("gmail-access-token");
       expect(decryptEmailToken(secret.encryptedRefreshToken as string, env)).toBe("gmail-refresh-token");
+      const syncJob = await fixture.prisma.job.findFirstOrThrow({
+        where: { type: gmailInboxSyncJobType, workspaceId: fixture.workspaceA.id }
+      });
+      expect(syncJob.payload).toEqual({
+        connectionId: connection.id,
+        workspaceId: fixture.workspaceA.id
+      });
+      expect(JSON.stringify(syncJob.payload)).not.toContain("gmail-access-token");
+      expect(JSON.stringify(syncJob.payload)).not.toContain("gmail-refresh-token");
     } finally {
       await fixture.cleanup();
     }
@@ -455,7 +479,7 @@ describe("Gmail metadata sync", () => {
       expect(providerCard).toMatchObject({
         lastError:
           "Legacy failure with Bearer [redacted] at [redacted reset url] for [redacted email] apiKey=[redacted]",
-        status: "Sync issue"
+        status: "Reconnect required"
       });
       expect(providerCard?.lastError).not.toContain("legacy-gmail-access-token");
       expect(providerCard?.lastError).not.toContain("legacy-reset-token");
@@ -782,6 +806,653 @@ describe("Gmail metadata sync", () => {
       await fixture.cleanup();
     }
   });
+
+  it("stores recent Gmail inbox messages with full bodies, provider labels, and thread summaries", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "Full NDA follow-up body for CRM review.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 13:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Full inbox NDA follow-up",
+              To: "Alex <alex@example.test>"
+            },
+            id: "gmail-full-match-1",
+            labelIds: ["INBOX", "UNREAD"],
+            snippet: "Full NDA follow-up body"
+          },
+          {
+            bodyText: "Unmatched buyer body still belongs in Full Inbox.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 13:05:00 -0400",
+              From: "New Buyer <new-buyer@example.test>",
+              Subject: "Full inbox new buyer",
+              To: "Alex <alex@example.test>"
+            },
+            id: "gmail-full-unmatched-1",
+            labelIds: ["INBOX"],
+            snippet: "Unmatched buyer body"
+          }
+        ]
+      });
+
+      const result = await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl });
+      expect(result).toMatchObject({ created: 2, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 2 });
+      expect(result.unmatchedPreviews).toEqual([]);
+
+      const logs = await fixture.prisma.emailLog.findMany({
+        where: { workspaceId: fixture.workspaceA.id, provider: "GOOGLE_WORKSPACE" },
+        orderBy: { occurredAt: "asc" }
+      });
+      expect(logs).toHaveLength(2);
+      expect(logs[0]).toMatchObject({
+        body: "Full NDA follow-up body for CRM review.",
+        personId: fixture.recordsA.person.id,
+        providerLabels: ["INBOX", "UNREAD"],
+        providerMessageId: "gmail-full-match-1",
+        providerSnippet: "Full NDA follow-up body"
+      });
+      expect(logs[1]).toMatchObject({
+        body: "Unmatched buyer body still belongs in Full Inbox.",
+        personId: null,
+        providerLabels: ["INBOX"],
+        providerMessageId: "gmail-full-unmatched-1"
+      });
+
+      const threads = await listEmailInboxThreads(fixture.actorA);
+      expect(threads.map((thread) => thread.subject)).toEqual(["Full inbox new buyer", "Full inbox NDA follow-up"]);
+      expect(threads.find((thread) => thread.subject === "Full inbox NDA follow-up")).toMatchObject({
+        isUnread: true,
+        linkedRecordLabel: "Deal: Alpha Needle Deal",
+        messageCount: 1
+      });
+      expect(threads.find((thread) => thread.subject === "Full inbox new buyer")).toMatchObject({
+        isUnread: false,
+        linkedRecordLabel: null,
+        messageCount: 1
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("loads older Gmail inbox messages without duplicates or global cursor changes", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const initialFetch = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "Current inbox body.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 13:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Current inbox",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "3001",
+            id: "gmail-current-inbox-1",
+            snippet: "Current inbox body"
+          }
+        ]
+      });
+      await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl: initialFetch });
+      await expect(fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } })).resolves.toMatchObject({
+        lastSyncCursor: "historyId:3001"
+      });
+
+      const olderFetch = gmailFetchMock({
+        accessToken: "access-token",
+        expectedGmailQuery: "before:2026/06/26",
+        expectedMaxResults: "25",
+        messages: [
+          {
+            bodyText: "Current inbox body refreshed.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 13:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Current inbox",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "3001",
+            id: "gmail-current-inbox-1",
+            snippet: "Current inbox body refreshed"
+          },
+          {
+            bodyText: "Older inbox body.",
+            headers: {
+              Date: "Thu, 25 Jun 2026 09:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Older inbox",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "2501",
+            id: "gmail-older-inbox-1",
+            snippet: "Older inbox body"
+          }
+        ]
+      });
+
+      const result = await syncOlderGmailInboxMessages({
+        actor: fixture.actorA,
+        before: "2026-06-26T13:00:00.000Z",
+        env,
+        fetchImpl: olderFetch
+      });
+      expect(result).toMatchObject({ created: 1, skippedDuplicates: 1, syncMode: "older", totalFetched: 2 });
+
+      const [logs, reloadedConnection] = await Promise.all([
+        fixture.prisma.emailLog.findMany({
+          where: { provider: "GOOGLE_WORKSPACE", workspaceId: fixture.workspaceA.id },
+          orderBy: { occurredAt: "asc" }
+        }),
+        fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } })
+      ]);
+      expect(logs.map((log) => log.providerMessageId)).toEqual(["gmail-older-inbox-1", "gmail-current-inbox-1"]);
+      expect(reloadedConnection.lastSyncCursor).toBe("historyId:3001");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("queues Gmail background sync jobs with scoped metadata payloads and processes them safely", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const job = await enqueueGmailInboxSyncJob(fixture.actorA);
+      const duplicate = await enqueueGmailInboxSyncJob(fixture.actorA);
+
+      expect(duplicate.id).toBe(job.id);
+      expect(job).toMatchObject({
+        dedupeKey: `gmail-inbox-sync:${connection.id}`,
+        status: "PENDING",
+        type: gmailInboxSyncJobType,
+        workspaceId: fixture.workspaceA.id
+      });
+      expect(job.payload).toEqual({
+        connectionId: connection.id,
+        workspaceId: fixture.workspaceA.id
+      });
+      expect(JSON.stringify(job.payload)).not.toContain("access-token");
+      expect(JSON.stringify(job.payload)).not.toContain("refresh-token");
+
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        expectedMaxResults: "25",
+        messages: [
+          {
+            bodyText: "Background sync body for CRM review.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Background sync",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "1001",
+            id: "gmail-background-sync-1",
+            labelIds: ["INBOX", "UNREAD"],
+            snippet: "Background sync body"
+          }
+        ]
+      });
+
+      await processGmailInboxSyncJob(job.payload, { env, fetchImpl });
+
+      const [log, reloadedConnection] = await Promise.all([
+        fixture.prisma.emailLog.findFirstOrThrow({
+          where: {
+            providerMessageId: "gmail-background-sync-1",
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
+        fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } })
+      ]);
+      expect(log).toMatchObject({
+        body: "Background sync body for CRM review.",
+        providerLabels: ["INBOX", "UNREAD"],
+        providerSnippet: "Background sync body",
+        subject: "Background sync"
+      });
+      expect(reloadedConnection).toMatchObject({
+        lastError: null,
+        lastSyncCursor: "historyId:1001"
+      });
+
+      const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(providerCard).toMatchObject({
+        syncAvailable: true,
+        syncStatusLabel: "Sync queued"
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("uses Gmail history cursors for incremental inbox sync and falls back to recent sync when history expires", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const initialFetch = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "Initial full inbox body.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 16:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Initial full inbox",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "2001",
+            id: "gmail-incremental-initial-1",
+            snippet: "Initial full inbox body"
+          }
+        ]
+      });
+
+      const initial = await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl: initialFetch });
+      expect(initial).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "recent", totalFetched: 1 });
+      await expect(fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } })).resolves.toMatchObject({
+        lastSyncCursor: "historyId:2001"
+      });
+
+      const historyFetch = gmailFetchMock({
+        accessToken: "access-token",
+        expectedHistoryStartId: "2001",
+        historyId: "2005",
+        historyMessages: [{ id: "gmail-incremental-history-1", threadId: "thread-gmail-incremental-history-1" }],
+        messages: [
+          {
+            bodyText: "Incremental history body.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 16:10:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Incremental history",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "2005",
+            id: "gmail-incremental-history-1",
+            snippet: "Incremental history body"
+          }
+        ]
+      });
+
+      const incremental = await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl: historyFetch });
+      expect(incremental).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "history", totalFetched: 1 });
+      await expect(fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } })).resolves.toMatchObject({
+        lastSyncCursor: "historyId:2005"
+      });
+
+      const fallbackFetch = gmailFetchMock({
+        accessToken: "access-token",
+        expectedHistoryStartId: "2005",
+        historyStatus: 404,
+        messages: [
+          {
+            bodyText: "History fallback body.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 16:20:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "History fallback",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "2010",
+            id: "gmail-history-fallback-1",
+            snippet: "History fallback body"
+          }
+        ]
+      });
+
+      const fallback = await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl: fallbackFetch });
+      expect(fallback).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "recent", totalFetched: 1 });
+      await expect(fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } })).resolves.toMatchObject({
+        lastSyncCursor: "historyId:2010"
+      });
+
+      await expect(
+        fixture.prisma.emailLog.findMany({
+          where: { provider: "GOOGLE_WORKSPACE", workspaceId: fixture.workspaceA.id }
+        })
+      ).resolves.toHaveLength(3);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("sends an explicit Gmail reply and logs the sent message on the provider thread", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "Can you send next steps?",
+            headers: {
+              Date: "Fri, 26 Jun 2026 14:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Next steps",
+              To: "Alex <alex@example.test>"
+            },
+            id: "gmail-reply-source-1",
+            snippet: "Can you send next steps?"
+          }
+        ],
+        sentMessageId: "gmail-sent-explicit-reply-1"
+      });
+      await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl });
+      const sourceEmail = await fixture.prisma.emailLog.findFirstOrThrow({
+        where: { providerMessageId: "gmail-reply-source-1", workspaceId: fixture.workspaceA.id }
+      });
+
+      const result = await sendGmailReplyFromEmailLog({
+        actor: fixture.actorA,
+        body: "Thanks, I will send next steps today.",
+        emailLogId: sourceEmail.id,
+        env,
+        fetchImpl
+      });
+
+      expect(result).toMatchObject({
+        providerMessageId: "gmail-sent-explicit-reply-1",
+        providerThreadId: "thread-gmail-reply-source-1"
+      });
+      const sentLog = await fixture.prisma.emailLog.findFirstOrThrow({
+        where: { providerMessageId: "gmail-sent-explicit-reply-1", workspaceId: fixture.workspaceA.id }
+      });
+      expect(sentLog).toMatchObject({
+        body: "Thanks, I will send next steps today.",
+        direction: "OUTBOUND",
+        personId: fixture.recordsA.person.id,
+        providerLabels: ["SENT"],
+        subject: "Re: Next steps",
+        toText: "alpha@example.test"
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("refreshes a selected Gmail thread without changing the global sync cursor or losing sent replies", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "Can you send next steps?",
+            headers: {
+              Date: "Fri, 26 Jun 2026 14:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Next steps",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "4001",
+            id: "gmail-thread-refresh-source-1",
+            snippet: "Can you send next steps?",
+            threadId: "thread-shared-refresh-1"
+          },
+          {
+            bodyText: "Thanks, I will send next steps today.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 14:05:00 -0400",
+              From: "Alex <alex@example.test>",
+              Subject: "Re: Next steps",
+              To: "alpha@example.test"
+            },
+            historyId: "4002",
+            id: "gmail-thread-refresh-sent-1",
+            labelIds: ["SENT"],
+            snippet: "Thanks, I will send next steps today.",
+            threadId: "thread-shared-refresh-1"
+          },
+          {
+            bodyText: "Following up with a new answer.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 14:15:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Re: Next steps",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "4003",
+            id: "gmail-thread-refresh-new-1",
+            snippet: "Following up with a new answer.",
+            threadId: "thread-shared-refresh-1"
+          }
+        ],
+        listedMessageIds: ["gmail-thread-refresh-source-1"],
+        sentMessageId: "gmail-thread-refresh-sent-1",
+        threadMessagesById: {
+          "thread-shared-refresh-1": ["gmail-thread-refresh-source-1", "gmail-thread-refresh-sent-1", "gmail-thread-refresh-new-1"]
+        }
+      });
+      await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl });
+      const sourceEmail = await fixture.prisma.emailLog.findFirstOrThrow({
+        where: { providerMessageId: "gmail-thread-refresh-source-1", workspaceId: fixture.workspaceA.id }
+      });
+      await sendGmailReplyFromEmailLog({
+        actor: fixture.actorA,
+        body: "Thanks, I will send next steps today.",
+        emailLogId: sourceEmail.id,
+        env,
+        fetchImpl
+      });
+      const cursorBeforeThreadRefresh = (await fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }))
+        .lastSyncCursor;
+      expect(cursorBeforeThreadRefresh).toBe("historyId:4001");
+
+      const result = await refreshGmailInboxThread({
+        actor: fixture.actorA,
+        env,
+        fetchImpl,
+        threadId: "GOOGLE_WORKSPACE:thread-shared-refresh-1"
+      });
+      expect(result).toMatchObject({ created: 1, skippedDuplicates: 2, syncMode: "thread", totalFetched: 3 });
+
+      const [logs, reloadedConnection, threads] = await Promise.all([
+        fixture.prisma.emailLog.findMany({
+          where: { providerThreadId: "thread-shared-refresh-1", workspaceId: fixture.workspaceA.id },
+          orderBy: { occurredAt: "asc" }
+        }),
+        fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+        listEmailInboxThreads(fixture.actorA)
+      ]);
+      expect(logs.map((log) => log.providerMessageId)).toEqual(
+        expect.arrayContaining([
+          "gmail-thread-refresh-source-1",
+          "gmail-thread-refresh-sent-1",
+          "gmail-thread-refresh-new-1"
+        ])
+      );
+      expect(logs).toHaveLength(3);
+      expect(logs.find((log) => log.providerMessageId === "gmail-thread-refresh-sent-1")).toMatchObject({
+        body: "Thanks, I will send next steps today.",
+        direction: "OUTBOUND",
+        providerLabels: ["SENT"]
+      });
+      expect(reloadedConnection.lastSyncCursor).toBe(cursorBeforeThreadRefresh);
+      expect(threads.find((thread) => thread.id === "GOOGLE_WORKSPACE:thread-shared-refresh-1")).toMatchObject({
+        messageCount: 3
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("disconnects Gmail by removing encrypted tokens and allows reconnecting the same account", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token-before-disconnect",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        refreshToken: "refresh-token-before-disconnect"
+      });
+
+      const result = await disconnectEmailConnection(fixture.actorA, "GOOGLE_WORKSPACE");
+      expect(result).toEqual({
+        accountEmail: "alex@example.test",
+        provider: "GOOGLE_WORKSPACE"
+      });
+
+      const disconnected = await fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } });
+      expect(disconnected).toMatchObject({
+        lastError: null,
+        status: "DISCONNECTED"
+      });
+      expect(disconnected.deletedAt).toBeInstanceOf(Date);
+      await expect(
+        fixture.prisma.emailConnectionSecret.findUnique({ where: { connectionId: connection.id } })
+      ).resolves.toBeNull();
+
+      const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(providerCard).toMatchObject({
+        accountEmail: undefined,
+        disconnectAvailable: false,
+        status: "Ready to connect",
+        syncAvailable: false
+      });
+
+      const fetchImpl = (async () => {
+        throw new Error("Gmail should not be called after disconnect.");
+      }) as typeof fetch;
+      await expect(syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl })).rejects.toMatchObject({
+        code: "EMAIL_CONNECTION_NOT_FOUND"
+      });
+
+      const reconnected = await storeGoogleOAuthConnection({
+        actor: fixture.actorA,
+        env,
+        profile: {
+          email: "alex@example.test",
+          name: "Alex Gmail"
+        },
+        tokenResponse: {
+          access_token: "access-token-after-reconnect",
+          refresh_token: "refresh-token-after-reconnect",
+          scope: gmailFullInboxScopes.join(" ")
+        }
+      });
+      expect(reconnected.id).toBe(connection.id);
+      expect(reconnected.deletedAt).toBeNull();
+      expect(reconnected.status).toBe("CONNECTED");
+      const secret = await fixture.prisma.emailConnectionSecret.findUniqueOrThrow({
+        where: { connectionId: connection.id }
+      });
+      expect(decryptEmailToken(secret.encryptedAccessToken, env)).toBe("access-token-after-reconnect");
+      expect(decryptEmailToken(secret.encryptedRefreshToken as string, env)).toBe("refresh-token-after-reconnect");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("requires expanded Gmail scopes for Full Inbox sync and preserves workspace scoping for replies", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const legacyConnection = await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "alex@example.test",
+          createdById: fixture.userA.id,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.create({
+        data: {
+          accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          accountEmail: "alex@example.test",
+          connectionId: legacyConnection.id,
+          encryptedAccessToken: encryptEmailToken("legacy-access-token", env),
+          encryptedRefreshToken: null,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          userId: fixture.userA.id,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      const fetchImpl = (async () => {
+        throw new Error("Full Inbox should not call Gmail when scopes are insufficient.");
+      }) as typeof fetch;
+
+      await expect(syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl })).rejects.toMatchObject({
+        code: "EMAIL_PROVIDER_SCOPES_INSUFFICIENT"
+      });
+      const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(providerCard).toMatchObject({
+        status: "Reconnect required",
+        syncAvailable: false
+      });
+      await expect(enqueueGmailInboxSyncJob(fixture.actorA)).rejects.toMatchObject({
+        code: "EMAIL_PROVIDER_SCOPES_INSUFFICIENT"
+      });
+      await expect(
+        fixture.prisma.job.findMany({
+          where: { type: gmailInboxSyncJobType, workspaceId: fixture.workspaceA.id }
+        })
+      ).resolves.toHaveLength(0);
+
+      const otherWorkspaceEmail = await fixture.prisma.emailLog.create({
+        data: {
+          body: "Other workspace email",
+          direction: "INBOUND",
+          fromText: "Other <other@example.test>",
+          occurredAt: new Date("2026-06-26T15:00:00.000Z"),
+          provider: "GOOGLE_WORKSPACE",
+          providerMessageId: "gmail-other-workspace-1",
+          providerThreadId: "thread-other-workspace",
+          subject: "Other workspace",
+          toText: "Alex <alex@example.test>",
+          workspaceId: fixture.workspaceB.id,
+          createdById: fixture.userB.id
+        }
+      });
+      await expect(
+        sendGmailReplyFromEmailLog({
+          actor: fixture.actorA,
+          body: "Should not send",
+          emailLogId: otherWorkspaceEmail.id,
+          env,
+          fetchImpl
+        })
+      ).rejects.toMatchObject({
+        code: "EMAIL_LOG_NOT_FOUND"
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });
 
 async function createConnectedGmailSecret(
@@ -797,7 +1468,7 @@ async function createConnectedGmailSecret(
       accountEmail: "alex@example.test",
       createdById: fixture.userA.id,
       provider: "GOOGLE_WORKSPACE",
-      scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+      scopes: gmailFullInboxScopes,
       status: "CONNECTED",
       workspaceId: fixture.workspaceA.id
     }
@@ -810,7 +1481,7 @@ async function createConnectedGmailSecret(
       encryptedAccessToken: encryptEmailToken(options.accessToken, env),
       encryptedRefreshToken: options.refreshToken ? encryptEmailToken(options.refreshToken, env) : null,
       provider: "GOOGLE_WORKSPACE",
-      scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+      scopes: gmailFullInboxScopes,
       userId: fixture.userA.id,
       workspaceId: fixture.workspaceA.id
     }
@@ -844,16 +1515,40 @@ async function createCrossWorkspaceAttachmentTrap(fixture: Awaited<ReturnType<ty
 
 function gmailFetchMock({
   accessToken,
+  expectedGmailQuery,
   expectedMaxResults = "10",
+  expectedHistoryStartId,
+  historyId,
+  historyMessages,
+  historyStatus,
+  listedMessageIds,
   messages,
   refreshedAccessToken,
-  refreshToken
+  refreshToken,
+  sentMessageId,
+  threadMessagesById
 }: {
   accessToken: string;
+  expectedGmailQuery?: string;
   expectedMaxResults?: string;
-  messages: { headers: Record<string, string>; id: string; snippet: string }[];
+  expectedHistoryStartId?: string;
+  historyId?: string;
+  historyMessages?: { id: string; threadId?: string }[];
+  historyStatus?: number;
+  listedMessageIds?: string[];
+  messages: {
+    bodyText?: string;
+    headers: Record<string, string>;
+    historyId?: string;
+    id: string;
+    labelIds?: string[];
+    snippet: string;
+    threadId?: string;
+  }[];
   refreshedAccessToken?: string;
   refreshToken?: string;
+  sentMessageId?: string;
+  threadMessagesById?: Record<string, string[]>;
 }) {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -867,12 +1562,79 @@ function gmailFetchMock({
 
     expect(authorization).toBe(`Bearer ${accessToken}`);
 
+    if (url === "https://gmail.googleapis.com/gmail/v1/users/me/messages/send") {
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body));
+      expect(body.raw).toEqual(expect.any(String));
+      expect(body.raw).not.toContain(accessToken);
+      return Response.json({ id: sentMessageId ?? "gmail-sent-reply-1", threadId: body.threadId ?? "sent-thread-1" });
+    }
+
     if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
       const requestUrl = new URL(url);
       expect(requestUrl.searchParams.get("maxResults")).toBe(expectedMaxResults);
-      expect(requestUrl.searchParams.has("q")).toBe(false);
+      if (expectedGmailQuery) {
+        expect(requestUrl.searchParams.get("q")).toBe(expectedGmailQuery);
+      } else {
+        expect(requestUrl.searchParams.has("q")).toBe(false);
+      }
       return Response.json({
-        messages: messages.map((message) => ({ id: message.id, threadId: `thread-${message.id}` }))
+        messages: (listedMessageIds ? messages.filter((message) => listedMessageIds.includes(message.id)) : messages).map((message) => ({
+          id: message.id,
+          threadId: message.threadId ?? `thread-${message.id}`
+        }))
+      });
+    }
+
+    if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/history?")) {
+      const requestUrl = new URL(url);
+      if (expectedHistoryStartId) {
+        expect(requestUrl.searchParams.get("startHistoryId")).toBe(expectedHistoryStartId);
+      }
+      expect(requestUrl.searchParams.get("historyTypes")).toBe("messageAdded");
+      expect(requestUrl.searchParams.get("labelId")).toBe("INBOX");
+      if (historyStatus) return Response.json({ error: "history expired" }, { status: historyStatus });
+      return Response.json({
+        history: [
+          {
+            messagesAdded: (historyMessages ?? messages).map((message) => ({
+              message: { id: message.id, threadId: message.threadId ?? `thread-${message.id}` }
+            }))
+          }
+        ],
+        historyId
+      });
+    }
+
+    if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/threads/")) {
+      const threadId = decodeURIComponent(url.split("/threads/")[1]?.split("?")[0] ?? "");
+      const threadMessageIds = threadMessagesById?.[threadId] ?? [];
+      const threadMessages = threadMessageIds
+        .map((id) => messages.find((message) => message.id === id))
+        .filter((message): message is (typeof messages)[number] => Boolean(message));
+      return Response.json({
+        id: threadId,
+        messages: threadMessages.map((message) => ({
+          id: message.id,
+          historyId: message.historyId,
+          internalDate: String(Date.parse(message.headers.Date)),
+          labelIds: message.labelIds ?? ["INBOX"],
+          payload: {
+            ...(message.bodyText
+              ? {
+                  parts: [
+                    {
+                      body: { data: gmailTestBodyData(message.bodyText) },
+                      mimeType: "text/plain"
+                    }
+                  ]
+                }
+              : {}),
+            headers: Object.entries(message.headers).map(([name, value]) => ({ name, value }))
+          },
+          snippet: message.snippet,
+          threadId
+        }))
       });
     }
 
@@ -881,12 +1643,28 @@ function gmailFetchMock({
 
     return Response.json({
       id: message.id,
+      historyId: message.historyId,
       internalDate: String(Date.parse(message.headers.Date)),
+      labelIds: message.labelIds ?? ["INBOX"],
       payload: {
+        ...(message.bodyText
+          ? {
+              parts: [
+                {
+                  body: { data: gmailTestBodyData(message.bodyText) },
+                  mimeType: "text/plain"
+                }
+              ]
+            }
+          : {}),
         headers: Object.entries(message.headers).map(([name, value]) => ({ name, value }))
       },
       snippet: message.snippet,
-      threadId: `thread-${message.id}`
+      threadId: message.threadId ?? `thread-${message.id}`
     });
   }) as typeof fetch;
+}
+
+function gmailTestBodyData(value: string) {
+  return Buffer.from(value, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }

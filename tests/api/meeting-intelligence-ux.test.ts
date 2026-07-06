@@ -23,6 +23,16 @@ const compactList = readFileSync(
   join(process.cwd(), "components/compact-list.tsx"),
   "utf8",
 );
+const globalStyles = readFileSync(
+  join(process.cwd(), "app/globals.css"),
+  "utf8",
+);
+const meetingIntelligenceService = readFileSync(
+  join(process.cwd(), "lib/services/meeting-intelligence-service.ts"),
+  "utf8",
+);
+const architecture = readFileSync(join(process.cwd(), "docs/architecture.md"), "utf8");
+const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
 
 describe("meeting intelligence UX", () => {
   it("uses shared CRM primitives for intake, review, and result actions", () => {
@@ -40,6 +50,13 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceForm).toContain("Scanned PDFs queue OCR/vision extraction when a PDF-capable provider is configured.");
     expect(meetingIntelligenceForm).toContain("meetingDirectUploadSourceType");
     expect(meetingIntelligenceForm).toContain("meeting-intake-upload-capabilities");
+    expect(meetingIntelligenceForm).toContain("meeting-upload-capability-card");
+    expect(meetingIntelligenceForm).toContain("Local extraction");
+    expect(meetingIntelligenceForm).toContain("Direct and multipart upload");
+    expect(meetingIntelligenceForm).toContain("Provider extraction");
+    expect(meetingIntelligenceForm).toContain("Review-first apply");
+    expect(meetingIntelligenceForm).toContain("Scanned PDF or video without provider support");
+    expect(meetingIntelligenceForm).toContain("nothing is written to CRM records until you apply selected updates");
     expect(meetingIntelligenceForm).toContain("uploadCapabilities");
     expect(meetingIntelligenceForm).toContain("uploadGateForFile");
     expect(meetingIntelligenceForm).toContain("directUploadDecision");
@@ -53,6 +70,17 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceForm).toContain("meeting-intake-multipart-upload-sessions");
     expect(meetingIntelligenceForm).toContain("tryDirectUploadIntake");
     expect(meetingIntelligenceForm).toContain("uploadMultipartIntake");
+    expect(meetingIntelligenceForm).toContain("readMultipartResumeState");
+    expect(meetingIntelligenceForm).toContain("persistMultipartResumeState");
+    expect(meetingIntelligenceForm).toContain("inspectMultipartResumeState");
+    expect(meetingIntelligenceForm).toContain("continueMultipartUpload");
+    expect(meetingIntelligenceForm).toContain("if (completedParts.has(partNumber)) continue;");
+    expect(meetingIntelligenceForm).toContain("northstar:meeting-intelligence:multipart-resume");
+    expect(meetingIntelligenceForm).toContain("Interrupted upload:");
+    expect(meetingIntelligenceForm).toContain("Multipart upload resume progress");
+    expect(meetingIntelligenceForm).toContain("meeting-upload-progress");
+    expect(meetingIntelligenceForm).toContain("Resume");
+    expect(meetingIntelligenceForm).toContain("Cancel upload");
     expect(meetingIntelligenceForm).toContain("isDirectUploadFallbackError");
     expect(meetingIntelligenceForm).toContain("Hashing file...");
     expect(meetingIntelligenceForm).toContain("Creating multipart upload session...");
@@ -61,6 +89,9 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceForm).toContain("Uploading part");
     expect(meetingIntelligenceForm).toContain("Completing multipart upload...");
     expect(meetingIntelligenceForm).toContain("Aborting multipart upload...");
+    expect(meetingIntelligenceForm).toContain("Previous multipart upload is already queued for extraction.");
+    expect(meetingIntelligenceForm).toContain("Previous multipart upload can no longer be resumed.");
+    expect(meetingIntelligenceForm).toContain("The selected file checksum does not match the interrupted multipart upload.");
     expect(meetingIntelligenceForm).toContain("Retrying upload...");
     expect(meetingIntelligenceForm).toContain("Finalizing upload...");
     expect(meetingIntelligenceForm).toContain("Queued for extraction.");
@@ -98,14 +129,36 @@ describe("meeting intelligence UX", () => {
       'title="Follow-Ups"',
       'title="Normalized Markdown"',
       'title="Apply Summary"',
-      '<PanelTitleRow title="Applied Updates" titleId="applied-updates-heading" />',
+      'title="Applied Updates"',
     ]) {
       expect(meetingIntelligenceReview).toContain(titleRow);
     }
     expect(meetingIntelligenceReview).toContain('import { Badge } from "@/components/badge"');
     expect(meetingIntelligenceReview).toContain('import { CountBadge } from "@/components/count-badge"');
     expect(meetingIntelligenceReview).toContain("meetingReviewWarningCount(draft)");
+    expect(meetingIntelligenceReview).toContain("ReviewOrientationSummary");
+    expect(meetingIntelligenceReview).toContain('aria-label="Meeting Intelligence review summary"');
+    expect(meetingIntelligenceReview).toContain("Editable proposals only until you apply.");
+    expect(meetingIntelligenceReview).toContain("meeting-review-section");
+    expect(meetingIntelligenceReview).toContain("meeting-match-review-list");
+    expect(meetingIntelligenceReview).toContain("No match signals found");
+    expect(meetingIntelligenceReview).toContain("meeting-proposal-evidence");
     expect(meetingIntelligenceReview).toContain("{selectedUpdateCount} selected");
+    expect(meetingIntelligenceReview).toContain("Review-first safety");
+    expect(meetingIntelligenceReview).toContain("Nothing is written to notes, activities, associations, or Relationship Brief fields");
+    expect(meetingIntelligenceReview).toContain("submitActionLabel=\"Apply reviewed Meeting Intelligence updates\"");
+    expect(meetingIntelligenceReview).toContain("Created updates are linked below. Skipped items did not mutate CRM data.");
+    expect(meetingIntelligenceReview).toContain("meeting-apply-success");
+    expect(globalStyles).toContain(".meeting-review-item");
+    expect(globalStyles).toContain(".meeting-review-item-header");
+    expect(globalStyles).toContain(".meeting-review-item-header > *");
+    expect(globalStyles).toContain(".meeting-intake-upload-capabilities");
+    expect(globalStyles).toContain(".meeting-upload-capability-card");
+    expect(globalStyles).toContain(".meeting-review-overview");
+    expect(globalStyles).toContain(".meeting-match-review-list > .compact-list-item");
+    expect(globalStyles).toContain(".meeting-processor-status-item");
+    expect(globalStyles).toContain(".meeting-intake-row,");
+    expect(globalStyles).toContain("min-width: 0;");
     expect(meetingIntelligenceReview).toContain("Source preview");
     expect(meetingIntelligenceReview).toContain(
       'aria-labelledby="applied-updates-heading"',
@@ -151,6 +204,12 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).not.toContain(
       '<div className="form-actions">',
     );
+    expect(meetingIntelligenceDetailPage).toContain('intake.status === "DRAFT"');
+    expect(meetingIntelligenceDetailPage).toContain('title="Upload waiting to finish"');
+    expect(meetingIntelligenceDetailPage).toContain(
+      "waiting for direct or multipart file upload completion",
+    );
+    expect(meetingIntelligenceDetailPage).toContain("Back to intake form");
     for (const emptyTitle of [
       'title="No meeting activity proposed"',
       'title="No notes proposed"',
@@ -245,6 +304,11 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceDetailPage).toContain("Provider-required conversion");
     expect(meetingIntelligenceDetailPage).toContain('title="Extraction queued"');
     expect(meetingIntelligenceDetailPage).toContain("Status message");
+    expect(meetingIntelligenceDetailPage).toContain("meeting-processing-state");
+    expect(meetingIntelligenceDetailPage).toContain("Intake could not be processed");
+    expect(meetingIntelligenceDetailPage).toContain("No CRM records were changed");
+    expect(meetingIntelligenceDetailPage).toContain("meeting-processor-status-list");
+    expect(meetingIntelligenceDetailPage).toContain("meeting-processor-status-item");
     expect(meetingIntelligenceDetailPage).toContain(
       'className="empty-state-compact"',
     );
@@ -254,5 +318,11 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceDetailPage).not.toContain(
       '<p className="muted">This intake does not have a reviewable proposal yet.</p>',
     );
+    expect(meetingIntelligenceService).toContain("meetingIntelligenceActivityDescription");
+    expect(meetingIntelligenceService).toContain("Source: Meeting Intelligence ${label}.");
+    expect(currentStatus).toContain("Meeting Intelligence-created follow-up activities carry an explicit source line");
+    expect(currentStatus).toContain("do not create `EmailLogActivityLink` rows unless the follow-up originated from an email review");
+    expect(architecture).toContain("Approved Meeting Intelligence meeting logs and next-step follow-ups are ordinary `Activity` rows");
+    expect(architecture).toContain("next-step follow-ups keep source context in the activity description");
   });
 });

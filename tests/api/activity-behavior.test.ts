@@ -471,10 +471,13 @@ describe("activity create and completion behavior", () => {
     expect(globalStyles).toContain("activity-due-unscheduled");
     expect(globalStyles).toContain(".section-spaced");
     expect(globalStyles).toContain(".activity-item-open .activity-icon");
+    expect(globalStyles).toContain(".activity-agenda-section .activity-item");
+    expect(globalStyles).toContain(".activity-agenda-section .activity-icon");
     expect(globalStyles).toContain(".activity-row-header");
     expect(globalStyles).toContain(".activity-actions > *");
     expect(globalStyles).toContain(".activity-related-links");
     expect(globalStyles).toContain(".activity-related-empty");
+    expect(globalStyles).toContain("min-width: min(100%, 180px)");
     expect(globalStyles).toContain("display: block;");
   });
 

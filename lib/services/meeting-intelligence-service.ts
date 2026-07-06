@@ -16,6 +16,7 @@ import {
   deleteStoredMeetingIntelligenceFile,
   finalizeMeetingIntelligenceDirectUpload,
   getMeetingIntelligenceFileStorageConfig,
+  inspectMeetingIntelligenceMultipartUpload,
   normalizeStoredMeetingIntelligenceFileRef,
   readStoredMeetingIntelligenceFile,
   storeMeetingIntelligenceFile,
@@ -645,6 +646,69 @@ export async function signMeetingIntakeMultipartUploadParts(
   }
   const parts = await createMeetingIntelligenceMultipartUploadPartTargets(storedFile, { partNumbers: input.partNumbers });
   return { parts, uploadSessionId: intake.id };
+}
+
+export async function inspectMeetingIntakeMultipartUploadSession(actor: WorkspaceActor, uploadSessionId: string) {
+  await ensureWorkspaceAccess(actor);
+  const intake = await prisma.meetingIntake.findFirst({
+    where: { id: uploadSessionId, workspaceId: actor.workspaceId },
+    select: {
+      analysisJson: true,
+      id: true,
+      originalFilename: true,
+      originalMimeType: true,
+      status: true
+    }
+  });
+  if (!intake) throw new ApiError("NOT_FOUND", "Meeting multipart upload session was not found.", 404);
+
+  if (intake.status !== MeetingIntakeStatus.DRAFT) {
+    if (
+      intake.status === MeetingIntakeStatus.EXTRACTING ||
+      intake.status === MeetingIntakeStatus.EXTRACTED ||
+      intake.status === MeetingIntakeStatus.ANALYZING ||
+      intake.status === MeetingIntakeStatus.READY_FOR_REVIEW ||
+      intake.status === MeetingIntakeStatus.APPLIED
+    ) {
+      return {
+        abortAllowed: false,
+        intakeId: intake.id,
+        resumeAllowed: false,
+        status: "queued" as const,
+        uploadSessionId: intake.id
+      };
+    }
+    throw new ApiError(
+      "MEETING_INTAKE_MULTIPART_UPLOAD_INVALID_STATE",
+      "Meeting multipart upload session is already finalized, aborted, or is not waiting for upload completion.",
+      409
+    );
+  }
+
+  const storedFile = storedFileFromDirectUploadSession(intake.analysisJson);
+  if (!storedFile || storedFile.workspaceId !== actor.workspaceId || storedFile.intakeId !== intake.id) {
+    throw new ApiError("MEETING_INTAKE_STORED_FILE_INVALID", "Stored meeting file reference is invalid.", 422);
+  }
+  const status = await inspectMeetingIntelligenceMultipartUpload(storedFile);
+  return {
+    abortAllowed: true,
+    acceptedSourceType: storedFile.sourceType,
+    byteLength: storedFile.byteLength,
+    intakeId: intake.id,
+    multipart: {
+      expiresAt: status.expiresAt,
+      maxParts: status.maxParts,
+      partCount: status.partCount,
+      partSizeBytes: status.partSizeBytes,
+      uploadedPartCount: status.parts.length,
+      uploadedParts: status.parts
+    },
+    originalMimeType: intake.originalMimeType ?? storedFile.mimeType,
+    resumeAllowed: true,
+    sha256: storedFile.sha256,
+    status: "awaiting_parts" as const,
+    uploadSessionId: intake.id
+  };
 }
 
 export async function completeMeetingIntakeMultipartUploadSession(
@@ -1542,7 +1606,7 @@ async function createApprovedActivity(
     const created = await createActivity(actor, {
       ...targetAttachment(targetValidation.target),
       completedAt: "completedAt" in activity ? activity.completedAt ?? null : null,
-      description: activity.description ?? null,
+      description: meetingIntelligenceActivityDescription(activity.description ?? null, label),
       dueAt: "dueAt" in activity ? activity.dueAt ?? null : null,
       ownerId: "ownerId" in activity ? activity.ownerId ?? null : null,
       title: activity.title,
@@ -1563,6 +1627,14 @@ async function createApprovedActivity(
     });
     return null;
   }
+}
+
+function meetingIntelligenceActivityDescription(description: string | null, label: string) {
+  const sourceLine = `Source: Meeting Intelligence ${label}.`;
+  const trimmed = description?.trim();
+  if (!trimmed) return sourceLine;
+  if (trimmed.includes("Source: Meeting Intelligence")) return trimmed;
+  return `${sourceLine}\n\n${trimmed}`;
 }
 
 async function createApprovedMeetingAssociations(

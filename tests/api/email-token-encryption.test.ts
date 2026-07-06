@@ -83,7 +83,8 @@ describe("encrypted email token storage", () => {
 
   it("connects Gmail only through configured OAuth and encrypted persistence", () => {
     expect(service).toContain("gmailOAuthScopes");
-    expect(service).toContain("https://www.googleapis.com/auth/gmail.metadata");
+    expect(service).toContain("https://www.googleapis.com/auth/gmail.readonly");
+    expect(service).toContain("https://www.googleapis.com/auth/gmail.send");
     expect(service).toContain("export function assertGoogleOAuthReady");
     expect(service).toContain("export function buildGoogleAuthorizationUrl");
     expect(service).toContain("export async function exchangeGoogleAuthorizationCode");

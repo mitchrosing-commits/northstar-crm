@@ -9,11 +9,20 @@ export default defineConfig({
     include: ["tests/integration/**/*.test.ts"],
     setupFiles: ["tests/integration/setup.ts"],
     globals: true,
+    maxConcurrency: 1,
+    maxWorkers: 1,
+    minWorkers: 1,
     pool: "forks",
     poolOptions: {
       forks: {
+        maxForks: 1,
+        minForks: 1,
         singleFork: true
       }
+    },
+    sequence: {
+      concurrent: false,
+      hooks: "list"
     }
   },
   resolve: {
