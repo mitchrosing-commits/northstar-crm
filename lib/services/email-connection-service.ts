@@ -276,6 +276,7 @@ type GmailDiagnosticProbeResult = {
 type GmailPermissionProbeClassification =
   | "full_body_permission_rejected"
   | "gmail_api_or_token_rejected"
+  | "metadata_scope_conflict"
   | "message_get_permission_rejected"
   | "message_specific_rejection"
   | "no_probe_message_available"
@@ -312,6 +313,7 @@ export type GmailConnectionDiagnosticResult = {
     includeGrantedScopes: boolean;
     promptConsent: boolean;
     redirectUriConfigured: boolean;
+    requestedOAuthIncludesMetadataScope: boolean;
     requestedScopeCategories: string[];
     responseTypeCode: boolean;
     usesOfflineAccess: boolean;
@@ -325,6 +327,10 @@ export type GmailConnectionDiagnosticResult = {
       probes: Record<GmailMessageGetProbeFormat, GmailDiagnosticProbeResult>;
     }>;
     profile: GmailDiagnosticProbeResult;
+    recommendedAction: "reconnect_after_metadata_scope_removed" | null;
+    requestedOAuthIncludesMetadataScope: boolean;
+    tokeninfoIncludesMetadataScope: boolean;
+    tokeninfoIncludesReadOnlyScope: boolean;
     tokenRefsMatch: boolean | null;
   };
   selectedConnectionId: string;
@@ -533,7 +539,7 @@ export function buildGoogleAuthorizationUrl({
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("client_id", config.clientId);
-  url.searchParams.set("include_granted_scopes", "true");
+  url.searchParams.set("include_granted_scopes", "false");
   url.searchParams.set("prompt", "consent");
   url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("response_type", "code");
@@ -1660,6 +1666,10 @@ export async function diagnoseGmailConnection(
         success: false,
         tokenRef: null
       },
+      recommendedAction: null,
+      requestedOAuthIncludesMetadataScope: false,
+      tokeninfoIncludesMetadataScope: false,
+      tokeninfoIncludesReadOnlyScope: false,
       tokenRefsMatch: null
     },
     selectedConnectionId: connection.id,
@@ -1857,6 +1867,7 @@ function diagnoseGoogleOAuthAuthorizationRequest(config: Required<ProviderConfig
     includeGrantedScopes: url.searchParams.get("include_granted_scopes") === "true",
     promptConsent: url.searchParams.get("prompt") === "consent",
     redirectUriConfigured: Boolean(readNonEmptyValue(url.searchParams.get("redirect_uri"))),
+    requestedOAuthIncludesMetadataScope: requestedScopes.includes("https://www.googleapis.com/auth/gmail.metadata"),
     requestedScopeCategories: scopeCategoryLabels(requestedScopes),
     responseTypeCode: url.searchParams.get("response_type") === "code",
     usesOfflineAccess: url.searchParams.get("access_type") === "offline"
@@ -1880,7 +1891,7 @@ async function repairGmailStoredScopesFromTokenInfo({
   }
 
   const lastError = fullMessageGetRequiresLastError(fullMessageGet)
-    ? formatGmailFullMessagePermissionLastError(fullMessageGet)
+    ? formatGmailFullMessagePermissionLastError(fullMessageGet, normalizedTokenInfoScopes)
     : null;
   await prisma.$transaction([
     prisma.emailConnection.update({
@@ -1912,7 +1923,17 @@ function fullMessageGetRequiresLastError(fullMessageGet: GmailConnectionDiagnost
   );
 }
 
-function formatGmailFullMessagePermissionLastError(fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"]) {
+function formatGmailFullMessagePermissionLastError(
+  fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"],
+  tokenInfoScopes: readonly string[]
+) {
+  if (
+    tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.metadata") &&
+    tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.readonly") &&
+    isGmailMetadataScopeProviderError(fullMessageGet.providerError)
+  ) {
+    return `EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED: ${gmailMetadataScopeConflictMessage()}`;
+  }
   const detail = [
     fullMessageGet.providerStatus ? `Google status ${fullMessageGet.providerStatus}` : null,
     fullMessageGet.providerReason ? `reason ${fullMessageGet.providerReason}` : null,
@@ -2320,6 +2341,10 @@ function providerErrorInfoFromDetails(details: Record<string, unknown>): GmailPr
 }
 
 function gmailMessageAuthFailureMessage(info: GmailProviderErrorInfo) {
+  if (isGmailMetadataScopeProviderError(info.providerError)) {
+    return gmailMetadataScopeConflictMessage();
+  }
+
   const reasonDetail = [
     info.providerStatus ? `Google status ${info.providerStatus}` : null,
     info.providerReason ? `reason ${info.providerReason}` : null,
@@ -2338,6 +2363,10 @@ function gmailMessageAuthFailureMessage(info: GmailProviderErrorInfo) {
     return `Gmail listed inbox messages, but the selected Gmail connection does not match the verified token account (${reasonDetail}). Disconnect and reconnect the intended Gmail account.`;
   }
   return `Google granted Gmail access, but Gmail rejected full-message reads (${reasonDetail}). Run diagnostics or check Google Cloud OAuth/Gmail API configuration, then retry sync.`;
+}
+
+function gmailMetadataScopeConflictMessage() {
+  return "Google granted both metadata-only and full-read Gmail scopes, and Gmail is enforcing metadata-only reads. Reconnect Gmail after Northstar removes the metadata-only scope.";
 }
 
 function pluralize(label: string, count: number) {
@@ -2904,6 +2933,9 @@ async function diagnoseGmailPermissionProbes({
   messageIds: string[];
   tokenInfoScopes: string[];
 }): Promise<GmailConnectionDiagnosticResult["permissionProbes"]> {
+  const tokeninfoIncludesMetadataScope = tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.metadata");
+  const tokeninfoIncludesReadOnlyScope = tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.readonly");
+  const requestedOAuthIncludesMetadataScope = normalizeScopeList(gmailOAuthScopes).includes("https://www.googleapis.com/auth/gmail.metadata");
   const profile = await diagnoseGmailProfileProbe({ accessToken, connectionId, fetchImpl });
   const messages = [];
   for (const messageId of messageIds.slice(0, 2)) {
@@ -2922,12 +2954,23 @@ async function diagnoseGmailPermissionProbes({
     ...messages.flatMap((message) => Object.values(message.probes).map((probe) => probe.tokenRef))
   ].filter((tokenRef): tokenRef is string => Boolean(tokenRef));
   const uniqueTokenRefs = new Set(tokenRefs);
+  const classification = classifyGmailPermissionProbes({
+    listSummary,
+    messages,
+    profile,
+    tokeninfoIncludesMetadataScope,
+    tokeninfoIncludesReadOnlyScope
+  });
   return {
-    classification: classifyGmailPermissionProbes({ listSummary, messages, profile }),
+    classification,
     gmailMetadataScopeNote: gmailMetadataScopeDiagnosticNote(tokenInfoScopes),
     messageCount: messages.length,
     messages,
     profile,
+    recommendedAction: classification === "metadata_scope_conflict" ? "reconnect_after_metadata_scope_removed" : null,
+    requestedOAuthIncludesMetadataScope,
+    tokeninfoIncludesMetadataScope,
+    tokeninfoIncludesReadOnlyScope,
     tokenRefsMatch: tokenRefs.length > 0 ? uniqueTokenRefs.size === 1 : null
   };
 }
@@ -3021,17 +3064,34 @@ async function gmailDiagnosticProbeResultFromResponse({
 function classifyGmailPermissionProbes({
   listSummary,
   messages,
-  profile
+  profile,
+  tokeninfoIncludesMetadataScope,
+  tokeninfoIncludesReadOnlyScope
 }: {
   listSummary: GmailConnectionDiagnosticResult["list"];
   messages: GmailConnectionDiagnosticResult["permissionProbes"]["messages"];
   profile: GmailDiagnosticProbeResult;
+  tokeninfoIncludesMetadataScope: boolean;
+  tokeninfoIncludesReadOnlyScope: boolean;
 }): GmailPermissionProbeClassification {
   if (!profile.success || !listSummary.success) return "gmail_api_or_token_rejected";
   if (messages.length === 0) return "no_probe_message_available";
   const messageProbeGroups = messages.map((message) => Object.values(message.probes));
   const allMessageGetsFail = messageProbeGroups.every((probes) => probes.every((probe) => !probe.success));
   if (allMessageGetsFail) return "message_get_permission_rejected";
+  if (
+    tokeninfoIncludesMetadataScope &&
+    tokeninfoIncludesReadOnlyScope &&
+    messages.every(
+      (message) =>
+        message.probes.minimal.success &&
+        message.probes.metadata.success &&
+        isGmailMetadataScopeFormatRejection(message.probes.full, "full") &&
+        isGmailMetadataScopeFormatRejection(message.probes.raw, "raw")
+    )
+  ) {
+    return "metadata_scope_conflict";
+  }
   const fullBodyOnlyRejected = messages.every(
     (message) =>
       message.probes.minimal.success &&
@@ -3045,13 +3105,32 @@ function classifyGmailPermissionProbes({
   return messagesWithFailures > 0 ? "message_specific_rejection" : "success";
 }
 
+function isGmailMetadataScopeFormatRejection(probe: GmailDiagnosticProbeResult, format: GmailMessageGetProbeFormat) {
+  if (probe.success || probe.providerStatus !== 403) return false;
+  const expected = `metadata scope doesn't allow format ${format}`;
+  return gmailProviderErrorMessages(probe.providerError).some((message) => message.toLowerCase().includes(expected));
+}
+
+function isGmailMetadataScopeProviderError(providerError: GmailSafeProviderError | null) {
+  return gmailProviderErrorMessages(providerError).some((message) => message.toLowerCase().includes("metadata scope doesn't allow format"));
+}
+
+function gmailProviderErrorMessages(providerError: GmailSafeProviderError | null) {
+  if (!providerError) return [];
+  return [
+    providerError.message,
+    providerError.status,
+    ...providerError.errors.flatMap((error) => [error.domain, error.message, error.reason])
+  ].filter((message): message is string => Boolean(message));
+}
+
 function gmailMetadataScopeDiagnosticNote(scopes: readonly string[]) {
   const normalized = new Set(normalizeScopeList(scopes));
   if (
     normalized.has("https://www.googleapis.com/auth/gmail.metadata") &&
     normalized.has("https://www.googleapis.com/auth/gmail.readonly")
   ) {
-    return "Google tokeninfo includes both gmail.metadata and gmail.readonly. Northstar treats gmail.readonly as the read-body grant and does not count gmail.metadata as read access.";
+    return "Google tokeninfo includes both gmail.metadata and gmail.readonly. Gmail may enforce metadata-only reads until the account reconnects after Northstar stops carrying forward gmail.metadata.";
   }
   return null;
 }
@@ -3332,7 +3411,10 @@ async function getGmailMessageFull({
   if (!response.ok) {
     const info = await readGmailProviderErrorInfo(response);
     const reason = gmailMessageHttpFailureReason(info.providerStatus ?? response.status, info.providerReason);
-    throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", gmailMessageHttpFailureMessage(reason), 400, {
+    const message = isGmailMetadataScopeProviderError(info.providerError)
+      ? gmailMetadataScopeConflictMessage()
+      : gmailMessageHttpFailureMessage(reason);
+    throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", message, 400, {
       gmailMessageLoadReason: reason,
       providerError: info.providerError,
       providerErrorCategory: info.category,

@@ -1919,11 +1919,11 @@ describe("Gmail metadata sync", () => {
                 errors: [
                   {
                     domain: "global",
-                    message: `Insufficient Permission for provider-body-secret-token-${format}`,
-                    reason: "insufficientPermissions"
+                    message: `Metadata scope doesn't allow format ${format?.toUpperCase()} for provider-body-secret-token-${format}`,
+                    reason: "forbidden"
                   }
                 ],
-                message: `Request had insufficient authentication scopes for provider-body-secret-token-${format}`,
+                message: `Metadata scope doesn't allow format ${format?.toUpperCase()} for provider-body-secret-token-${format}`,
                 status: "PERMISSION_DENIED"
               }
             },
@@ -1948,7 +1948,7 @@ describe("Gmail metadata sync", () => {
         fullMessageGet: {
           category: "insufficient_permissions",
           messageRef: "message:...essage-1",
-          providerReason: "insufficientPermissions",
+          providerReason: null,
           providerStatus: 403,
           success: false
         },
@@ -1970,9 +1970,10 @@ describe("Gmail metadata sync", () => {
           typeMatches: true
         },
         oauth: {
-          includeGrantedScopes: true,
+          includeGrantedScopes: false,
           promptConsent: true,
           redirectUriConfigured: true,
+          requestedOAuthIncludesMetadataScope: false,
           requestedScopeCategories: ["email", "Gmail read", "Gmail send", "sign-in"],
           responseTypeCode: true,
           usesOfflineAccess: true
@@ -2006,10 +2007,14 @@ describe("Gmail metadata sync", () => {
       expect(diagnostic.list.tokenRef).toBe(diagnostic.tokeninfo.tokenRef);
       expect(diagnostic.fullMessageGet.tokenRef).toBe(diagnostic.tokeninfo.tokenRef);
       expect(diagnostic.permissionProbes).toMatchObject({
-        classification: "full_body_permission_rejected",
+        classification: "metadata_scope_conflict",
         gmailMetadataScopeNote:
-          "Google tokeninfo includes both gmail.metadata and gmail.readonly. Northstar treats gmail.readonly as the read-body grant and does not count gmail.metadata as read access.",
+          "Google tokeninfo includes both gmail.metadata and gmail.readonly. Gmail may enforce metadata-only reads until the account reconnects after Northstar stops carrying forward gmail.metadata.",
         messageCount: 1,
+        recommendedAction: "reconnect_after_metadata_scope_removed",
+        requestedOAuthIncludesMetadataScope: false,
+        tokeninfoIncludesMetadataScope: true,
+        tokeninfoIncludesReadOnlyScope: true,
         tokenRefsMatch: true,
         profile: {
           category: "success",
@@ -2037,21 +2042,32 @@ describe("Gmail metadata sync", () => {
           errors: [
             {
               domain: "global",
-              message: "Insufficient Permission for [redacted]",
-              reason: "insufficientPermissions"
+              message: "Metadata scope doesn't allow format FULL for [redacted]",
+              reason: "forbidden"
             }
           ],
-          message: "Request had insufficient authentication scopes for [redacted]",
+          message: "Metadata scope doesn't allow format FULL for [redacted]",
           status: "PERMISSION_DENIED"
         },
-        providerReason: "insufficientPermissions",
+        providerReason: null,
         providerStatus: 403,
         success: false,
         tokenRef: diagnostic.tokeninfo.tokenRef
       });
       expect(diagnostic.permissionProbes.messages[0]?.probes.raw).toMatchObject({
         category: "insufficient_permissions",
-        providerReason: "insufficientPermissions",
+        providerError: {
+          errors: [
+            {
+              domain: "global",
+              message: "Metadata scope doesn't allow format RAW for [redacted]",
+              reason: "forbidden"
+            }
+          ],
+          message: "Metadata scope doesn't allow format RAW for [redacted]",
+          status: "PERMISSION_DENIED"
+        },
+        providerReason: null,
         providerStatus: 403,
         success: false,
         tokenRef: diagnostic.tokeninfo.tokenRef
@@ -2073,8 +2089,10 @@ describe("Gmail metadata sync", () => {
       expect(repairedConnection.scopes).toEqual(diagnosticTokenInfoScopes);
       expect(repairedSecret.scopes).toEqual(diagnosticTokenInfoScopes);
       expect(repairedConnection.lastError).toContain("EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED");
-      expect(repairedConnection.lastError).toContain("Google status 403");
-      expect(repairedConnection.lastError).toContain("category insufficient_permissions");
+      expect(repairedConnection.lastError).toContain(
+        "Google granted both metadata-only and full-read Gmail scopes, and Gmail is enforcing metadata-only reads."
+      );
+      expect(repairedConnection.lastError).toContain("Reconnect Gmail after Northstar removes the metadata-only scope.");
       expect(serialized).not.toContain("diagnostic-refresh-token");
       expect(serialized).not.toContain("diagnostic-refreshed-access-token");
       expect(serialized).not.toContain("provider-body-secret-token");

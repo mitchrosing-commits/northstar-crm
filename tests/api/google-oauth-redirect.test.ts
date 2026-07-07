@@ -56,10 +56,11 @@ describe("hosted email OAuth redirects", () => {
     );
     expect(url.searchParams.get("redirect_uri")).not.toContain("localhost");
     expect(url.searchParams.get("access_type")).toBe("offline");
-    expect(url.searchParams.get("include_granted_scopes")).toBe("true");
+    expect(url.searchParams.get("include_granted_scopes")).toBe("false");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/gmail.readonly");
     expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/gmail.send");
+    expect(url.searchParams.get("scope")).not.toContain("https://www.googleapis.com/auth/gmail.metadata");
   });
 
   it("keeps legacy local dev redirect behavior when only legacy env is configured", () => {
