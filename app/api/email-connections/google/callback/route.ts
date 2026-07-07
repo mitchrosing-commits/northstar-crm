@@ -7,6 +7,7 @@ import {
   assertGoogleOAuthReady,
   exchangeGoogleAuthorizationCode,
   fetchGoogleUserProfile,
+  resolveGoogleOAuthGrantedScopes,
   storeGoogleOAuthConnection
 } from "@/lib/services/crm";
 
@@ -43,10 +44,16 @@ export async function GET(request: NextRequest) {
     });
     const config = assertGoogleOAuthReady();
     const tokenResponse = await exchangeGoogleAuthorizationCode({ code, config });
+    const scopeResolution = await resolveGoogleOAuthGrantedScopes({
+      accessToken: tokenResponse.access_token as string,
+      tokenResponse
+    });
     const profile = await fetchGoogleUserProfile({ accessToken: tokenResponse.access_token as string });
     await storeGoogleOAuthConnection({
       actor,
+      grantedScopes: scopeResolution.scopes,
       profile: { ...profile, email: profile.email as string },
+      scopeResolution,
       tokenResponse
     });
 

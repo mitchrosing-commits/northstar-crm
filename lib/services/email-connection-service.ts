@@ -50,6 +50,18 @@ export type GoogleTokenResponse = {
   token_type?: string;
 };
 
+type GoogleTokenInfoResponse = {
+  scope?: string;
+};
+
+export type GoogleOAuthScopeResolution = {
+  missingRequiredScopes: string[];
+  scopes: string[];
+  source: "token_response" | "tokeninfo" | "token_response_and_tokeninfo" | "unverified";
+  tokenResponseScopes: string[];
+  tokenInfoScopes?: string[];
+};
+
 export type GoogleUserProfile = {
   email?: string;
   email_verified?: boolean;
@@ -495,6 +507,64 @@ export async function fetchGoogleUserProfile({
   return { ...profile, email: accountEmail };
 }
 
+export async function resolveGoogleOAuthGrantedScopes({
+  accessToken,
+  fetchImpl = fetch,
+  tokenResponse
+}: {
+  accessToken: string;
+  fetchImpl?: typeof fetch;
+  tokenResponse: GoogleTokenResponse;
+}): Promise<GoogleOAuthScopeResolution> {
+  const tokenResponseScopes = normalizeGoogleOAuthScopes(tokenResponse.scope);
+  if (hasProviderScopes(tokenResponseScopes, gmailOAuthScopes)) {
+    return googleOAuthScopeResolution({
+      scopes: tokenResponseScopes,
+      source: "token_response",
+      tokenResponseScopes
+    });
+  }
+
+  try {
+    const tokenInfoScopes = await fetchGoogleAccessTokenInfoScopes({ accessToken, fetchImpl });
+    return googleOAuthScopeResolution({
+      scopes: mergeScopeLists(tokenResponseScopes, tokenInfoScopes),
+      source: tokenResponseScopes.length > 0 ? "token_response_and_tokeninfo" : "tokeninfo",
+      tokenInfoScopes,
+      tokenResponseScopes
+    });
+  } catch {
+    return googleOAuthScopeResolution({
+      scopes: tokenResponseScopes,
+      source: "unverified",
+      tokenResponseScopes
+    });
+  }
+}
+
+async function fetchGoogleAccessTokenInfoScopes({
+  accessToken,
+  fetchImpl
+}: {
+  accessToken: string;
+  fetchImpl: typeof fetch;
+}) {
+  const url = new URL("https://oauth2.googleapis.com/tokeninfo");
+  url.searchParams.set("access_token", accessToken);
+  const response = await fetchImpl(url);
+
+  if (!response.ok) {
+    throw new ApiError("EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED", "Gmail granted scopes could not be verified.", 400);
+  }
+
+  const tokenInfo = await readEmailProviderJson<GoogleTokenInfoResponse>(response, {
+    code: "EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED",
+    message: "Gmail granted scopes could not be verified."
+  });
+
+  return normalizeGoogleOAuthScopes(tokenInfo.scope);
+}
+
 export async function fetchMicrosoftUserProfile({
   accessToken,
   fetchImpl = fetch
@@ -521,12 +591,16 @@ export async function fetchMicrosoftUserProfile({
 
 export async function storeGoogleOAuthConnection({
   actor,
+  grantedScopes,
   profile,
+  scopeResolution,
   tokenResponse,
   env = process.env
 }: {
   actor: WorkspaceActor;
+  grantedScopes?: readonly string[];
   profile: Required<Pick<GoogleUserProfile, "email">> & GoogleUserProfile;
+  scopeResolution?: GoogleOAuthScopeResolution;
   tokenResponse: GoogleTokenResponse;
   env?: EmailConnectionEnv;
 }) {
@@ -535,7 +609,16 @@ export async function storeGoogleOAuthConnection({
     throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
   }
 
-  const scopes = normalizeGoogleOAuthScopes(tokenResponse.scope);
+  const tokenResponseScopes = normalizeGoogleOAuthScopes(tokenResponse.scope);
+  const scopes = grantedScopes ? normalizeScopeList(grantedScopes) : tokenResponseScopes;
+  const resolvedScopeDiagnostic =
+    scopeResolution ??
+    googleOAuthScopeResolution({
+      scopes,
+      source: tokenResponseScopes.length > 0 ? "token_response" : "unverified",
+      tokenResponseScopes
+    });
+  const scopeError = hasProviderScopes(scopes, gmailOAuthScopes) ? null : formatGoogleOAuthMissingScopeError(resolvedScopeDiagnostic);
   const accountEmail = normalizeProviderAccountEmail(profile.email, "Gmail");
   const connection = await prisma.emailConnection.upsert({
     where: {
@@ -549,6 +632,7 @@ export async function storeGoogleOAuthConnection({
       accountEmail,
       createdById: actor.actorUserId,
       displayName: profile.name,
+      lastError: scopeError,
       provider: "GOOGLE_WORKSPACE",
       scopes,
       status: "CONNECTED",
@@ -557,7 +641,7 @@ export async function storeGoogleOAuthConnection({
     update: {
       deletedAt: null,
       displayName: profile.name,
-      lastError: null,
+      lastError: scopeError,
       scopes,
       status: "CONNECTED"
     }
@@ -598,6 +682,8 @@ export async function storeGoogleOAuthConnection({
   await writeAuditLog(actor, "email_connection.connected", "EmailConnection", connection.id, {
     accountEmail,
     provider: "GOOGLE_WORKSPACE",
+    scopeResolutionSource: resolvedScopeDiagnostic.source,
+    missingScopeCategories: resolvedScopeDiagnostic.missingRequiredScopes.map(googleScopeCategoryLabel),
     scopes
   });
   if (hasProviderScopes(scopes, gmailOAuthScopes)) {
@@ -2711,8 +2797,27 @@ function normalizeGoogleOAuthScopes(scope: unknown) {
   return normalizeScopes(scope, []);
 }
 
+function normalizeScopeList(scopes: readonly string[]) {
+  const normalized = new Set<string>();
+  for (const scope of scopes) {
+    const trimmed = scope.trim();
+    if (trimmed) normalized.add(trimmed);
+  }
+  return [...normalized];
+}
+
 function normalizeStoredScopes(scopes: Prisma.JsonValue | null | undefined) {
   return Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [];
+}
+
+function mergeScopeLists(...scopeSources: readonly string[][]) {
+  const scopes = new Set<string>();
+  for (const source of scopeSources) {
+    for (const scope of normalizeScopeList(source)) {
+      scopes.add(scope);
+    }
+  }
+  return [...scopes];
 }
 
 function mergeProviderScopes(...scopeSources: unknown[]) {
@@ -2723,6 +2828,63 @@ function mergeProviderScopes(...scopeSources: unknown[]) {
     }
   }
   return [...scopes];
+}
+
+function googleOAuthScopeResolution({
+  scopes,
+  source,
+  tokenInfoScopes,
+  tokenResponseScopes
+}: {
+  scopes: readonly string[];
+  source: GoogleOAuthScopeResolution["source"];
+  tokenInfoScopes?: readonly string[];
+  tokenResponseScopes: readonly string[];
+}): GoogleOAuthScopeResolution {
+  const normalizedScopes = normalizeScopeList(scopes);
+  return {
+    missingRequiredScopes: missingProviderScopes(normalizedScopes, gmailOAuthScopes),
+    scopes: normalizedScopes,
+    source,
+    tokenInfoScopes: tokenInfoScopes ? normalizeScopeList(tokenInfoScopes) : undefined,
+    tokenResponseScopes: normalizeScopeList(tokenResponseScopes)
+  };
+}
+
+function formatGoogleOAuthMissingScopeError(scopeResolution: GoogleOAuthScopeResolution) {
+  const missing = formatGoogleScopeCategories(scopeResolution.missingRequiredScopes);
+  const granted = formatGoogleScopeCategories(scopeResolution.scopes);
+
+  if (scopeResolution.source === "unverified" && scopeResolution.tokenResponseScopes.length === 0) {
+    return [
+      "EMAIL_OAUTH_GMAIL_SCOPES_UNVERIFIED: Google did not return granted scopes, and Northstar could not verify Gmail permissions.",
+      "Granted scope categories: none verified.",
+      `Missing: ${missing}.`,
+      "Check the Google OAuth consent screen, Gmail API, test-user access, and redirect URI, then reconnect Gmail."
+    ].join(" ");
+  }
+
+  return [
+    "EMAIL_OAUTH_GMAIL_SCOPES_MISSING: Google did not grant Gmail read/send permissions.",
+    `Granted scope categories: ${granted}.`,
+    `Missing: ${missing}.`,
+    "Check the Google OAuth consent screen/scopes and reconnect Gmail again."
+  ].join(" ");
+}
+
+function formatGoogleScopeCategories(scopes: readonly string[]) {
+  const categories = new Set(scopes.map(googleScopeCategoryLabel));
+  return categories.size > 0 ? [...categories].join(", ") : "none";
+}
+
+function googleScopeCategoryLabel(scope: string) {
+  if (scope === "openid") return "sign-in";
+  if (scope === "email") return "email";
+  if (scope === "profile") return "profile";
+  if (scope === "https://www.googleapis.com/auth/gmail.readonly") return "Gmail read";
+  if (scope === "https://www.googleapis.com/auth/gmail.send") return "Gmail send";
+  if (scope === "https://www.googleapis.com/auth/gmail.metadata") return "Gmail metadata";
+  return scope.startsWith("https://www.googleapis.com/auth/gmail.") ? "other Gmail permission" : "other";
 }
 
 async function markGmailFullInboxScopesRejected(connectionId: string) {
@@ -2878,6 +3040,11 @@ function normalizeDisconnectProvider(provider: unknown): "GOOGLE_WORKSPACE" | "M
 function hasProviderScopes(scopes: Prisma.JsonValue | null | undefined, requiredScopes: readonly string[]) {
   const normalized = new Set(normalizeStoredScopes(scopes));
   return requiredScopes.every((scope) => normalized.has(scope));
+}
+
+function missingProviderScopes(scopes: readonly string[], requiredScopes: readonly string[]) {
+  const normalized = new Set(scopes);
+  return requiredScopes.filter((scope) => !normalized.has(scope));
 }
 
 function hasConnectionProviderScopes(

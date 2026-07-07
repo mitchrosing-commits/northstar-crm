@@ -11,6 +11,7 @@ import {
   listEmailConnectionProviderCards,
   processGmailInboxSyncJob,
   refreshGmailInboxThread,
+  resolveGoogleOAuthGrantedScopes,
   runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog,
   storeGoogleOAuthConnection,
@@ -189,6 +190,126 @@ describe("Gmail metadata sync", () => {
       expect(secret.scopes).toEqual(["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"]);
       expect(providerCard).toMatchObject({
         accountEmail: "alex@example.test",
+        lastError:
+          "EMAIL_OAUTH_GMAIL_SCOPES_MISSING: Google did not grant Gmail read/send permissions. Granted scope categories: sign-in, email, Gmail metadata. Missing: Gmail read, Gmail send. Check the Google OAuth consent screen/scopes and reconnect Gmail again.",
+        status: "Reconnect required",
+        syncAvailable: false
+      });
+      expect(jobs).toHaveLength(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("verifies omitted Google token-response scopes through tokeninfo and marks Full Inbox ready", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const scopeResolution = await resolveGoogleOAuthGrantedScopes({
+        accessToken: "gmail-verified-access-token",
+        fetchImpl: async (input) => {
+          const url = new URL(String(input));
+          expect(url.origin + url.pathname).toBe("https://oauth2.googleapis.com/tokeninfo");
+          expect(url.searchParams.get("access_token")).toBe("gmail-verified-access-token");
+          return Response.json({ scope: gmailFullInboxScopes.join(" ") });
+        },
+        tokenResponse: {
+          access_token: "gmail-verified-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-verified-refresh-token"
+        }
+      });
+      expect(scopeResolution).toMatchObject({
+        missingRequiredScopes: [],
+        scopes: gmailFullInboxScopes,
+        source: "tokeninfo",
+        tokenResponseScopes: []
+      });
+
+      const connection = await storeGoogleOAuthConnection({
+        actor: fixture.actorA,
+        env,
+        grantedScopes: scopeResolution.scopes,
+        profile: {
+          email: "alex@example.test",
+          name: "Alex Gmail"
+        },
+        scopeResolution,
+        tokenResponse: {
+          access_token: "gmail-verified-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-verified-refresh-token"
+        }
+      });
+      const [secret, providerCard, jobs] = await Promise.all([
+        fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } }),
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        ),
+        fixture.prisma.job.findMany({ where: { type: gmailInboxSyncJobType, workspaceId: fixture.workspaceA.id } })
+      ]);
+
+      expect(connection.scopes).toEqual(gmailFullInboxScopes);
+      expect(secret.scopes).toEqual(gmailFullInboxScopes);
+      expect(providerCard).toMatchObject({
+        accountEmail: "alex@example.test",
+        lastError: null,
+        status: "Connected",
+        syncAvailable: true
+      });
+      expect(jobs).toHaveLength(1);
+      expect(JSON.stringify(jobs[0].payload)).not.toContain("gmail-verified-access-token");
+      expect(JSON.stringify(jobs[0].payload)).not.toContain("gmail-verified-refresh-token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("shows safe missing-scope categories when tokeninfo verifies partial Gmail grants", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const scopeResolution = await resolveGoogleOAuthGrantedScopes({
+        accessToken: "gmail-partial-access-token",
+        fetchImpl: async () => Response.json({ scope: "openid email" }),
+        tokenResponse: {
+          access_token: "gmail-partial-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-partial-refresh-token"
+        }
+      });
+      const connection = await storeGoogleOAuthConnection({
+        actor: fixture.actorA,
+        env,
+        grantedScopes: scopeResolution.scopes,
+        profile: {
+          email: "alex@example.test",
+          name: "Alex Gmail"
+        },
+        scopeResolution,
+        tokenResponse: {
+          access_token: "gmail-partial-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-partial-refresh-token"
+        }
+      });
+      const [providerCard, jobs] = await Promise.all([
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        ),
+        fixture.prisma.job.findMany({ where: { type: gmailInboxSyncJobType, workspaceId: fixture.workspaceA.id } })
+      ]);
+
+      expect(scopeResolution).toMatchObject({
+        missingRequiredScopes: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+        scopes: ["openid", "email"],
+        source: "tokeninfo"
+      });
+      expect(connection.lastError).toContain("EMAIL_OAUTH_GMAIL_SCOPES_MISSING");
+      expect(connection.lastError).toContain("Granted scope categories: sign-in, email.");
+      expect(connection.lastError).toContain("Missing: Gmail read, Gmail send.");
+      expect(connection.lastError).not.toContain("gmail-partial-access-token");
+      expect(providerCard).toMatchObject({
+        accountEmail: "alex@example.test",
+        lastError: connection.lastError,
         status: "Reconnect required",
         syncAvailable: false
       });
@@ -262,6 +383,76 @@ describe("Gmail metadata sync", () => {
       );
       expect(afterReconnect).toMatchObject({
         accountEmail: "alex@example.test",
+        status: "Connected",
+        syncAvailable: true
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("upgrades a stale Gmail row when reconnect omits scope but tokeninfo verifies Full Inbox grants", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const legacyConnection = await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "alex@example.test",
+          createdById: fixture.userA.id,
+          lastError: "Previous scope warning",
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.create({
+        data: {
+          accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          accountEmail: "alex@example.test",
+          connectionId: legacyConnection.id,
+          encryptedAccessToken: encryptEmailToken("legacy-access-token", env),
+          encryptedRefreshToken: encryptEmailToken("legacy-refresh-token", env),
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          userId: fixture.userA.id,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      const scopeResolution = await resolveGoogleOAuthGrantedScopes({
+        accessToken: "gmail-verified-reconnect-access-token",
+        fetchImpl: async () => Response.json({ scope: gmailFullInboxScopes.join(" ") }),
+        tokenResponse: {
+          access_token: "gmail-verified-reconnect-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-verified-reconnect-refresh-token"
+        }
+      });
+      const reconnected = await storeGoogleOAuthConnection({
+        actor: fixture.actorA,
+        env,
+        grantedScopes: scopeResolution.scopes,
+        profile: {
+          email: "alex@example.test",
+          name: "Alex Gmail"
+        },
+        scopeResolution,
+        tokenResponse: {
+          access_token: "gmail-verified-reconnect-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-verified-reconnect-refresh-token"
+        }
+      });
+      expect(reconnected.id).toBe(legacyConnection.id);
+      expect(reconnected.scopes).toEqual(gmailFullInboxScopes);
+      expect(reconnected.lastError).toBeNull();
+
+      const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(providerCard).toMatchObject({
+        accountEmail: "alex@example.test",
+        lastError: null,
         status: "Connected",
         syncAvailable: true
       });

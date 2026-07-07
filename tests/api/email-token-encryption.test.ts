@@ -88,12 +88,15 @@ describe("encrypted email token storage", () => {
     expect(service).toContain("export function assertGoogleOAuthReady");
     expect(service).toContain("export function buildGoogleAuthorizationUrl");
     expect(service).toContain("export async function exchangeGoogleAuthorizationCode");
+    expect(service).toContain("export async function resolveGoogleOAuthGrantedScopes");
     expect(service).toContain("export async function fetchGoogleUserProfile");
     expect(service).toContain("export async function storeGoogleOAuthConnection");
     expect(service).toContain("normalizeProviderAccountEmail(profile.email, \"Gmail\")");
     expect(service).toContain("normalizeAccessTokenExpiresAt(tokenResponse.expires_in)");
     expect(service).toContain("function normalizeScopes(scope: unknown");
     expect(service).toContain("return normalizeScopes(scope, [])");
+    expect(service).toContain("https://oauth2.googleapis.com/tokeninfo");
+    expect(service).toContain("EMAIL_OAUTH_GMAIL_SCOPES_MISSING");
     expect(service).toContain("encryptedAccessToken: encryptEmailToken(tokenResponse.access_token");
     expect(service).toContain("encryptedRefreshToken");
     expect(service).toContain("actionLabel: connection?.status === \"CONNECTED\" ? \"Reconnect Gmail\" : \"Connect Gmail\"");

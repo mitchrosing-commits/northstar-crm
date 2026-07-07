@@ -148,6 +148,8 @@ describe("hosted email OAuth redirects", () => {
   it("routes email OAuth callbacks through the hosted app URL helper", () => {
     expect(googleCallbackRoute).toContain("buildAppUrl");
     expect(googleCallbackRoute).toContain("new URL(buildAppUrl(\"/settings\", { requestUrl: request.url }))");
+    expect(googleCallbackRoute).toContain("resolveGoogleOAuthGrantedScopes");
+    expect(googleCallbackRoute).toContain("grantedScopes: scopeResolution.scopes");
     expect(microsoftCallbackRoute).toContain("buildAppUrl");
     expect(microsoftCallbackRoute).toContain("new URL(buildAppUrl(\"/settings\", { requestUrl: request.url }))");
   });
@@ -195,6 +197,34 @@ describe("hosted email OAuth redirects", () => {
     expect(response.headers.get("location")).toBe("https://northstar.example.test/settings?emailConnection=gmail-error");
     expect(getRequestContext).not.toHaveBeenCalled();
     expect(exchangeGoogleAuthorizationCode).not.toHaveBeenCalled();
+  });
+
+  it("verifies Google granted scopes before storing the OAuth connection", async () => {
+    const { resolveGoogleOAuthGrantedScopes, storeGoogleOAuthConnection } = mockGoogleCallbackDependencies();
+    const { GET } = await import("@/app/api/email-connections/google/callback/route");
+
+    const response = await GET(
+      oauthCallbackRequest(
+        "https://northstar.example.test/api/email-connections/google/callback?code=one-time-code&state=signed-state"
+      )
+    );
+
+    expect(response.headers.get("location")).toBe("https://northstar.example.test/settings?emailConnection=gmail-connected");
+    expect(resolveGoogleOAuthGrantedScopes).toHaveBeenCalledWith({
+      accessToken: "access-token",
+      tokenResponse: { access_token: "access-token" }
+    });
+    expect(storeGoogleOAuthConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grantedScopes: [
+          "openid",
+          "email",
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.send"
+        ],
+        scopeResolution: expect.objectContaining({ source: "token_response" })
+      })
+    );
   });
 
   it("redirects Microsoft provider errors without preserving provider query details", async () => {
@@ -275,6 +305,23 @@ function mockGoogleCallbackDependencies({
     actor: { actorUserId: "user_123", workspaceId: "workspace_123" }
   }));
   const exchangeGoogleAuthorizationCode = vi.fn(async () => ({ access_token: "access-token" }));
+  const resolveGoogleOAuthGrantedScopes = vi.fn(async () => ({
+    missingRequiredScopes: [],
+    scopes: [
+      "openid",
+      "email",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send"
+    ],
+    source: "token_response",
+    tokenResponseScopes: [
+      "openid",
+      "email",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send"
+    ]
+  }));
+  const storeGoogleOAuthConnection = vi.fn();
 
   vi.doMock("@/lib/auth/request-context", () => ({
     getRequestContext,
@@ -294,10 +341,17 @@ function mockGoogleCallbackDependencies({
       email: "alex@example.test",
       name: "Alex"
     })),
-    storeGoogleOAuthConnection: vi.fn()
+    resolveGoogleOAuthGrantedScopes,
+    storeGoogleOAuthConnection
   }));
 
-  return { exchangeGoogleAuthorizationCode, getRequestContext, resolveCurrentWorkspaceContext };
+  return {
+    exchangeGoogleAuthorizationCode,
+    getRequestContext,
+    resolveCurrentWorkspaceContext,
+    resolveGoogleOAuthGrantedScopes,
+    storeGoogleOAuthConnection
+  };
 }
 
 function mockMicrosoftCallbackDependencies({
