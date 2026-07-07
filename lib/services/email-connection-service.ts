@@ -232,8 +232,27 @@ export async function listEmailConnectionProviderCards(
     take: 5
   });
   const latestConnectionByProvider = new Map<(typeof connections)[number]["provider"], (typeof connections)[number]>();
-  for (const connection of connections) {
-    if (!latestConnectionByProvider.has(connection.provider)) {
+  for (const sourceConnection of connections) {
+    let connection = sourceConnection;
+    if (
+      connection.provider === "GOOGLE_WORKSPACE" &&
+      connection.status === "CONNECTED" &&
+      hasProviderScopes(connection.secret?.scopes, gmailOAuthScopes) &&
+      !hasProviderScopes(connection.scopes, gmailOAuthScopes)
+    ) {
+      const scopes = mergeProviderScopes(connection.secret?.scopes, gmailOAuthScopes);
+      await prisma.emailConnection.update({
+        where: { id: connection.id },
+        data: { lastError: null, scopes }
+      });
+      connection = { ...connection, lastError: null, scopes };
+    }
+
+    const existingConnection = latestConnectionByProvider.get(connection.provider);
+    if (
+      !existingConnection ||
+      providerConnectionCardPriority(connection) > providerConnectionCardPriority(existingConnection)
+    ) {
       latestConnectionByProvider.set(connection.provider, connection);
     }
   }
@@ -2380,6 +2399,27 @@ function normalizeGoogleOAuthScopes(scope: unknown) {
 
 function normalizeStoredScopes(scopes: Prisma.JsonValue | null | undefined) {
   return Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [];
+}
+
+function mergeProviderScopes(...scopeSources: unknown[]) {
+  const scopes = new Set<string>();
+  for (const source of scopeSources) {
+    for (const scope of normalizeStoredScopes(source as Prisma.JsonValue | null | undefined)) {
+      scopes.add(scope);
+    }
+  }
+  return [...scopes];
+}
+
+function providerConnectionCardPriority(connection: {
+  provider: EmailConnectionProvider;
+  scopes: Prisma.JsonValue | null | undefined;
+  secret?: { scopes: Prisma.JsonValue | null | undefined } | null;
+  status: EmailConnectionStatus;
+}) {
+  if (connection.status !== "CONNECTED") return 0;
+  if (connection.provider === "GOOGLE_WORKSPACE" && hasConnectionProviderScopes(connection, gmailOAuthScopes)) return 2;
+  return 1;
 }
 
 function gmailInboxSyncJobDedupeKey(connectionId: string) {

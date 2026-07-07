@@ -108,8 +108,8 @@ textarea {
 }
 
 .sidebar nav {
-  min-height: 0;
-  overflow-y: auto;
+  flex-shrink: 0;
+  overflow: visible;
   padding-right: 2px;
 }
 

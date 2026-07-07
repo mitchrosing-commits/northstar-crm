@@ -214,8 +214,10 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain(".sidebar {\n  position: sticky;");
     expect(globalStyles).toContain("display: flex;");
     expect(globalStyles).toContain("flex-direction: column;");
-    expect(globalStyles).toContain(".sidebar nav");
     expect(globalStyles).toContain("overflow-y: auto;");
+    expect(globalStyles).toContain(".sidebar nav");
+    expect(globalStyles).toContain("flex-shrink: 0;");
+    expect(globalStyles).toContain("overflow: visible;");
     expect(globalStyles).toContain("margin-top: auto;");
     expect(globalStyles).not.toContain("bottom: 16px;\n  left: 16px;");
   });

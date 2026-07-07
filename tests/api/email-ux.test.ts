@@ -167,6 +167,12 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Smart Labels");
     expect(emailPage).toContain("AI Reply Assistant");
     expect(emailPage).toContain("Follow-ups");
+    expect(emailPage).toContain('id="full-inbox"');
+    expect(emailPage).toContain('aria-label="Full Inbox synced Gmail mailbox"');
+    expect(emailPage).toContain('id="relationship-inbox"');
+    expect(emailPage).toContain('aria-label="Relationship Inbox CRM priority queue"');
+    expect(emailPage.indexOf('id="full-inbox"')).toBeLessThan(emailPage.indexOf('title="Email Providers"'));
+    expect(emailPage.indexOf('id="relationship-inbox"')).toBeGreaterThan(emailPage.indexOf('title="Email Providers"'));
     expect(emailPage).toContain("InboxWorkflowItem");
     expect(globalCss).toContain(".inbox-workflow-map");
     expect(globalCss).toContain(".inbox-workflow-grid");

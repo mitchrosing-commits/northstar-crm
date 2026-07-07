@@ -169,6 +169,58 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         </div>
       </section>
 
+      <section aria-label="Full Inbox synced Gmail mailbox" className="data-card section-separated" id="full-inbox">
+        <PanelTitleRow
+          actions={<Badge>{inboxThreads.length ? `${inboxThreads.length} threads` : "No synced threads"}</Badge>}
+          title="Full Inbox"
+        />
+        <FormIntroCallout className="email-status-callout email-inbox-status" title="Gmail sync status">
+          {gmailReadiness.statusLine}
+          {gmailProvider?.lastSyncAt ? ` Last synced ${formatDate(gmailProvider.lastSyncAt)}.` : ""}
+          {gmailProvider?.syncStatusLabel ? ` Background worker: ${gmailProvider.syncStatusLabel}.` : ""}
+          {gmailProvider?.syncStatusDetail ? ` ${formatProviderSyncStatusDetail(gmailProvider.syncStatusDetail)}` : ""}
+        </FormIntroCallout>
+        <EmailScopeCallout title="Inbox workflow">
+          Browse synced Gmail threads, read stored message bodies, and send replies only after writing and submitting
+          the reply yourself. Viewing, filtering, and opening threads does not send email or create CRM records.
+        </EmailScopeCallout>
+        {inboxThreads.length > 0 && selectedInboxThread ? (
+          <div className="email-inbox-layout">
+            <div className="email-inbox-thread-list-shell">
+              <EmailInboxThreadList activeThreadId={selectedInboxThread.id} threads={inboxThreads} />
+              {gmailProvider?.syncAvailable && oldestInboxMessageAt ? (
+                <form action={loadOlderGmailInboxFromEmailPageAction} className="email-inbox-load-more">
+                  <input name="before" type="hidden" value={oldestInboxMessageAt.toISOString()} />
+                  <input name="threadId" type="hidden" value={selectedInboxThread.id} />
+                  <button
+                    aria-label="Load older Gmail inbox messages"
+                    className="button-secondary button-compact"
+                    title="Load older Gmail inbox messages"
+                    type="submit"
+                  >
+                    Load older messages
+                  </button>
+                  <span className="form-hint">Before {formatDate(oldestInboxMessageAt)}</span>
+                </form>
+              ) : null}
+            </div>
+            <EmailInboxThreadDetail
+              aiReplyReadiness={aiReplyReadiness}
+              draftTemplates={draftTemplates}
+              followUpDetails={selectedInboxFollowUpDetails}
+              smartLabelReadiness={smartLabelReadiness}
+              thread={selectedInboxThread}
+              workspaceId={workspace.id}
+            />
+          </div>
+        ) : (
+          <EmptyState
+            description={fullInboxEmptyState.description}
+            title={fullInboxEmptyState.title}
+          />
+        )}
+      </section>
+
       <section className="panel section-separated">
         <PanelTitleRow actions={<Badge>{gmailProvider?.status ?? "Not configured"}</Badge>} title="Email Providers" />
         <EmailScopeCallout title="Sync boundaries">
@@ -318,59 +370,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         </section>
       ) : null}
 
-      <section className="data-card section-separated">
-        <PanelTitleRow
-          actions={<Badge>{inboxThreads.length ? `${inboxThreads.length} threads` : "No synced threads"}</Badge>}
-          title="Full Inbox"
-        />
-        <FormIntroCallout className="email-status-callout email-inbox-status" title="Gmail sync status">
-          {gmailReadiness.statusLine}
-          {gmailProvider?.lastSyncAt ? ` Last synced ${formatDate(gmailProvider.lastSyncAt)}.` : ""}
-          {gmailProvider?.syncStatusLabel ? ` Background worker: ${gmailProvider.syncStatusLabel}.` : ""}
-          {gmailProvider?.syncStatusDetail ? ` ${formatProviderSyncStatusDetail(gmailProvider.syncStatusDetail)}` : ""}
-        </FormIntroCallout>
-        <EmailScopeCallout title="Inbox workflow">
-          Browse synced Gmail threads, read stored message bodies, and send replies only after writing and submitting
-          the reply yourself. Viewing, filtering, and opening threads does not send email or create CRM records.
-        </EmailScopeCallout>
-        {inboxThreads.length > 0 && selectedInboxThread ? (
-          <div className="email-inbox-layout">
-            <div className="email-inbox-thread-list-shell">
-              <EmailInboxThreadList activeThreadId={selectedInboxThread.id} threads={inboxThreads} />
-              {gmailProvider?.syncAvailable && oldestInboxMessageAt ? (
-                <form action={loadOlderGmailInboxFromEmailPageAction} className="email-inbox-load-more">
-                  <input name="before" type="hidden" value={oldestInboxMessageAt.toISOString()} />
-                  <input name="threadId" type="hidden" value={selectedInboxThread.id} />
-                  <button
-                    aria-label="Load older Gmail inbox messages"
-                    className="button-secondary button-compact"
-                    title="Load older Gmail inbox messages"
-                    type="submit"
-                  >
-                    Load older messages
-                  </button>
-                  <span className="form-hint">Before {formatDate(oldestInboxMessageAt)}</span>
-                </form>
-              ) : null}
-            </div>
-            <EmailInboxThreadDetail
-              aiReplyReadiness={aiReplyReadiness}
-              draftTemplates={draftTemplates}
-              followUpDetails={selectedInboxFollowUpDetails}
-              smartLabelReadiness={smartLabelReadiness}
-              thread={selectedInboxThread}
-              workspaceId={workspace.id}
-            />
-          </div>
-        ) : (
-          <EmptyState
-            description={fullInboxEmptyState.description}
-            title={fullInboxEmptyState.title}
-          />
-        )}
-      </section>
-
-      <section className="data-card section-separated">
+      <section aria-label="Relationship Inbox CRM priority queue" className="data-card section-separated" id="relationship-inbox">
         <PanelTitleRow
           actions={
             <Badge>

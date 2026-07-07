@@ -230,6 +230,51 @@ describe("Gmail metadata sync", () => {
     }
   });
 
+  it("repairs stale Gmail scope summaries when encrypted reconnect credentials are current", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const staleConnection = await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "alex@example.test",
+          createdById: fixture.userA.id,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.create({
+        data: {
+          accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          accountEmail: "alex@example.test",
+          connectionId: staleConnection.id,
+          encryptedAccessToken: encryptEmailToken("reconnected-access-token", env),
+          encryptedRefreshToken: encryptEmailToken("reconnected-refresh-token", env),
+          provider: "GOOGLE_WORKSPACE",
+          scopes: gmailFullInboxScopes,
+          userId: fixture.userA.id,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      const afterReconnect = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(afterReconnect).toMatchObject({
+        accountEmail: "alex@example.test",
+        status: "Connected",
+        syncAvailable: true
+      });
+
+      const repairedConnection = await fixture.prisma.emailConnection.findUniqueOrThrow({
+        where: { id: staleConnection.id }
+      });
+      expect(repairedConnection.scopes).toEqual(gmailFullInboxScopes);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("imports only matched recent Gmail metadata and deduplicates provider message ids", async () => {
     const fixture = await createIntegrationFixture();
     try {
