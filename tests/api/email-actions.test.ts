@@ -94,7 +94,7 @@ describe("email sync server actions", () => {
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?emailConnection=gmail-sync-queued"
+      url: "/email?emailConnection=gmail-sync-queued&syncStatus=1#gmail-sync-progress"
     });
 
     expect(mocks.enqueueGmailInboxSyncJob).toHaveBeenCalledWith(actor);
@@ -226,7 +226,7 @@ describe("email sync server actions", () => {
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?emailConnection=gmail-sync-error"
+      url: "/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress"
     });
 
     expect(mocks.cookieSet).not.toHaveBeenCalled();

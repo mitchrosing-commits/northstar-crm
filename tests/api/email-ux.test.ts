@@ -189,7 +189,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain('title="Latest Sync Result"');
     expect(emailPage).toContain('title="Unmatched Email Review"');
     expect(emailPage).toContain('title="Suggested Follow-ups"');
-    expect(emailPage).toContain('title="Synced Emails"');
+    expect(emailPage).toContain('title="Stored Email History"');
     expect(emailPage).toContain('className="panel section-separated"');
     expect(emailPage).toContain("provider-card-grid section-spaced");
     expect(emailPage).toContain("EmailScopeCallout");
@@ -288,10 +288,12 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Connected account: {provider.accountEmail}");
     expect(emailPage).toContain("Last sync: {formatDate(provider.lastSyncAt)}");
     expect(emailPage).toContain("Last sync issue: {provider.lastError}");
-    expect(emailPage).toContain("Background sync: {provider.syncStatusLabel}");
+    expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
     expect(emailPage).toContain("formatProviderSyncStatusDetail(provider.syncStatusDetail)");
-    expect(emailPage).toContain("formatProviderSyncStatusDetail(gmailProvider.syncStatusDetail)");
-    expect(emailPage).toContain("Gmail sync status");
+    expect(emailConnectionService).toContain("syncStatusUpdatedAt?: Date | null");
+    expect(emailConnectionService).toContain("syncStatusUpdatedAt: syncStatus.updatedAt");
+    expect(emailPage).toContain("GmailSyncProgressPanel");
+    expect(emailPage).toContain('aria-label="Gmail inbox sync progress"');
     expect(emailConnectionService).toContain("syncStatusLabel?: string | null");
     expect(emailConnectionService).toContain("syncStatusDetail?: string | null");
     expect(emailConnectionService).toContain("gmailSyncJobStatus(syncJob)");
@@ -340,7 +342,7 @@ describe("Email UX v1 discoverability", () => {
   it("runs manual Gmail sync from the email page and reports matched, duplicate, and skipped counts", () => {
     expect(emailActions).toContain('"use server"');
     expect(emailActions).toContain("enqueueGmailInboxSyncJob(actor)");
-    expect(emailActions).toContain("/email?emailConnection=gmail-sync-queued");
+    expect(emailActions).toContain("/email?emailConnection=gmail-sync-queued&syncStatus=1#gmail-sync-progress");
     expect(emailActions).toContain("syncOlderGmailInboxMessages({ actor, before })");
     expect(emailActions).toContain("refreshGmailInboxThread({ actor, threadId })");
     expect(emailActions).toContain("emailConnection: \"gmail-loaded-more\"");
@@ -357,7 +359,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailActions).toContain(
       "unmatchedPreviews: result.unmatchedPreviews",
     );
-    expect(emailActions).toContain("/email?emailConnection=gmail-sync-error");
+    expect(emailActions).toContain("/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress");
     expect(emailConnectionService).toContain(
       "normalizeRecentEmailSyncMaxResults(maxResults)",
     );
@@ -387,7 +389,21 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain("style={{ marginTop: 8 }}");
     expect(emailPage).not.toContain("style={{ marginTop: 12 }}");
     expect(emailPage).toContain("Gmail Full Inbox sync finished.");
-    expect(emailPage).toContain("Gmail Full Inbox sync was queued.");
+    expect(emailPage).toContain("Gmail inbox sync is queued.");
+    expect(emailPage).toContain("gmailSyncProgressState");
+    expect(emailPage).toContain('id="gmail-sync-progress"');
+    expect(emailPage).toContain("Waiting to start Gmail sync");
+    expect(emailPage).toContain("Syncing Gmail inbox");
+    expect(emailPage).toContain("Gmail sync completed");
+    expect(emailPage).toContain("Gmail sync completed with no stored messages");
+    expect(emailPage).toContain("Refresh status");
+    expect(emailPage).toContain("No Gmail account connected");
+    expect(emailPage).toContain("Provider errors are redacted before they are shown here.");
+    expect(globalCss).toContain(".gmail-sync-progress");
+    expect(globalCss).toContain(".gmail-sync-progress-grid");
+    expect(globalCss).toContain(".gmail-sync-progress-attention");
+    expect(globalCss).toContain(".gmail-sync-progress-danger");
+    expect(globalCss).toContain(".gmail-sync-progress-success");
     expect(emailPage).toContain("Older Gmail messages loaded.");
     expect(emailPage).toContain("Gmail thread refreshed.");
     expect(emailPage).toContain("skipped ${searchParams.skipped");
@@ -410,7 +426,7 @@ describe("Email UX v1 discoverability", () => {
   });
 
   it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
-    expect(emailPage).toContain("Synced Emails");
+    expect(emailPage).toContain("Stored Email History");
     expect(emailPage).toContain("Suggested Follow-ups");
     expect(emailPage).toContain("EmailLogCard");
     expect(emailPage).toContain("emailNeedsAttention");
@@ -591,11 +607,14 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain('<div className="empty-state">');
     expect(emailPage).toContain("No email activity yet");
     expect(emailPage).toContain(
-      "Log an email manually from a deal, contact, organization, or lead.",
+      "Synced Gmail messages and reviewed manual fallback logs appear here.",
     );
     expect(emailPage).toContain("Gmail is connected, but no inbox messages have synced yet");
     expect(emailPage).toContain("Relationship Inbox and manual email logging still work without a synced mailbox.");
-    expect(emailPage).toContain("Log an email manually");
+    expect(emailPage).toContain("Manual logging / legacy fallback");
+    expect(emailPage).toContain("not available through synced Gmail Full Inbox yet");
+    expect(emailPage).toContain("TODO: Remove or further de-emphasize manual logging after Gmail Full Inbox is proven in boss testing.");
+    expect(globalCss).toContain(".manual-email-legacy-fallback");
     expect(manualEmailPanel).toContain("Log Manual Email");
     expect(manualEmailPanel).toContain("description={");
     expect(manualEmailPanel).not.toContain("panel-intro-copy");

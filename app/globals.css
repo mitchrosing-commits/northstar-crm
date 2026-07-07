@@ -2798,6 +2798,87 @@ textarea {
   margin: 12px 0 0;
 }
 
+.gmail-sync-progress {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+}
+
+.gmail-sync-progress .panel-title-row {
+  margin-bottom: 0;
+}
+
+.gmail-sync-progress-attention {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface));
+}
+
+.gmail-sync-progress-success {
+  border-color: color-mix(in srgb, #2f855a 36%, var(--line));
+  background: #f3fbf6;
+}
+
+.gmail-sync-progress-danger {
+  border-color: color-mix(in srgb, #c2410c 35%, var(--line));
+  background: #fff7ed;
+}
+
+.gmail-sync-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+}
+
+.gmail-sync-progress-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.gmail-sync-progress-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.gmail-sync-progress-grid strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.manual-email-legacy-fallback {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.manual-email-legacy-fallback summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.manual-email-legacy-fallback p {
+  margin: 10px 0 0;
+}
+
 .inbox-workflow-map {
   margin-bottom: 16px;
 }

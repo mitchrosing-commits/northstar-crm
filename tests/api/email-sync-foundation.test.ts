@@ -173,7 +173,8 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("messages/send");
     expect(emailPage).toContain("title=\"Full Inbox\"");
     expect(emailPage).toContain("EmailInboxThreadList");
-    expect(emailPage).toContain("Background sync: {provider.syncStatusLabel}");
+    expect(emailPage).toContain("GmailSyncProgressPanel");
+    expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
     expect(emailPage).toContain("gmail-sync-queued");
     expect(emailPage).toContain("Send Gmail reply");
     expect(emailPage).toContain("Disconnect");

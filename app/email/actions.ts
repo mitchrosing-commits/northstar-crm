@@ -57,10 +57,10 @@ export async function syncGmailInboxFromEmailPageAction() {
   try {
     await enqueueGmailInboxSyncJob(actor);
   } catch {
-    redirect("/email?emailConnection=gmail-sync-error" as Route);
+    redirect("/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress" as Route);
   }
 
-  redirect("/email?emailConnection=gmail-sync-queued" as Route);
+  redirect("/email?emailConnection=gmail-sync-queued&syncStatus=1#gmail-sync-progress" as Route);
 }
 
 export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData) {

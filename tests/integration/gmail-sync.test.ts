@@ -1206,8 +1206,11 @@ describe("Gmail metadata sync", () => {
       );
       expect(providerCard).toMatchObject({
         syncAvailable: true,
-        syncStatusLabel: "Sync queued"
+        syncStatusLabel: "Sync queued",
+        syncStatusUpdatedAt: expect.any(Date)
       });
+      expect(JSON.stringify(providerCard)).not.toContain("access-token");
+      expect(JSON.stringify(providerCard)).not.toContain("refresh-token");
     } finally {
       await fixture.cleanup();
     }

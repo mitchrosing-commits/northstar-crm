@@ -66,6 +66,7 @@ type EmailPageProps = {
     emailConnection?: string;
     inbox?: string;
     skipped?: string;
+    syncStatus?: string;
     thread?: string;
     total?: string;
   }>;
@@ -95,6 +96,12 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const majorProviderCards = buildMajorProviderCards({ gmailProvider, microsoftProvider });
   const gmailReadiness = gmailFullInboxReadiness(gmailProvider);
   const fullInboxEmptyState = fullInboxEmptyStateCopy(gmailProvider, inboxThreads.length);
+  const gmailSyncProgress = gmailSyncProgressState({
+    emailConnection: resolvedSearchParams?.emailConnection,
+    provider: gmailProvider,
+    showRequested: resolvedSearchParams?.syncStatus === "1",
+    threadCount: inboxThreads.length
+  });
   const statusCopy = emailStatusCopy(resolvedSearchParams);
   const syncSummary = buildSyncSummary(resolvedSearchParams, latestSyncReview, majorProviderCards);
   const aiReplyReadiness = emailReplyAssistantReadiness(process.env);
@@ -145,12 +152,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           description="Synced Gmail mailbox threads appear here first. Relationship Inbox priorities stay separate below."
           title="Full Inbox"
         />
-        <FormIntroCallout className="email-status-callout email-inbox-status" title="Gmail sync status">
-          {gmailReadiness.statusLine}
-          {gmailProvider?.lastSyncAt ? ` Last synced ${formatDate(gmailProvider.lastSyncAt)}.` : ""}
-          {gmailProvider?.syncStatusLabel ? ` Background worker: ${gmailProvider.syncStatusLabel}.` : ""}
-          {gmailProvider?.syncStatusDetail ? ` ${formatProviderSyncStatusDetail(gmailProvider.syncStatusDetail)}` : ""}
-        </FormIntroCallout>
+        <GmailSyncProgressPanel progress={gmailSyncProgress} provider={gmailProvider} />
         <EmailScopeCallout title="Inbox workflow">
           Browse synced Gmail threads, read stored message bodies, and send replies only after writing and submitting
           the reply yourself. Viewing, filtering, and opening threads does not send email or create CRM records.
@@ -259,7 +261,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                 {provider.lastSyncAt ? <p>Last sync: {formatDate(provider.lastSyncAt)}</p> : null}
                 {provider.syncStatusLabel ? (
                   <p>
-                    Background sync: {provider.syncStatusLabel}
+                    Sync status: {provider.syncStatusLabel}
                     {provider.syncStatusDetail ? ` · ${formatProviderSyncStatusDetail(provider.syncStatusDetail)}` : ""}
                   </p>
                 ) : null}
@@ -504,7 +506,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
       ) : null}
 
       <section className="data-card">
-        <PanelTitleRow actions={<Badge>{recentEmailLogs.length} shown</Badge>} title="Synced Emails" />
+        <PanelTitleRow actions={<Badge>{recentEmailLogs.length} shown</Badge>} title="Stored Email History" />
         {recentEmailLogs.length > 0 ? (
           <div className="email-command-list">
             {recentEmailLogs.map((emailLog) => (
@@ -523,10 +525,23 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           </div>
         ) : (
           <EmptyState
-            description="Log an email manually from a deal, contact, organization, or lead. After Gmail is connected, manual sync will add recent matched messages from known contacts here. No matches yet? Create contacts from unmatched emails after your next sync."
+            description="Synced Gmail messages and reviewed manual fallback logs appear here. If Full Inbox cannot reach a message yet, use the manual logging fallback from the related CRM record."
             title="No email activity yet"
           />
         )}
+        <details className="manual-email-legacy-fallback">
+          <summary>
+            <span>Manual logging / legacy fallback</span>
+            <Badge>Fallback</Badge>
+          </summary>
+          <p>
+            Manual email logging stays available on deal, contact, organization, and lead records for emails that are
+            not available through synced Gmail Full Inbox yet. Prefer Full Inbox sync for mailbox-backed messages.
+          </p>
+          <p className="form-hint">
+            TODO: Remove or further de-emphasize manual logging after Gmail Full Inbox is proven in boss testing.
+          </p>
+        </details>
       </section>
     </AppShell>
   );
@@ -537,6 +552,73 @@ function EmailScopeCallout({ children, title }: { children: ReactNode; title: st
     <FormIntroCallout className="email-scope-callout" title={title}>
       {children}
     </FormIntroCallout>
+  );
+}
+
+type GmailSyncProgress = {
+  active: boolean;
+  detail: string;
+  lastUpdateLabel: string;
+  nextStep: string;
+  statusLabel: string;
+  technicalHint: string | null;
+  title: string;
+  tone: "attention" | "danger" | "neutral" | "success";
+  whatIsHappening: string;
+};
+
+function GmailSyncProgressPanel({
+  progress,
+  provider
+}: {
+  progress: GmailSyncProgress;
+  provider: ProviderCard | undefined;
+}) {
+  return (
+    <section
+      aria-label="Gmail inbox sync progress"
+      aria-live={progress.active ? "polite" : undefined}
+      className={`gmail-sync-progress gmail-sync-progress-${progress.tone}`}
+      id="gmail-sync-progress"
+    >
+      <PanelTitleRow
+        actions={
+          <ActionGroup className="filter-actions" label="Gmail inbox sync actions">
+            <Badge>{progress.statusLabel}</Badge>
+            <FullInboxPrimaryAction provider={provider} />
+            <Link
+              aria-label="Refresh Gmail inbox sync status"
+              className="button-secondary button-compact"
+              href={"/email?syncStatus=1#gmail-sync-progress" as Route}
+              title="Refresh Gmail inbox sync status"
+            >
+              Refresh status
+            </Link>
+          </ActionGroup>
+        }
+        description={progress.detail}
+        title={progress.title}
+      />
+      <div className="gmail-sync-progress-grid">
+        <div>
+          <span>Account</span>
+          <strong>{provider?.accountEmail ?? "No Gmail account connected"}</strong>
+        </div>
+        <div>
+          <span>Current step</span>
+          <strong>{progress.whatIsHappening}</strong>
+        </div>
+        <div>
+          <span>Last update</span>
+          <strong>{progress.lastUpdateLabel}</strong>
+        </div>
+        <div>
+          <span>Next</span>
+          <strong>{progress.nextStep}</strong>
+        </div>
+      </div>
+      {progress.technicalHint ? <p className="form-hint">{progress.technicalHint}</p> : null}
+    </section>
   );
 }
 
@@ -800,10 +882,136 @@ function gmailFullInboxReadiness(provider: ProviderCard | undefined) {
   }
 
   return {
-    description: "Gmail Full Inbox is connected. Sync now to queue the background worker or refresh a selected thread from the inbox reader.",
+    description: "Gmail Full Inbox is connected. Sync now to queue a mailbox refresh or refresh a selected thread from the inbox reader.",
     ready: true,
     statusLine: `Gmail Full Inbox is connected${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}.`,
     title: "Gmail Full Inbox connected"
+  };
+}
+
+function gmailSyncProgressState({
+  emailConnection,
+  provider,
+  showRequested,
+  threadCount
+}: {
+  emailConnection: string | undefined;
+  provider: ProviderCard | undefined;
+  showRequested: boolean;
+  threadCount: number;
+}): GmailSyncProgress {
+  const readiness = gmailFullInboxReadiness(provider);
+  const lastUpdate = provider?.syncStatusUpdatedAt ?? provider?.lastSyncAt ?? null;
+  const lastUpdateLabel = lastUpdate ? formatDate(lastUpdate) : "Not updated yet";
+  const syncDetail = provider?.syncStatusDetail ? formatProviderSyncStatusDetail(provider.syncStatusDetail) : null;
+  const activeFromClick = showRequested || emailConnection === "gmail-sync-queued" || emailConnection === "gmail-sync-error";
+
+  if (!readiness.ready) {
+    return {
+      active: false,
+      detail: readiness.description,
+      lastUpdateLabel,
+      nextStep: provider?.href ? "Connect or reconnect Gmail" : "Open email settings",
+      statusLabel: "Setup needed",
+      technicalHint: null,
+      title: readiness.title,
+      tone: "attention",
+      whatIsHappening: "Gmail is not ready to sync"
+    };
+  }
+
+  if (provider?.syncStatusLabel === "Sync queued" || emailConnection === "gmail-sync-queued") {
+    return {
+      active: true,
+      detail:
+        "Your Gmail inbox sync is queued. Northstar will start importing recent inbox threads as soon as the sync runner picks it up.",
+      lastUpdateLabel,
+      nextStep: "Refresh status in a moment",
+      statusLabel: "Sync queued",
+      technicalHint: "A background worker processes the queue; this page does not wait on the whole mailbox import request.",
+      title: "Waiting to start Gmail sync",
+      tone: "attention",
+      whatIsHappening: syncDetail ?? "Queued for mailbox import"
+    };
+  }
+
+  if (provider?.syncStatusLabel === "Sync running") {
+    return {
+      active: true,
+      detail: "Northstar is syncing the connected Gmail inbox and storing messages as workspace-scoped email logs.",
+      lastUpdateLabel,
+      nextStep: "Refresh status to check for new threads",
+      statusLabel: "Sync running",
+      technicalHint: "The sync uses the existing background job path so provider calls stay outside the page request.",
+      title: "Syncing Gmail inbox",
+      tone: "attention",
+      whatIsHappening: syncDetail ?? "Reading Gmail inbox messages"
+    };
+  }
+
+  if (
+    provider?.syncStatusLabel === "Sync failed" ||
+    provider?.syncStatusLabel === "Sync retry scheduled" ||
+    provider?.status === "Sync issue" ||
+    emailConnection === "gmail-sync-error"
+  ) {
+    return {
+      active: false,
+      detail: provider?.lastError ?? syncDetail ?? "Gmail sync could not be completed. Reconnect Gmail or retry sync.",
+      lastUpdateLabel,
+      nextStep: provider?.status === "Reconnect required" ? "Reconnect Gmail" : "Retry Sync Gmail inbox",
+      statusLabel: provider?.syncStatusLabel ?? "Sync failed",
+      technicalHint: "Provider errors are redacted before they are shown here.",
+      title: "Gmail sync needs attention",
+      tone: "danger",
+      whatIsHappening: syncDetail ?? "Sync stopped before inbox threads were stored"
+    };
+  }
+
+  if (provider?.syncStatusLabel === "Sync complete") {
+    return {
+      active: false,
+      detail:
+        threadCount > 0
+          ? "Gmail sync completed and synced threads are ready in Full Inbox."
+          : "Gmail sync completed, but no inbox messages were stored for this workspace.",
+      lastUpdateLabel,
+      nextStep: threadCount > 0 ? "Review synced threads" : "Confirm the mailbox has recent inbox mail",
+      statusLabel: "Sync complete",
+      technicalHint: null,
+      title: threadCount > 0 ? "Gmail sync completed" : "Gmail sync completed with no stored messages",
+      tone: threadCount > 0 ? "success" : "neutral",
+      whatIsHappening: syncDetail ?? "Mailbox sync finished"
+    };
+  }
+
+  if (provider?.lastSyncAt && threadCount === 0) {
+    return {
+      active: false,
+      detail: "Gmail is connected, but the latest sync did not store any inbox threads.",
+      lastUpdateLabel,
+      nextStep: "Sync again or check the connected mailbox",
+      statusLabel: "No synced messages",
+      technicalHint: null,
+      title: "Gmail connected, no messages synced yet",
+      tone: "neutral",
+      whatIsHappening: "Waiting for inbox messages to appear"
+    };
+  }
+
+  return {
+    active: activeFromClick,
+    detail:
+      threadCount > 0
+        ? "Gmail Full Inbox is ready. Sync again to refresh recent mailbox threads."
+        : "Gmail Full Inbox is ready, but no sync has completed yet.",
+    lastUpdateLabel,
+    nextStep: "Click Sync Gmail inbox",
+    statusLabel: "Ready to sync",
+    technicalHint: null,
+    title: threadCount > 0 ? "Gmail inbox ready" : "Ready to sync Gmail inbox",
+    tone: "neutral",
+    whatIsHappening: threadCount > 0 ? "Showing synced threads" : "Waiting for first mailbox sync"
   };
 }
 
@@ -826,7 +1034,7 @@ function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount
   if (provider?.syncStatusLabel === "Sync queued") {
     return {
       description:
-        "Gmail is connected and a Full Inbox sync is queued. Run the background worker or wait for it to process, then refresh this page.",
+        "Gmail is connected and a Full Inbox sync is queued. Refresh sync status in a moment to see whether messages have been stored.",
       title: "Gmail sync is queued"
     };
   }
@@ -834,7 +1042,7 @@ function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount
   if (provider?.syncStatusLabel === "Sync running") {
     return {
       description:
-        "Gmail is connected and a Full Inbox sync is currently running. Messages will appear here after the worker stores inbox threads.",
+        "Gmail is connected and a Full Inbox sync is currently running. Messages will appear here after inbox threads are stored.",
       title: "Gmail sync is running"
     };
   }
@@ -850,14 +1058,14 @@ function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount
   if (provider?.lastSyncAt) {
     return {
       description:
-        "Gmail is connected, but no inbox messages have synced yet. Use Sync Gmail inbox to queue the mailbox import; the background worker stores threads here.",
+        "Gmail is connected, but no inbox messages have synced yet. Use Sync Gmail inbox to queue the mailbox import and return to the progress panel.",
       title: "Gmail is connected, but no inbox messages have synced yet"
     };
   }
 
   return {
     description:
-      "Gmail is connected, but no inbox sync has completed yet. Use Sync Gmail inbox to queue the mailbox import; the background worker stores recent threads here.",
+      "Gmail is connected, but no inbox sync has completed yet. Use Sync Gmail inbox to queue the mailbox import and watch sync progress here.",
     title: "Gmail is connected, but no inbox messages have synced yet"
   };
 }
@@ -1656,7 +1864,7 @@ function emailStatusCopy(searchParams: Awaited<EmailPageProps["searchParams"]>) 
     return "Gmail Full Inbox sync was not completed. Reconnect Gmail with Full Inbox scopes or check provider configuration.";
   }
   if (searchParams?.emailConnection === "gmail-sync-queued") {
-    return "Gmail Full Inbox sync was queued. A background worker will refresh inbox threads using Gmail history when available, then recent inbox fallback if needed.";
+    return "Gmail inbox sync is queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.";
   }
   if (searchParams?.emailConnection === "gmail-loaded-more") {
     return `Older Gmail messages loaded. Stored ${searchParams.created ?? "0"} new message${

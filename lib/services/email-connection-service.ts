@@ -34,6 +34,7 @@ export type EmailProviderCard = {
   provider: EmailConnectionProvider;
   scopes: string[];
   syncAvailable?: boolean;
+  syncStatusUpdatedAt?: Date | null;
   syncLabel?: string;
   syncStatusDetail?: string | null;
   syncStatusLabel?: string | null;
@@ -2259,7 +2260,15 @@ function googleProviderCard({
     status: EmailConnectionStatus;
   };
   provider: "GOOGLE_WORKSPACE";
-  syncJob?: { createdAt: Date; failedAt: Date | null; lastError: string | null; processedAt: Date | null; runAt: Date; status: JobStatus } | null;
+  syncJob?: {
+    createdAt: Date;
+    failedAt: Date | null;
+    lastError: string | null;
+    processedAt: Date | null;
+    runAt: Date;
+    status: JobStatus;
+    updatedAt: Date;
+  } | null;
   tokenEncryptionReady: boolean;
 }): EmailProviderCard {
   const configured = isProviderConfigured(config);
@@ -2310,6 +2319,7 @@ function googleProviderCard({
     syncAvailable: fullInboxScopesReady,
     syncStatusDetail: syncStatus.detail,
     syncStatusLabel: syncStatus.label,
+    syncStatusUpdatedAt: syncStatus.updatedAt,
     status:
       connection?.status === "CONNECTED"
         ? fullInboxScopesReady
@@ -2435,23 +2445,32 @@ function gmailSyncJobStatus(
         processedAt: Date | null;
         runAt: Date;
         status: JobStatus;
+        updatedAt: Date;
       }
     | null
     | undefined
 ) {
   if (!job) return { detail: null, label: null };
-  if (job.status === JobStatus.PENDING) return { detail: `Queued ${job.createdAt.toISOString()}`, label: "Sync queued" };
-  if (job.status === JobStatus.RUNNING) return { detail: "A Gmail background sync is currently running.", label: "Sync running" };
+  if (job.status === JobStatus.PENDING) {
+    return { detail: `Queued ${job.createdAt.toISOString()}`, label: "Sync queued", updatedAt: job.updatedAt };
+  }
+  if (job.status === JobStatus.RUNNING) {
+    return { detail: "Gmail inbox sync is currently running.", label: "Sync running", updatedAt: job.updatedAt };
+  }
   if (job.status === JobStatus.DEAD) {
-    return { detail: safeProviderLastError(job.lastError) ?? "Gmail background sync failed.", label: "Sync failed" };
+    return { detail: safeProviderLastError(job.lastError) ?? "Gmail inbox sync failed.", label: "Sync failed", updatedAt: job.updatedAt };
   }
   if (job.status === JobStatus.FAILED) {
-    return { detail: safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`, label: "Sync retry scheduled" };
+    return {
+      detail: safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`,
+      label: "Sync retry scheduled",
+      updatedAt: job.updatedAt
+    };
   }
   if (job.status === JobStatus.SUCCEEDED && job.processedAt) {
-    return { detail: `Completed ${job.processedAt.toISOString()}`, label: "Background sync complete" };
+    return { detail: `Completed ${job.processedAt.toISOString()}`, label: "Sync complete", updatedAt: job.updatedAt };
   }
-  return { detail: null, label: null };
+  return { detail: null, label: null, updatedAt: job.updatedAt };
 }
 
 function parseGmailHistoryCursor(value: string | null | undefined) {

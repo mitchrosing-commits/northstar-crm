@@ -31,7 +31,10 @@ describe("app metadata icons", () => {
     expect(iconSvg).toContain('fill="none"');
     expect(iconSvg).toContain('stroke="#ffffff"');
     expect(iconSvg).toContain('stroke-linejoin="round"');
-    expect(iconSvg).toContain('transform="translate(8 8) scale(2)"');
+    expect(iconSvg).toContain('rx="15.06"');
+    expect(iconSvg).toContain('x1="8" y1="0" x2="56" y2="64"');
+    expect(iconSvg).toContain('stroke-width="2"');
+    expect(iconSvg).toContain('transform="translate(15.06 15.06) scale(1.4118)"');
     expect(iconSvg).toContain(
       "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962",
     );
