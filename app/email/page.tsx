@@ -66,6 +66,7 @@ type EmailPageProps = {
     emailConnection?: string;
     inbox?: string;
     skipped?: string;
+    syncError?: string;
     syncStatus?: string;
     thread?: string;
     total?: string;
@@ -100,6 +101,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     emailConnection: resolvedSearchParams?.emailConnection,
     provider: gmailProvider,
     showRequested: resolvedSearchParams?.syncStatus === "1",
+    syncError: resolvedSearchParams?.syncError,
     threadCount: inboxThreads.length
   });
   const statusCopy = emailStatusCopy(resolvedSearchParams);
@@ -893,11 +895,13 @@ function gmailSyncProgressState({
   emailConnection,
   provider,
   showRequested,
+  syncError,
   threadCount
 }: {
   emailConnection: string | undefined;
   provider: ProviderCard | undefined;
   showRequested: boolean;
+  syncError: string | undefined;
   threadCount: number;
 }): GmailSyncProgress {
   const readiness = gmailFullInboxReadiness(provider);
@@ -918,6 +922,22 @@ function gmailSyncProgressState({
       title: readiness.title,
       tone: "attention",
       whatIsHappening: "Gmail is not ready to sync"
+    };
+  }
+
+  if (emailConnection === "gmail-sync-error") {
+    return {
+      active: false,
+      detail: syncError
+        ? `Gmail sync could not be completed: ${syncError}`
+        : provider?.lastError ?? syncDetail ?? "Gmail sync could not be completed. Reconnect Gmail or retry sync.",
+      lastUpdateLabel,
+      nextStep: provider?.status === "Reconnect required" ? "Reconnect Gmail" : "Retry Sync Gmail inbox",
+      statusLabel: "Sync failed",
+      technicalHint: "Provider and job errors are redacted before they are shown here.",
+      title: "Gmail sync needs attention",
+      tone: "danger",
+      whatIsHappening: "Explicit sync failed before inbox threads were stored"
     };
   }
 
@@ -957,8 +977,7 @@ function gmailSyncProgressState({
   if (
     provider?.syncStatusLabel === "Sync failed" ||
     provider?.syncStatusLabel === "Sync retry scheduled" ||
-    provider?.status === "Sync issue" ||
-    emailConnection === "gmail-sync-error"
+    provider?.status === "Sync issue"
   ) {
     return {
       active: false,
@@ -1871,7 +1890,9 @@ function emailStatusCopy(searchParams: Awaited<EmailPageProps["searchParams"]>) 
     }; skipped ${searchParams.skipped ?? "0"} unmatched and ${searchParams.duplicates ?? "0"} duplicate.`;
   }
   if (searchParams?.emailConnection === "gmail-sync-error") {
-    return "Gmail Full Inbox sync was not completed. Reconnect Gmail with Full Inbox scopes or check provider configuration.";
+    return searchParams.syncError
+      ? `Gmail Full Inbox sync was not completed: ${searchParams.syncError}`
+      : "Gmail Full Inbox sync was not completed. Reconnect Gmail with Full Inbox scopes or check provider configuration.";
   }
   if (searchParams?.emailConnection === "gmail-sync-queued") {
     return "Gmail inbox sync is queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.";

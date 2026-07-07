@@ -1,3 +1,4 @@
+import { JobStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "@/lib/api/responses";
@@ -1293,6 +1294,166 @@ describe("Gmail metadata sync", () => {
     }
   });
 
+  it("does not let an existing stale pending Gmail job trap explicit sync clicks forever", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      await fixture.prisma.job.update({
+        where: { id: queuedJob.id },
+        data: {
+          createdAt: new Date("2030-07-01T11:00:00.000Z"),
+          runAt: new Date("2030-07-01T11:00:00.000Z"),
+          updatedAt: new Date("2030-07-01T11:00:00.000Z")
+        }
+      });
+      const duplicate = await enqueueGmailInboxSyncJob(fixture.actorA);
+      expect(duplicate.id).toBe(queuedJob.id);
+
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        expectedMaxResults: "25",
+        messages: [
+          {
+            bodyText: "Stale pending sync body.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:45:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Stale pending sync",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "1111",
+            id: "gmail-stale-pending-sync-1",
+            snippet: "Stale pending sync body"
+          }
+        ]
+      });
+
+      const result = await runGmailInboxSyncNow(fixture.actorA, {
+        env,
+        fetchImpl,
+        now: new Date("2030-07-01T12:05:00.000Z"),
+        workerId: "test-email-page-sync"
+      });
+
+      expect(result).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "recent", totalFetched: 1 });
+      await expect(fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } })).resolves.toMatchObject({
+        attempts: 1,
+        lockedAt: null,
+        lockedBy: null,
+        status: JobStatus.SUCCEEDED
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("recovers a stale running Gmail job for an explicit user retry without concurrent duplicate syncs", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      await fixture.prisma.job.update({
+        where: { id: queuedJob.id },
+        data: {
+          attempts: 1,
+          lockedAt: new Date("2030-07-01T11:00:00.000Z"),
+          lockedBy: "dead-worker",
+          status: JobStatus.RUNNING,
+          updatedAt: new Date("2030-07-01T11:00:00.000Z")
+        }
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        expectedMaxResults: "25",
+        messages: [
+          {
+            bodyText: "Recovered running sync body.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:50:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Recovered running sync",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "1121",
+            id: "gmail-stale-running-sync-1",
+            snippet: "Recovered running sync body"
+          }
+        ]
+      });
+
+      const result = await runGmailInboxSyncNow(fixture.actorA, {
+        env,
+        fetchImpl,
+        now: new Date("2030-07-01T11:20:01.000Z"),
+        workerId: "test-email-page-sync"
+      });
+
+      expect(result).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "recent", totalFetched: 1 });
+      await expect(fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } })).resolves.toMatchObject({
+        attempts: 2,
+        lockedAt: null,
+        lockedBy: null,
+        status: JobStatus.SUCCEEDED
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("shows Gmail sync job status only for the selected connected Gmail row", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const olderConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "older@example.test",
+        accessToken: "older-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const selectedConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "selected@example.test",
+        accessToken: "selected-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      await fixture.prisma.emailConnection.update({
+        where: { id: selectedConnection.id },
+        data: { updatedAt: new Date("2030-07-01T12:10:00.000Z") }
+      });
+      await fixture.prisma.job.create({
+        data: {
+          dedupeKey: `gmail-inbox-sync:${olderConnection.id}`,
+          payload: {
+            connectionId: olderConnection.id,
+            workspaceId: fixture.workspaceA.id
+          },
+          status: JobStatus.PENDING,
+          type: gmailInboxSyncJobType,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+
+      expect(providerCard).toMatchObject({
+        accountEmail: "selected@example.test",
+        syncAvailable: true,
+        syncStatusDetail: null,
+        syncStatusLabel: null
+      });
+      expect(providerCard?.syncJobRef).toBeNull();
+      expect(selectedConnection.id).not.toBe(olderConnection.id);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("uses Gmail history cursors for incremental inbox sync and falls back to recent sync when history expires", async () => {
     const fixture = await createIntegrationFixture();
     try {
@@ -1706,14 +1867,16 @@ describe("Gmail metadata sync", () => {
 async function createConnectedGmailSecret(
   fixture: Awaited<ReturnType<typeof createIntegrationFixture>>,
   options: {
+    accountEmail?: string;
     accessToken: string;
     expiresAt: Date;
     refreshToken?: string;
   }
 ) {
+  const accountEmail = options.accountEmail ?? "alex@example.test";
   const connection = await fixture.prisma.emailConnection.create({
     data: {
-      accountEmail: "alex@example.test",
+      accountEmail,
       createdById: fixture.userA.id,
       provider: "GOOGLE_WORKSPACE",
       scopes: gmailFullInboxScopes,
@@ -1724,7 +1887,7 @@ async function createConnectedGmailSecret(
   await fixture.prisma.emailConnectionSecret.create({
     data: {
       accessTokenExpiresAt: options.expiresAt,
-      accountEmail: "alex@example.test",
+      accountEmail,
       connectionId: connection.id,
       encryptedAccessToken: encryptEmailToken(options.accessToken, env),
       encryptedRefreshToken: options.refreshToken ? encryptEmailToken(options.refreshToken, env) : null,

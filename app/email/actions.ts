@@ -57,8 +57,13 @@ export async function syncGmailInboxFromEmailPageAction() {
 
   try {
     result = await runGmailInboxSyncNow(actor);
-  } catch {
-    redirect("/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress" as Route);
+  } catch (error) {
+    const params = new URLSearchParams({
+      emailConnection: "gmail-sync-error",
+      syncError: safeGmailSyncActionError(error),
+      syncStatus: "1"
+    });
+    redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
   }
 
   const params = new URLSearchParams({
@@ -70,6 +75,35 @@ export async function syncGmailInboxFromEmailPageAction() {
     total: String(result.totalFetched)
   });
   redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
+}
+
+function safeGmailSyncActionError(error: unknown) {
+  const message =
+    error instanceof ApiError
+      ? `${error.code}: ${error.message}`
+      : error instanceof Error
+        ? error.message
+        : "Gmail sync failed before inbox threads were stored.";
+  return truncateSyncError(redactGmailSyncActionSecrets(redactSensitiveText(message)));
+}
+
+function truncateSyncError(message: string) {
+  return message.length > 240 ? `${message.slice(0, 237)}...` : message;
+}
+
+function redactGmailSyncActionSecrets(message: string) {
+  return message
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/-]+=*/gi, "$1 [redacted]")
+    .replace(/\b(access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|secret)([:=]\s*)[^\s&]+/gi, "$1$2[redacted]")
+    .replace(
+      /\b(access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|secret)(\s+)([^\s&]+)/gi,
+      (match, label: string, spacing: string, value: string) =>
+        isSecretLikeSyncErrorValue(value) ? `${label}${spacing}[redacted]` : match
+    );
+}
+
+function isSecretLikeSyncErrorValue(value: string) {
+  return value.length >= 12 || /[-_.+/=]/.test(value) || /^eyJ/i.test(value);
 }
 
 export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData) {

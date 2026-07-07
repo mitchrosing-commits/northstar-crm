@@ -229,7 +229,20 @@ describe("email sync server actions", () => {
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress"
+      url: "/email?emailConnection=gmail-sync-error&syncError=provider+token+%5Bredacted%5D&syncStatus=1#gmail-sync-progress"
+    });
+
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("redirects Full Inbox Gmail ApiError failures with sanitized actionable detail", async () => {
+    mocks.runGmailInboxSyncNow.mockRejectedValue(
+      new Error("EMAIL_SYNC_ALREADY_RUNNING: Gmail sync is already running. Refresh status in a moment.")
+    );
+
+    await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?emailConnection=gmail-sync-error&syncError=EMAIL_SYNC_ALREADY_RUNNING%3A+Gmail+sync+is+already+running.+Refresh+status+in+a+moment.&syncStatus=1#gmail-sync-progress"
     });
 
     expect(mocks.cookieSet).not.toHaveBeenCalled();

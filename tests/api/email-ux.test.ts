@@ -292,6 +292,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("formatProviderSyncStatusDetail(provider.syncStatusDetail)");
     expect(emailConnectionService).toContain("syncStatusUpdatedAt?: Date | null");
     expect(emailConnectionService).toContain("syncStatusUpdatedAt: syncStatus.updatedAt");
+    expect(emailConnectionService).toContain("syncJobRef?: string | null");
+    expect(emailConnectionService).toContain("syncJobRef: syncStatus.jobRef");
+    expect(emailConnectionService).toContain("dedupeKey: gmailInboxSyncJobDedupeKey(gmailConnection.id)");
     expect(emailPage).toContain("GmailSyncProgressPanel");
     expect(emailPage).toContain('aria-label="Gmail inbox sync progress"');
     expect(emailConnectionService).toContain("syncStatusLabel?: string | null");
@@ -344,6 +347,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
     expect(emailActions).toContain('emailConnection: "gmail-synced"');
     expect(emailActions).toContain('syncStatus: "1"');
+    expect(emailActions).toContain("safeGmailSyncActionError(error)");
+    expect(emailActions).toContain("redactSensitiveText(message)");
+    expect(emailActions).toContain('syncError: safeGmailSyncActionError(error)');
     expect(emailActions).toContain("syncOlderGmailInboxMessages({ actor, before })");
     expect(emailActions).toContain("refreshGmailInboxThread({ actor, threadId })");
     expect(emailActions).toContain("emailConnection: \"gmail-loaded-more\"");
@@ -360,7 +366,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailActions).toContain(
       "unmatchedPreviews: result.unmatchedPreviews",
     );
-    expect(emailActions).toContain("/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress");
+    expect(emailActions).toContain('emailConnection: "gmail-sync-error"');
     expect(emailConnectionService).toContain(
       "normalizeRecentEmailSyncMaxResults(maxResults)",
     );
@@ -392,6 +398,8 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Gmail Full Inbox sync finished.");
     expect(emailPage).toContain("Gmail inbox sync is queued.");
     expect(emailPage).toContain("gmailSyncProgressState");
+    expect(emailPage).toContain('if (emailConnection === "gmail-sync-error")');
+    expect(emailPage).toContain("Gmail sync could not be completed: ${syncError}");
     expect(emailPage).toContain("isGmailSyncStatusStale");
     expect(emailPage).toContain("background worker has not picked it up yet");
     expect(emailPage).toContain("RAILWAY_SERVICE_ROLE=worker");
@@ -405,6 +413,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Refresh status");
     expect(emailPage).toContain("No Gmail account connected");
     expect(emailPage).toContain("Provider errors are redacted before they are shown here.");
+    expect(emailPage).toContain("Provider and job errors are redacted before they are shown here.");
     expect(globalCss).toContain(".gmail-sync-progress");
     expect(globalCss).toContain(".gmail-sync-progress-grid");
     expect(globalCss).toContain(".gmail-sync-progress-attention");

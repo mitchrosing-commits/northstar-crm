@@ -34,6 +34,7 @@ export type EmailProviderCard = {
   provider: EmailConnectionProvider;
   scopes: string[];
   syncAvailable?: boolean;
+  syncJobRef?: string | null;
   syncStatusUpdatedAt?: Date | null;
   syncLabel?: string;
   syncStatusDetail?: string | null;
@@ -224,14 +225,6 @@ export async function listEmailConnectionProviderCards(
     include: { secret: { select: { scopes: true } } },
     orderBy: [{ provider: "asc" }, { updatedAt: "desc" }]
   });
-  const gmailSyncJobs = await prisma.job.findMany({
-    where: {
-      workspaceId: actor.workspaceId,
-      type: gmailInboxSyncJobType
-    },
-    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    take: 5
-  });
   const latestConnectionByProvider = new Map<(typeof connections)[number]["provider"], (typeof connections)[number]>();
   for (const sourceConnection of connections) {
     let connection = sourceConnection;
@@ -259,12 +252,24 @@ export async function listEmailConnectionProviderCards(
   }
   const tokenEncryptionReady = isTokenEncryptionConfigured(env);
 
+  const gmailConnection = latestConnectionByProvider.get("GOOGLE_WORKSPACE");
+  const gmailSyncJob = gmailConnection
+    ? await prisma.job.findFirst({
+        where: {
+          dedupeKey: gmailInboxSyncJobDedupeKey(gmailConnection.id),
+          type: gmailInboxSyncJobType,
+          workspaceId: actor.workspaceId
+        },
+        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+      })
+    : null;
+
   return [
     googleProviderCard({
-      connection: latestConnectionByProvider.get("GOOGLE_WORKSPACE"),
+      connection: gmailConnection,
       config: resolveGoogleOAuthConfig(env),
       provider: "GOOGLE_WORKSPACE",
-      syncJob: gmailSyncJobs[0] ?? null,
+      syncJob: gmailSyncJob,
       tokenEncryptionReady
     }),
     microsoftProviderCard({
@@ -1330,7 +1335,16 @@ async function claimGmailInboxSyncJobForImmediateRun({
     }
   });
 
-  if (staleRunningJob && staleRunningJob.attempts < staleRunningJob.maxAttempts) {
+  if (staleRunningJob && staleRunningJob.attempts >= staleRunningJob.maxAttempts) {
+    await markJobFailedForRetry(jobId, new Error("Gmail sync job was stale before the explicit sync retry."), { now });
+    throw new ApiError(
+      "EMAIL_SYNC_STALE_RETRY_LIMIT",
+      "The previous Gmail sync was stale and has reached the retry limit. Refresh status, then start a new sync.",
+      409
+    );
+  }
+
+  if (staleRunningJob) {
     await prisma.job.updateMany({
       where: {
         id: jobId,
@@ -2367,8 +2381,10 @@ function googleProviderCard({
   };
   provider: "GOOGLE_WORKSPACE";
   syncJob?: {
+    attempts: number;
     createdAt: Date;
     failedAt: Date | null;
+    id: string;
     lastError: string | null;
     processedAt: Date | null;
     runAt: Date;
@@ -2423,6 +2439,7 @@ function googleProviderCard({
     provider,
     scopes: [...gmailOAuthScopes],
     syncAvailable: fullInboxScopesReady,
+    syncJobRef: syncStatus.jobRef,
     syncStatusDetail: syncStatus.detail,
     syncStatusLabel: syncStatus.label,
     syncStatusUpdatedAt: syncStatus.updatedAt,
@@ -2545,8 +2562,10 @@ function gmailInboxSyncJobDedupeKey(connectionId: string) {
 function gmailSyncJobStatus(
   job:
     | {
+        attempts: number;
         createdAt: Date;
         failedAt: Date | null;
+        id: string;
         lastError: string | null;
         processedAt: Date | null;
         runAt: Date;
@@ -2556,27 +2575,54 @@ function gmailSyncJobStatus(
     | null
     | undefined
 ) {
-  if (!job) return { detail: null, label: null };
+  if (!job) return { detail: null, jobRef: null, label: null, updatedAt: null };
+  const jobRef = shortJobRef(job.id);
+  const attemptLabel = job.attempts > 0 ? `; attempts ${job.attempts}` : "";
   if (job.status === JobStatus.PENDING) {
-    return { detail: `Queued ${job.createdAt.toISOString()}`, label: "Sync queued", updatedAt: job.updatedAt };
+    return {
+      detail: `Queued ${job.createdAt.toISOString()}; job ${jobRef}${attemptLabel}`,
+      jobRef,
+      label: "Sync queued",
+      updatedAt: job.updatedAt
+    };
   }
   if (job.status === JobStatus.RUNNING) {
-    return { detail: "Gmail inbox sync is currently running.", label: "Sync running", updatedAt: job.updatedAt };
+    return {
+      detail: `Gmail inbox sync is currently running; job ${jobRef}${attemptLabel}.`,
+      jobRef,
+      label: "Sync running",
+      updatedAt: job.updatedAt
+    };
   }
   if (job.status === JobStatus.DEAD) {
-    return { detail: safeProviderLastError(job.lastError) ?? "Gmail inbox sync failed.", label: "Sync failed", updatedAt: job.updatedAt };
+    return {
+      detail: `${safeProviderLastError(job.lastError) ?? "Gmail inbox sync failed."} Job ${jobRef}${attemptLabel}.`,
+      jobRef,
+      label: "Sync failed",
+      updatedAt: job.updatedAt
+    };
   }
   if (job.status === JobStatus.FAILED) {
     return {
-      detail: safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`,
+      detail: `${safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`} Job ${jobRef}${attemptLabel}.`,
+      jobRef,
       label: "Sync retry scheduled",
       updatedAt: job.updatedAt
     };
   }
   if (job.status === JobStatus.SUCCEEDED && job.processedAt) {
-    return { detail: `Completed ${job.processedAt.toISOString()}`, label: "Sync complete", updatedAt: job.updatedAt };
+    return {
+      detail: `Completed ${job.processedAt.toISOString()}; job ${jobRef}${attemptLabel}`,
+      jobRef,
+      label: "Sync complete",
+      updatedAt: job.updatedAt
+    };
   }
-  return { detail: null, label: null, updatedAt: job.updatedAt };
+  return { detail: null, jobRef, label: null, updatedAt: job.updatedAt };
+}
+
+function shortJobRef(jobId: string) {
+  return jobId.slice(-8);
 }
 
 function parseGmailHistoryCursor(value: string | null | undefined) {

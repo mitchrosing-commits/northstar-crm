@@ -333,7 +333,7 @@ describe("manual email logging and templates foundation", () => {
     expect(currentStatus).toContain(
       "Clicking `/email` Sync Gmail inbox enqueues and immediately claims one bounded Gmail sync job through the same job record"
     );
-    expect(currentStatus).toContain("unattended reconnect/background jobs still require `npm run jobs:work`");
+    expect(currentStatus).toContain("Unattended reconnect/background jobs still require `npm run jobs:work`");
     expect(currentStatus).toContain("The `/email` Load older messages action uses a user-triggered bounded Gmail `before:` inbox search");
     expect(currentStatus).toContain("neither path mutates the stored history cursor");
     expect(currentStatus).toContain("never stores OAuth tokens or message bodies in job payloads");
@@ -344,8 +344,9 @@ describe("manual email logging and templates foundation", () => {
     );
     expect(architecture).toContain("Gmail Full Inbox sync runs through the explicit `email.gmail_sync` job handler");
     expect(architecture).toContain(
-      "The `/email` Sync Gmail inbox action enqueues and immediately claims the workspace's Gmail sync job"
+      "The `/email` Sync Gmail inbox action enqueues and immediately claims the selected connection's Gmail sync job"
     );
+    expect(architecture).toContain("Provider-card sync status is looked up by the selected Gmail connection's dedupe key");
     expect(architecture).toContain("selected-thread refresh calls Gmail thread detail for a provider thread id that already has a same-workspace `EmailLog`");
     expect(architecture).toContain("deliberately leave `lastSyncCursor` unchanged");
     expect(architecture).toContain("Explicit Gmail replies use the connected account and Gmail `messages.send`");

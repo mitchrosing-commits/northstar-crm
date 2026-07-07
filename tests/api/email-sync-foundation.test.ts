@@ -158,6 +158,9 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("export async function processGmailInboxSyncJob");
     expect(emailConnectionService).toContain("markJobSucceeded(claimedJob.id");
     expect(emailConnectionService).toContain("markJobFailedForRetry(claimedJob.id");
+    expect(emailConnectionService).toContain("EMAIL_SYNC_STALE_RETRY_LIMIT");
+    expect(emailConnectionService).toContain("dedupeKey: gmailInboxSyncJobDedupeKey(gmailConnection.id)");
+    expect(emailConnectionService).toContain("shortJobRef(job.id)");
     expect(emailConnectionService).toContain("export async function syncOlderGmailInboxMessages");
     expect(emailConnectionService).toContain("export async function refreshGmailInboxThread");
     expect(emailConnectionService).toContain("parseGmailHistoryCursor(connection.lastSyncCursor)");
