@@ -28,6 +28,12 @@ import type {
   RelationshipBriefSensitivityCategory,
   UnmatchedEntity
 } from "@/lib/meeting-intelligence/types";
+import {
+  explainMeetingActivityPlacement,
+  explainMeetingNotePlacement,
+  explainRelationshipFactPlacement,
+  type MeetingPlacementExplanation
+} from "@/lib/meeting-intelligence/placement-explanations";
 import { relationshipBriefUsageItems } from "@/lib/relationship-brief-usage";
 
 type Option = { id: string; label: string };
@@ -316,6 +322,7 @@ export function MeetingIntelligenceReview({
               confidence={draft.meetingActivity.confidence}
               evidence={draft.meetingActivity.evidence}
               matchedReason={draft.meetingActivity.matchedReason}
+              placementExplanation={explainMeetingActivityPlacement(draft.meetingActivity)}
               targetWarning={draft.meetingActivity.targetWarning}
             />
           </div>
@@ -433,6 +440,7 @@ export function MeetingIntelligenceReview({
                         confidence={note.confidence}
                         evidence={note.evidence}
                         matchedReason={note.matchedReason}
+                        placementExplanation={explainMeetingNotePlacement(note)}
                         targetWarning={note.targetWarning}
                       />
                     </div>
@@ -606,6 +614,7 @@ export function MeetingIntelligenceReview({
                     confidence={update.confidence}
                     evidence={update.evidence}
                     matchedReason={update.matchedReason}
+                    placementExplanation={relationshipBriefPlacementExplanation(facts)}
                     targetWarning={update.targetWarning}
                   />
                 </div>
@@ -681,6 +690,7 @@ export function MeetingIntelligenceReview({
                   confidence={activity.confidence}
                   evidence={activity.evidence}
                   matchedReason={activity.matchedReason}
+                  placementExplanation={explainMeetingActivityPlacement(activity)}
                   targetWarning={activity.targetWarning}
                 />
               </div>
@@ -1306,19 +1316,26 @@ function ProposalEvidence({
   confidence,
   evidence,
   matchedReason,
+  placementExplanation,
   targetWarning
 }: {
   confidence?: string;
   evidence: string[];
   matchedReason?: string;
+  placementExplanation?: MeetingPlacementExplanation;
   targetWarning?: string;
 }) {
   const items = evidence.filter(Boolean).slice(0, 3);
-  if (!confidence && !matchedReason && !targetWarning && items.length === 0) return null;
+  if (!confidence && !matchedReason && !placementExplanation && !targetWarning && items.length === 0) return null;
   return (
     <CompactList>
       <CompactListItem>
         {confidence ? <Badge>{`Confidence: ${confidence}`}</Badge> : null}
+        {placementExplanation ? (
+          <span className="muted">
+            {placementExplanation.label}: {placementExplanation.reason} Review before apply.
+          </span>
+        ) : null}
         {matchedReason ? <span className="muted">{matchedReason}</span> : null}
         {targetWarning ? <Badge className="badge badge-lost">{targetWarning}</Badge> : null}
         {items.map((item) => (
@@ -1329,6 +1346,11 @@ function ProposalEvidence({
       </CompactListItem>
     </CompactList>
   );
+}
+
+function relationshipBriefPlacementExplanation(facts: RelationshipFactDraft[]) {
+  const firstIncluded = facts.find((fact) => fact.include) ?? facts[0];
+  return firstIncluded ? explainRelationshipFactPlacement(firstIncluded) : undefined;
 }
 
 function defaultApplySummary(draft: MeetingIntelligenceDraft) {

@@ -3,6 +3,7 @@ import type { Route } from "next";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { AiRecordBriefCard } from "@/components/ai-record-brief-card";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
 import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
@@ -26,8 +27,10 @@ import { formatPersonName } from "@/lib/person-name";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
 import {
+  buildAiRecordBrief,
   buildContactAssistantContext,
   buildNorthstarAssistantInsight,
+  getAiPreferences,
   getPerson,
   getRecordTimeline,
   getWorkspace,
@@ -69,14 +72,16 @@ export default async function ContactDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext] = await Promise.all([
+  const [workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext, aiPreferences] = await Promise.all([
     getWorkspace(actor),
     getRecordTimeline(actor, { type: "PERSON", id: person.id }),
     listPersonCustomFields(actor, person.id),
     listEmailTemplates(actor, { activeOnly: true }),
-    buildContactAssistantContext(actor, person.id)
+    buildContactAssistantContext(actor, person.id),
+    getAiPreferences(actor)
   ]);
-  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
+  const aiRecordBrief = buildAiRecordBrief(northstarContext, northstarInsight, aiPreferences);
   const personName = formatPersonName(person) ?? person.email ?? "Unnamed contact";
   const nextActivity = getNextOpenActivity(person.activities);
   const activityCopy = recordActivitySectionCopy("contact");
@@ -181,6 +186,7 @@ export default async function ContactDetailPage({ params }: PageProps) {
         title="Contact workspace"
       />
 
+      <AiRecordBriefCard brief={aiRecordBrief} />
       <NorthstarAssistantPanel insight={northstarInsight} />
 
       <RelationshipBriefPanel

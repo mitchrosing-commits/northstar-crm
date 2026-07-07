@@ -5,6 +5,7 @@ import type { Route } from "next";
 import { ApiError } from "@/lib/api/responses";
 import { ActivityDueBadge } from "@/components/activity-due-badge";
 import { AppShell } from "@/components/app-shell";
+import { AiRecordBriefCard } from "@/components/ai-record-brief-card";
 import { AttentionBadge } from "@/components/attention-badge";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
 import { Badge } from "@/components/badge";
@@ -44,8 +45,10 @@ import { formatPersonName } from "@/lib/person-name";
 import { recordSubtitle } from "@/lib/record-subtitle";
 import { buildDealAttentionBadges, type DealAttentionBadge } from "@/lib/sales-assistant";
 import {
+  buildAiRecordBrief,
   buildDealAssistantContext,
   buildNorthstarAssistantInsight,
+  getAiPreferences,
   getDeal,
   getRecordTimeline,
   getWorkspace,
@@ -72,7 +75,7 @@ export default async function DealDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [stages, workspaceDetail, customFields, contractSteps, timelineItems, products, emailTemplates, emailLogs, northstarContext] = await Promise.all([
+  const [stages, workspaceDetail, customFields, contractSteps, timelineItems, products, emailTemplates, emailLogs, northstarContext, aiPreferences] = await Promise.all([
     listStages(actor, deal.pipelineId),
     getWorkspace(actor),
     listDealCustomFields(actor, deal.id),
@@ -81,9 +84,11 @@ export default async function DealDetailPage({ params }: PageProps) {
     listProducts(actor),
     listEmailTemplates(actor, { activeOnly: true }),
     listEmailLogsForRecord(actor, { type: "DEAL", id: deal.id }),
-    buildDealAssistantContext(actor, deal.id)
+    buildDealAssistantContext(actor, deal.id),
+    getAiPreferences(actor)
   ]);
-  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
+  const aiRecordBrief = buildAiRecordBrief(northstarContext, northstarInsight, aiPreferences);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
@@ -227,6 +232,7 @@ export default async function DealDetailPage({ params }: PageProps) {
         title="Deal workspace"
       />
 
+      <AiRecordBriefCard brief={aiRecordBrief} />
       <NorthstarAssistantPanel insight={northstarInsight} />
 
       <section className="deal-context-grid">

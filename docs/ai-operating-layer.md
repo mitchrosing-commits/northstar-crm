@@ -13,7 +13,16 @@ Northstar is moving from isolated AI features toward an AI-first CRM operating l
 
 ## Foundation Added
 
-The first shared foundation lives in `lib/services/northstar-ai-service.ts`.
+The shared foundation lives across the AI service layer:
+
+- `lib/services/northstar-ai-service.ts`
+- `lib/services/ai-preferences-service.ts`
+- `lib/services/ai-record-brief-service.ts`
+- `lib/services/ai-hygiene-service.ts`
+- `lib/services/ai-email-summary-service.ts`
+- `lib/meeting-intelligence/placement-explanations.ts`
+
+The Assistant context builders are:
 
 - `buildContactAssistantContext`
 - `buildDealAssistantContext`
@@ -40,6 +49,37 @@ Each builder starts with `ensureWorkspaceAccess`, gathers bounded workspace-scop
 - Meeting Intelligence proposal warning summaries
 
 `buildNorthstarAssistantInsight` returns deterministic diagnostics by default. It can optionally call a provider through `createOpenAINorthstarAssistantProvider`, but provider summaries are gated by `OPENAI_API_KEY`, receive only sanitized assistant context, and may only rewrite the explanation/caution text. They do not create or apply CRM changes.
+
+## AI Preferences Console
+
+`/settings/ai` stores per-user, per-workspace `AiPreference` rows. The schema is explicit rather than a generic JSON blob, with a unique `(workspaceId, userId)` boundary and no provider secrets.
+
+Active preferences:
+
+- record summary style
+- Assistant detail level
+- suggestion level
+- diagnostics detail level
+- email reply tone default
+- stored email summary length
+- Relationship Memory usage posture
+- Meeting Intelligence note style
+- natural-language guidance, sanitized before storage
+
+Active behavior today:
+
+- Assistant findings/actions are trimmed by detail and suggestion preferences.
+- Inbox AI reply drafting defaults to the saved reply tone.
+- Diagnostics remain sanitized; simple diagnostics hide low-level job/provider evidence.
+- Record briefs use record summary style.
+- Stored email summary helpers honor disabled, one-sentence, short, and detailed length preferences.
+
+Reserved preferences:
+
+- provider-specific model selection
+- automatic full-body email summarization
+- background digest cadence
+- autonomous cleanup or proposal persistence
 
 ## Review-First Action Model
 
@@ -73,6 +113,25 @@ The first mounted surfaces are:
 - Contact detail
 - Deal detail
 
+Compact AI record briefs now appear on:
+
+- Contact detail
+- Deal detail
+- Lead detail
+- Organization detail
+
+The brief gives a small review-first snapshot: health, what changed, missing/stale review focus, next review action, and source basis. It is intentionally compact so record pages stay readable.
+
+Meeting Intelligence review now includes placement explanations in proposal evidence. These explain why a proposed note, follow-up, or Relationship Memory fact appears to belong on a contact, organization, deal, lead, or activity target. They do not apply anything by themselves.
+
+`/settings/ai` also shows CRM hygiene suggestions for duplicate contacts/organizations, likely contact-organization links, stale or closed-deal activity issues, unlinked stored email, relationship-memory placement candidates, and Meeting Intelligence proposals awaiting review.
+
+## Stored Email Summary Boundary
+
+`ai-email-summary-service` prepares future AI email summaries from stored `EmailLog` data only. It does not request Gmail bodies, OAuth scopes, tokens, provider payloads, or sync retries.
+
+When a stored email has no body and no provider snippet, the helper returns `status: "unavailable"` with a clear message. Full-message email summaries remain blocked until full-message sync safely provides durable body text.
+
 ## Safety Model
 
 - Workspace scoping is mandatory before context assembly.
@@ -86,6 +145,6 @@ The first mounted surfaces are:
 
 - Add explicit user-triggered provider summarization on the panel.
 - Persist reviewed assistant proposals if they become durable workflow objects.
-- Add assistant adapters to Lead, Organization, Meeting Intelligence review, Settings diagnostics, and developer/admin diagnostics pages.
-- Expand discrepancy detectors for duplicate contacts, stale Gmail connection rows, meeting fact retargeting, and email sender CRM matching.
+- Add a richer Settings/system diagnostics Assistant view.
+- Expand discrepancy detectors for email sender CRM matching and safe proposal persistence.
 - Add audit events only when a user accepts or applies an assistant-proposed change through a normal service mutation.

@@ -1817,7 +1817,7 @@ describe("Gmail metadata sync", () => {
       ).rejects.toMatchObject({
         code: "EMAIL_GMAIL_MESSAGE_AUTH_FAILED",
         message:
-          "Gmail listed inbox messages, but Gmail rejected full-message loading (Google status 403; category insufficient_permissions). Reconnect Gmail with Full Inbox scopes, then retry sync."
+          "Google granted Gmail access, but Gmail rejected full-message reads (Google status 403; category insufficient_permissions). Run diagnostics or check Google Cloud OAuth/Gmail API configuration, then retry sync."
       });
 
       const [job, reloadedConnection, reloadedSecret, providerCard, logs] = await Promise.all([
@@ -1833,19 +1833,19 @@ describe("Gmail metadata sync", () => {
       ]);
       expect(job).toMatchObject({
         lastError:
-          "Gmail listed inbox messages, but Gmail rejected full-message loading (Google status 403; category insufficient_permissions). Reconnect Gmail with Full Inbox scopes, then retry sync.",
+          "Google granted Gmail access, but Gmail rejected full-message reads (Google status 403; category insufficient_permissions). Run diagnostics or check Google Cloud OAuth/Gmail API configuration, then retry sync.",
         status: "PENDING",
         type: gmailInboxSyncJobType
       });
       expect(reloadedConnection.lastError).toBe(
-        "EMAIL_GMAIL_MESSAGE_AUTH_FAILED: Gmail listed inbox messages, but Gmail rejected full-message loading (Google status 403; category insufficient_permissions). Reconnect Gmail with Full Inbox scopes, then retry sync."
+        "EMAIL_GMAIL_MESSAGE_AUTH_FAILED: Google granted Gmail access, but Gmail rejected full-message reads (Google status 403; category insufficient_permissions). Run diagnostics or check Google Cloud OAuth/Gmail API configuration, then retry sync."
       );
-      expect(reloadedConnection.scopes).toEqual(["openid", "email"]);
-      expect(reloadedSecret.scopes).toEqual(["openid", "email"]);
+      expect(reloadedConnection.scopes).toEqual(gmailFullInboxScopes);
+      expect(reloadedSecret.scopes).toEqual(gmailFullInboxScopes);
       expect(providerCard).toMatchObject({
         accountEmail: "alex@example.test",
-        status: "Reconnect required",
-        syncAvailable: false
+        status: "Sync issue",
+        syncAvailable: true
       });
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
@@ -1876,6 +1876,7 @@ describe("Gmail metadata sync", () => {
         data: { scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"] }
       });
       let refreshCallCount = 0;
+      const diagnosticTokenInfoScopes = [...gmailFullInboxScopes, "https://www.googleapis.com/auth/gmail.metadata"];
       const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         const authorization = new Headers(init?.headers).get("authorization");
@@ -1890,20 +1891,39 @@ describe("Gmail metadata sync", () => {
           expect(requestUrl.searchParams.get("access_token")).toBe("diagnostic-refreshed-access-token");
           return Response.json({
             email: "alex@example.test",
-            scope: gmailFullInboxScopes.join(" ")
+            scope: diagnosticTokenInfoScopes.join(" ")
           });
         }
         expect(authorization).toBe("Bearer diagnostic-refreshed-access-token");
         if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
           return Response.json({ messages: [{ id: "diagnostic-message-1", threadId: "diagnostic-thread-1" }] });
         }
+        if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
+          return Response.json({ emailAddress: "alex@example.test", messagesTotal: 10, threadsTotal: 4 });
+        }
         if (url.includes("/messages/diagnostic-message-1?")) {
+          const requestUrl = new URL(url);
+          const format = requestUrl.searchParams.get("format");
+          if (format === "minimal" || format === "metadata") {
+            return Response.json({
+              id: "diagnostic-message-1",
+              labelIds: ["INBOX"],
+              payload: { headers: [] },
+              threadId: "diagnostic-thread-1"
+            });
+          }
           return Response.json(
             {
               error: {
                 code: 403,
-                errors: [{ reason: "accessNotConfigured" }],
-                message: "provider-body-secret-token",
+                errors: [
+                  {
+                    domain: "global",
+                    message: `Insufficient Permission for provider-body-secret-token-${format}`,
+                    reason: "insufficientPermissions"
+                  }
+                ],
+                message: `Request had insufficient authentication scopes for provider-body-secret-token-${format}`,
                 status: "PERMISSION_DENIED"
               }
             },
@@ -1926,9 +1946,9 @@ describe("Gmail metadata sync", () => {
         accountEmail: "alex@example.test",
         connectionRef: connection.id.slice(-8),
         fullMessageGet: {
-          category: "api_disabled",
+          category: "insufficient_permissions",
           messageRef: "message:...essage-1",
-          providerReason: "accessNotConfigured",
+          providerReason: "insufficientPermissions",
           providerStatus: 403,
           success: false
         },
@@ -1971,7 +1991,7 @@ describe("Gmail metadata sync", () => {
           gmailReadSatisfiedBy: "https://www.googleapis.com/auth/gmail.readonly",
           gmailSendSatisfiedBy: "https://www.googleapis.com/auth/gmail.send",
           missingRequiredScopeCategories: [],
-          scopeUrls: gmailFullInboxScopes,
+          scopeUrls: diagnosticTokenInfoScopes,
           success: true
         },
         tokenResolution: {
@@ -1980,11 +2000,62 @@ describe("Gmail metadata sync", () => {
         }
       });
       expect(diagnostic.storedScopeCategories).toEqual(["email", "Gmail metadata", "sign-in"]);
-      expect(diagnostic.tokeninfo.scopeCategories).toEqual(expect.arrayContaining(["email", "Gmail read", "Gmail send", "sign-in"]));
+      expect(diagnostic.tokeninfo.scopeCategories).toEqual(expect.arrayContaining(["email", "Gmail metadata", "Gmail read", "Gmail send", "sign-in"]));
       expect(diagnostic.storedMetadataRepair).toEqual({ repaired: true, staleRelativeToTokeninfo: true });
       expect(diagnostic.tokeninfo.tokenRef).toMatch(/^tok_[a-f0-9]{12}$/);
       expect(diagnostic.list.tokenRef).toBe(diagnostic.tokeninfo.tokenRef);
       expect(diagnostic.fullMessageGet.tokenRef).toBe(diagnostic.tokeninfo.tokenRef);
+      expect(diagnostic.permissionProbes).toMatchObject({
+        classification: "full_body_permission_rejected",
+        gmailMetadataScopeNote:
+          "Google tokeninfo includes both gmail.metadata and gmail.readonly. Northstar treats gmail.readonly as the read-body grant and does not count gmail.metadata as read access.",
+        messageCount: 1,
+        tokenRefsMatch: true,
+        profile: {
+          category: "success",
+          connectionRef: connection.id.slice(-8),
+          providerStatus: 200,
+          success: true,
+          tokenRef: diagnostic.tokeninfo.tokenRef
+        }
+      });
+      expect(diagnostic.permissionProbes.messages[0]?.probes.minimal).toMatchObject({
+        category: "success",
+        providerStatus: 200,
+        success: true,
+        tokenRef: diagnostic.tokeninfo.tokenRef
+      });
+      expect(diagnostic.permissionProbes.messages[0]?.probes.metadata).toMatchObject({
+        category: "success",
+        providerStatus: 200,
+        success: true,
+        tokenRef: diagnostic.tokeninfo.tokenRef
+      });
+      expect(diagnostic.permissionProbes.messages[0]?.probes.full).toMatchObject({
+        category: "insufficient_permissions",
+        providerError: {
+          errors: [
+            {
+              domain: "global",
+              message: "Insufficient Permission for [redacted]",
+              reason: "insufficientPermissions"
+            }
+          ],
+          message: "Request had insufficient authentication scopes for [redacted]",
+          status: "PERMISSION_DENIED"
+        },
+        providerReason: "insufficientPermissions",
+        providerStatus: 403,
+        success: false,
+        tokenRef: diagnostic.tokeninfo.tokenRef
+      });
+      expect(diagnostic.permissionProbes.messages[0]?.probes.raw).toMatchObject({
+        category: "insufficient_permissions",
+        providerReason: "insufficientPermissions",
+        providerStatus: 403,
+        success: false,
+        tokenRef: diagnostic.tokeninfo.tokenRef
+      });
       expect(diagnostic.list.connectionRef).toBe(connection.id.slice(-8));
       expect(diagnostic.fullMessageGet.connectionRef).toBe(connection.id.slice(-8));
       expect(diagnostic.fullMessageGet.endpoint).toEqual({
@@ -1999,14 +2070,217 @@ describe("Gmail metadata sync", () => {
         fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
         fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } })
       ]);
-      expect(repairedConnection.scopes).toEqual(gmailFullInboxScopes);
-      expect(repairedSecret.scopes).toEqual(gmailFullInboxScopes);
+      expect(repairedConnection.scopes).toEqual(diagnosticTokenInfoScopes);
+      expect(repairedSecret.scopes).toEqual(diagnosticTokenInfoScopes);
       expect(repairedConnection.lastError).toContain("EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED");
       expect(repairedConnection.lastError).toContain("Google status 403");
-      expect(repairedConnection.lastError).toContain("category api_disabled");
+      expect(repairedConnection.lastError).toContain("category insufficient_permissions");
       expect(serialized).not.toContain("diagnostic-refresh-token");
       expect(serialized).not.toContain("diagnostic-refreshed-access-token");
       expect(serialized).not.toContain("provider-body-secret-token");
+      expect(serialized).not.toContain("diagnostic-message-1\"");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("classifies Gmail diagnostics when every message get format is rejected", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "all-message-get-rejected-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo?")) {
+          return Response.json({ email: "alex@example.test", scope: gmailFullInboxScopes.join(" ") });
+        }
+        expect(authorization).toBe("Bearer all-message-get-rejected-access-token");
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
+          return Response.json({ messages: [{ id: "all-get-rejected-message", threadId: "all-get-rejected-thread" }] });
+        }
+        if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
+          return Response.json({ emailAddress: "alex@example.test" });
+        }
+        if (url.includes("/messages/all-get-rejected-message?")) {
+          return Response.json(
+            {
+              error: {
+                code: 403,
+                errors: [{ domain: "global", message: "Request had insufficient authentication scopes.", reason: "insufficientPermissions" }],
+                message: "Request had insufficient authentication scopes.",
+                status: "PERMISSION_DENIED"
+              }
+            },
+            { status: 403 }
+          );
+        }
+        throw new Error(`Unexpected all-get diagnostic fetch URL ${url}`);
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: connection.id.slice(-8),
+        env,
+        fetchImpl,
+        maxResults: 1
+      });
+
+      expect(diagnostic.permissionProbes).toMatchObject({
+        classification: "message_get_permission_rejected",
+        messageCount: 1,
+        tokenRefsMatch: true
+      });
+      expect(Object.values(diagnostic.permissionProbes.messages[0]?.probes ?? {})).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            category: "insufficient_permissions",
+            providerError: expect.objectContaining({
+              message: "Request had insufficient authentication scopes.",
+              status: "PERMISSION_DENIED"
+            }),
+            providerReason: "insufficientPermissions",
+            providerStatus: 403,
+            success: false,
+            tokenRef: diagnostic.tokeninfo.tokenRef
+          })
+        ])
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("probes up to two Gmail messages to identify a message-specific rejection", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "message-specific-diagnostic-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo?")) {
+          return Response.json({ email: "alex@example.test", scope: gmailFullInboxScopes.join(" ") });
+        }
+        expect(authorization).toBe("Bearer message-specific-diagnostic-access-token");
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
+          return Response.json({
+            messages: [
+              { id: "probe-message-readable01", threadId: "probe-readable-thread" },
+              { id: "probe-message-restricted02", threadId: "probe-restricted-thread" },
+              { id: "probe-message-third03", threadId: "probe-third-thread" }
+            ]
+          });
+        }
+        if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
+          return Response.json({ emailAddress: "alex@example.test" });
+        }
+        if (url.includes("/messages/probe-message-readable01?")) {
+          return Response.json({ id: "probe-message-readable01", threadId: "probe-readable-thread" });
+        }
+        if (url.includes("/messages/probe-message-restricted02?")) {
+          const format = new URL(url).searchParams.get("format");
+          if (format === "minimal" || format === "metadata") {
+            return Response.json({ id: "probe-message-restricted02", threadId: "probe-restricted-thread" });
+          }
+          return Response.json(
+            {
+              error: {
+                code: 404,
+                errors: [{ domain: "global", message: "Requested entity was not found.", reason: "notFound" }],
+                message: "Requested entity was not found.",
+                status: "NOT_FOUND"
+              }
+            },
+            { status: 404 }
+          );
+        }
+        throw new Error(`Unexpected message-specific diagnostic fetch URL ${url}`);
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: connection.id.slice(-8),
+        env,
+        fetchImpl
+      });
+
+      expect(diagnostic.permissionProbes).toMatchObject({
+        classification: "message_specific_rejection",
+        messageCount: 2,
+        tokenRefsMatch: true
+      });
+      expect(diagnostic.permissionProbes.messages.map((message) => message.messageRef)).toEqual([
+        "message:...adable01",
+        "message:...ricted02"
+      ]);
+      expect(JSON.stringify(diagnostic)).not.toContain("probe-message-third03");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("classifies Gmail API or token rejection when the profile probe fails", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "profile-rejected-diagnostic-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo?")) {
+          return Response.json({ email: "alex@example.test", scope: gmailFullInboxScopes.join(" ") });
+        }
+        expect(authorization).toBe("Bearer profile-rejected-diagnostic-access-token");
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
+          return Response.json({ messages: [{ id: "profile-rejected-message", threadId: "profile-rejected-thread" }] });
+        }
+        if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
+          return Response.json(
+            {
+              error: {
+                code: 401,
+                errors: [{ domain: "global", message: "Invalid Credentials", reason: "authError" }],
+                message: "Invalid Credentials",
+                status: "UNAUTHENTICATED"
+              }
+            },
+            { status: 401 }
+          );
+        }
+        if (url.includes("/messages/profile-rejected-message?")) {
+          return Response.json({ id: "profile-rejected-message", threadId: "profile-rejected-thread" });
+        }
+        throw new Error(`Unexpected profile-rejected diagnostic fetch URL ${url}`);
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: connection.id.slice(-8),
+        env,
+        fetchImpl,
+        maxResults: 1
+      });
+
+      expect(diagnostic.permissionProbes).toMatchObject({
+        classification: "gmail_api_or_token_rejected",
+        messageCount: 1,
+        profile: {
+          category: "invalid_token",
+          providerError: {
+            errors: [{ domain: "global", message: "Invalid Credentials", reason: "authError" }],
+            message: "Invalid Credentials",
+            status: "UNAUTHENTICATED"
+          },
+          providerReason: "authError",
+          providerStatus: 401,
+          success: false
+        },
+        tokenRefsMatch: true
+      });
     } finally {
       await fixture.cleanup();
     }
@@ -2058,6 +2332,9 @@ describe("Gmail metadata sync", () => {
         if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
           return Response.json({ messages: [] });
         }
+        if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
+          return Response.json({ emailAddress: "selected-job-diagnostic@example.test" });
+        }
         throw new Error(`Unexpected mismatched job diagnostic fetch URL ${url}`);
       };
 
@@ -2080,6 +2357,11 @@ describe("Gmail metadata sync", () => {
         typeMatches: true
       });
       expect(diagnostic.selectedConnectionId).toBe(selectedConnection.id);
+      expect(diagnostic.permissionProbes).toMatchObject({
+        classification: "no_probe_message_available",
+        messageCount: 0,
+        tokenRefsMatch: true
+      });
     } finally {
       await fixture.cleanup();
     }
@@ -2199,6 +2481,9 @@ describe("Gmail metadata sync", () => {
         if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
           return Response.json({ messages: [{ id: "selected-diagnostic-message", threadId: "selected-diagnostic-thread" }] });
         }
+        if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
+          return Response.json({ emailAddress: "selected-diagnostic@example.test" });
+        }
         if (url.includes("/messages/selected-diagnostic-message?")) {
           return Response.json({
             id: "selected-diagnostic-message",
@@ -2243,6 +2528,11 @@ describe("Gmail metadata sync", () => {
         }
       });
       expect(diagnostic.selectedConnectionId).not.toBe(newerConnection.id);
+      expect(diagnostic.permissionProbes).toMatchObject({
+        classification: "success",
+        messageCount: 1,
+        tokenRefsMatch: true
+      });
     } finally {
       await fixture.cleanup();
     }

@@ -7,6 +7,7 @@ import { formatPersonName } from "@/lib/person-name";
 import { relationshipBriefUsageForField, type RelationshipBriefFieldKey } from "@/lib/relationship-brief-usage";
 import { redactSensitiveText } from "@/lib/security/redaction";
 
+import type { AiPreferences } from "./ai-preferences-service";
 import { readEmailSmartClassification } from "./email-classification-service";
 import { defaultStaleJobAfterMs } from "./job-service";
 import { userDisplaySelect } from "./user-select";
@@ -191,6 +192,7 @@ export type NorthstarAssistantProvider = {
 type BuildInsightOptions = {
   env?: EnvInput;
   fetchImpl?: FetchLike;
+  preferences?: AiPreferences;
   provider?: NorthstarAssistantProvider | null;
   useProvider?: boolean;
 };
@@ -604,13 +606,13 @@ export async function buildNorthstarAssistantInsight(
   context: NorthstarAssistantContext,
   options: BuildInsightOptions = {}
 ): Promise<NorthstarAssistantInsight> {
-  const deterministicInsight = buildDeterministicInsight(context);
+  const deterministicInsight = buildDeterministicInsight(context, options.preferences);
   if (!options.useProvider) return deterministicInsight;
 
   const provider = options.provider ?? createOpenAINorthstarAssistantProvider(options.env, options.fetchImpl);
   if (!provider) return deterministicInsight;
 
-  const prompt = buildNorthstarAssistantPrompt(context, deterministicInsight);
+  const prompt = buildNorthstarAssistantPrompt(context, deterministicInsight, options.preferences);
   const generated = await provider.explain({ context, deterministicInsight, prompt });
   return {
     ...deterministicInsight,
@@ -623,7 +625,10 @@ export async function buildNorthstarAssistantInsight(
   };
 }
 
-export function buildDeterministicInsight(context: NorthstarAssistantContext): NorthstarAssistantInsight {
+export function buildDeterministicInsight(
+  context: NorthstarAssistantContext,
+  preferences?: AiPreferences
+): NorthstarAssistantInsight {
   const findings = [
     ...recordLinkFindings(context),
     ...activityFindings(context),
@@ -636,7 +641,7 @@ export function buildDeterministicInsight(context: NorthstarAssistantContext): N
   const generatedAt = context.generatedAt;
 
   if (findings.length === 0) {
-    return {
+    return applyAssistantPreferences({
       cautions: defaultCautions(context),
       confidence: "medium",
       findings: [{
@@ -661,10 +666,10 @@ export function buildDeterministicInsight(context: NorthstarAssistantContext): N
       }],
       summary: "Northstar reviewed the available CRM context and did not find a clear issue. Continue normal review before making changes.",
       title: assistantTitle(context)
-    };
+    }, context, preferences);
   }
 
-  return {
+  return applyAssistantPreferences({
     cautions: defaultCautions(context),
     confidence: findings.some((finding) => finding.severity === "attention") ? "high" : "medium",
     findings,
@@ -677,12 +682,13 @@ export function buildDeterministicInsight(context: NorthstarAssistantContext): N
     suggestedActions,
     summary: deterministicSummary(context, findings),
     title: assistantTitle(context)
-  };
+  }, context, preferences);
 }
 
 export function buildNorthstarAssistantPrompt(
   context: NorthstarAssistantContext,
-  deterministicInsight: NorthstarAssistantInsight
+  deterministicInsight: NorthstarAssistantInsight,
+  preferences?: AiPreferences
 ) {
   const system = [
     "You are Northstar Assistant, an AI operating layer for a CRM.",
@@ -698,7 +704,8 @@ export function buildNorthstarAssistantPrompt(
         findings: deterministicInsight.findings,
         suggestedActions: deterministicInsight.suggestedActions,
         summary: deterministicInsight.summary
-      }
+      },
+      preferences: preferences ? providerPreferenceSummary(preferences) : undefined
     }),
     maxProviderPayloadChars
   ) ?? "{}";
@@ -1091,6 +1098,69 @@ function defaultGuardrails() {
     "Private connection data hidden",
     "Review before apply"
   ];
+}
+
+function applyAssistantPreferences(
+  insight: NorthstarAssistantInsight,
+  context: NorthstarAssistantContext,
+  preferences?: AiPreferences
+): NorthstarAssistantInsight {
+  if (!preferences) return insight;
+  const findingLimit = preferences.assistantDetailLevel === "detailed" ? 6 : preferences.assistantDetailLevel === "minimal" ? 2 : 4;
+  const actionLimit = preferences.suggestionAggressiveness === "high" ? 5 : preferences.suggestionAggressiveness === "low" ? 2 : 4;
+  const lookedAtLimit = preferences.assistantDetailLevel === "detailed" ? 8 : preferences.assistantDetailLevel === "minimal" ? 4 : 6;
+  const findings = insight.findings.slice(0, findingLimit).map((finding) =>
+    preferences.diagnosticsDetailLevel === "simple" ? simplifyDiagnosticFinding(context, finding) : finding
+  );
+
+  return {
+    ...insight,
+    cautions: preferenceCautions(insight.cautions, preferences),
+    findings,
+    lookedAt: insight.lookedAt.slice(0, lookedAtLimit),
+    suggestedActions: insight.suggestedActions.slice(0, actionLimit),
+    summary: preferenceSummary(insight.summary, preferences)
+  };
+}
+
+function simplifyDiagnosticFinding(
+  context: NorthstarAssistantContext,
+  finding: NorthstarAssistantFinding
+): NorthstarAssistantFinding {
+  if (context.surface !== "inbox" && context.surface !== "job_system") return finding;
+  if (!finding.id.includes("job") && !finding.id.includes("connection")) return finding;
+  return {
+    ...finding,
+    detail: finding.detail
+      .replaceAll("job", "background work")
+      .replaceAll("provider", "mail connection")
+      .replaceAll("stale threshold", "expected processing window"),
+    evidence: ["Diagnostic details are summarized for safety. Secret values and raw provider data are hidden."]
+  };
+}
+
+function preferenceCautions(cautions: string[], preferences: AiPreferences) {
+  return dedupe([
+    ...cautions,
+    preferences.naturalLanguageInstructions ? "Personal AI guidance was applied to tone and detail, not to data access." : ""
+  ]);
+}
+
+function preferenceSummary(summary: string, preferences: AiPreferences) {
+  if (preferences.recordSummaryStyle !== "concise") return summary;
+  const firstSentence = summary.match(/.*?[.!?](?:\s|$)/)?.[0]?.trim();
+  return firstSentence || truncate(summary, 260) || summary;
+}
+
+function providerPreferenceSummary(preferences: AiPreferences) {
+  return {
+    assistantDetailLevel: preferences.assistantDetailLevel,
+    diagnosticsDetailLevel: preferences.diagnosticsDetailLevel,
+    naturalLanguageInstructions: preferences.naturalLanguageInstructions,
+    recordSummaryStyle: preferences.recordSummaryStyle,
+    relationshipMemoryUsage: preferences.relationshipMemoryUsage,
+    suggestionAggressiveness: preferences.suggestionAggressiveness
+  };
 }
 
 async function possibleOrganizationsForEmailDomain(workspaceId: string, email: string) {

@@ -28,6 +28,7 @@ model User {
   createdEmailConnections  EmailConnection[]       @relation("EmailConnectionCreator")
   createdMeetingIntakes    MeetingIntake[]         @relation("MeetingIntakeCreator")
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
+  aiPreferences            AiPreference[]
   auditLogs                AuditLog[]
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
@@ -94,6 +95,7 @@ model Workspace {
   jobs                        Job[]
   meetingIntakes              MeetingIntake[]
   meetingActivityAssociations MeetingActivityAssociation[]
+  aiPreferences               AiPreference[]
   auditLogs                   AuditLog[]
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
@@ -747,6 +749,28 @@ model AuditLog {
 
   @@index([workspaceId, entityType, entityId])
   @@index([workspaceId, actorId])
+}
+
+model AiPreference {
+  id                           String    @id @default(cuid())
+  workspaceId                  String
+  userId                       String
+  emailSummaryLength           String    @default("short")
+  recordSummaryStyle           String    @default("balanced")
+  replyTone                    String    @default("warm")
+  assistantDetailLevel         String    @default("balanced")
+  diagnosticsDetailLevel       String    @default("simple")
+  relationshipMemoryUsage      String    @default("conservative")
+  meetingIntelligenceNoteStyle String    @default("structured")
+  suggestionAggressiveness     String    @default("medium")
+  naturalLanguageInstructions  String?
+  workspace                    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user                         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
 }
 
 enum MembershipRole {

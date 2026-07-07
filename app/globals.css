@@ -6032,6 +6032,43 @@ textarea {
   gap: 12px;
 }
 
+.ai-record-brief-card {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-record-brief-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-record-brief-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.ai-record-brief-grid strong {
+  color: var(--text);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.ai-record-brief-grid span,
+.ai-record-brief-footnote {
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+
+.ai-record-brief-footnote {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
 .northstar-assistant-summary {
   display: grid;
   gap: 7px;
@@ -6175,6 +6212,7 @@ textarea {
 }
 
 @media (max-width: 920px) {
+  .ai-record-brief-grid,
   .northstar-assistant-grid,
   .northstar-assistant-reviewed,
   .northstar-assistant-footer {

@@ -3,6 +3,7 @@ import type { Route } from "next";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { AiRecordBriefCard } from "@/components/ai-record-brief-card";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
 import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
@@ -20,7 +21,17 @@ import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
-import { getOrganization, getRecordTimeline, getWorkspace, listEmailTemplates, listOrganizationCustomFields } from "@/lib/services/crm";
+import {
+  buildAiRecordBrief,
+  buildNorthstarAssistantInsight,
+  buildOrganizationAssistantContext,
+  getAiPreferences,
+  getOrganization,
+  getRecordTimeline,
+  getWorkspace,
+  listEmailTemplates,
+  listOrganizationCustomFields
+} from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -36,12 +47,16 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [workspaceDetail, timelineItems, customFields, emailTemplates] = await Promise.all([
+  const [workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext, aiPreferences] = await Promise.all([
     getWorkspace(actor),
     getRecordTimeline(actor, { type: "ORGANIZATION", id: organization.id }),
     listOrganizationCustomFields(actor, organization.id),
-    listEmailTemplates(actor, { activeOnly: true })
+    listEmailTemplates(actor, { activeOnly: true }),
+    buildOrganizationAssistantContext(actor, organization.id),
+    getAiPreferences(actor)
   ]);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
+  const aiRecordBrief = buildAiRecordBrief(northstarContext, northstarInsight, aiPreferences);
   const nextActivity = getNextOpenActivity(organization.activities);
   const activityCopy = recordActivitySectionCopy("organization");
   const emailLogCount = timelineItems.filter((item) => item.type === "email").length;
@@ -85,6 +100,12 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
             }}
             extraJumps={[
               {
+                href: "#ai-record-brief" as Route,
+                label: "AI",
+                count: northstarInsight.findings.length,
+                countLabel: { singular: "AI finding", plural: "AI findings" }
+              },
+              {
                 href: "#related-people" as Route,
                 label: "People",
                 count: organization.people.length,
@@ -114,6 +135,8 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
         ]}
         title="Organization workspace"
       />
+
+      <AiRecordBriefCard brief={aiRecordBrief} />
 
       <section className="detail-grid">
         <DetailFieldGrid

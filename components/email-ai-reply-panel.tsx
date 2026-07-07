@@ -10,6 +10,7 @@ import { FormSuccessMessage } from "@/components/form-success-message";
 import type { EmailReplyAssistantReadiness } from "@/lib/services/email-reply-assistant-service";
 
 type EmailAiReplyPanelProps = {
+  defaultTone?: string;
   emailLogId: string;
   readiness: EmailReplyAssistantReadiness;
   recipientEmail: string | null;
@@ -20,7 +21,7 @@ const initialState: GenerateEmailReplyDraftActionState = {};
 const aiReplyDisclosureLabel = "Draft reply with AI";
 const aiReplyActionsLabel = "AI email reply actions";
 
-export function EmailAiReplyPanel({ emailLogId, readiness, recipientEmail, subject }: EmailAiReplyPanelProps) {
+export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readiness, recipientEmail, subject }: EmailAiReplyPanelProps) {
   const [state, formAction, isPending] = useActionState(generateEmailReplyDraftAction, initialState);
   const [draftSubject, setDraftSubject] = useState(`Re: ${subject}`.slice(0, 160));
   const [draftBody, setDraftBody] = useState("");
@@ -60,7 +61,7 @@ export function EmailAiReplyPanel({ emailLogId, readiness, recipientEmail, subje
           <input name="emailLogId" type="hidden" value={emailLogId} />
           <label className="form-field">
             <FormFieldLabel>Tone</FormFieldLabel>
-            <select name="tone" defaultValue={state.tone ?? "concise"}>
+            <select name="tone" defaultValue={state.tone ?? defaultTone}>
               <option value="concise">Concise</option>
               <option value="warm">Warm</option>
               <option value="professional">Professional</option>

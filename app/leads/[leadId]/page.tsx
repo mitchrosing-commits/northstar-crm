@@ -3,6 +3,7 @@ import type { Route } from "next";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { AiRecordBriefCard } from "@/components/ai-record-brief-card";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
 import { Badge } from "@/components/badge";
 import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
@@ -28,7 +29,18 @@ import { formatPersonName } from "@/lib/person-name";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { convertedLeadLockedLabel, convertedLeadLockMessage } from "@/lib/record-lock-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
-import { getLead, getRecordTimeline, getWorkspace, listEmailTemplates, listLeadCustomFields, listPipelines } from "@/lib/services/crm";
+import {
+  buildAiRecordBrief,
+  buildLeadAssistantContext,
+  buildNorthstarAssistantInsight,
+  getAiPreferences,
+  getLead,
+  getRecordTimeline,
+  getWorkspace,
+  listEmailTemplates,
+  listLeadCustomFields,
+  listPipelines
+} from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -44,13 +56,17 @@ export default async function LeadDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [pipelines, workspaceDetail, timelineItems, customFields, emailTemplates] = await Promise.all([
+  const [pipelines, workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext, aiPreferences] = await Promise.all([
     listPipelines(actor),
     getWorkspace(actor),
     getRecordTimeline(actor, { type: "LEAD", id: lead.id }),
     listLeadCustomFields(actor, lead.id),
-    listEmailTemplates(actor, { activeOnly: true })
+    listEmailTemplates(actor, { activeOnly: true }),
+    buildLeadAssistantContext(actor, lead.id),
+    getAiPreferences(actor)
   ]);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
+  const aiRecordBrief = buildAiRecordBrief(northstarContext, northstarInsight, aiPreferences);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
@@ -118,6 +134,8 @@ export default async function LeadDetailPage({ params }: PageProps) {
         ]}
         title="Lead workspace"
       />
+
+      <AiRecordBriefCard brief={aiRecordBrief} />
 
       {lead.status !== "CONVERTED" && lead.activities.length === 0 ? (
         <section className="data-card automation-template-panel section-separated">

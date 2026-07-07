@@ -23,6 +23,7 @@ import { StatCard } from "@/components/stat-card";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { formatPersonName } from "@/lib/person-name";
 import {
+  aiReplyToneFromPreferences,
   buildEmailPriorityQueue,
   buildEmailPriorityQueueSummary,
   buildInboxAssistantContext,
@@ -31,6 +32,7 @@ import {
   emailClassificationReadiness,
   emailFollowUpStateLabel,
   emailReplyAssistantReadiness,
+  getAiPreferences,
   listEmailConnectionProviderCards,
   listEmailInboxThreads,
   listEmailPriorityFollowUpDetails,
@@ -86,14 +88,16 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const latestSyncReview = isSyncResult(resolvedSearchParams?.emailConnection)
     ? decodeEmailSyncReview(cookieStore.get(emailSyncReviewCookieName)?.value)
     : null;
-  const [providers, recentEmailLogs, emailTemplates, inboxThreads, northstarContext] = await Promise.all([
+  const [providers, recentEmailLogs, emailTemplates, inboxThreads, northstarContext, aiPreferences] = await Promise.all([
     listEmailConnectionProviderCards(actor),
     listEmailLogs(actor, { limit: 25 }),
     listEmailTemplates(actor, { activeOnly: true }),
     listEmailInboxThreads(actor, { limit: 75 }),
-    buildInboxAssistantContext(actor)
+    buildInboxAssistantContext(actor),
+    getAiPreferences(actor)
   ]);
-  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
+  const defaultAiReplyTone = aiReplyToneFromPreferences(aiPreferences);
   const selectedInboxThread =
     inboxThreads.find((thread) => thread.id === resolvedSearchParams?.thread) ?? inboxThreads[0] ?? null;
   const oldestInboxMessageAt = oldestInboxMessageDate(inboxThreads);
@@ -193,6 +197,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             </div>
             <EmailInboxThreadDetail
               aiReplyReadiness={aiReplyReadiness}
+              defaultAiReplyTone={defaultAiReplyTone}
               draftTemplates={draftTemplates}
               followUpDetails={selectedInboxFollowUpDetails}
               smartLabelReadiness={smartLabelReadiness}
@@ -507,6 +512,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             {attentionLogs.map((emailLog) => (
               <EmailLogCard
                 aiReplyReadiness={aiReplyReadiness}
+                defaultAiReplyTone={defaultAiReplyTone}
                 draftTemplates={draftTemplates}
                 emailLog={emailLog}
                 key={emailLog.id}
@@ -527,6 +533,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             {recentEmailLogs.map((emailLog) => (
               <EmailLogCard
                 aiReplyReadiness={aiReplyReadiness}
+                defaultAiReplyTone={defaultAiReplyTone}
                 draftTemplates={draftTemplates}
                 emailLog={emailLog}
                 key={emailLog.id}
@@ -1096,7 +1103,10 @@ function isGmailSyncStatusStale(updatedAt: Date | null | undefined) {
 }
 
 function gmailSyncErrorNextStep(syncError: string | undefined, provider: ProviderCard | undefined) {
-  if (provider?.status === "Reconnect required" || syncError?.includes("EMAIL_GMAIL_MESSAGE_AUTH_FAILED")) {
+  if (syncError?.includes("EMAIL_GMAIL_MESSAGE_AUTH_FAILED")) {
+    return "Run diagnostics or check Google Cloud OAuth/Gmail API configuration";
+  }
+  if (provider?.status === "Reconnect required") {
     return "Reconnect Gmail with Full Inbox scopes";
   }
   if (syncError?.includes("Gmail listed")) {
@@ -1352,6 +1362,7 @@ function EmailInboxEmptyShell({
 
 function EmailInboxThreadDetail({
   aiReplyReadiness,
+  defaultAiReplyTone,
   draftTemplates,
   followUpDetails,
   smartLabelReadiness,
@@ -1359,6 +1370,7 @@ function EmailInboxThreadDetail({
   workspaceId
 }: {
   aiReplyReadiness: EmailReplyAssistantReadiness;
+  defaultAiReplyTone: string;
   draftTemplates: DraftTemplate[];
   followUpDetails: Map<string, EmailPriorityFollowUpDetail>;
   smartLabelReadiness: EmailClassificationReadiness;
@@ -1402,6 +1414,7 @@ function EmailInboxThreadDetail({
         {thread.messages.map((message) => (
           <EmailLogCard
             aiReplyReadiness={aiReplyReadiness}
+            defaultAiReplyTone={defaultAiReplyTone}
             draftTemplates={draftTemplates}
             emailLog={message}
             followUpDetail={followUpDetails.get(message.id)}
@@ -1454,6 +1467,7 @@ function oldestInboxMessageDate(threads: EmailInboxThreadSummary[]) {
 
 function EmailLogCard({
   aiReplyReadiness,
+  defaultAiReplyTone,
   draftTemplates,
   emailLog,
   followUpDetail,
@@ -1463,6 +1477,7 @@ function EmailLogCard({
   workspaceId
 }: {
   aiReplyReadiness: EmailReplyAssistantReadiness;
+  defaultAiReplyTone: string;
   draftTemplates: DraftTemplate[];
   emailLog: EmailLog;
   followUpDetail?: EmailPriorityFollowUpDetail;
@@ -1537,6 +1552,7 @@ function EmailLogCard({
         />
       </ActionGroup>
       <EmailAiReplyPanel
+        defaultTone={defaultAiReplyTone}
         emailLogId={emailLog.id}
         readiness={aiReplyReadiness}
         recipientEmail={recipientEmail}
@@ -1966,7 +1982,7 @@ function emailStatusCopy(searchParams: Awaited<EmailPageProps["searchParams"]>) 
   if (searchParams?.emailConnection === "gmail-sync-error") {
     return searchParams.syncError
       ? `Gmail Full Inbox sync was not completed: ${searchParams.syncError}`
-      : "Gmail Full Inbox sync was not completed. Reconnect Gmail with Full Inbox scopes or check provider configuration.";
+      : "Gmail Full Inbox sync was not completed. Google granted Gmail access, but Gmail rejected full-message reads. Run diagnostics or check Google Cloud OAuth/Gmail API configuration.";
   }
   if (searchParams?.emailConnection === "gmail-sync-queued") {
     return "Gmail inbox sync is queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.";

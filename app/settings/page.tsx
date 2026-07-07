@@ -87,6 +87,7 @@ export default async function SettingsPage({
   const currentUserIsOwner = summary.currentMembership.role === "OWNER";
   const importExportActionLabel = "Open import and export settings";
   const developerApiActionLabel = "Open developer API surface";
+  const aiPreferencesActionLabel = "Open AI preferences";
 
   return (
     <AppShell workspace={workspace}>
@@ -166,6 +167,22 @@ export default async function SettingsPage({
         intro="Review the workspace-scoped REST surface, OpenAPI reference files, CSV export endpoints, and planned API key and webhook controls."
         introClassName="empty-copy"
         title="Developer / API"
+      />
+
+      <SettingsSection
+        action={
+          <Link
+            aria-label={aiPreferencesActionLabel}
+            className="button-secondary"
+            href={"/settings/ai" as Route}
+            title={aiPreferencesActionLabel}
+          >
+            Open AI preferences
+          </Link>
+        }
+        intro="Tune review-first summaries, reply tone defaults, Assistant detail, Meeting Intelligence guidance, and CRM hygiene suggestions."
+        introClassName="empty-copy"
+        title="AI Preferences"
       />
 
       <EmailTemplatesPanel
