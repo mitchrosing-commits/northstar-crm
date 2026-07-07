@@ -171,6 +171,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain('aria-label="Full Inbox synced Gmail mailbox"');
     expect(emailPage).toContain('id="relationship-inbox"');
     expect(emailPage).toContain('aria-label="Relationship Inbox CRM priority queue"');
+    expect(emailPage.indexOf('id="full-inbox"')).toBeLessThan(emailPage.indexOf('className="panel inbox-workflow-map"'));
     expect(emailPage.indexOf('id="full-inbox"')).toBeLessThan(emailPage.indexOf('title="Email Providers"'));
     expect(emailPage.indexOf('id="relationship-inbox"')).toBeGreaterThan(emailPage.indexOf('title="Email Providers"'));
     expect(emailPage).toContain("InboxWorkflowItem");
@@ -395,9 +396,17 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Encrypted OAuth tokens were removed");
     expect(emailPage).toContain("email-disconnect-error");
     expect(emailPage).toContain("fullInboxEmptyStateCopy(gmailProvider, inboxThreads.length)");
-    expect(emailPage).toContain("Sync Gmail to populate Full Inbox");
-    expect(emailPage).toContain("No Gmail threads stored yet");
-    expect(emailPage).toContain("Use Sync Gmail inbox, then run the background worker");
+    expect(emailPage).toContain("EmailInboxEmptyShell");
+    expect(emailPage).toContain("FullInboxHeaderActions");
+    expect(emailPage).toContain("FullInboxPrimaryAction");
+    expect(emailPage).toContain("Gmail is connected, but no inbox messages have synced yet");
+    expect(emailPage).toContain("Gmail sync is queued");
+    expect(emailPage).toContain("Gmail sync is running");
+    expect(emailPage).toContain("Gmail sync needs attention");
+    expect(emailPage).toContain("Sync Gmail inbox");
+    expect(emailPage).toContain("Full Inbox mailbox reader");
+    expect(emailPage).toContain("No synced threads");
+    expect(emailPage).toContain("The mailbox reader stays here while sync catches up.");
   });
 
   it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
@@ -422,6 +431,9 @@ describe("Email UX v1 discoverability", () => {
     expect(globalCss).toContain(".email-command-card .compact-title");
     expect(globalCss).toContain(".email-inbox-thread-detail .email-inbox-thread-subject");
     expect(globalCss).toContain(".email-inbox-load-more");
+    expect(globalCss).toContain(".email-inbox-empty-layout");
+    expect(globalCss).toContain(".email-inbox-empty-rail");
+    expect(globalCss).toContain(".email-inbox-empty-detail");
     expect(globalCss).toContain(".email-inbox-message-list .email-preview");
     expect(emailPage).toContain("Load older messages");
     expect(emailPage).toContain("Refresh thread");
@@ -581,7 +593,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain(
       "Log an email manually from a deal, contact, organization, or lead.",
     );
-    expect(emailPage).toContain("Sync Gmail to populate Full Inbox");
+    expect(emailPage).toContain("Gmail is connected, but no inbox messages have synced yet");
     expect(emailPage).toContain("Relationship Inbox and manual email logging still work without a synced mailbox.");
     expect(emailPage).toContain("Log an email manually");
     expect(manualEmailPanel).toContain("Log Manual Email");

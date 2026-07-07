@@ -2883,6 +2883,10 @@ textarea {
   min-width: 0;
 }
 
+.email-inbox-empty-layout {
+  align-items: stretch;
+}
+
 .email-inbox-thread-list {
   display: grid;
   gap: 8px;
@@ -2894,6 +2898,22 @@ textarea {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.email-inbox-empty-rail,
+.email-inbox-empty-detail {
+  min-height: 220px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: var(--surface-muted);
+}
+
+.email-inbox-empty-rail {
+  align-content: center;
+}
+
+.email-inbox-empty-rail h3,
+.email-inbox-empty-detail h3 {
+  font-size: 15px;
 }
 
 .email-inbox-load-more {

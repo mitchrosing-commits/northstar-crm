@@ -139,39 +139,10 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         title="Inbox"
       />
 
-      <section className="panel inbox-workflow-map" aria-label="Inbox workflow map">
-        <PanelTitleRow
-          actions={<Badge>Review-first</Badge>}
-          description="Email intelligence lives inside the Inbox workflow. Nothing here auto-sends, auto-classifies, creates CRM records, or creates follow-ups without review."
-          title="Inbox Workflows"
-        />
-        <div className="inbox-workflow-grid">
-          <InboxWorkflowItem
-            detail="Synced Gmail threads, stored readable bodies, explicit replies, and selected-thread refresh."
-            label="Full Inbox"
-          />
-          <InboxWorkflowItem
-            detail="CRM-prioritized stored emails with suggested next actions and relationship-risk signals."
-            label="Relationship Inbox"
-          />
-          <InboxWorkflowItem
-            detail="User-triggered classification snapshots with evidence attached to stored messages."
-            label="Smart Labels"
-          />
-          <InboxWorkflowItem
-            detail="Draft-only reply assistance inside an email card; the user still reviews and sends."
-            label="AI Reply Assistant"
-          />
-          <InboxWorkflowItem
-            detail="Review-first activity drafting and durable linked follow-up history from email context."
-            label="Follow-ups"
-          />
-        </div>
-      </section>
-
       <section aria-label="Full Inbox synced Gmail mailbox" className="data-card section-separated" id="full-inbox">
         <PanelTitleRow
-          actions={<Badge>{inboxThreads.length ? `${inboxThreads.length} threads` : "No synced threads"}</Badge>}
+          actions={<FullInboxHeaderActions provider={gmailProvider} threadCount={inboxThreads.length} />}
+          description="Synced Gmail mailbox threads appear here first. Relationship Inbox priorities stay separate below."
           title="Full Inbox"
         />
         <FormIntroCallout className="email-status-callout email-inbox-status" title="Gmail sync status">
@@ -214,11 +185,41 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             />
           </div>
         ) : (
-          <EmptyState
-            description={fullInboxEmptyState.description}
-            title={fullInboxEmptyState.title}
+          <EmailInboxEmptyShell
+            emptyState={fullInboxEmptyState}
+            provider={gmailProvider}
           />
         )}
+      </section>
+
+      <section className="panel inbox-workflow-map" aria-label="Inbox workflow map">
+        <PanelTitleRow
+          actions={<Badge>Review-first</Badge>}
+          description="Email intelligence lives inside the Inbox workflow. Nothing here auto-sends, auto-classifies, creates CRM records, or creates follow-ups without review."
+          title="Inbox Workflows"
+        />
+        <div className="inbox-workflow-grid">
+          <InboxWorkflowItem
+            detail="Synced Gmail threads, stored readable bodies, explicit replies, and selected-thread refresh."
+            label="Full Inbox"
+          />
+          <InboxWorkflowItem
+            detail="CRM-prioritized stored emails with suggested next actions and relationship-risk signals."
+            label="Relationship Inbox"
+          />
+          <InboxWorkflowItem
+            detail="User-triggered classification snapshots with evidence attached to stored messages."
+            label="Smart Labels"
+          />
+          <InboxWorkflowItem
+            detail="Draft-only reply assistance inside an email card; the user still reviews and sends."
+            label="AI Reply Assistant"
+          />
+          <InboxWorkflowItem
+            detail="Review-first activity drafting and durable linked follow-up history from email context."
+            label="Follow-ups"
+          />
+        </div>
       </section>
 
       <section className="panel section-separated">
@@ -822,18 +823,42 @@ function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount
     };
   }
 
+  if (provider?.syncStatusLabel === "Sync queued") {
+    return {
+      description:
+        "Gmail is connected and a Full Inbox sync is queued. Run the background worker or wait for it to process, then refresh this page.",
+      title: "Gmail sync is queued"
+    };
+  }
+
+  if (provider?.syncStatusLabel === "Sync running") {
+    return {
+      description:
+        "Gmail is connected and a Full Inbox sync is currently running. Messages will appear here after the worker stores inbox threads.",
+      title: "Gmail sync is running"
+    };
+  }
+
+  if (provider?.status === "Sync issue") {
+    return {
+      description:
+        "Gmail is connected, but the latest Full Inbox sync reported an issue. Review the provider status below, then retry Sync Gmail inbox.",
+      title: "Gmail sync needs attention"
+    };
+  }
+
   if (provider?.lastSyncAt) {
     return {
       description:
-        "The latest Gmail sync did not store any inbox threads. Confirm the connected mailbox has recent inbox mail, then sync again or check the background worker.",
-      title: "No Gmail threads stored yet"
+        "Gmail is connected, but no inbox messages have synced yet. Use Sync Gmail inbox to queue the mailbox import; the background worker stores threads here.",
+      title: "Gmail is connected, but no inbox messages have synced yet"
     };
   }
 
   return {
     description:
-      "Gmail is connected, but no inbox sync has completed yet. Use Sync Gmail inbox, then run the background worker so Northstar can store recent threads.",
-    title: "Sync Gmail to populate Full Inbox"
+      "Gmail is connected, but no inbox sync has completed yet. Use Sync Gmail inbox to queue the mailbox import; the background worker stores recent threads here.",
+    title: "Gmail is connected, but no inbox messages have synced yet"
   };
 }
 
@@ -930,6 +955,94 @@ function EmailInboxThreadList({
           </Link>
         );
       })}
+    </div>
+  );
+}
+
+function FullInboxHeaderActions({ provider, threadCount }: { provider: ProviderCard | undefined; threadCount: number }) {
+  return (
+    <>
+      <Badge>{threadCount ? `${threadCount} threads` : "No synced threads"}</Badge>
+      <FullInboxPrimaryAction provider={provider} />
+    </>
+  );
+}
+
+function FullInboxPrimaryAction({ provider }: { provider: ProviderCard | undefined }) {
+  if (provider?.syncAvailable) {
+    return (
+      <form action={syncGmailInboxFromEmailPageAction}>
+        <button
+          aria-label="Sync Gmail inbox"
+          className="button-primary button-compact"
+          title="Sync Gmail inbox"
+          type="submit"
+        >
+          Sync Gmail inbox
+        </button>
+      </form>
+    );
+  }
+
+  if (provider && !provider.disabled && provider.href) {
+    const label = provider.status === "Reconnect required" ? "Reconnect Gmail" : "Connect Gmail";
+    return (
+      <Link
+        aria-label={`${label} for Full Inbox`}
+        className="button-primary button-compact"
+        href={provider.href as Route}
+        title={`${label} for Full Inbox`}
+      >
+        {label}
+      </Link>
+    );
+  }
+
+  return (
+    <Link
+      aria-label="Open email settings for Gmail setup"
+      className="button-secondary button-compact"
+      href="/settings#email-connections"
+      title="Open email settings for Gmail setup"
+    >
+      Email settings
+    </Link>
+  );
+}
+
+function EmailInboxEmptyShell({
+  emptyState,
+  provider
+}: {
+  emptyState: { description: string; title: string };
+  provider: ProviderCard | undefined;
+}) {
+  return (
+    <div className="email-inbox-layout email-inbox-empty-layout" aria-label="Full Inbox mailbox reader">
+      <div className="email-inbox-thread-list-shell">
+        <div className="email-inbox-thread-list" aria-label="Synced inbox threads">
+          <EmptyState
+            className="email-inbox-empty-rail"
+            description="Synced Gmail conversations will appear in this list after inbox sync stores messages."
+            title="No synced threads"
+            titleLevel="h3"
+          />
+        </div>
+      </div>
+      <div className="email-inbox-thread-detail email-inbox-empty-detail" aria-label="Full Inbox empty message reader">
+        <EmptyState
+          actions={<FullInboxPrimaryAction provider={provider} />}
+          actionsLabel="Full Inbox sync actions"
+          description={emptyState.description}
+          title={emptyState.title}
+          titleLevel="h3"
+        >
+          <p className="form-hint">
+            The mailbox reader stays here while sync catches up. Relationship Inbox priorities and manual email history remain
+            separate sections below.
+          </p>
+        </EmptyState>
+      </div>
     </div>
   );
 }

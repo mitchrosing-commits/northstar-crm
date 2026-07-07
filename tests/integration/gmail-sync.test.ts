@@ -275,6 +275,57 @@ describe("Gmail metadata sync", () => {
     }
   });
 
+  it("prefers a scope-ready Gmail account over a newer stale connected row", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const readyConnection = await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "ready@example.test",
+          createdById: fixture.userA.id,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: gmailFullInboxScopes,
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.create({
+        data: {
+          accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          accountEmail: "ready@example.test",
+          connectionId: readyConnection.id,
+          encryptedAccessToken: encryptEmailToken("ready-access-token", env),
+          encryptedRefreshToken: encryptEmailToken("ready-refresh-token", env),
+          provider: "GOOGLE_WORKSPACE",
+          scopes: gmailFullInboxScopes,
+          userId: fixture.userA.id,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "stale-newer@example.test",
+          createdById: fixture.userA.id,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
+        (provider) => provider.provider === "GOOGLE_WORKSPACE"
+      );
+      expect(providerCard).toMatchObject({
+        accountEmail: "ready@example.test",
+        status: "Connected",
+        syncAvailable: true
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("imports only matched recent Gmail metadata and deduplicates provider message ids", async () => {
     const fixture = await createIntegrationFixture();
     try {
