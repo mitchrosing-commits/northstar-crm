@@ -905,6 +905,7 @@ function gmailSyncProgressState({
   const lastUpdateLabel = lastUpdate ? formatDate(lastUpdate) : "Not updated yet";
   const syncDetail = provider?.syncStatusDetail ? formatProviderSyncStatusDetail(provider.syncStatusDetail) : null;
   const activeFromClick = showRequested || emailConnection === "gmail-sync-queued" || emailConnection === "gmail-sync-error";
+  const syncStatusStale = isGmailSyncStatusStale(lastUpdate);
 
   if (!readiness.ready) {
     return {
@@ -923,13 +924,17 @@ function gmailSyncProgressState({
   if (provider?.syncStatusLabel === "Sync queued" || emailConnection === "gmail-sync-queued") {
     return {
       active: true,
-      detail:
-        "Your Gmail inbox sync is queued. Northstar will start importing recent inbox threads as soon as the sync runner picks it up.",
+      detail: syncStatusStale
+        ? "This Gmail inbox sync has been queued for more than a couple minutes. The background worker has not picked it up yet."
+        : "Your Gmail inbox sync is queued. Northstar will start importing recent inbox threads as soon as the sync runner picks it up.",
       lastUpdateLabel,
-      nextStep: "Refresh status in a moment",
+      nextStep: syncStatusStale
+        ? "Click Sync Gmail inbox again to run a bounded sync now, or start the Railway worker service"
+        : "Refresh status in a moment",
       statusLabel: "Sync queued",
-      technicalHint: "A background worker processes the queue; this page does not wait on the whole mailbox import request.",
-      title: "Waiting to start Gmail sync",
+      technicalHint:
+        "Production Gmail sync needs a running job worker (`npm run jobs:work` or Railway `RAILWAY_SERVICE_ROLE=worker`). The Sync Gmail inbox button can also run one explicit bounded sync through the same job record.",
+      title: syncStatusStale ? "Gmail sync queued with no worker pickup yet" : "Waiting to start Gmail sync",
       tone: "attention",
       whatIsHappening: syncDetail ?? "Queued for mailbox import"
     };
@@ -1013,6 +1018,11 @@ function gmailSyncProgressState({
     tone: "neutral",
     whatIsHappening: threadCount > 0 ? "Showing synced threads" : "Waiting for first mailbox sync"
   };
+}
+
+function isGmailSyncStatusStale(updatedAt: Date | null | undefined) {
+  if (!updatedAt) return false;
+  return Date.now() - updatedAt.getTime() > 2 * 60 * 1000;
 }
 
 function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount: number) {

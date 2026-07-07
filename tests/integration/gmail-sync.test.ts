@@ -10,6 +10,7 @@ import {
   listEmailConnectionProviderCards,
   processGmailInboxSyncJob,
   refreshGmailInboxThread,
+  runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog,
   storeGoogleOAuthConnection,
   syncGmailInboxMessages,
@@ -1211,6 +1212,82 @@ describe("Gmail metadata sync", () => {
       });
       expect(JSON.stringify(providerCard)).not.toContain("access-token");
       expect(JSON.stringify(providerCard)).not.toContain("refresh-token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("runs an explicit Gmail sync through the queued job record and marks it complete", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        expectedMaxResults: "25",
+        messages: [
+          {
+            bodyText: "Immediate sync body for CRM review.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:30:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Immediate sync",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "1101",
+            id: "gmail-immediate-sync-1",
+            labelIds: ["INBOX"],
+            snippet: "Immediate sync body"
+          }
+        ]
+      });
+
+      const result = await runGmailInboxSyncNow(fixture.actorA, {
+        env,
+        fetchImpl,
+        now: new Date("2030-07-01T12:00:00.000Z"),
+        workerId: "test-email-page-sync"
+      });
+
+      expect(result).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "recent", totalFetched: 1 });
+      const [job, log, providerCard] = await Promise.all([
+        fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
+        fixture.prisma.emailLog.findFirstOrThrow({
+          where: {
+            providerMessageId: "gmail-immediate-sync-1",
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        )
+      ]);
+
+      expect(job).toMatchObject({
+        attempts: 1,
+        dedupeKey: `gmail-inbox-sync:${connection.id}`,
+        lockedAt: null,
+        lockedBy: null,
+        status: "SUCCEEDED",
+        type: gmailInboxSyncJobType,
+        workspaceId: fixture.workspaceA.id
+      });
+      expect(JSON.stringify(job.payload)).not.toContain("access-token");
+      expect(JSON.stringify(job.payload)).not.toContain("refresh-token");
+      expect(log).toMatchObject({
+        body: "Immediate sync body for CRM review.",
+        providerLabels: ["INBOX"],
+        providerSnippet: "Immediate sync body",
+        subject: "Immediate sync"
+      });
+      expect(providerCard).toMatchObject({
+        syncAvailable: true,
+        syncStatusLabel: "Sync complete",
+        syncStatusUpdatedAt: expect.any(Date)
+      });
     } finally {
       await fixture.cleanup();
     }

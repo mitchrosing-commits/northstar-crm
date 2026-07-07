@@ -341,8 +341,9 @@ describe("Email UX v1 discoverability", () => {
 
   it("runs manual Gmail sync from the email page and reports matched, duplicate, and skipped counts", () => {
     expect(emailActions).toContain('"use server"');
-    expect(emailActions).toContain("enqueueGmailInboxSyncJob(actor)");
-    expect(emailActions).toContain("/email?emailConnection=gmail-sync-queued&syncStatus=1#gmail-sync-progress");
+    expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
+    expect(emailActions).toContain('emailConnection: "gmail-synced"');
+    expect(emailActions).toContain('syncStatus: "1"');
     expect(emailActions).toContain("syncOlderGmailInboxMessages({ actor, before })");
     expect(emailActions).toContain("refreshGmailInboxThread({ actor, threadId })");
     expect(emailActions).toContain("emailConnection: \"gmail-loaded-more\"");
@@ -391,8 +392,13 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Gmail Full Inbox sync finished.");
     expect(emailPage).toContain("Gmail inbox sync is queued.");
     expect(emailPage).toContain("gmailSyncProgressState");
+    expect(emailPage).toContain("isGmailSyncStatusStale");
+    expect(emailPage).toContain("background worker has not picked it up yet");
+    expect(emailPage).toContain("RAILWAY_SERVICE_ROLE=worker");
+    expect(emailPage).toContain("run one explicit bounded sync through the same job record");
     expect(emailPage).toContain('id="gmail-sync-progress"');
     expect(emailPage).toContain("Waiting to start Gmail sync");
+    expect(emailPage).toContain("Gmail sync queued with no worker pickup yet");
     expect(emailPage).toContain("Syncing Gmail inbox");
     expect(emailPage).toContain("Gmail sync completed");
     expect(emailPage).toContain("Gmail sync completed with no stored messages");

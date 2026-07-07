@@ -11,9 +11,9 @@ import {
   classifyEmailLog,
   createEmailFollowUpActivity,
   disconnectEmailConnection,
-  enqueueGmailInboxSyncJob,
   generateEmailReplyDraft,
   refreshGmailInboxThread,
+  runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog,
   syncOlderGmailInboxMessages,
   syncRecentGmailMessages,
@@ -53,14 +53,23 @@ export type GenerateEmailReplyDraftActionState = {
 
 export async function syncGmailInboxFromEmailPageAction() {
   const { actor } = await getCurrentWorkspaceContext();
+  let result: Awaited<ReturnType<typeof runGmailInboxSyncNow>>;
 
   try {
-    await enqueueGmailInboxSyncJob(actor);
+    result = await runGmailInboxSyncNow(actor);
   } catch {
     redirect("/email?emailConnection=gmail-sync-error&syncStatus=1#gmail-sync-progress" as Route);
   }
 
-  redirect("/email?emailConnection=gmail-sync-queued&syncStatus=1#gmail-sync-progress" as Route);
+  const params = new URLSearchParams({
+    created: String(result.created),
+    duplicates: String(result.skippedDuplicates),
+    emailConnection: "gmail-synced",
+    skipped: String(result.skippedUnmatched),
+    syncStatus: "1",
+    total: String(result.totalFetched)
+  });
+  redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
 }
 
 export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData) {

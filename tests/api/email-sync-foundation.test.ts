@@ -154,7 +154,10 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("export async function syncGmailInboxMessages");
     expect(emailConnectionService).toContain('export const gmailInboxSyncJobType = "email.gmail_sync"');
     expect(emailConnectionService).toContain("export async function enqueueGmailInboxSyncJob");
+    expect(emailConnectionService).toContain("export async function runGmailInboxSyncNow");
     expect(emailConnectionService).toContain("export async function processGmailInboxSyncJob");
+    expect(emailConnectionService).toContain("markJobSucceeded(claimedJob.id");
+    expect(emailConnectionService).toContain("markJobFailedForRetry(claimedJob.id");
     expect(emailConnectionService).toContain("export async function syncOlderGmailInboxMessages");
     expect(emailConnectionService).toContain("export async function refreshGmailInboxThread");
     expect(emailConnectionService).toContain("parseGmailHistoryCursor(connection.lastSyncCursor)");
@@ -179,6 +182,7 @@ describe("email sync provider foundation", () => {
     expect(emailPage).toContain("Send Gmail reply");
     expect(emailPage).toContain("Disconnect");
     expect(emailActions).toContain("syncGmailInboxFromEmailPageAction");
+    expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
     expect(emailActions).toContain("sendGmailReplyFromEmailPageAction");
     expect(emailActions).toContain("disconnectEmailProviderFromEmailPageAction");
     expect(emailActions).not.toContain("sendGmailReplyFromEmailPageAction()");

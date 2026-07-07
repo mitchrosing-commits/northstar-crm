@@ -11,11 +11,12 @@ const appleIcon = readFileSync(join(process.cwd(), "app/apple-icon.png"));
 describe("app metadata icons", () => {
   it("wires Northstar favicon and app icons through root metadata", () => {
     expect(layout).toContain("applicationName: \"Northstar CRM\"");
+    expect(layout).toContain('const appIconVersion = "northstar-brand-20260707";');
     expect(layout).toContain("icons: {");
-    expect(layout).toContain('{ url: "/favicon.ico", sizes: "any" }');
-    expect(layout).toContain('{ url: "/icon.svg", type: "image/svg+xml" }');
-    expect(layout).toContain('{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }');
-    expect(layout).toContain("shortcut: [\"/favicon.ico\"]");
+    expect(layout).toContain('{ url: `/favicon.ico?v=${appIconVersion}`, sizes: "any" }');
+    expect(layout).toContain('{ url: `/icon.svg?v=${appIconVersion}`, type: "image/svg+xml" }');
+    expect(layout).toContain('{ url: `/apple-icon.png?v=${appIconVersion}`, sizes: "180x180", type: "image/png" }');
+    expect(layout).toContain("shortcut: [`/favicon.ico?v=${appIconVersion}`]");
     expect(layout).toContain("appleWebApp");
     expect(layout).toContain("title: \"Northstar CRM\"");
   });
@@ -24,6 +25,9 @@ describe("app metadata icons", () => {
     expect(existsSync(join(process.cwd(), "app/favicon.ico"))).toBe(true);
     expect(existsSync(join(process.cwd(), "app/icon.svg"))).toBe(true);
     expect(existsSync(join(process.cwd(), "app/apple-icon.png"))).toBe(true);
+    expect(existsSync(join(process.cwd(), "public/favicon.ico"))).toBe(false);
+    expect(existsSync(join(process.cwd(), "public/icon.svg"))).toBe(false);
+    expect(existsSync(join(process.cwd(), "public/apple-icon.png"))).toBe(false);
     expect(iconSvg).toContain("Northstar CRM icon");
     expect(iconSvg).toContain("northstar-logo-gradient");
     expect(iconSvg).toContain('stop-color="#0f766e"');

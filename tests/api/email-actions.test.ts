@@ -7,10 +7,10 @@ const mocks = vi.hoisted(() => ({
   cookieSet: vi.fn(),
   createEmailFollowUpActivity: vi.fn(),
   disconnectEmailConnection: vi.fn(),
-  enqueueGmailInboxSyncJob: vi.fn(),
   generateEmailReplyDraft: vi.fn(),
   getCurrentWorkspaceContext: vi.fn(),
   refreshGmailInboxThread: vi.fn(),
+  runGmailInboxSyncNow: vi.fn(),
   sendGmailReplyFromEmailLog: vi.fn(),
   redirect: vi.fn(),
   syncOlderGmailInboxMessages: vi.fn(),
@@ -36,9 +36,9 @@ vi.mock("@/lib/services/crm", () => ({
   classifyEmailLog: mocks.classifyEmailLog,
   createEmailFollowUpActivity: mocks.createEmailFollowUpActivity,
   disconnectEmailConnection: mocks.disconnectEmailConnection,
-  enqueueGmailInboxSyncJob: mocks.enqueueGmailInboxSyncJob,
   generateEmailReplyDraft: mocks.generateEmailReplyDraft,
   refreshGmailInboxThread: mocks.refreshGmailInboxThread,
+  runGmailInboxSyncNow: mocks.runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog: mocks.sendGmailReplyFromEmailLog,
   syncOlderGmailInboxMessages: mocks.syncOlderGmailInboxMessages,
   syncRecentGmailMessages: mocks.syncRecentGmailMessages,
@@ -86,18 +86,21 @@ describe("email sync server actions", () => {
     });
   });
 
-  it("queues a Full Inbox Gmail sync from the email page without writing a review cookie", async () => {
-    mocks.enqueueGmailInboxSyncJob.mockResolvedValue({
-      dedupeKey: "gmail-inbox-sync:connection_1",
-      jobId: "job_1"
+  it("runs a bounded Full Inbox Gmail sync from the email page without writing a review cookie", async () => {
+    mocks.runGmailInboxSyncNow.mockResolvedValue({
+      created: 2,
+      skippedDuplicates: 1,
+      skippedUnmatched: 0,
+      totalFetched: 3,
+      unmatchedPreviews: []
     });
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?emailConnection=gmail-sync-queued&syncStatus=1#gmail-sync-progress"
+      url: "/email?created=2&duplicates=1&emailConnection=gmail-synced&skipped=0&syncStatus=1&total=3#gmail-sync-progress"
     });
 
-    expect(mocks.enqueueGmailInboxSyncJob).toHaveBeenCalledWith(actor);
+    expect(mocks.runGmailInboxSyncNow).toHaveBeenCalledWith(actor);
     expect(mocks.cookieSet).not.toHaveBeenCalled();
   });
 
@@ -221,8 +224,8 @@ describe("email sync server actions", () => {
     expect(mocks.cookieSet).not.toHaveBeenCalled();
   });
 
-  it("redirects queued Gmail sync failures without writing stale review cookies", async () => {
-    mocks.enqueueGmailInboxSyncJob.mockRejectedValue(new Error("provider token raw-secret-token"));
+  it("redirects Full Inbox Gmail sync failures without writing stale review cookies", async () => {
+    mocks.runGmailInboxSyncNow.mockRejectedValue(new Error("provider token raw-secret-token"));
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",

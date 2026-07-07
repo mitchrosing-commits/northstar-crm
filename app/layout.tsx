@@ -2,17 +2,19 @@ import type { Metadata } from "next";
 
 import "./globals.css";
 
+const appIconVersion = "northstar-brand-20260707";
+
 export const metadata: Metadata = {
   applicationName: "Northstar CRM",
   title: "Northstar CRM",
   description: "Multi-tenant sales CRM for pipeline and deal management",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icon.svg", type: "image/svg+xml" }
+      { url: `/favicon.ico?v=${appIconVersion}`, sizes: "any" },
+      { url: `/icon.svg?v=${appIconVersion}`, type: "image/svg+xml" }
     ],
-    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
-    shortcut: ["/favicon.ico"]
+    apple: [{ url: `/apple-icon.png?v=${appIconVersion}`, sizes: "180x180", type: "image/png" }],
+    shortcut: [`/favicon.ico?v=${appIconVersion}`]
   },
   appleWebApp: {
     title: "Northstar CRM"

@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { canUseEmailTokenEncryptionKey, decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
 import { redactSensitiveText } from "@/lib/security/redaction";
-import { enqueueJob } from "./job-service";
+import { defaultStaleJobAfterMs, enqueueJob, markJobFailedForRetry, markJobSucceeded } from "./job-service";
 import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 import { userDisplaySelect } from "./user-select";
 
@@ -1211,10 +1211,51 @@ export async function enqueueGmailInboxSyncJob(actor: WorkspaceActor) {
   return enqueueGmailInboxSyncJobForConnection(actor, connection.id);
 }
 
+export async function runGmailInboxSyncNow(
+  actor: WorkspaceActor,
+  options: { env?: EmailConnectionEnv; fetchImpl?: GmailFetch; now?: Date; workerId?: string } = {}
+): Promise<GmailSyncResult> {
+  await ensureWorkspaceAccess(actor);
+  const now = options.now ?? new Date();
+  const connection = await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE");
+  if (!connection) {
+    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing inbox messages.", 400);
+  }
+  assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+
+  const job = await enqueueGmailInboxSyncJobForConnection(actor, connection.id);
+  const claimedJob = await claimGmailInboxSyncJobForImmediateRun({
+    jobId: job.id,
+    now,
+    workerId: options.workerId ?? "email-page-gmail-sync",
+    workspaceId: actor.workspaceId
+  });
+
+  if (!claimedJob) {
+    throw new ApiError(
+      "EMAIL_SYNC_ALREADY_RUNNING",
+      "Gmail sync is already running. Refresh status in a moment.",
+      409
+    );
+  }
+
+  try {
+    const result = await processGmailInboxSyncJob(claimedJob.payload, {
+      env: options.env,
+      fetchImpl: options.fetchImpl
+    });
+    await markJobSucceeded(claimedJob.id, new Date());
+    return result;
+  } catch (error) {
+    await markJobFailedForRetry(claimedJob.id, error, { now: new Date() });
+    throw error;
+  }
+}
+
 export async function processGmailInboxSyncJob(
   payload: unknown,
   options: { env?: EmailConnectionEnv; fetchImpl?: GmailFetch } = {}
-) {
+): Promise<GmailSyncResult> {
   const input = parseGmailInboxSyncJobPayload(payload);
   const connection = await prisma.emailConnection.findFirst({
     where: {
@@ -1230,7 +1271,7 @@ export async function processGmailInboxSyncJob(
   }
   const actorUserId = connection.createdById ?? connection.secret.userId;
   const actor = { actorUserId, workspaceId: connection.workspaceId };
-  await syncGmailInboxMessages({
+  return syncGmailInboxMessages({
     actor,
     connectionId: connection.id,
     env: options.env,
@@ -1261,6 +1302,71 @@ async function enqueueGmailInboxSyncJobForConnection(actor: WorkspaceActor, conn
       workspaceId: actor.workspaceId
     }
   });
+}
+
+async function claimGmailInboxSyncJobForImmediateRun({
+  jobId,
+  now,
+  workerId,
+  workspaceId
+}: {
+  jobId: string;
+  now: Date;
+  workerId: string;
+  workspaceId: string;
+}) {
+  const staleCutoff = new Date(now.getTime() - defaultStaleJobAfterMs);
+  const staleRunningJob = await prisma.job.findFirst({
+    where: {
+      id: jobId,
+      lockedAt: { lt: staleCutoff },
+      status: JobStatus.RUNNING,
+      type: gmailInboxSyncJobType,
+      workspaceId
+    },
+    select: {
+      attempts: true,
+      maxAttempts: true
+    }
+  });
+
+  if (staleRunningJob && staleRunningJob.attempts < staleRunningJob.maxAttempts) {
+    await prisma.job.updateMany({
+      where: {
+        id: jobId,
+        lockedAt: { lt: staleCutoff },
+        status: JobStatus.RUNNING,
+        type: gmailInboxSyncJobType,
+        workspaceId
+      },
+      data: {
+        lockedAt: null,
+        lockedBy: null,
+        runAt: now,
+        status: JobStatus.PENDING
+      }
+    });
+  }
+
+  const updated = await prisma.job.updateMany({
+    where: {
+      id: jobId,
+      status: { in: [JobStatus.PENDING, JobStatus.FAILED] },
+      type: gmailInboxSyncJobType,
+      workspaceId
+    },
+    data: {
+      attempts: { increment: 1 },
+      failedAt: null,
+      lockedAt: now,
+      lockedBy: workerId,
+      runAt: now,
+      status: JobStatus.RUNNING
+    }
+  });
+
+  if (updated.count !== 1) return null;
+  return prisma.job.findUniqueOrThrow({ where: { id: jobId } });
 }
 
 async function syncGmailInboxHistoryOrFallback({
