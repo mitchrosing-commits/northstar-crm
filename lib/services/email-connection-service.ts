@@ -1373,11 +1373,11 @@ export async function runGmailInboxSyncNow(
   });
 
   if (!claimedJob) {
-    throw new ApiError(
-      "EMAIL_SYNC_ALREADY_RUNNING",
-      "Gmail sync is already running. Refresh status in a moment.",
-      409
-    );
+    throw await gmailInboxSyncClaimFailureError({
+      connectionId: connection.id,
+      jobId: job.id,
+      workspaceId: actor.workspaceId
+    });
   }
 
   try {
@@ -1517,6 +1517,57 @@ async function claimGmailInboxSyncJobForImmediateRun({
 
   if (updated.count !== 1) return null;
   return prisma.job.findUniqueOrThrow({ where: { id: jobId } });
+}
+
+async function gmailInboxSyncClaimFailureError({
+  connectionId,
+  jobId,
+  workspaceId
+}: {
+  connectionId: string;
+  jobId: string;
+  workspaceId: string;
+}) {
+  const job = await prisma.job.findFirst({
+    where: {
+      id: jobId,
+      type: gmailInboxSyncJobType,
+      workspaceId
+    },
+    select: {
+      attempts: true,
+      id: true,
+      lastError: true,
+      lockedAt: true,
+      runAt: true,
+      status: true
+    }
+  });
+  if (!job) {
+    return new ApiError(
+      "EMAIL_SYNC_JOB_NOT_FOUND",
+      `Gmail sync job ${shortJobRef(jobId)} for connection ${shortJobRef(connectionId)} could not be found after enqueue.`,
+      409
+    );
+  }
+
+  if (job.status === JobStatus.RUNNING) {
+    return new ApiError(
+      "EMAIL_SYNC_ALREADY_RUNNING",
+      `Gmail sync is already running for connection ${shortJobRef(connectionId)}; job ${shortJobRef(job.id)}${job.lockedAt ? ` claimed ${job.lockedAt.toISOString()}` : ""}. Refresh status in a moment.`,
+      409
+    );
+  }
+
+  return new ApiError(
+    "EMAIL_SYNC_JOB_NOT_CLAIMED",
+    [
+      `Gmail sync job ${shortJobRef(job.id)} for connection ${shortJobRef(connectionId)} could not be claimed for an explicit run.`,
+      `Status ${job.status}; run after ${job.runAt.toISOString()}; attempts ${job.attempts}.`,
+      safeProviderLastError(job.lastError) ? `Last issue: ${safeProviderLastError(job.lastError)}.` : "Retry Sync Gmail inbox or start the worker."
+    ].join(" "),
+    409
+  );
 }
 
 async function syncGmailInboxHistoryOrFallback({
@@ -2641,6 +2692,7 @@ function googleProviderCard({
 }: {
   config: ProviderConfig;
   connection?: {
+    id: string;
     accountEmail: string | null;
     lastError: string | null;
     lastSyncAt: Date | null;
@@ -2655,6 +2707,8 @@ function googleProviderCard({
     failedAt: Date | null;
     id: string;
     lastError: string | null;
+    lockedAt: Date | null;
+    lockedBy: string | null;
     processedAt: Date | null;
     runAt: Date;
     status: JobStatus;
@@ -2664,7 +2718,7 @@ function googleProviderCard({
 }): EmailProviderCard {
   const configured = isProviderConfigured(config);
   const fullInboxScopesReady = connection?.status === "CONNECTED" && hasConnectionProviderScopes(connection, gmailOAuthScopes);
-  const syncStatus = gmailSyncJobStatus(syncJob);
+  const syncStatus = gmailSyncJobStatus(syncJob, connection?.id);
 
   if (!configured) {
     return {
@@ -2936,20 +2990,32 @@ function gmailSyncJobStatus(
         failedAt: Date | null;
         id: string;
         lastError: string | null;
+        lockedAt?: Date | null;
+        lockedBy?: string | null;
         processedAt: Date | null;
         runAt: Date;
         status: JobStatus;
         updatedAt: Date;
       }
     | null
-    | undefined
+    | undefined,
+  connectionId?: string | null
 ) {
   if (!job) return { detail: null, jobRef: null, label: null, updatedAt: null };
   const jobRef = shortJobRef(job.id);
+  const connectionLabel = connectionId ? `; connection ${shortJobRef(connectionId)}` : "";
   const attemptLabel = job.attempts > 0 ? `; attempts ${job.attempts}` : "";
   if (job.status === JobStatus.PENDING) {
+    if (job.attempts > 0 || job.lastError) {
+      return {
+        detail: `${safeProviderLastError(job.lastError) ?? "Previous Gmail inbox sync attempt failed."} Retry scheduled ${job.runAt.toISOString()}; job ${jobRef}${connectionLabel}${attemptLabel}.`,
+        jobRef,
+        label: "Sync retry scheduled",
+        updatedAt: job.updatedAt
+      };
+    }
     return {
-      detail: `Queued ${job.createdAt.toISOString()}; job ${jobRef}${attemptLabel}`,
+      detail: `Queued ${job.createdAt.toISOString()}; run after ${job.runAt.toISOString()}; job ${jobRef}${connectionLabel}${attemptLabel}`,
       jobRef,
       label: "Sync queued",
       updatedAt: job.updatedAt
@@ -2957,7 +3023,7 @@ function gmailSyncJobStatus(
   }
   if (job.status === JobStatus.RUNNING) {
     return {
-      detail: `Gmail inbox sync is currently running; job ${jobRef}${attemptLabel}.`,
+      detail: `Gmail inbox sync is currently running; job ${jobRef}${connectionLabel}${attemptLabel}${job.lockedAt ? `; claimed ${job.lockedAt.toISOString()}` : ""}.`,
       jobRef,
       label: "Sync running",
       updatedAt: job.updatedAt
@@ -2965,7 +3031,7 @@ function gmailSyncJobStatus(
   }
   if (job.status === JobStatus.DEAD) {
     return {
-      detail: `${safeProviderLastError(job.lastError) ?? "Gmail inbox sync failed."} Job ${jobRef}${attemptLabel}.`,
+      detail: `${safeProviderLastError(job.lastError) ?? "Gmail inbox sync failed."} Job ${jobRef}${connectionLabel}${attemptLabel}.`,
       jobRef,
       label: "Sync failed",
       updatedAt: job.updatedAt
@@ -2973,7 +3039,7 @@ function gmailSyncJobStatus(
   }
   if (job.status === JobStatus.FAILED) {
     return {
-      detail: `${safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`} Job ${jobRef}${attemptLabel}.`,
+      detail: `${safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`} Job ${jobRef}${connectionLabel}${attemptLabel}.`,
       jobRef,
       label: "Sync retry scheduled",
       updatedAt: job.updatedAt
@@ -2981,7 +3047,7 @@ function gmailSyncJobStatus(
   }
   if (job.status === JobStatus.SUCCEEDED && job.processedAt) {
     return {
-      detail: `Completed ${job.processedAt.toISOString()}; job ${jobRef}${attemptLabel}`,
+      detail: `Completed ${job.processedAt.toISOString()}; job ${jobRef}${connectionLabel}${attemptLabel}`,
       jobRef,
       label: "Sync complete",
       updatedAt: job.updatedAt

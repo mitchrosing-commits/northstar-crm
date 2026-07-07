@@ -295,11 +295,15 @@ describe("Email UX v1 discoverability", () => {
     expect(emailConnectionService).toContain("syncJobRef?: string | null");
     expect(emailConnectionService).toContain("syncJobRef: syncStatus.jobRef");
     expect(emailConnectionService).toContain("dedupeKey: gmailInboxSyncJobDedupeKey(gmailConnection.id)");
+    expect(emailConnectionService).toContain("job.attempts > 0 || job.lastError");
+    expect(emailConnectionService).toContain('label: "Sync retry scheduled"');
+    expect(emailConnectionService).toContain("connection ${shortJobRef(connectionId)}");
+    expect(emailConnectionService).toContain("Gmail sync job ${shortJobRef(job.id)}");
     expect(emailPage).toContain("GmailSyncProgressPanel");
     expect(emailPage).toContain('aria-label="Gmail inbox sync progress"');
     expect(emailConnectionService).toContain("syncStatusLabel?: string | null");
     expect(emailConnectionService).toContain("syncStatusDetail?: string | null");
-    expect(emailConnectionService).toContain("gmailSyncJobStatus(syncJob)");
+    expect(emailConnectionService).toContain("gmailSyncJobStatus(syncJob, connection?.id)");
     expect(emailConnectionService).toContain("Connect Gmail");
     expect(emailConnectionService).toContain("Reconnect Gmail");
     expect(emailConnectionService).toContain("Connect Microsoft");

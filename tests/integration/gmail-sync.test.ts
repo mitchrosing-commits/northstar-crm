@@ -1758,6 +1758,21 @@ describe("Gmail metadata sync", () => {
       );
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
+      expect(providerCard).toMatchObject({
+        accountEmail: "alex@example.test",
+        status: "Sync issue",
+        syncAvailable: true,
+        syncStatusLabel: "Sync retry scheduled"
+      });
+      expect(providerCard?.syncStatusDetail).toContain(
+        "Gmail listed 2 inbox messages, but none could be loaded. Attempted 2; skipped 2. Reason categories: message_load_not_found=2."
+      );
+      expect(providerCard?.syncStatusDetail).toContain(`job ${queuedJob.id.slice(-8)}`);
+      expect(providerCard?.syncStatusDetail).toContain(`connection ${connection.id.slice(-8)}`);
+      expect(providerCard?.syncStatusDetail).toContain("attempts 1");
+      expect(providerCard?.syncStatusDetail).toContain("Retry scheduled");
+      expect(providerCard?.syncStatusDetail).not.toContain("access-token");
+      expect(providerCard?.syncStatusDetail).not.toContain("provider-body-secret-token");
       expect(logs).toHaveLength(0);
     } finally {
       await fixture.cleanup();
