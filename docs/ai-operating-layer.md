@@ -8,6 +8,7 @@ Northstar is moving from isolated AI features toward an AI-first CRM operating l
 - **Relationship Memory** stores curated contact profile fields with usage guidance and audit-backed provenance from manual edits or approved Meeting Intelligence updates.
 - **AI Email Reply Assistant** builds workspace-scoped email and CRM context, uses OpenAI only when configured, and returns editable reply drafts that are never sent automatically.
 - **Smart Email Labels** classify stored emails when OpenAI is configured, save category/signal snapshots, and power the Relationship Inbox queue without creating records automatically.
+- **Work Inbox intelligence** scores synced Gmail threads deterministically from stored bodies/snippets, CRM linkage, provider labels, saved Smart Labels, reply/follow-up language, and AI preferences, then renders review-safe tabs, tags, summaries, and suggested next actions without mutating Gmail or CRM records.
 - **Relationship Inbox** already has deterministic explainers and next-best-action guidance from saved labels, CRM linkage, and durable linked follow-up state.
 - **Background jobs and email connection status** provide structured status, retry, stale-worker, and sanitized-error data, but those fragments were not previously assembled into a reusable assistant context.
 
@@ -128,7 +129,7 @@ Meeting Intelligence review now includes placement explanations in proposal evid
 
 ## Stored Email Summary Boundary
 
-`ai-email-summary-service` prepares future AI email summaries from stored `EmailLog` data only. It does not request Gmail bodies, OAuth scopes, tokens, provider payloads, or sync retries.
+`ai-email-summary-service` prepares AI-ready email summaries from stored `EmailLog` data only. `email-inbox-intelligence-service` uses those summaries plus deterministic priority/category rules for the `/email` Work Inbox tabs, filters, row tags, reader summary, and "why it matters" panel. These services do not request Gmail bodies, OAuth scopes, tokens, provider payloads, or sync retries.
 
 When a stored email has no body and no provider snippet, the helper returns `status: "unavailable"` with a clear message. Full-message email summaries remain blocked until full-message sync safely provides durable body text.
 

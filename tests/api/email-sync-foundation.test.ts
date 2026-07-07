@@ -177,8 +177,9 @@ describe("email sync provider foundation", () => {
     expect(emailConnectionService).toContain("emailConnectionSecret.deleteMany");
     expect(emailConnectionService).toContain("deletedAt: null");
     expect(emailConnectionService).toContain("messages/send");
-    expect(emailPage).toContain("title=\"Full Inbox\"");
-    expect(emailPage).toContain("EmailInboxThreadList");
+    expect(emailPage).toContain("title=\"Work Inbox\"");
+    expect(emailPage).toContain("WorkInboxThreadList");
+    expect(emailPage).toContain("work-prioritized view of synced Gmail messages");
     expect(emailPage).toContain("GmailSyncProgressPanel");
     expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
     expect(emailPage).toContain("gmail-sync-queued");

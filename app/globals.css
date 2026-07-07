@@ -2805,6 +2805,119 @@ textarea {
   margin: 12px 0 0;
 }
 
+.email-setup-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.email-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 12px;
+}
+
+.email-setup-grid > div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface-muted);
+}
+
+.email-setup-grid h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.email-setup-grid p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.email-advanced-diagnostics {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.email-advanced-diagnostics > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.email-advanced-diagnostics-body {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding: 14px;
+}
+
+.work-inbox-toolbar {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 14px;
+}
+
+.work-inbox-tabs {
+  justify-content: flex-start;
+}
+
+.work-inbox-filter-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(130px, auto)) auto auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+.work-inbox-filter-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.work-inbox-filter-form label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.work-inbox-filter-form input,
+.work-inbox-filter-form select {
+  width: 100%;
+  min-width: 0;
+}
+
+.work-inbox-sync-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .work-inbox-filter-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .gmail-sync-progress {
   display: grid;
   gap: 12px;
@@ -3024,6 +3137,11 @@ textarea {
   background: var(--surface);
 }
 
+.work-inbox-row {
+  padding: 9px 10px;
+  box-shadow: none;
+}
+
 .email-inbox-thread-row.active,
 .email-inbox-thread-row[aria-current="page"] {
   border-color: var(--accent);
@@ -3045,6 +3163,40 @@ textarea {
 .email-inbox-thread-main {
   display: grid;
   gap: 4px;
+}
+
+.work-inbox-row-topline {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.work-inbox-sender,
+.work-inbox-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-inbox-sender {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.work-inbox-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.work-inbox-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
 }
 
 .email-inbox-thread-subject {
@@ -3081,6 +3233,58 @@ textarea {
   border-radius: 8px;
   padding: 12px;
   background: var(--surface);
+}
+
+.work-inbox-insight-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface));
+}
+
+.work-inbox-insight-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.work-inbox-insight-header p {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.work-inbox-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 8px;
+}
+
+.work-inbox-insight-grid > div,
+.work-inbox-question-list {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.work-inbox-insight-grid strong,
+.work-inbox-question-list strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.work-inbox-insight-grid span,
+.work-inbox-question-list span {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .email-inbox-message-list .email-preview {

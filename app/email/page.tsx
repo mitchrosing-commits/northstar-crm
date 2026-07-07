@@ -29,6 +29,7 @@ import {
   buildInboxAssistantContext,
   buildNorthstarAssistantInsight,
   buildEmailFollowUpDraftFromEmailLog,
+  buildWorkInbox,
   emailClassificationReadiness,
   emailFollowUpStateLabel,
   emailReplyAssistantReadiness,
@@ -39,6 +40,11 @@ import {
   listEmailLogs,
   listEmailTemplates,
   isGmailPartialSyncWarning,
+  normalizeWorkInboxCrmFilter,
+  normalizeWorkInboxPriorityFilter,
+  normalizeWorkInboxSearch,
+  normalizeWorkInboxSort,
+  normalizeWorkInboxTab,
   normalizeEmailPriorityQueueFilter,
   readEmailSmartClassification
 } from "@/lib/services/crm";
@@ -52,6 +58,12 @@ import type {
   EmailPriorityQueueEvidenceTrailItem
 } from "@/lib/services/email-priority-queue-service";
 import type { EmailReplyAssistantReadiness } from "@/lib/services/email-reply-assistant-service";
+import type {
+  WorkInboxCrmFilter,
+  WorkInboxItem,
+  WorkInboxPriorityFilter,
+  WorkInboxSort
+} from "@/lib/services/email-inbox-intelligence-service";
 import type { EmailInboxThreadSummary, EmailSyncPreview } from "@/lib/services/email-connection-service";
 import {
   disconnectEmailProviderFromEmailPageAction,
@@ -72,7 +84,11 @@ type EmailPageProps = {
     emailConnection?: string;
     inbox?: string;
     messageSkips?: string;
+    crm?: string;
+    priority?: string;
+    q?: string;
     skipped?: string;
+    sort?: string;
     syncError?: string;
     syncStatus?: string;
     syncWarning?: string;
@@ -98,10 +114,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   ]);
   const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
   const defaultAiReplyTone = aiReplyToneFromPreferences(aiPreferences);
-  const selectedInboxThread =
-    inboxThreads.find((thread) => thread.id === resolvedSearchParams?.thread) ?? inboxThreads[0] ?? null;
   const oldestInboxMessageAt = oldestInboxMessageDate(inboxThreads);
-  const selectedInboxFollowUpDetails = await listEmailPriorityFollowUpDetails(actor, selectedInboxThread?.messages ?? []);
+  const inboxFollowUpDetails = await listEmailPriorityFollowUpDetails(actor, inboxThreads.flatMap((thread) => thread.messages));
   const followUpDetails = await listEmailPriorityFollowUpDetails(actor, recentEmailLogs);
   const gmailProvider = providers.find((provider) => provider.provider === "GOOGLE_WORKSPACE");
   const microsoftProvider = providers.find((provider) => provider.provider === "MICROSOFT_365");
@@ -128,6 +142,31 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     name: template.name,
     subject: template.subject
   }));
+  const activeWorkInboxTab = normalizeWorkInboxTab(resolvedSearchParams?.inbox);
+  const activeWorkInboxSearch = normalizeWorkInboxSearch(resolvedSearchParams?.q);
+  const activeWorkInboxPriority = normalizeWorkInboxPriorityFilter(resolvedSearchParams?.priority);
+  const activeWorkInboxCrm = normalizeWorkInboxCrmFilter(resolvedSearchParams?.crm);
+  const activeWorkInboxSort = normalizeWorkInboxSort(resolvedSearchParams?.sort);
+  const workInbox = buildWorkInbox({
+    crmFilter: activeWorkInboxCrm,
+    followUpDetails: inboxFollowUpDetails,
+    priorityFilter: activeWorkInboxPriority,
+    preferences: aiPreferences,
+    query: activeWorkInboxSearch,
+    selectedTab: activeWorkInboxTab,
+    sort: activeWorkInboxSort,
+    threads: inboxThreads
+  });
+  const selectedWorkInboxItem =
+    workInbox.visibleItems.find((item) => item.thread.id === resolvedSearchParams?.thread) ??
+    workInbox.visibleItems[0] ??
+    null;
+  const selectedInboxThread = selectedWorkInboxItem?.thread ?? null;
+  const selectedInboxFollowUpDetails = new Map<string, EmailPriorityFollowUpDetail>();
+  for (const message of selectedInboxThread?.messages ?? []) {
+    const detail = inboxFollowUpDetails.get(message.id);
+    if (detail) selectedInboxFollowUpDetails.set(message.id, detail);
+  }
   const attentionLogs = recentEmailLogs.filter((emailLog) => emailNeedsAttention(emailLog)).slice(0, 6);
   const activeInboxFilter = normalizeEmailPriorityQueueFilter(resolvedSearchParams?.inbox);
   const priorityQueueSummary = buildEmailPriorityQueueSummary(recentEmailLogs);
@@ -143,6 +182,37 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const priorityExplainersByEmailId = new Map(allPriorityQueueItems.map((item) => [item.emailLog.id, item.explainer]));
   const activeInboxFilterLabel = priorityQueueSummary.find((item) => item.id === activeInboxFilter)?.label ?? "All priority";
   const emailSettingsLabel = "Open email connection settings";
+
+  if (!gmailReadiness.ready) {
+    return (
+      <AppShell workspace={workspace}>
+        <PageHeader
+          actions={
+            <Link
+              aria-label={emailSettingsLabel}
+              className="button-secondary"
+              href="/settings#email-connections"
+              title={emailSettingsLabel}
+            >
+              Email settings
+            </Link>
+          }
+          eyebrow="Communication"
+          subtitle="Connect Gmail to sync work emails, summarize threads, draft replies, and link messages to CRM records."
+          title="Inbox"
+        />
+        <FullInboxSetupState
+          gmailReadiness={gmailReadiness}
+          provider={gmailProvider}
+          statusCopy={statusCopy}
+        />
+        <AdvancedEmailDiagnostics
+          gmailSyncProgress={gmailSyncProgress}
+          provider={gmailProvider}
+        />
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell workspace={workspace}>
@@ -162,23 +232,26 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         title="Inbox"
       />
 
-      <NorthstarAssistantPanel insight={northstarInsight} />
-
       <section aria-label="Full Inbox synced Gmail mailbox" className="data-card section-separated" id="full-inbox">
         <PanelTitleRow
-          actions={<FullInboxHeaderActions provider={gmailProvider} threadCount={inboxThreads.length} />}
-          description="Synced Gmail mailbox threads appear here first. Relationship Inbox priorities stay separate below."
-          title="Full Inbox"
+          actions={<FullInboxHeaderActions provider={gmailProvider} threadCount={workInbox.items.length} />}
+          description="A work-prioritized view of synced Gmail messages with local Northstar tags, summaries, and review-first actions."
+          title="Work Inbox"
         />
-        <GmailSyncProgressPanel progress={gmailSyncProgress} provider={gmailProvider} />
-        <EmailScopeCallout title="Inbox workflow">
-          Browse synced Gmail threads, read stored message bodies, and send replies only after writing and submitting
-          the reply yourself. Viewing, filtering, and opening threads does not send email or create CRM records.
-        </EmailScopeCallout>
-        {inboxThreads.length > 0 && selectedInboxThread ? (
+        <WorkInboxToolbar
+          activeTab={activeWorkInboxTab}
+          crmFilter={activeWorkInboxCrm}
+          provider={gmailProvider}
+          priorityFilter={activeWorkInboxPriority}
+          query={activeWorkInboxSearch}
+          sort={activeWorkInboxSort}
+          syncProgress={gmailSyncProgress}
+          tabs={workInbox.tabs}
+        />
+        {workInbox.visibleItems.length > 0 && selectedInboxThread && selectedWorkInboxItem ? (
           <div className="email-inbox-layout">
             <div className="email-inbox-thread-list-shell">
-              <EmailInboxThreadList activeThreadId={selectedInboxThread.id} threads={inboxThreads} />
+              <WorkInboxThreadList activeThreadId={selectedInboxThread.id} items={workInbox.visibleItems} />
               {gmailProvider?.syncAvailable && oldestInboxMessageAt ? (
                 <form action={loadOlderGmailInboxFromEmailPageAction} className="email-inbox-load-more">
                   <input name="before" type="hidden" value={oldestInboxMessageAt.toISOString()} />
@@ -200,11 +273,14 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               defaultAiReplyTone={defaultAiReplyTone}
               draftTemplates={draftTemplates}
               followUpDetails={selectedInboxFollowUpDetails}
+              insight={selectedWorkInboxItem}
               smartLabelReadiness={smartLabelReadiness}
               thread={selectedInboxThread}
               workspaceId={workspace.id}
             />
           </div>
+        ) : workInbox.items.length > 0 ? (
+          <WorkInboxFilteredEmptyState activeTab={activeWorkInboxTab} provider={gmailProvider} />
         ) : (
           <EmailInboxEmptyShell
             emptyState={fullInboxEmptyState}
@@ -212,6 +288,14 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           />
         )}
       </section>
+
+      <details className="email-advanced-diagnostics section-separated">
+        <summary>
+          <span>Advanced diagnostics and legacy email tools</span>
+          <Badge>{gmailProvider?.status ?? "Connected"}</Badge>
+        </summary>
+        <div className="email-advanced-diagnostics-body">
+          <NorthstarAssistantPanel insight={northstarInsight} />
 
       <section className="panel inbox-workflow-map" aria-label="Inbox workflow map">
         <PanelTitleRow
@@ -565,6 +649,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           </p>
         </details>
       </section>
+        </div>
+      </details>
     </AppShell>
   );
 }
@@ -575,6 +661,292 @@ function EmailScopeCallout({ children, title }: { children: ReactNode; title: st
       {children}
     </FormIntroCallout>
   );
+}
+
+function FullInboxSetupState({
+  gmailReadiness,
+  provider,
+  statusCopy
+}: {
+  gmailReadiness: ReturnType<typeof gmailFullInboxReadiness>;
+  provider: ProviderCard | undefined;
+  statusCopy: string | null;
+}) {
+  return (
+    <section className="email-setup-panel section-separated" aria-label="Connect Gmail for Northstar Inbox">
+      <PanelTitleRow
+        actions={<FullInboxPrimaryAction provider={provider} />}
+        description="Connect Gmail to bring your work inbox into Northstar. Messages are synced for review, summaries, reply drafts, and CRM matching; Northstar never sends or creates CRM records without your explicit action."
+        title={gmailReadiness.title}
+      />
+      <div className="email-setup-grid">
+        <div>
+          <h3>What Northstar needs</h3>
+          <p>{gmailReadiness.description}</p>
+          <p className="form-hint">Required access: Gmail read for synced messages and Gmail send for explicit replies you submit.</p>
+        </div>
+        <div>
+          <h3>What stays review-first</h3>
+          <p>AI drafts, follow-ups, and CRM links are suggestions for review. Viewing the inbox does not send emails, create records, or change Gmail labels.</p>
+        </div>
+      </div>
+      {statusCopy ? <FormIntroCallout className="email-status-callout" title="Connection status">{statusCopy}</FormIntroCallout> : null}
+    </section>
+  );
+}
+
+function AdvancedEmailDiagnostics({
+  gmailSyncProgress,
+  provider
+}: {
+  gmailSyncProgress: GmailSyncProgress;
+  provider: ProviderCard | undefined;
+}) {
+  return (
+    <details className="email-advanced-diagnostics section-separated">
+      <summary>
+        <span>Advanced diagnostics</span>
+        <Badge>{gmailSyncProgress.statusLabel}</Badge>
+      </summary>
+      <div className="email-advanced-diagnostics-body">
+        <GmailSyncProgressPanel progress={gmailSyncProgress} provider={provider} />
+      </div>
+    </details>
+  );
+}
+
+function WorkInboxToolbar({
+  activeTab,
+  crmFilter,
+  provider,
+  priorityFilter,
+  query,
+  sort,
+  syncProgress,
+  tabs
+}: {
+  activeTab: string;
+  crmFilter: WorkInboxCrmFilter;
+  provider: ProviderCard | undefined;
+  priorityFilter: WorkInboxPriorityFilter;
+  query: string;
+  sort: WorkInboxSort;
+  syncProgress: GmailSyncProgress;
+  tabs: Array<{ count: number; href: Route; id: string; label: string }>;
+}) {
+  return (
+    <div className="work-inbox-toolbar">
+      <ActionGroup className="work-inbox-tabs" label="Work inbox categories">
+        {tabs.map((tab) => (
+          <Link
+            aria-current={tab.id === activeTab ? "page" : undefined}
+            className={tab.id === activeTab ? "button-primary button-compact" : "button-secondary button-compact"}
+            href={tab.href}
+            key={tab.id}
+            title={`Show ${tab.label} emails`}
+          >
+            {tab.label} ({tab.count})
+          </Link>
+        ))}
+      </ActionGroup>
+      <form action="/email" className="work-inbox-filter-form">
+        <input name="inbox" type="hidden" value={activeTab} />
+        <label>
+          <span>Search</span>
+          <input
+            aria-label="Search synced inbox"
+            defaultValue={query}
+            name="q"
+            placeholder="Sender, subject, body, tag"
+            type="search"
+          />
+        </label>
+        <label>
+          <span>Priority</span>
+          <select aria-label="Filter inbox by priority" defaultValue={priorityFilter} name="priority">
+            <option value="all">Any priority</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label>
+          <span>CRM</span>
+          <select aria-label="Filter inbox by CRM link state" defaultValue={crmFilter} name="crm">
+            <option value="all">Any CRM state</option>
+            <option value="linked">Linked</option>
+            <option value="unlinked">Unlinked</option>
+          </select>
+        </label>
+        <label>
+          <span>Sort</span>
+          <select aria-label="Sort synced inbox" defaultValue={sort} name="sort">
+            <option value="priority">Priority</option>
+            <option value="recent">Recent</option>
+          </select>
+        </label>
+        <button className="button-secondary button-compact" type="submit">
+          Apply
+        </button>
+        {query || priorityFilter !== "all" || crmFilter !== "all" || sort !== "priority" ? (
+          <Link className="button-secondary button-compact" href={`/email?inbox=${activeTab}` as Route}>
+            Clear
+          </Link>
+        ) : null}
+      </form>
+      <div className="work-inbox-sync-strip">
+        <Badge>{syncProgress.statusLabel}</Badge>
+        <span>{provider?.lastSyncAt ? `Last sync ${formatDate(provider.lastSyncAt)}` : "Sync when ready"}</span>
+        <FullInboxPrimaryAction provider={provider} />
+      </div>
+    </div>
+  );
+}
+
+function WorkInboxThreadList({
+  activeThreadId,
+  items
+}: {
+  activeThreadId: string;
+  items: WorkInboxItem[];
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="email-inbox-thread-list" aria-label="Work inbox threads">
+        <EmptyState
+          className="email-inbox-empty-rail"
+          description="No synced threads match this category yet. Try All or sync Gmail again."
+          title="No messages in this category"
+          titleLevel="h3"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="email-inbox-thread-list" aria-label="Work inbox threads">
+      {items.map((item) => {
+        const thread = item.thread;
+        return (
+          <Link
+            aria-current={thread.id === activeThreadId ? "page" : undefined}
+            aria-label={`Open inbox thread ${thread.subject}`}
+            className={thread.id === activeThreadId ? "email-inbox-thread-row work-inbox-row active" : "email-inbox-thread-row work-inbox-row"}
+            href={item.href}
+            key={thread.id}
+            title={`Open inbox thread ${thread.subject}`}
+          >
+            <span className="email-inbox-thread-main">
+              <span className="work-inbox-row-topline">
+                <span className="work-inbox-sender">
+                  {thread.latestMessage.direction === "INBOUND" ? thread.latestMessage.fromText : thread.latestMessage.toText}
+                </span>
+                <span className="muted">{formatDate(thread.latestAt)}</span>
+              </span>
+              <span className="email-inbox-thread-subject">{thread.subject}</span>
+              <span className="work-inbox-summary">{item.summary.summary}</span>
+              <span className="work-inbox-tag-row">
+                {item.tags.slice(0, 4).map((tag) => (
+                  <Badge key={tag}>{tag}</Badge>
+                ))}
+              </span>
+            </span>
+            <span className="email-inbox-thread-meta">
+              <Badge>{priorityLevelLabel(item.priorityLevel)}</Badge>
+              {thread.isUnread ? <Badge>Unread</Badge> : null}
+            </span>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function WorkInboxFilteredEmptyState({
+  activeTab,
+  provider
+}: {
+  activeTab: string;
+  provider: ProviderCard | undefined;
+}) {
+  return (
+    <div className="email-inbox-layout email-inbox-empty-layout" aria-label="Filtered work inbox results">
+      <div className="email-inbox-thread-list-shell">
+        <WorkInboxThreadList activeThreadId="" items={[]} />
+      </div>
+      <div className="email-inbox-thread-detail email-inbox-empty-detail" aria-label="No matching inbox messages">
+        <EmptyState
+          actions={
+            <ActionGroup className="filter-actions" label="Filtered inbox empty actions">
+              <Link className="button-primary button-compact" href={`/email?inbox=${activeTab}` as Route}>
+                Clear filters
+              </Link>
+              <FullInboxPrimaryAction provider={provider} />
+            </ActionGroup>
+          }
+          actionsLabel="Filtered inbox empty actions"
+          description="No synced Gmail threads match the current search and filters. Clear filters, switch tabs, or sync Gmail again."
+          title="No matching inbox messages"
+          titleLevel="h3"
+        />
+      </div>
+    </div>
+  );
+}
+
+function WorkInboxInsightPanel({ item }: { item: WorkInboxItem }) {
+  return (
+    <section className="work-inbox-insight-panel" aria-label={`AI-ready summary for ${item.thread.subject}`}>
+      <div className="work-inbox-insight-header">
+        <div>
+          <span className="relationship-inbox-explainer-label">AI-ready summary</span>
+          <p>{item.summary.summary}</p>
+        </div>
+        <Badge>{priorityLevelLabel(item.priorityLevel)}</Badge>
+      </div>
+      <div className="work-inbox-insight-grid">
+        <div>
+          <strong>Why it matters</strong>
+          <span>{item.whyItMatters}</span>
+        </div>
+        <div>
+          <strong>Intent</strong>
+          <span>{item.detectedIntent}</span>
+        </div>
+        <div>
+          <strong>Next action</strong>
+          <span>{item.suggestedNextAction}</span>
+        </div>
+        <div>
+          <strong>CRM status</strong>
+          <span>{item.crmLinkLabel}</span>
+        </div>
+      </div>
+      {item.reasonList.length > 0 ? (
+        <ActionGroup className="filter-actions" label="Priority reasons">
+          {item.reasonList.map((reason) => (
+            <Badge key={reason}>{reason}</Badge>
+          ))}
+        </ActionGroup>
+      ) : null}
+      {item.unansweredQuestions.length > 0 ? (
+        <div className="work-inbox-question-list">
+          <strong>Unanswered question</strong>
+          {item.unansweredQuestions.map((question) => (
+            <span key={question}>{question}</span>
+          ))}
+        </div>
+      ) : null}
+      {item.urgencyRisk ? <p className="form-hint">{item.urgencyRisk}</p> : null}
+      {item.missingCrmLinkSuggestion ? <p className="form-hint">{item.missingCrmLinkSuggestion}</p> : null}
+    </section>
+  );
+}
+
+function priorityLevelLabel(level: WorkInboxItem["priorityLevel"]) {
+  if (level === "high") return "High priority";
+  if (level === "medium") return "Medium priority";
+  return "Low priority";
 }
 
 type GmailSyncProgress = {
@@ -1351,8 +1723,7 @@ function EmailInboxEmptyShell({
           titleLevel="h3"
         >
           <p className="form-hint">
-            The mailbox reader stays here while sync catches up. Relationship Inbox priorities and manual email history remain
-            separate sections below.
+            The mailbox reader stays here while sync catches up. Diagnostics and legacy email tools remain collapsed below.
           </p>
         </EmptyState>
       </div>
@@ -1365,6 +1736,7 @@ function EmailInboxThreadDetail({
   defaultAiReplyTone,
   draftTemplates,
   followUpDetails,
+  insight,
   smartLabelReadiness,
   thread,
   workspaceId
@@ -1373,6 +1745,7 @@ function EmailInboxThreadDetail({
   defaultAiReplyTone: string;
   draftTemplates: DraftTemplate[];
   followUpDetails: Map<string, EmailPriorityFollowUpDetail>;
+  insight: WorkInboxItem;
   smartLabelReadiness: EmailClassificationReadiness;
   thread: EmailInboxThreadSummary;
   workspaceId: string;
@@ -1408,6 +1781,7 @@ function EmailInboxThreadDetail({
           description={`${thread.linkedRecordLabel ?? "No linked CRM record"} · Latest ${formatDate(thread.latestAt)}`}
           title={thread.subject}
         />
+        <WorkInboxInsightPanel item={insight} />
         {replyTarget ? <GmailReplyComposer replyTarget={replyTarget} threadId={thread.id} /> : null}
       </div>
       <div className="email-command-list email-inbox-message-list">

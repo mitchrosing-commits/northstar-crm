@@ -198,14 +198,12 @@ test.describe("Northstar CRM browser smoke", () => {
       }
       if (path === "/email") {
         await expect(page.getByRole("link", { name: "Current section: Inbox" })).toBeVisible();
+        await expect(page.getByRole("heading", { exact: true, name: "Inbox" })).toBeVisible();
+        await expect(page.getByText(/Connect Gmail to sync work emails|work-prioritized view of synced Gmail messages/)).toBeVisible();
+        const advancedDiagnostics = page.locator("details.email-advanced-diagnostics").first();
+        await expect(advancedDiagnostics).toBeVisible();
+        await advancedDiagnostics.locator("summary").click();
         await expect(page.getByLabel("Gmail inbox sync progress")).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Email Providers" })).toBeVisible();
-        await expect(page.getByRole("heading", { exact: true, name: "Gmail" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Google Workspace" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Microsoft 365" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Outlook" })).toBeVisible();
-        await expect(page.getByText("IMAP/SMTP is planned as a fallback for Yahoo Mail")).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Stored Email History" })).toBeVisible();
         const overflowingProviderCards = await page.locator(".provider-card").evaluateAll((cards) =>
           cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length
         );
@@ -299,13 +297,13 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(page.getByRole("heading", { name: "Proposed Notes" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Follow-Ups" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Normalized Markdown" })).toBeVisible();
-    await expect(page.getByText("Review-first safety")).toBeVisible();
-    await expect(page.getByText("Nothing is written to notes, activities, associations, or Relationship Brief fields")).toBeVisible();
+    await expect(page.getByText("Review-first safety").first()).toBeVisible();
+    await expect(page.getByText("Nothing is written to notes, activities, associations, or Relationship Memory fields")).toBeVisible();
     await expect(page.getByText("Evidence:").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Apply reviewed Meeting Intelligence updates" })).toBeVisible();
   });
 
-  test("renders Relationship Brief guidance, history filters, and source details", async ({ page }) => {
+  test("renders Relationship Memory guidance, history filters, and source details", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     const browserFlowSuffix = registerBrowserFlowSuffix();
     const contact = await createRelationshipBriefSmokeContact(browserFlowSuffix);
@@ -315,8 +313,8 @@ test.describe("Northstar CRM browser smoke", () => {
 
     await expectPageReady(page, contact.path);
     const panel = page.locator("#relationship-brief");
-    await expect(panel.getByRole("heading", { exact: true, name: "Relationship Brief" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: /Edit relationship brief for/ })).toBeVisible();
+    await expect(panel.getByRole("heading", { exact: true, name: "Relationship Memory" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: /Edit relationship memory for/ })).toBeVisible();
     await expect(panel.getByText("Rockies fan; prefers implementation stories.")).toBeVisible();
 
     const usageGuidance = panel.locator(".relationship-brief-usage-details");
@@ -328,7 +326,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(usageBadges.getByText("Internal only", { exact: true })).toBeVisible();
     await expect(usageBadges.getByText("Do not mention directly", { exact: true }).first()).toBeVisible();
 
-    await expect(panel.getByRole("heading", { name: "Recent Relationship Brief Changes" })).toBeVisible();
+    await expect(panel.getByRole("heading", { name: "Source and Change History" })).toBeVisible();
     await expect(panel.locator(".relationship-brief-history-source-filter").getByText("Source", { exact: true })).toBeVisible();
     const fieldFilter = panel.locator(".relationship-brief-history-field-filter select");
     await expect(fieldFilter).toBeVisible();
@@ -336,7 +334,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(panel.locator(".relationship-brief-change-card").filter({ hasText: "Communication style" })).toBeVisible();
 
     await panel.getByRole("button", { name: "Manual" }).click();
-    await expect(panel.getByText("No Relationship Brief changes match these filters.")).toBeVisible();
+    await expect(panel.getByText("No Relationship Memory changes match these filters.")).toBeVisible();
     await panel.getByRole("button", { name: "Meeting Intelligence" }).click();
     const changeCard = panel.locator(".relationship-brief-change-card").filter({ hasText: "Communication style" }).first();
     await expect(changeCard).toBeVisible();
@@ -350,7 +348,7 @@ test.describe("Northstar CRM browser smoke", () => {
     const auditCountAfter = await prisma.auditLog.count({
       where: { action: "person.updated", entityId: contact.id, entityType: "Person", workspaceId: smokeAuth.workspaceId }
     });
-    expect(auditCountAfter, "Opening Relationship Brief guidance and source details should not mutate CRM history").toBe(auditCountBefore);
+    expect(auditCountAfter, "Opening Relationship Memory guidance and source details should not mutate CRM history").toBe(auditCountBefore);
   });
 
   test("creates linked CRM records and completes a follow-up from the UI", async ({ page }) => {
@@ -376,7 +374,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await createOrganizationButton.click();
     await expectApiOk(organizationResponse, "Expected organization create API to succeed");
     const organizationPath = await waitForDetailPath(page, "/organizations/");
-    await expect(page.getByRole("heading", { name: organizationName })).toBeVisible();
+    await expect(page.locator(".page-title", { hasText: organizationName })).toBeVisible();
 
     await expectPageReady(page, "/contacts/new");
     await page.waitForLoadState("networkidle");
@@ -389,7 +387,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await contactForm.getByRole("button", { name: "Create contact" }).click();
     await expectApiOk(contactResponse, "Expected contact create API to succeed");
     const contactPath = await waitForDetailPath(page, "/contacts/");
-    await expect(page.getByRole("heading", { name: contactName })).toBeVisible();
+    await expect(page.locator(".page-title", { hasText: contactName })).toBeVisible();
     await expect(page.getByRole("link", { name: organizationName }).first()).toHaveAttribute("href", organizationPath);
 
     await expectPageReady(page, "/deals/new");
@@ -405,7 +403,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await dealForm.getByRole("button", { name: "Create deal" }).click();
     await expectApiOk(dealResponse, "Expected deal create API to succeed");
     const dealPath = await waitForDetailPath(page, "/deals/");
-    await expect(page.getByRole("heading", { name: dealTitle })).toBeVisible();
+    await expect(page.locator(".page-title", { hasText: dealTitle })).toBeVisible();
     await expect(page.getByRole("link", { name: contactName }).first()).toHaveAttribute("href", contactPath);
     await expect(page.getByRole("link", { name: organizationName }).first()).toHaveAttribute("href", organizationPath);
 
@@ -619,7 +617,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await createLeadButton.click();
     await expectApiOk(leadResponse, "Expected lead create API to succeed");
     const leadPath = await waitForDetailPath(page, "/leads/");
-    await expect(page.getByRole("heading", { name: leadTitle })).toBeVisible();
+    await expect(page.locator(".page-title", { hasText: leadTitle })).toBeVisible();
     await expect(page.getByText("Browser regression", { exact: true }).first()).toBeVisible();
 
     const emailLogPanel = page.locator("#email-log");
@@ -638,7 +636,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await page.getByRole("button", { name: "Convert to deal" }).click();
     await expectApiOk(conversionResponse, "Expected lead conversion API to succeed");
     const dealPath = await waitForDetailPath(page, "/deals/");
-    await expect(page.getByRole("heading", { name: dealTitle })).toBeVisible();
+    await expect(page.locator(".page-title", { hasText: dealTitle })).toBeVisible();
     await expect(page.getByText(emailSubject)).toBeVisible();
     await expect(page.getByText("Logged inbound email")).toBeVisible();
 

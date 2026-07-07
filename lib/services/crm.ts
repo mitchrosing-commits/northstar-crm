@@ -16,6 +16,7 @@ export * from "./deal-service";
 export * from "./export-service";
 export * from "./email-classification-service";
 export * from "./email-follow-up-service";
+export * from "./email-inbox-intelligence-service";
 export * from "./email-priority-queue-service";
 export * from "./email-service";
 export * from "./email-reply-assistant-service";
