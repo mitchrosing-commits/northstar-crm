@@ -154,7 +154,9 @@ export type GmailSyncResult = {
   created: number;
   syncMode?: "history" | "older" | "recent" | "thread";
   skippedDuplicates: number;
+  skippedMessageFailures?: number;
   skippedUnmatched: number;
+  syncWarning?: string | null;
   totalFetched: number;
   unmatchedPreviews: EmailSyncPreview[];
 };
@@ -171,6 +173,17 @@ export type EmailSyncPreview = {
   snippet: string | null;
   subject: string;
   toText: string | null;
+};
+
+type GmailSkippedMessageSummary = {
+  providerMessageRef: string;
+  reason: "message_load_failed" | "message_missing_id";
+};
+
+type GmailFullMessageLoadResult = {
+  attemptedMessageCount: number;
+  fullMessages: Array<{ listedThreadId?: string; message: GmailMessageResponse }>;
+  skippedMessages: GmailSkippedMessageSummary[];
 };
 
 export type EmailInboxMessageSummary = Prisma.EmailLogGetPayload<{ include: typeof emailInboxLogInclude }>;
@@ -1040,7 +1053,7 @@ export async function syncGmailInboxMessages({
     await prisma.emailConnection.update({
       where: { id: connection.id },
       data: {
-        lastError: null,
+        lastError: syncResult.syncWarning ?? null,
         lastSyncAt: new Date(),
         lastSyncCursor: syncResult.historyId ? formatGmailHistoryCursor(syncResult.historyId) : connection.lastSyncCursor
       }
@@ -1049,15 +1062,20 @@ export async function syncGmailInboxMessages({
       created: syncResult.created,
       provider: "GOOGLE_WORKSPACE",
       skippedDuplicates: syncResult.skippedDuplicates,
+      skippedMessageFailureReasons: summarizeGmailSkippedMessages(syncResult.skippedMessages),
+      skippedMessageFailures: syncResult.skippedMessages.length,
       syncMode: syncResult.syncMode,
+      syncWarning: syncResult.syncWarning,
       totalFetched: syncResult.totalFetched
     });
 
     return {
       created: syncResult.created,
       skippedDuplicates: syncResult.skippedDuplicates,
+      skippedMessageFailures: syncResult.skippedMessages.length,
       skippedUnmatched: 0,
       syncMode: syncResult.syncMode,
+      syncWarning: syncResult.syncWarning,
       totalFetched: syncResult.totalFetched,
       unmatchedPreviews: []
     };
@@ -1100,13 +1118,15 @@ export async function syncOlderGmailInboxMessages({
       fetchImpl,
       maxResults
     });
-    const fullMessages = await getGmailFullMessages({ accessToken, fetchImpl, messages });
-    const persisted = await persistGmailInboxMessages({ actor, connection, contactByEmail, fullMessages });
+    const loadResult = await getGmailFullMessages({ accessToken, fetchImpl, messages });
+    assertGmailMessageLoadSucceeded(loadResult);
+    const persisted = await persistGmailInboxMessages({ actor, connection, contactByEmail, fullMessages: loadResult.fullMessages });
+    const syncWarning = buildGmailPartialSyncWarning(loadResult.skippedMessages.length);
 
     await prisma.emailConnection.update({
       where: { id: connection.id },
       data: {
-        lastError: null,
+        lastError: syncWarning,
         lastSyncAt: new Date()
       }
     });
@@ -1115,14 +1135,19 @@ export async function syncOlderGmailInboxMessages({
       created: persisted.created,
       provider: "GOOGLE_WORKSPACE",
       skippedDuplicates: persisted.skippedDuplicates,
+      skippedMessageFailureReasons: summarizeGmailSkippedMessages(loadResult.skippedMessages),
+      skippedMessageFailures: loadResult.skippedMessages.length,
+      syncWarning,
       totalFetched: messages.length
     });
 
     return {
       created: persisted.created,
       skippedDuplicates: persisted.skippedDuplicates,
+      skippedMessageFailures: loadResult.skippedMessages.length,
       skippedUnmatched: 0,
       syncMode: "older",
+      syncWarning,
       totalFetched: messages.length,
       unmatchedPreviews: []
     };
@@ -1402,12 +1427,15 @@ async function syncGmailInboxHistoryOrFallback({
 }) {
   try {
     const history = await listGmailInboxHistoryMessages({ accessToken, fetchImpl, startHistoryId: cursor });
-    const fullMessages = await getGmailFullMessages({ accessToken, fetchImpl, messages: history.messages });
-    const persisted = await persistGmailInboxMessages({ actor, connection, contactByEmail, fullMessages });
+    const loadResult = await getGmailFullMessages({ accessToken, fetchImpl, messages: history.messages });
+    assertGmailMessageLoadSucceeded(loadResult);
+    const persisted = await persistGmailInboxMessages({ actor, connection, contactByEmail, fullMessages: loadResult.fullMessages });
     return {
       ...persisted,
-      historyId: history.historyId ?? newestGmailHistoryId(fullMessages),
+      historyId: history.historyId ?? newestGmailHistoryId(loadResult.fullMessages),
+      skippedMessages: loadResult.skippedMessages,
       syncMode: "history" as const,
+      syncWarning: buildGmailPartialSyncWarning(loadResult.skippedMessages.length),
       totalFetched: history.messages.length
     };
   } catch (error) {
@@ -1441,12 +1469,15 @@ async function syncRecentGmailInboxMessagesForConnection({
   maxResults: number;
 }) {
   const messages = await listRecentGmailInboxMessages({ accessToken, fetchImpl, maxResults });
-  const fullMessages = await getGmailFullMessages({ accessToken, fetchImpl, messages });
-  const persisted = await persistGmailInboxMessages({ actor, connection, contactByEmail, fullMessages });
+  const loadResult = await getGmailFullMessages({ accessToken, fetchImpl, messages });
+  assertGmailMessageLoadSucceeded(loadResult);
+  const persisted = await persistGmailInboxMessages({ actor, connection, contactByEmail, fullMessages: loadResult.fullMessages });
   return {
     ...persisted,
-    historyId: newestGmailHistoryId(fullMessages),
+    historyId: newestGmailHistoryId(loadResult.fullMessages),
+    skippedMessages: loadResult.skippedMessages,
     syncMode: "recent" as const,
+    syncWarning: buildGmailPartialSyncWarning(loadResult.skippedMessages.length),
     totalFetched: messages.length
   };
 }
@@ -1489,16 +1520,70 @@ async function getGmailFullMessages({
   accessToken: string;
   fetchImpl: GmailFetch;
   messages: { id?: string; threadId?: string }[];
-}) {
+}): Promise<GmailFullMessageLoadResult> {
   const fullMessages: Array<{ listedThreadId?: string; message: GmailMessageResponse }> = [];
+  const skippedMessages: GmailSkippedMessageSummary[] = [];
   for (const listedMessage of messages) {
-    if (!listedMessage.id) continue;
-    fullMessages.push({
-      listedThreadId: listedMessage.threadId,
-      message: await getGmailMessageFull({ accessToken, fetchImpl, messageId: listedMessage.id })
-    });
+    if (!listedMessage.id) {
+      skippedMessages.push({ providerMessageRef: "missing-id", reason: "message_missing_id" });
+      continue;
+    }
+    try {
+      fullMessages.push({
+        listedThreadId: listedMessage.threadId,
+        message: await getGmailMessageFull({ accessToken, fetchImpl, messageId: listedMessage.id })
+      });
+    } catch (error) {
+      if (!isSkippableGmailMessageLoadError(error)) throw error;
+      skippedMessages.push({
+        providerMessageRef: safeGmailMessageRef(listedMessage.id),
+        reason: "message_load_failed"
+      });
+    }
   }
-  return fullMessages;
+  return { attemptedMessageCount: messages.length, fullMessages, skippedMessages };
+}
+
+function assertGmailMessageLoadSucceeded(loadResult: GmailFullMessageLoadResult) {
+  if (
+    loadResult.attemptedMessageCount > 0 &&
+    loadResult.fullMessages.length === 0 &&
+    loadResult.skippedMessages.length > 0
+  ) {
+    throw new ApiError(
+      "EMAIL_GMAIL_MESSAGES_ALL_FAILED",
+      "Gmail messages could not be loaded. All attempted Gmail messages were skipped before inbox threads could be stored.",
+      400
+    );
+  }
+}
+
+function buildGmailPartialSyncWarning(skippedMessageFailures: number) {
+  if (skippedMessageFailures <= 0) return null;
+  const messageLabel = skippedMessageFailures === 1 ? "message" : "messages";
+  const verb = skippedMessageFailures === 1 ? "was" : "were";
+  return `Gmail sync completed with warnings: ${skippedMessageFailures} Gmail ${messageLabel} could not be loaded and ${verb} skipped.`;
+}
+
+export function isGmailPartialSyncWarning(value: string | null | undefined) {
+  return Boolean(value?.startsWith("Gmail sync completed with warnings:"));
+}
+
+function summarizeGmailSkippedMessages(skippedMessages: GmailSkippedMessageSummary[]) {
+  return skippedMessages.reduce<Record<string, number>>((summary, skippedMessage) => {
+    summary[skippedMessage.reason] = (summary[skippedMessage.reason] ?? 0) + 1;
+    return summary;
+  }, {});
+}
+
+function isSkippableGmailMessageLoadError(error: unknown) {
+  return (error instanceof ApiError && error.code === "EMAIL_GMAIL_MESSAGE_FAILED") || error instanceof TypeError;
+}
+
+function safeGmailMessageRef(messageId: string) {
+  const trimmed = messageId.trim();
+  if (!trimmed) return "missing-id";
+  return trimmed.length <= 8 ? `message:${trimmed}` : `message:...${trimmed.slice(-8)}`;
 }
 
 async function persistGmailInboxMessages({
@@ -2447,7 +2532,9 @@ function googleProviderCard({
       connection?.status === "CONNECTED"
         ? fullInboxScopesReady
           ? connection.lastError
-            ? "Sync issue"
+            ? isGmailPartialSyncWarning(connection.lastError)
+              ? "Connected with warnings"
+              : "Sync issue"
             : "Connected"
           : "Reconnect required"
         : "Ready to connect"

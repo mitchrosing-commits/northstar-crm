@@ -347,6 +347,8 @@ describe("Email UX v1 discoverability", () => {
     expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
     expect(emailActions).toContain('emailConnection: "gmail-synced"');
     expect(emailActions).toContain('syncStatus: "1"');
+    expect(emailActions).toContain("messageSkips: String(result.skippedMessageFailures ?? 0)");
+    expect(emailActions).toContain('params.set("syncWarning", result.syncWarning)');
     expect(emailActions).toContain("safeGmailSyncActionError(error)");
     expect(emailActions).toContain("redactSensitiveText(message)");
     expect(emailActions).toContain('syncError: safeGmailSyncActionError(error)');
@@ -376,6 +378,8 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Logged");
     expect(emailPage).toContain("Duplicates");
     expect(emailPage).toContain("Unmatched");
+    expect(emailPage).toContain("Skipped messages");
+    expect(emailPage).toContain("Sync completed with warnings");
     expect(emailPage).toContain("StatCard");
     expect(emailPage).toContain(
       '<StatCard label="Fetched" value={syncSummary.totalFetched} />',

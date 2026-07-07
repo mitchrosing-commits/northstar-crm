@@ -70,10 +70,12 @@ export async function syncGmailInboxFromEmailPageAction() {
     created: String(result.created),
     duplicates: String(result.skippedDuplicates),
     emailConnection: "gmail-synced",
+    messageSkips: String(result.skippedMessageFailures ?? 0),
     skipped: String(result.skippedUnmatched),
     syncStatus: "1",
     total: String(result.totalFetched)
   });
+  if (result.syncWarning) params.set("syncWarning", result.syncWarning);
   redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
 }
 
@@ -124,6 +126,7 @@ export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData)
     created: String(result.created),
     duplicates: String(result.skippedDuplicates),
     emailConnection: "gmail-loaded-more",
+    messageSkips: String(result.skippedMessageFailures ?? 0),
     total: String(result.totalFetched)
   });
   if (threadId) params.set("thread", threadId);
@@ -147,6 +150,7 @@ export async function refreshGmailThreadFromEmailPageAction(formData: FormData) 
     created: String(result.created),
     duplicates: String(result.skippedDuplicates),
     emailConnection: "gmail-thread-refreshed",
+    messageSkips: String(result.skippedMessageFailures ?? 0),
     thread: threadId,
     total: String(result.totalFetched)
   });

@@ -33,6 +33,7 @@ import {
   listEmailPriorityFollowUpDetails,
   listEmailLogs,
   listEmailTemplates,
+  isGmailPartialSyncWarning,
   normalizeEmailPriorityQueueFilter,
   readEmailSmartClassification
 } from "@/lib/services/crm";
@@ -65,9 +66,11 @@ type EmailPageProps = {
     duplicates?: string;
     emailConnection?: string;
     inbox?: string;
+    messageSkips?: string;
     skipped?: string;
     syncError?: string;
     syncStatus?: string;
+    syncWarning?: string;
     thread?: string;
     total?: string;
   }>;
@@ -99,9 +102,11 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const fullInboxEmptyState = fullInboxEmptyStateCopy(gmailProvider, inboxThreads.length);
   const gmailSyncProgress = gmailSyncProgressState({
     emailConnection: resolvedSearchParams?.emailConnection,
+    skippedMessageFailures: numberParam(resolvedSearchParams?.messageSkips),
     provider: gmailProvider,
     showRequested: resolvedSearchParams?.syncStatus === "1",
     syncError: resolvedSearchParams?.syncError,
+    syncWarning: resolvedSearchParams?.syncWarning,
     threadCount: inboxThreads.length
   });
   const statusCopy = emailStatusCopy(resolvedSearchParams);
@@ -342,6 +347,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             <StatCard label="Logged" value={syncSummary.created} />
             <StatCard label="Duplicates" value={syncSummary.duplicates} />
             <StatCard label="Unmatched" value={syncSummary.skipped} />
+            {syncSummary.messageSkips > 0 ? <StatCard label="Skipped messages" value={syncSummary.messageSkips} /> : null}
           </div>
           <FormIntroCallout className="email-status-callout" title="Sync scope">
             Last sync: {syncSummary.lastSyncAt ? formatDate(syncSummary.lastSyncAt) : "Just now"}. Synced emails are
@@ -893,15 +899,19 @@ function gmailFullInboxReadiness(provider: ProviderCard | undefined) {
 
 function gmailSyncProgressState({
   emailConnection,
+  skippedMessageFailures,
   provider,
   showRequested,
   syncError,
+  syncWarning,
   threadCount
 }: {
   emailConnection: string | undefined;
+  skippedMessageFailures: number;
   provider: ProviderCard | undefined;
   showRequested: boolean;
   syncError: string | undefined;
+  syncWarning: string | undefined;
   threadCount: number;
 }): GmailSyncProgress {
   const readiness = gmailFullInboxReadiness(provider);
@@ -910,6 +920,8 @@ function gmailSyncProgressState({
   const syncDetail = provider?.syncStatusDetail ? formatProviderSyncStatusDetail(provider.syncStatusDetail) : null;
   const activeFromClick = showRequested || emailConnection === "gmail-sync-queued" || emailConnection === "gmail-sync-error";
   const syncStatusStale = isGmailSyncStatusStale(lastUpdate);
+  const visiblePartialWarning =
+    searchParamPartialSyncWarning(syncWarning) ?? (isGmailPartialSyncWarning(provider?.lastError) ? provider?.lastError : null);
 
   if (!readiness.ready) {
     return {
@@ -974,25 +986,23 @@ function gmailSyncProgressState({
     };
   }
 
-  if (
-    provider?.syncStatusLabel === "Sync failed" ||
-    provider?.syncStatusLabel === "Sync retry scheduled" ||
-    provider?.status === "Sync issue"
-  ) {
-    return {
-      active: false,
-      detail: provider?.lastError ?? syncDetail ?? "Gmail sync could not be completed. Reconnect Gmail or retry sync.",
-      lastUpdateLabel,
-      nextStep: provider?.status === "Reconnect required" ? "Reconnect Gmail" : "Retry Sync Gmail inbox",
-      statusLabel: provider?.syncStatusLabel ?? "Sync failed",
-      technicalHint: "Provider errors are redacted before they are shown here.",
-      title: "Gmail sync needs attention",
-      tone: "danger",
-      whatIsHappening: syncDetail ?? "Sync stopped before inbox threads were stored"
-    };
-  }
-
   if (provider?.syncStatusLabel === "Sync complete") {
+    if (visiblePartialWarning) {
+      return {
+        active: false,
+        detail:
+          skippedMessageFailures > 0
+            ? `${visiblePartialWarning} Synced Gmail threads are ready for review.`
+            : visiblePartialWarning,
+        lastUpdateLabel,
+        nextStep: threadCount > 0 ? "Review synced threads or retry later for skipped messages" : "Retry Sync Gmail inbox",
+        statusLabel: "Sync completed with warnings",
+        technicalHint: "Skipped-message diagnostics are sanitized; raw Gmail payloads, headers, bodies, and tokens are not shown.",
+        title: "Gmail sync completed with warnings",
+        tone: "attention",
+        whatIsHappening: syncDetail ?? "Mailbox sync finished with skipped messages"
+      };
+    }
     return {
       active: false,
       detail:
@@ -1006,6 +1016,37 @@ function gmailSyncProgressState({
       title: threadCount > 0 ? "Gmail sync completed" : "Gmail sync completed with no stored messages",
       tone: threadCount > 0 ? "success" : "neutral",
       whatIsHappening: syncDetail ?? "Mailbox sync finished"
+    };
+  }
+
+  if (
+    provider?.syncStatusLabel === "Sync failed" ||
+    provider?.syncStatusLabel === "Sync retry scheduled" ||
+    provider?.status === "Sync issue"
+  ) {
+    if (visiblePartialWarning) {
+      return {
+        active: false,
+        detail: visiblePartialWarning,
+        lastUpdateLabel,
+        nextStep: threadCount > 0 ? "Review synced threads or retry later for skipped messages" : "Retry Sync Gmail inbox",
+        statusLabel: "Sync completed with warnings",
+        technicalHint: "Skipped-message diagnostics are sanitized; raw Gmail payloads, headers, bodies, and tokens are not shown.",
+        title: "Gmail sync completed with warnings",
+        tone: "attention",
+        whatIsHappening: syncDetail ?? "Mailbox sync finished with skipped messages"
+      };
+    }
+    return {
+      active: false,
+      detail: provider?.lastError ?? syncDetail ?? "Gmail sync could not be completed. Reconnect Gmail or retry sync.",
+      lastUpdateLabel,
+      nextStep: provider?.status === "Reconnect required" ? "Reconnect Gmail" : "Retry Sync Gmail inbox",
+      statusLabel: provider?.syncStatusLabel ?? "Sync failed",
+      technicalHint: "Provider errors are redacted before they are shown here.",
+      title: "Gmail sync needs attention",
+      tone: "danger",
+      whatIsHappening: syncDetail ?? "Sync stopped before inbox threads were stored"
     };
   }
 
@@ -1042,6 +1083,10 @@ function gmailSyncProgressState({
 function isGmailSyncStatusStale(updatedAt: Date | null | undefined) {
   if (!updatedAt) return false;
   return Date.now() - updatedAt.getTime() > 2 * 60 * 1000;
+}
+
+function searchParamPartialSyncWarning(value: string | undefined) {
+  return isGmailPartialSyncWarning(value) ? value : null;
 }
 
 function fullInboxEmptyStateCopy(provider: ProviderCard | undefined, threadCount: number) {
@@ -1138,6 +1183,7 @@ function buildSyncSummary(
     created: numberParam(searchParams?.created, syncReview?.created),
     duplicates: numberParam(searchParams?.duplicates, syncReview?.duplicates),
     lastSyncAt: providerStatus?.lastSyncAt ?? null,
+    messageSkips: numberParam(searchParams?.messageSkips),
     provider,
     skipped: numberParam(searchParams?.skipped, syncReview?.skipped),
     totalFetched: numberParam(searchParams?.total, syncReview?.totalFetched)
@@ -1880,6 +1926,14 @@ function buildLeadHref(email: string | null, subject: string) {
 
 function emailStatusCopy(searchParams: Awaited<EmailPageProps["searchParams"]>) {
   if (searchParams?.emailConnection === "gmail-synced") {
+    const messageSkips = numberParam(searchParams.messageSkips);
+    if (messageSkips > 0) {
+      return `Gmail Full Inbox sync finished with warnings. Stored ${searchParams.created ?? "0"} new message${
+        searchParams.created === "1" ? "" : "s"
+      }; found ${searchParams.duplicates ?? "0"} duplicate; skipped ${messageSkips} Gmail message${
+        messageSkips === 1 ? "" : "s"
+      } that could not be loaded.`;
+    }
     return `Gmail Full Inbox sync finished. Stored ${searchParams.created ?? "0"} new message${
       searchParams.created === "1" ? "" : "s"
     }; found ${searchParams.duplicates ?? "0"} duplicate.`;
@@ -1898,6 +1952,14 @@ function emailStatusCopy(searchParams: Awaited<EmailPageProps["searchParams"]>) 
     return "Gmail inbox sync is queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.";
   }
   if (searchParams?.emailConnection === "gmail-loaded-more") {
+    const messageSkips = numberParam(searchParams.messageSkips);
+    if (messageSkips > 0) {
+      return `Older Gmail messages loaded with warnings. Stored ${searchParams.created ?? "0"} new message${
+        searchParams.created === "1" ? "" : "s"
+      }; found ${searchParams.duplicates ?? "0"} duplicate; skipped ${messageSkips} Gmail message${
+        messageSkips === 1 ? "" : "s"
+      } that could not be loaded.`;
+    }
     return `Older Gmail messages loaded. Stored ${searchParams.created ?? "0"} new message${
       searchParams.created === "1" ? "" : "s"
     }; found ${searchParams.duplicates ?? "0"} duplicate.`;

@@ -97,11 +97,28 @@ describe("email sync server actions", () => {
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?created=2&duplicates=1&emailConnection=gmail-synced&skipped=0&syncStatus=1&total=3#gmail-sync-progress"
+      url: "/email?created=2&duplicates=1&emailConnection=gmail-synced&messageSkips=0&skipped=0&syncStatus=1&total=3#gmail-sync-progress"
     });
 
     expect(mocks.runGmailInboxSyncNow).toHaveBeenCalledWith(actor);
     expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("redirects Full Inbox Gmail sync warnings with skipped-message counts", async () => {
+    mocks.runGmailInboxSyncNow.mockResolvedValue({
+      created: 4,
+      skippedDuplicates: 2,
+      skippedMessageFailures: 1,
+      skippedUnmatched: 0,
+      syncWarning: "Gmail sync completed with warnings: 1 Gmail message could not be loaded and was skipped.",
+      totalFetched: 7,
+      unmatchedPreviews: []
+    });
+
+    await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?created=4&duplicates=2&emailConnection=gmail-synced&messageSkips=1&skipped=0&syncStatus=1&total=7&syncWarning=Gmail+sync+completed+with+warnings%3A+1+Gmail+message+could+not+be+loaded+and+was+skipped.#gmail-sync-progress"
+    });
   });
 
   it("keeps the legacy matched Gmail sync action available for settings", async () => {
@@ -154,7 +171,7 @@ describe("email sync server actions", () => {
 
     await expect(loadOlderGmailInboxFromEmailPageAction(formData)).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?created=2&duplicates=1&emailConnection=gmail-loaded-more&total=3&thread=GOOGLE_WORKSPACE%3Athread_1"
+      url: "/email?created=2&duplicates=1&emailConnection=gmail-loaded-more&messageSkips=0&total=3&thread=GOOGLE_WORKSPACE%3Athread_1"
     });
 
     expect(mocks.syncOlderGmailInboxMessages).toHaveBeenCalledWith({
@@ -178,7 +195,7 @@ describe("email sync server actions", () => {
 
     await expect(refreshGmailThreadFromEmailPageAction(formData)).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?created=1&duplicates=2&emailConnection=gmail-thread-refreshed&thread=GOOGLE_WORKSPACE%3Athread_1&total=3"
+      url: "/email?created=1&duplicates=2&emailConnection=gmail-thread-refreshed&messageSkips=0&thread=GOOGLE_WORKSPACE%3Athread_1&total=3"
     });
 
     expect(mocks.refreshGmailInboxThread).toHaveBeenCalledWith({
