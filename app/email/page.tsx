@@ -944,12 +944,15 @@ function gmailSyncProgressState({
         ? `Gmail sync could not be completed: ${syncError}`
         : provider?.lastError ?? syncDetail ?? "Gmail sync could not be completed. Reconnect Gmail or retry sync.",
       lastUpdateLabel,
-      nextStep: provider?.status === "Reconnect required" ? "Reconnect Gmail" : "Retry Sync Gmail inbox",
+      nextStep: gmailSyncErrorNextStep(syncError, provider),
       statusLabel: "Sync failed",
-      technicalHint: "Provider and job errors are redacted before they are shown here.",
+      technicalHint:
+        "Full Inbox imports normal Gmail inbox messages before CRM matching. Provider and job errors are redacted before they are shown here.",
       title: "Gmail sync needs attention",
       tone: "danger",
-      whatIsHappening: "Explicit sync failed before inbox threads were stored"
+      whatIsHappening: syncError?.includes("Gmail listed")
+        ? "Gmail listing worked, but full-message loading failed before storage"
+        : "Explicit sync failed before inbox threads were stored"
     };
   }
 
@@ -1083,6 +1086,16 @@ function gmailSyncProgressState({
 function isGmailSyncStatusStale(updatedAt: Date | null | undefined) {
   if (!updatedAt) return false;
   return Date.now() - updatedAt.getTime() > 2 * 60 * 1000;
+}
+
+function gmailSyncErrorNextStep(syncError: string | undefined, provider: ProviderCard | undefined) {
+  if (provider?.status === "Reconnect required" || syncError?.includes("EMAIL_GMAIL_MESSAGE_AUTH_FAILED")) {
+    return "Reconnect Gmail with Full Inbox scopes";
+  }
+  if (syncError?.includes("Gmail listed")) {
+    return "Retry Sync Gmail inbox; reconnect Gmail if message loading keeps failing";
+  }
+  return "Retry Sync Gmail inbox";
 }
 
 function searchParamPartialSyncWarning(value: string | undefined) {

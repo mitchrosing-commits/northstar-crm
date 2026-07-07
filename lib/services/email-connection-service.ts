@@ -177,7 +177,7 @@ export type EmailSyncPreview = {
 
 type GmailSkippedMessageSummary = {
   providerMessageRef: string;
-  reason: "message_load_failed" | "message_missing_id";
+  reason: GmailSkippedMessageReason;
 };
 
 type GmailFullMessageLoadResult = {
@@ -185,6 +185,19 @@ type GmailFullMessageLoadResult = {
   fullMessages: Array<{ listedThreadId?: string; message: GmailMessageResponse }>;
   skippedMessages: GmailSkippedMessageSummary[];
 };
+
+type GmailSkippedMessageReason =
+  | "message_fetch_failed"
+  | "message_load_http_failed"
+  | "message_load_not_found"
+  | "message_load_provider_unavailable"
+  | "message_load_rate_limited"
+  | "message_missing_id"
+  | "message_parse_failed";
+
+type GmailFatalMessageLoadReason = "message_load_auth_or_scope_failed";
+
+type GmailMessageLoadFailureReason = GmailFatalMessageLoadReason | GmailSkippedMessageReason;
 
 export type EmailInboxMessageSummary = Prisma.EmailLogGetPayload<{ include: typeof emailInboxLogInclude }>;
 
@@ -1534,10 +1547,18 @@ async function getGmailFullMessages({
         message: await getGmailMessageFull({ accessToken, fetchImpl, messageId: listedMessage.id })
       });
     } catch (error) {
-      if (!isSkippableGmailMessageLoadError(error)) throw error;
+      const reason = gmailMessageLoadFailureReason(error);
+      if (reason === "message_load_auth_or_scope_failed") {
+        throw new ApiError(
+          "EMAIL_GMAIL_MESSAGE_AUTH_FAILED",
+          "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync.",
+          400
+        );
+      }
+      if (!reason) throw error;
       skippedMessages.push({
         providerMessageRef: safeGmailMessageRef(listedMessage.id),
-        reason: "message_load_failed"
+        reason
       });
     }
   }
@@ -1550,9 +1571,15 @@ function assertGmailMessageLoadSucceeded(loadResult: GmailFullMessageLoadResult)
     loadResult.fullMessages.length === 0 &&
     loadResult.skippedMessages.length > 0
   ) {
+    const reasonSummary = formatGmailSkippedMessageReasonSummary(loadResult.skippedMessages);
     throw new ApiError(
       "EMAIL_GMAIL_MESSAGES_ALL_FAILED",
-      "Gmail messages could not be loaded. All attempted Gmail messages were skipped before inbox threads could be stored.",
+      `Gmail listed ${loadResult.attemptedMessageCount} inbox ${pluralize(
+        "message",
+        loadResult.attemptedMessageCount
+      )}, but none could be loaded. Attempted ${loadResult.attemptedMessageCount}; skipped ${
+        loadResult.skippedMessages.length
+      }. Reason categories: ${reasonSummary}. Gmail listing succeeded; Full Inbox storage did not run. Retry sync, and reconnect Gmail if this persists.`,
       400
     );
   }
@@ -1576,8 +1603,37 @@ function summarizeGmailSkippedMessages(skippedMessages: GmailSkippedMessageSumma
   }, {});
 }
 
-function isSkippableGmailMessageLoadError(error: unknown) {
-  return (error instanceof ApiError && error.code === "EMAIL_GMAIL_MESSAGE_FAILED") || error instanceof TypeError;
+function formatGmailSkippedMessageReasonSummary(skippedMessages: GmailSkippedMessageSummary[]) {
+  const summary = summarizeGmailSkippedMessages(skippedMessages);
+  return Object.entries(summary)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(", ");
+}
+
+function gmailMessageLoadFailureReason(error: unknown): GmailMessageLoadFailureReason | null {
+  if (error instanceof TypeError) return "message_fetch_failed";
+  if (!(error instanceof ApiError) || error.code !== "EMAIL_GMAIL_MESSAGE_FAILED") return null;
+  const details = isRecord(error.details) ? error.details : null;
+  const reason = details?.gmailMessageLoadReason;
+  return isGmailMessageLoadFailureReason(reason) ? reason : "message_load_http_failed";
+}
+
+function isGmailMessageLoadFailureReason(value: unknown): value is GmailMessageLoadFailureReason {
+  return (
+    value === "message_fetch_failed" ||
+    value === "message_load_auth_or_scope_failed" ||
+    value === "message_load_http_failed" ||
+    value === "message_load_not_found" ||
+    value === "message_load_provider_unavailable" ||
+    value === "message_load_rate_limited" ||
+    value === "message_missing_id" ||
+    value === "message_parse_failed"
+  );
+}
+
+function pluralize(label: string, count: number) {
+  return count === 1 ? label : `${label}s`;
 }
 
 function safeGmailMessageRef(messageId: string) {
@@ -1913,12 +1969,12 @@ function formatEmailConnectionSyncError(providerLabel: "Gmail" | "Microsoft", er
 
 async function readEmailProviderJson<T>(
   response: Response,
-  error: { code: string; message: string; status?: number }
+  error: { code: string; details?: unknown; message: string; status?: number }
 ) {
   try {
     return (await response.json()) as T;
   } catch {
-    throw new ApiError(error.code, error.message, error.status ?? 400);
+    throw new ApiError(error.code, error.message, error.status ?? 400, error.details);
   }
 }
 
@@ -2231,13 +2287,43 @@ async function getGmailMessageFull({
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", "Gmail message could not be loaded.", 400);
+    const reason = gmailMessageHttpFailureReason(response.status);
+    throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", gmailMessageHttpFailureMessage(reason), 400, {
+      gmailMessageLoadReason: reason,
+      providerStatus: response.status,
+      phase: "message_fetch"
+    });
   }
 
   return readEmailProviderJson<GmailMessageResponse>(response, {
     code: "EMAIL_GMAIL_MESSAGE_FAILED",
-    message: "Gmail message could not be loaded."
+    details: { gmailMessageLoadReason: "message_parse_failed", phase: "message_parse" },
+    message: "Gmail message could not be parsed."
   });
+}
+
+function gmailMessageHttpFailureReason(status: number): GmailMessageLoadFailureReason {
+  if (status === 401 || status === 403) return "message_load_auth_or_scope_failed";
+  if (status === 404 || status === 410) return "message_load_not_found";
+  if (status === 429) return "message_load_rate_limited";
+  if (status >= 500) return "message_load_provider_unavailable";
+  return "message_load_http_failed";
+}
+
+function gmailMessageHttpFailureMessage(reason: GmailMessageLoadFailureReason) {
+  if (reason === "message_load_auth_or_scope_failed") {
+    return "Gmail listed inbox messages, but full-message loading was rejected. Reconnect Gmail with Full Inbox scopes.";
+  }
+  if (reason === "message_load_not_found") {
+    return "Gmail message could not be loaded because it was unavailable or deleted after listing.";
+  }
+  if (reason === "message_load_rate_limited") {
+    return "Gmail message could not be loaded because Gmail rate-limited the request.";
+  }
+  if (reason === "message_load_provider_unavailable") {
+    return "Gmail message could not be loaded because Gmail was temporarily unavailable.";
+  }
+  return "Gmail message could not be loaded.";
 }
 
 async function getGmailThreadFull({

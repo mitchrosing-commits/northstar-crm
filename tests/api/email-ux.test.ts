@@ -418,6 +418,10 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("No Gmail account connected");
     expect(emailPage).toContain("Provider errors are redacted before they are shown here.");
     expect(emailPage).toContain("Provider and job errors are redacted before they are shown here.");
+    expect(emailPage).toContain("Full Inbox imports normal Gmail inbox messages before CRM matching.");
+    expect(emailPage).toContain("Gmail listing worked, but full-message loading failed before storage");
+    expect(emailPage).toContain("Reconnect Gmail with Full Inbox scopes");
+    expect(emailPage).toContain("Retry Sync Gmail inbox; reconnect Gmail if message loading keeps failing");
     expect(globalCss).toContain(".gmail-sync-progress");
     expect(globalCss).toContain(".gmail-sync-progress-grid");
     expect(globalCss).toContain(".gmail-sync-progress-attention");

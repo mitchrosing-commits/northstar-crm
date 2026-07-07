@@ -1054,6 +1054,68 @@ describe("Gmail metadata sync", () => {
     }
   });
 
+  it("stores normal Gmail inbox messages from unknown senders without requiring a CRM match", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await fixture.prisma.person.updateMany({
+        where: { workspaceId: fixture.workspaceA.id },
+        data: { email: null }
+      });
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "This is a normal Gmail inbox message from someone not yet in CRM.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 13:15:00 -0400",
+              From: "Unknown Sender <unknown-sender@example.test>",
+              Subject: "Normal Gmail inbox message",
+              To: "Alex <alex@example.test>"
+            },
+            id: "gmail-normal-unknown-sender-1",
+            labelIds: ["INBOX", "UNREAD"],
+            snippet: "This is a normal Gmail inbox message"
+          }
+        ]
+      });
+
+      const result = await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl });
+
+      expect(result).toMatchObject({ created: 1, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 1 });
+      expect(result.unmatchedPreviews).toEqual([]);
+      const [log, threads] = await Promise.all([
+        fixture.prisma.emailLog.findFirstOrThrow({
+          where: {
+            providerMessageId: "gmail-normal-unknown-sender-1",
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
+        listEmailInboxThreads(fixture.actorA)
+      ]);
+      expect(log).toMatchObject({
+        body: "This is a normal Gmail inbox message from someone not yet in CRM.",
+        dealId: null,
+        leadId: null,
+        organizationId: null,
+        personId: null,
+        provider: "GOOGLE_WORKSPACE",
+        providerLabels: ["INBOX", "UNREAD"],
+        subject: "Normal Gmail inbox message"
+      });
+      expect(threads.find((thread) => thread.subject === "Normal Gmail inbox message")).toMatchObject({
+        isUnread: true,
+        linkedRecordLabel: null,
+        messageCount: 1
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("loads older Gmail inbox messages without duplicates or global cursor changes", async () => {
     const fixture = await createIntegrationFixture();
     try {
@@ -1382,7 +1444,7 @@ describe("Gmail metadata sync", () => {
         syncStatusLabel: "Sync complete"
       });
       expect(JSON.stringify(auditLogs[0]?.metadata)).toContain('"skippedMessageFailures":1');
-      expect(JSON.stringify(auditLogs[0]?.metadata)).toContain('"message_load_failed":1');
+      expect(JSON.stringify(auditLogs[0]?.metadata)).toContain('"message_load_not_found":1');
       expect(JSON.stringify(auditLogs[0]?.metadata)).not.toContain("provider-body-secret-token");
       expect(JSON.stringify(auditLogs[0]?.metadata)).not.toContain("Unavailable Gmail message");
     } finally {
@@ -1437,8 +1499,76 @@ describe("Gmail metadata sync", () => {
         })
       ).rejects.toMatchObject({
         code: "EMAIL_GMAIL_MESSAGES_ALL_FAILED",
+        message: expect.stringContaining(
+          "Gmail listed 2 inbox messages, but none could be loaded. Attempted 2; skipped 2. Reason categories: message_load_not_found=2."
+        )
+      });
+
+      const [job, reloadedConnection, logs] = await Promise.all([
+        fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
+        fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+        fixture.prisma.emailLog.findMany({
+          where: { provider: "GOOGLE_WORKSPACE", workspaceId: fixture.workspaceA.id }
+        })
+      ]);
+      expect(job).toMatchObject({
+        lastError: expect.stringContaining(
+          "Gmail listed 2 inbox messages, but none could be loaded. Attempted 2; skipped 2. Reason categories: message_load_not_found=2."
+        ),
+        status: "PENDING",
+        type: gmailInboxSyncJobType
+      });
+      expect(reloadedConnection.lastError).toEqual(
+        expect.stringContaining(
+          "EMAIL_GMAIL_MESSAGES_ALL_FAILED: Gmail listed 2 inbox messages, but none could be loaded. Attempted 2; skipped 2. Reason categories: message_load_not_found=2."
+        )
+      );
+      expect(reloadedConnection.lastError).not.toContain("access-token");
+      expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
+      expect(logs).toHaveLength(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("treats full-message auth or scope rejection as a reconnect-required Gmail load failure", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        expectedMaxResults: "25",
+        failedMessageIds: { "gmail-full-auth-rejected-1": 403 },
+        messages: [
+          {
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:45:00 -0400",
+              From: "Unknown Sender <unknown-sender@example.test>",
+              Subject: "Normal Gmail message needing full scope",
+              To: "Alex <alex@example.test>"
+            },
+            id: "gmail-full-auth-rejected-1",
+            labelIds: ["INBOX"],
+            snippet: "This should ask for reconnect, not CRM matching."
+          }
+        ]
+      });
+
+      await expect(
+        runGmailInboxSyncNow(fixture.actorA, {
+          env,
+          fetchImpl,
+          now: new Date("2030-07-01T12:25:00.000Z"),
+          workerId: "test-email-page-sync"
+        })
+      ).rejects.toMatchObject({
+        code: "EMAIL_GMAIL_MESSAGE_AUTH_FAILED",
         message:
-          "Gmail messages could not be loaded. All attempted Gmail messages were skipped before inbox threads could be stored."
+          "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync."
       });
 
       const [job, reloadedConnection, logs] = await Promise.all([
@@ -1450,12 +1580,12 @@ describe("Gmail metadata sync", () => {
       ]);
       expect(job).toMatchObject({
         lastError:
-          "Gmail messages could not be loaded. All attempted Gmail messages were skipped before inbox threads could be stored.",
+          "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync.",
         status: "PENDING",
         type: gmailInboxSyncJobType
       });
       expect(reloadedConnection.lastError).toBe(
-        "EMAIL_GMAIL_MESSAGES_ALL_FAILED: Gmail messages could not be loaded. All attempted Gmail messages were skipped before inbox threads could be stored."
+        "EMAIL_GMAIL_MESSAGE_AUTH_FAILED: Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync."
       );
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
