@@ -8,6 +8,7 @@ import {
   diagnoseGmailConnection,
   enqueueGmailInboxSyncJob,
   gmailInboxSyncJobType,
+  listGmailInboxAccounts,
   listEmailInboxThreads,
   listEmailConnectionProviderCards,
   processGmailInboxSyncJob,
@@ -1284,6 +1285,84 @@ describe("Gmail metadata sync", () => {
     }
   });
 
+  it("matches Google Workspace custom-domain inbox messages by .info contact email and organization domain", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await fixture.prisma.person.update({
+        where: { id: fixture.recordsA.person.id },
+        data: { email: "Mitch@Veridian.INFO" }
+      });
+      await fixture.prisma.organization.update({
+        where: { id: fixture.recordsA.organization.id },
+        data: { domain: "https://www.veridian.info/accounts" }
+      });
+      await createConnectedGmailSecret(fixture, {
+        accountEmail: "sally@veridian.info",
+        accessToken: "access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        messages: [
+          {
+            bodyText: "Can you send the Veridian contract and pricing today?",
+            headers: {
+              Date: "Fri, 26 Jun 2026 14:00:00 -0400",
+              From: "Mitch Rosing <mitch@veridian.info>",
+              Subject: "Veridian pricing and contract",
+              To: "Sally <sally@veridian.info>"
+            },
+            id: "gmail-info-contact-match",
+            labelIds: ["INBOX", "UNREAD"],
+            snippet: "Can you send the Veridian contract and pricing today?"
+          },
+          {
+            bodyText: "The support team has a follow-up for the same Veridian account.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 14:05:00 -0400",
+              From: "Support <support@mail.veridian.info>",
+              Subject: "Veridian support follow-up",
+              To: "Sally <sally@veridian.info>"
+            },
+            id: "gmail-info-organization-match",
+            labelIds: ["INBOX"],
+            snippet: "Support follow-up for Veridian"
+          }
+        ]
+      });
+
+      const result = await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl });
+      expect(result).toMatchObject({ created: 2, skippedDuplicates: 0, skippedUnmatched: 0, totalFetched: 2 });
+
+      const [contactLog, organizationLog] = await Promise.all([
+        fixture.prisma.emailLog.findFirstOrThrow({
+          where: { providerMessageId: "gmail-info-contact-match", workspaceId: fixture.workspaceA.id }
+        }),
+        fixture.prisma.emailLog.findFirstOrThrow({
+          where: { providerMessageId: "gmail-info-organization-match", workspaceId: fixture.workspaceA.id }
+        })
+      ]);
+
+      expect(contactLog).toMatchObject({
+        organizationId: fixture.recordsA.organization.id,
+        personId: fixture.recordsA.person.id,
+        provider: "GOOGLE_WORKSPACE"
+      });
+      expect(organizationLog).toMatchObject({
+        organizationId: fixture.recordsA.organization.id,
+        personId: null,
+        provider: "GOOGLE_WORKSPACE"
+      });
+
+      const inbox = await listEmailInboxThreads(fixture.actorA);
+      expect(inbox.find((thread) => thread.subject === "Veridian support follow-up")).toMatchObject({
+        linkedRecordLabel: "Organization: Alpha Orbit Organization"
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("stores normal Gmail inbox messages from unknown senders without requiring a CRM match", async () => {
     const fixture = await createIntegrationFixture();
     try {
@@ -1340,6 +1419,124 @@ describe("Gmail metadata sync", () => {
         isUnread: true,
         linkedRecordLabel: null,
         messageCount: 1
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("scopes Full Inbox logs, account lists, selected views, and replies to the current user's Gmail connection", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const salesConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "sales@veridian.info",
+        accessToken: "sales-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const salesFetch = gmailFetchMock({
+        accessToken: "sales-access-token",
+        messages: [
+          {
+            bodyText: "Sales inbox copy of the shared provider id.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:00:00 -0400",
+              From: "Buyer <buyer@example.test>",
+              Subject: "Shared provider message",
+              To: "Sales <sales@veridian.info>"
+            },
+            id: "gmail-shared-provider-message",
+            snippet: "Sales inbox copy",
+            threadId: "thread-shared-provider"
+          }
+        ]
+      });
+      await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl: salesFetch });
+
+      const supportConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "support@veridian.info",
+        accessToken: "support-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const supportFetch = gmailFetchMock({
+        accessToken: "support-access-token",
+        messages: [
+          {
+            bodyText: "Support inbox copy of the same provider id.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 15:05:00 -0400",
+              From: "Buyer <buyer@example.test>",
+              Subject: "Shared provider message",
+              To: "Support <support@veridian.info>"
+            },
+            id: "gmail-shared-provider-message",
+            snippet: "Support inbox copy",
+            threadId: "thread-shared-provider"
+          }
+        ],
+        sentMessageId: "gmail-sent-from-support"
+      });
+      await syncGmailInboxMessages({ actor: fixture.actorA, env, fetchImpl: supportFetch });
+
+      await fixture.prisma.emailConnection.create({
+        data: {
+          accountEmail: "other-user@veridian.info",
+          createdById: fixture.userB.id,
+          provider: "GOOGLE_WORKSPACE",
+          scopes: gmailFullInboxScopes,
+          status: "CONNECTED",
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+
+      const [accounts, logs, unifiedThreads, salesThreads, supportThreads] = await Promise.all([
+        listGmailInboxAccounts(fixture.actorA, env),
+        fixture.prisma.emailLog.findMany({
+          where: { providerMessageId: "gmail-shared-provider-message", workspaceId: fixture.workspaceA.id },
+          orderBy: { emailConnectionId: "asc" }
+        }),
+        listEmailInboxThreads(fixture.actorA),
+        listEmailInboxThreads(fixture.actorA, { connectionId: salesConnection.id }),
+        listEmailInboxThreads(fixture.actorA, { connectionId: supportConnection.id })
+      ]);
+
+      expect(accounts.map((account) => account.accountEmail).sort()).toEqual([
+        "sales@veridian.info",
+        "support@veridian.info"
+      ]);
+      expect(logs.map((log) => log.emailConnectionId).sort()).toEqual([salesConnection.id, supportConnection.id].sort());
+      expect(unifiedThreads.filter((thread) => thread.subject === "Shared provider message")).toHaveLength(2);
+      expect(salesThreads).toHaveLength(1);
+      expect(salesThreads[0]).toMatchObject({
+        accountEmail: "sales@veridian.info",
+        emailConnectionId: salesConnection.id,
+        messageCount: 1,
+        subject: "Shared provider message"
+      });
+      expect(salesThreads[0]?.id).toContain(":thread-shared-provider");
+      expect(supportThreads).toHaveLength(1);
+      expect(supportThreads[0]).toMatchObject({
+        accountEmail: "support@veridian.info",
+        emailConnectionId: supportConnection.id,
+        messageCount: 1,
+        subject: "Shared provider message"
+      });
+
+      const supportLog = logs.find((log) => log.emailConnectionId === supportConnection.id);
+      expect(supportLog).toBeDefined();
+      await sendGmailReplyFromEmailLog({
+        actor: fixture.actorA,
+        body: "Replying from the support inbox.",
+        emailLogId: supportLog!.id,
+        env,
+        fetchImpl: supportFetch
+      });
+      const sentReply = await fixture.prisma.emailLog.findFirstOrThrow({
+        where: { providerMessageId: "gmail-sent-from-support", workspaceId: fixture.workspaceA.id }
+      });
+      expect(sentReply).toMatchObject({
+        direction: "OUTBOUND",
+        emailConnectionId: supportConnection.id,
+        fromText: "support@veridian.info"
       });
     } finally {
       await fixture.cleanup();
@@ -1859,6 +2056,7 @@ describe("Gmail metadata sync", () => {
     const fixture = await createIntegrationFixture();
     try {
       const connection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "sally@veridian.info",
         accessToken: "expired-diagnostic-access-token",
         expiresAt: new Date("2020-01-01T00:00:00.000Z"),
         refreshToken: "diagnostic-refresh-token"
@@ -1890,7 +2088,7 @@ describe("Gmail metadata sync", () => {
           const requestUrl = new URL(url);
           expect(requestUrl.searchParams.get("access_token")).toBe("diagnostic-refreshed-access-token");
           return Response.json({
-            email: "alex@example.test",
+            email: "sally@veridian.info",
             scope: diagnosticTokenInfoScopes.join(" ")
           });
         }
@@ -1899,7 +2097,7 @@ describe("Gmail metadata sync", () => {
           return Response.json({ messages: [{ id: "diagnostic-message-1", threadId: "diagnostic-thread-1" }] });
         }
         if (url === "https://gmail.googleapis.com/gmail/v1/users/me/profile") {
-          return Response.json({ emailAddress: "alex@example.test", messagesTotal: 10, threadsTotal: 4 });
+          return Response.json({ emailAddress: "sally@veridian.info", messagesTotal: 10, threadsTotal: 4 });
         }
         if (url.includes("/messages/diagnostic-message-1?")) {
           const requestUrl = new URL(url);
@@ -1943,7 +2141,8 @@ describe("Gmail metadata sync", () => {
       const serialized = JSON.stringify(diagnostic);
 
       expect(diagnostic).toMatchObject({
-        accountEmail: "alex@example.test",
+        accountDomainType: "google_workspace_or_custom_domain",
+        accountEmail: "sally@veridian.info",
         connectionRef: connection.id.slice(-8),
         fullMessageGet: {
           category: "insufficient_permissions",
@@ -1985,7 +2184,8 @@ describe("Gmail metadata sync", () => {
           success: true
         },
         tokeninfo: {
-          accountEmail: "alex@example.test",
+          accountDomainType: "google_workspace_or_custom_domain",
+          accountEmail: "sally@veridian.info",
           accountMatchesConnection: true,
           category: "success",
           connectionRef: connection.id.slice(-8),
@@ -3030,7 +3230,7 @@ describe("Gmail metadata sync", () => {
         providerLabels: ["SENT"]
       });
       expect(reloadedConnection.lastSyncCursor).toBe(cursorBeforeThreadRefresh);
-      expect(threads.find((thread) => thread.id === "GOOGLE_WORKSPACE:thread-shared-refresh-1")).toMatchObject({
+      expect(threads.find((thread) => thread.id.endsWith(":thread-shared-refresh-1"))).toMatchObject({
         messageCount: 3
       });
     } finally {

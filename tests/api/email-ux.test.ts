@@ -211,7 +211,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain('title: "Gmail setup required"');
     expect(emailPage).toContain('title: "Reconnect Gmail for Full Inbox"');
     expect(emailPage).toContain('title: "Token encryption required"');
-    expect(emailPage).toContain("Connect Gmail with Full Inbox scopes");
+    expect(emailPage).toContain("Connect Gmail or Google Workspace with Full Inbox scopes");
     expect(emailPage).toContain('className="email-provider-empty"');
     expect(emailPage).not.toContain(
       '<div className="empty-state email-provider-empty">',
@@ -339,8 +339,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailConnectionService).toContain("deletedAt: new Date()");
     expect(emailConnectionService).toContain("email_connection.disconnected");
     expect(emailConnectionService).toContain(
-      "Planned fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, custom domains, and hosting-provider email.",
+      "Planned fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, and non-Google hosting-provider email.",
     );
+    expect(emailConnectionService).toContain("Gmail-backed custom-domain mailboxes use Google Workspace");
     expect(emailConnectionService).toContain("disabled: true");
     expect(emailConnectionService).not.toContain("Yahoo OAuth");
     expect(emailPage).not.toContain("Yahoo OAuth");
@@ -349,6 +350,8 @@ describe("Email UX v1 discoverability", () => {
   it("runs manual Gmail sync from the email page and reports matched, duplicate, and skipped counts", () => {
     expect(emailActions).toContain('"use server"');
     expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
+    expect(emailActions).toContain("runAllGmailInboxSyncNow(actor)");
+    expect(emailActions).toContain("runGmailInboxSyncNow(actor, { connectionId: selectedAccount })");
     expect(emailActions).toContain('emailConnection: "gmail-synced"');
     expect(emailActions).toContain('syncStatus: "1"');
     expect(emailActions).toContain("messageSkips: String(result.skippedMessageFailures ?? 0)");
@@ -356,6 +359,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailActions).toContain("safeGmailSyncActionError(error)");
     expect(emailActions).toContain("redactSensitiveText(message)");
     expect(emailActions).toContain('syncError: safeGmailSyncActionError(error)');
+    expect(emailActions).toContain("syncOlderGmailInboxMessages({ actor, before, connectionId: selectedAccount })");
     expect(emailActions).toContain("syncOlderGmailInboxMessages({ actor, before })");
     expect(emailActions).toContain("refreshGmailInboxThread({ actor, threadId })");
     expect(emailActions).toContain("emailConnection: \"gmail-loaded-more\"");
@@ -750,6 +754,35 @@ describe("Email UX v1 discoverability", () => {
     expect(settingsPage).not.toContain("<h3>{provider.name}</h3>");
     expect(emailPage).toContain('href="/settings#email-connections"');
     expect(emailPage).toContain("Email settings");
+  });
+
+  it("renders Full Inbox threads as dense inbox rows instead of email cards", () => {
+    const rowCss = globalCss.match(/\.inbox-thread-row \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(emailPage).toContain('className="inbox-thread-list"');
+    expect(emailPage).toContain('"inbox-thread-row inbox-thread-row-selected"');
+    expect(emailPage).not.toContain("email-inbox-thread-row active");
+    expect(emailPage).toContain('className="inbox-thread-subject-line"');
+    expect(emailPage).toContain('className="inbox-thread-preview"');
+    expect(emailPage).toContain('className="email-inbox-thread-detail inbox-reader-pane"');
+    expect(emailPage).toContain("Suggested inbox:");
+    expect(emailPage).toContain("Unified inbox");
+    expect(emailPage).toContain("Connected Gmail and Google Workspace inboxes");
+    expect(emailPage).toContain("Sync all inboxes");
+    expect(emailPage).toContain("Sync this inbox");
+    expect(emailPage).toContain("item.tags.slice(0, 2)");
+    expect(emailPage).toContain("hiddenTagCount > 0");
+    expect(globalCss).toContain(".inbox-thread-row");
+    expect(globalCss).toContain("min-height: 46px");
+    expect(globalCss).toContain("max-height: 56px");
+    expect(globalCss).toContain("border-bottom: 1px solid var(--line)");
+    expect(globalCss).toContain(".inbox-thread-preview::before");
+    expect(rowCss).not.toContain("border-radius");
+    expect(rowCss).not.toContain("border: 1px solid");
+    expect(rowCss).not.toContain("background: var(--surface)");
+    expect(globalCss).not.toContain(".email-inbox-thread-row");
+    expect(globalCss).toContain(".inbox-thread-tag");
+    expect(globalCss).toContain("white-space: nowrap");
   });
 
   it("keeps provider cards resilient to long provider/account/status text", () => {

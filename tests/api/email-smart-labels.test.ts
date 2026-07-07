@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildEmailClassificationPrompt,
+  buildLocalEmailLabelSuggestions,
+  buildLocalEmailSmartClassification,
   createOpenAIEmailClassificationProvider,
   emailClassificationReadiness,
   emailSmartClassificationLabels,
@@ -223,20 +225,50 @@ describe("Smart Email Labels", () => {
     expect(classification?.categoryEvidence).toBeUndefined();
   });
 
+  it("generates deterministic local labels when AI refinement is unavailable", () => {
+    const classification = buildLocalEmailSmartClassification(
+      {
+        body: "Can you send updated pricing and contract timing today? We need the proposal for our demo.",
+        dealId: "deal_1",
+        direction: "INBOUND",
+        fromText: "Maya Buyer <maya@example.test>",
+        subject: "Pricing and contract timing"
+      },
+      { now: new Date("2030-01-04T12:00:00.000Z") }
+    );
+
+    expect(buildLocalEmailLabelSuggestions({
+      body: "Newsletter digest. Unsubscribe or view in browser.",
+      providerLabels: ["CATEGORY_PROMOTIONS"],
+      subject: "Vendor newsletter"
+    })).toEqual(expect.arrayContaining(["Automated", "No CRM link"]));
+    expect(classification).toMatchObject({
+      category: "CUSTOMER",
+      providerId: "local_rules",
+      providerName: "Local rules",
+      signals: expect.arrayContaining(["NEEDS_REPLY", "PRICING_QUOTE", "CONTRACT_LEGAL", "POSITIVE_BUYING_SIGNAL"]),
+      summary: expect.stringContaining("Local rules suggest")
+    });
+    expect(classification.evidence.join(" ")).not.toContain("raw-secret-token");
+  });
+
   it("renders smart labels in Inbox without replacing manual email workflows", () => {
     expect(emailPage).toContain('import { EmailSmartLabelPanel } from "@/components/email-smart-label-panel"');
     expect(emailPage).toContain("emailClassificationReadiness(process.env)");
     expect(emailPage).toContain("Relationship Inbox Queue");
     expect(emailPage).toContain("<EmailSmartLabelPanel");
     expect(emailPage).toContain("readEmailSmartClassification(emailLog)");
-    expect(emailSmartLabelPanel).toContain("Classify with AI");
-    expect(emailSmartLabelPanel).toContain("Refresh labels");
+    expect(emailPage).toContain("buildLocalEmailSmartClassification(emailLog)");
+    expect(emailPage).toContain("buildLocalEmailLabelSuggestions(emailLog)");
+    expect(emailSmartLabelPanel).toContain("Local labels suggested");
+    expect(emailSmartLabelPanel).toContain("Refine with AI");
+    expect(emailSmartLabelPanel).toContain("AI refinement is unavailable");
     expect(emailSmartLabelPanel).toContain("Why this was labeled");
     expect(emailSmartLabelPanel).toContain("Labels do not create tasks or change CRM records");
     expect(emailActions).toContain("classifyEmailLogAction");
     expect(emailActions).toContain("classifyEmailLog(actor, { emailLogId })");
     expect(currentStatus).toContain("Smart Email Labels");
-    expect(currentStatus).toContain("do not send email or create activities, notes, leads, or profile facts");
+    expect(currentStatus).toContain("do not send email, mutate Gmail labels, or create activities, notes, leads, CRM links, or profile facts");
   });
 });
 

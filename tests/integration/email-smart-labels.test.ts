@@ -148,35 +148,80 @@ describe("Smart Email Labels service", () => {
     await expect(mutationCounts(fx)).resolves.toEqual(beforeCounts);
   });
 
-  it("fails closed when no provider is configured and leaves saved labels empty", async () => {
+  it("falls back to local labels when no provider is configured and mutates only smart-label metadata", async () => {
     const fx = currentFixture();
     const emailLog = await crm.createEmailLog(fx.actorA, {
-      body: "Can you follow up?",
+      body: "Can you follow up with pricing for the demo proposal?",
       direction: "INBOUND",
       fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
       occurredAt: "2030-01-05T12:00:00.000Z",
       personId: fx.recordsA.person.id,
-      subject: "Follow up",
+      subject: "Follow up on pricing",
       toText: "sales@example.test"
     });
+    const beforeCounts = await mutationCounts(fx);
 
     await expect(
-      crm.classifyEmailLog(
-        fx.actorA,
-        { emailLogId: emailLog.id },
-        { env: { OPENAI_API_KEY: undefined } }
-      )
-    ).rejects.toMatchObject({
-      code: "AI_EMAIL_CLASSIFICATION_NOT_CONFIGURED",
-      status: 503
+      crm.classifyEmailLog(fx.actorA, { emailLogId: emailLog.id }, { env: { OPENAI_API_KEY: undefined } })
+    ).resolves.toMatchObject({
+      category: "CUSTOMER",
+      providerId: "local_rules",
+      signals: expect.arrayContaining(["NEEDS_REPLY", "PRICING_QUOTE", "FOLLOW_UP_NEEDED"]),
+      summary: expect.stringContaining("Local rules suggest")
     });
 
     const saved = await fx.prisma.emailLog.findFirstOrThrow({
       where: { id: emailLog.id, workspaceId: fx.workspaceA.id }
     });
-    expect(saved.smartLabelJson).toBeNull();
-    expect(saved.smartLabelGeneratedAt).toBeNull();
-    expect(saved.smartLabelProvider).toBeNull();
+    expect(saved.smartLabelGeneratedAt).toBeTruthy();
+    expect(saved.smartLabelProvider).toBe("local_rules");
+    expect(crm.readEmailSmartClassification(saved)).toMatchObject({
+      providerId: "local_rules",
+      providerName: "Local rules",
+      signals: expect.arrayContaining(["NEEDS_REPLY", "PRICING_QUOTE", "FOLLOW_UP_NEEDED"])
+    });
+    await expect(mutationCounts(fx)).resolves.toEqual(beforeCounts);
+  });
+
+  it("keeps local labels when the AI provider request fails", async () => {
+    const fx = currentFixture();
+    const emailLog = await crm.createEmailLog(fx.actorA, {
+      body: "This is urgent. Can you send contract terms today?",
+      dealId: fx.recordsA.deal.id,
+      direction: "INBOUND",
+      fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
+      occurredAt: "2030-01-05T12:00:00.000Z",
+      subject: "Urgent contract terms",
+      toText: "sales@example.test"
+    });
+    const beforeCounts = await mutationCounts(fx);
+
+    const classification = await crm.classifyEmailLog(
+      fx.actorA,
+      { emailLogId: emailLog.id },
+      {
+        provider: {
+          id: "test-provider",
+          name: "Test provider",
+          async classify() {
+            throw new Error("provider failed with raw-secret-token");
+          }
+        }
+      }
+    );
+
+    expect(classification).toMatchObject({
+      category: "CUSTOMER",
+      providerId: "local_rules",
+      signals: expect.arrayContaining(["URGENT", "NEEDS_REPLY", "CONTRACT_LEGAL"])
+    });
+    expect(JSON.stringify(classification)).not.toContain("raw-secret-token");
+    const saved = await fx.prisma.emailLog.findFirstOrThrow({
+      where: { id: emailLog.id, workspaceId: fx.workspaceA.id }
+    });
+    expect(saved.smartLabelProvider).toBe("local_rules");
+    expect(JSON.stringify(saved.smartLabelJson)).not.toContain("raw-secret-token");
+    await expect(mutationCounts(fx)).resolves.toEqual(beforeCounts);
   });
 });
 

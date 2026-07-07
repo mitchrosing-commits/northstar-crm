@@ -13,6 +13,7 @@ import {
   disconnectEmailConnection,
   generateEmailReplyDraft,
   refreshGmailInboxThread,
+  runAllGmailInboxSyncNow,
   runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog,
   syncOlderGmailInboxMessages,
@@ -51,18 +52,25 @@ export type GenerateEmailReplyDraftActionState = {
   warnings?: string[];
 };
 
-export async function syncGmailInboxFromEmailPageAction() {
+export async function syncGmailInboxFromEmailPageAction(formData?: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
+  const selectedAccount = normalizeInboxAccountSelection(formData?.get("account"));
   let result: Awaited<ReturnType<typeof runGmailInboxSyncNow>>;
 
   try {
-    result = await runGmailInboxSyncNow(actor);
+    result =
+      selectedAccount === "all"
+        ? await runAllGmailInboxSyncNow(actor)
+        : selectedAccount
+          ? await runGmailInboxSyncNow(actor, { connectionId: selectedAccount })
+          : await runGmailInboxSyncNow(actor);
   } catch (error) {
     const params = new URLSearchParams({
       emailConnection: "gmail-sync-error",
       syncError: safeGmailSyncActionError(error),
       syncStatus: "1"
     });
+    addSelectedInboxAccountParam(params, selectedAccount);
     redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
   }
 
@@ -76,6 +84,7 @@ export async function syncGmailInboxFromEmailPageAction() {
     total: String(result.totalFetched)
   });
   if (result.syncWarning) params.set("syncWarning", result.syncWarning);
+  addSelectedInboxAccountParam(params, selectedAccount);
   redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
 }
 
@@ -111,14 +120,19 @@ function isSecretLikeSyncErrorValue(value: string) {
 export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData) {
   const before = String(formData.get("before") ?? "").trim();
   const threadId = String(formData.get("threadId") ?? "").trim();
+  const selectedAccount = normalizeInboxAccountSelection(formData.get("account"));
   const { actor } = await getCurrentWorkspaceContext();
   let result: Awaited<ReturnType<typeof syncOlderGmailInboxMessages>>;
 
   try {
-    result = await syncOlderGmailInboxMessages({ actor, before });
+    result =
+      selectedAccount && selectedAccount !== "all"
+        ? await syncOlderGmailInboxMessages({ actor, before, connectionId: selectedAccount })
+        : await syncOlderGmailInboxMessages({ actor, before });
   } catch {
     const params = new URLSearchParams({ emailConnection: "gmail-load-more-error" });
     if (threadId) params.set("thread", threadId);
+    addSelectedInboxAccountParam(params, selectedAccount);
     redirect(`/email?${params.toString()}` as Route);
   }
 
@@ -130,11 +144,13 @@ export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData)
     total: String(result.totalFetched)
   });
   if (threadId) params.set("thread", threadId);
+  addSelectedInboxAccountParam(params, selectedAccount);
   redirect(`/email?${params.toString()}` as Route);
 }
 
 export async function refreshGmailThreadFromEmailPageAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
+  const selectedAccount = normalizeInboxAccountSelection(formData.get("account"));
   const { actor } = await getCurrentWorkspaceContext();
   let result: Awaited<ReturnType<typeof refreshGmailInboxThread>>;
 
@@ -143,6 +159,7 @@ export async function refreshGmailThreadFromEmailPageAction(formData: FormData) 
   } catch {
     const params = new URLSearchParams({ emailConnection: "gmail-thread-refresh-error" });
     if (threadId) params.set("thread", threadId);
+    addSelectedInboxAccountParam(params, selectedAccount);
     redirect(`/email?${params.toString()}` as Route);
   }
 
@@ -154,6 +171,7 @@ export async function refreshGmailThreadFromEmailPageAction(formData: FormData) 
     thread: threadId,
     total: String(result.totalFetched)
   });
+  addSelectedInboxAccountParam(params, selectedAccount);
   redirect(`/email?${params.toString()}` as Route);
 }
 
@@ -227,17 +245,31 @@ export async function sendGmailReplyFromEmailPageAction(formData: FormData) {
 
 export async function disconnectEmailProviderFromEmailPageAction(formData: FormData) {
   const provider = String(formData.get("provider") ?? "").trim();
+  const connectionId = normalizeInboxAccountSelection(formData.get("connectionId"));
   let status: "gmail-disconnected" | "microsoft-disconnected";
 
   try {
     const { actor } = await getCurrentWorkspaceContext();
-    const result = await disconnectEmailConnection(actor, provider);
+    const result =
+      connectionId && connectionId !== "all"
+        ? await disconnectEmailConnection(actor, provider, connectionId)
+        : await disconnectEmailConnection(actor, provider);
     status = result.provider === "MICROSOFT_365" ? "microsoft-disconnected" : "gmail-disconnected";
   } catch {
     redirect("/email?emailConnection=email-disconnect-error" as Route);
   }
 
   redirect(`/email?emailConnection=${status}` as Route);
+}
+
+function normalizeInboxAccountSelection(value: unknown) {
+  const selected = typeof value === "string" ? value.trim() : "";
+  if (!selected || selected === "all") return selected === "all" ? "all" : null;
+  return selected;
+}
+
+function addSelectedInboxAccountParam(params: URLSearchParams, selectedAccount: string | null) {
+  if (selectedAccount) params.set("account", selectedAccount);
 }
 
 export async function generateEmailReplyDraftAction(
@@ -283,11 +315,14 @@ export async function classifyEmailLogAction(
     return {
       classification,
       emailLogId,
-      message: "Smart labels generated. Review them before acting."
+      message:
+        classification.providerId === "local_rules"
+          ? "AI refinement is unavailable right now. Northstar generated local labels instead."
+          : "Smart labels generated. Review them before acting."
     };
   } catch (error) {
     if (error instanceof ApiError) {
-      return { emailLogId, error: redactSensitiveText(error.message) };
+      return { emailLogId, error: "Smart Email Labels could not be generated. Local suggestions remain available when the email has enough context." };
     }
 
     return { emailLogId, error: "Smart Email Labels could not be generated." };

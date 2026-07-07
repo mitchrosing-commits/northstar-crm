@@ -199,7 +199,7 @@ test.describe("Northstar CRM browser smoke", () => {
       if (path === "/email") {
         await expect(page.getByRole("link", { name: "Current section: Inbox" })).toBeVisible();
         await expect(page.getByRole("heading", { exact: true, name: "Inbox" })).toBeVisible();
-        await expect(page.getByText(/Connect Gmail to sync work emails|work-prioritized view of synced Gmail messages/)).toBeVisible();
+        await expect(page.getByText(/Connect Gmail(?: or Google Workspace)? to sync work emails|work-prioritized view of synced Gmail messages/)).toBeVisible();
         const advancedDiagnostics = page.locator("details.email-advanced-diagnostics").first();
         await expect(advancedDiagnostics).toBeVisible();
         await advancedDiagnostics.locator("summary").click();

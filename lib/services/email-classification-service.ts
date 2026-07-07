@@ -103,6 +103,24 @@ type ClassifyEmailLogOptions = {
   provider?: EmailClassificationProvider | null;
 };
 
+export type EmailLocalClassificationInput = {
+  body?: string | null;
+  deal?: unknown | null;
+  dealId?: string | null;
+  direction?: string | null;
+  fromText?: string | null;
+  lead?: unknown | null;
+  leadId?: string | null;
+  organization?: unknown | null;
+  organizationId?: string | null;
+  person?: unknown | null;
+  personId?: string | null;
+  providerLabels?: Prisma.JsonValue | null;
+  providerSnippet?: string | null;
+  subject?: string | null;
+  toText?: string | null;
+};
+
 const defaultEmailClassificationModel = "gpt-5.5";
 const maxClassificationBodyChars = 2500;
 const maxContextItemChars = 420;
@@ -134,6 +152,89 @@ export function emailClassificationReadiness(env: EnvInput = process.env): Email
   };
 }
 
+export function buildLocalEmailSmartClassification(
+  email: EmailLocalClassificationInput,
+  options: { now?: Date } = {}
+): EmailSmartClassification {
+  const labels = buildLocalEmailLabelSuggestions(email);
+  const text = localEmailSearchText(email);
+  const lower = text.toLowerCase();
+  const linkedToCrm = emailLinkedToCrm(email);
+  const automated = localEmailIsAutomated(email, lower);
+  const personal = !linkedToCrm && hasAny(lower, ["family", "personal", "birthday", "dinner", "weekend", "vacation"]);
+  const signals: EmailSmartSignal[] = [];
+
+  if (hasAny(lower, ["urgent", "asap", "today", "deadline", "blocked", "escalat"])) signals.push("URGENT");
+  if (String(email.direction ?? "").toUpperCase() === "INBOUND" && (localEmailHasQuestion(text) || hasAny(lower, ["can you", "could you", "please", "let me know", "thoughts?", "available?"]))) {
+    signals.push("NEEDS_REPLY");
+  }
+  if (hasAny(lower, ["waiting on customer", "waiting for customer", "pending customer", "customer owes"])) signals.push("WAITING_ON_CUSTOMER");
+  if (hasAny(lower, ["pricing", "price", "quote", "proposal"])) signals.push("PRICING_QUOTE");
+  if (hasAny(lower, ["contract", "msa", "sow", "legal", "terms"])) signals.push("CONTRACT_LEGAL");
+  if (hasAny(lower, ["objection", "concern", "issue", "blocked", "unhappy", "delay"])) signals.push("OBJECTION_CONCERN");
+  if (hasAny(lower, ["interested", "buying", "demo", "trial", "move forward", "approved"])) signals.push("POSITIVE_BUYING_SIGNAL");
+  if (hasAny(lower, ["risk", "churn", "cancel", "unhappy", "escalat"])) signals.push("RELATIONSHIP_RISK");
+  if (hasAny(lower, ["follow up", "follow-up", "next step", "circle back", "check in"])) signals.push("FOLLOW_UP_NEEDED");
+  if (!linkedToCrm && hasAny(lower, ["demo", "pricing", "interested", "trial", "intro", "proposal"])) signals.push("POTENTIAL_LEAD");
+
+  const category: EmailSmartCategory = personal
+    ? "PERSONAL"
+    : automated
+      ? "NOT_CRM_RELEVANT"
+      : linkedToCrm
+        ? "CUSTOMER"
+        : signals.includes("POTENTIAL_LEAD") || signals.includes("POSITIVE_BUYING_SIGNAL") || signals.includes("PRICING_QUOTE")
+          ? "PROSPECT"
+          : "UNKNOWN";
+  const uniqueSignals = Array.from(new Set(signals)).slice(0, 6);
+  const evidence = localEvidence(email, labels, uniqueSignals);
+  const categoryEvidence = localCategoryEvidence(category, email, linkedToCrm, automated, personal);
+  const signalEvidence = uniqueSignals.map((signal) => localSignalEvidence(signal, email, lower));
+
+  return {
+    category,
+    ...(categoryEvidence ? { categoryEvidence } : {}),
+    cautions: [
+      ...defaultCautions,
+      "AI refinement was unavailable or not requested; these labels were generated with deterministic local rules."
+    ],
+    confidence: localConfidence(category, uniqueSignals, linkedToCrm),
+    evidence,
+    generatedAt: options.now ?? new Date(),
+    providerId: "local_rules",
+    providerName: "Local rules",
+    signalEvidence,
+    signals: uniqueSignals,
+    summary: localClassificationSummary(labels, category, uniqueSignals)
+  };
+}
+
+export function buildLocalEmailLabelSuggestions(email: EmailLocalClassificationInput) {
+  const text = localEmailSearchText(email);
+  const lower = text.toLowerCase();
+  const linkedToCrm = emailLinkedToCrm(email);
+  const automated = localEmailIsAutomated(email, lower);
+  const personal = !linkedToCrm && hasAny(lower, ["family", "personal", "birthday", "dinner", "weekend", "vacation"]);
+  const labels = new Set<string>();
+
+  if (String(email.direction ?? "").toUpperCase() === "INBOUND" && (localEmailHasQuestion(text) || hasAny(lower, ["can you", "could you", "please", "let me know", "thoughts?", "available?"]))) labels.add("Needs reply");
+  if (hasAny(lower, ["follow up", "follow-up", "next step", "circle back", "check in"])) labels.add("Follow-up");
+  if (hasAny(lower, ["pricing", "price", "quote", "proposal"])) labels.add("Pricing");
+  if (hasAny(lower, ["contract", "msa", "sow", "legal", "terms"])) labels.add("Contract");
+  if (hasAny(lower, ["meeting", "calendar", "demo", "call", "zoom", "agenda"])) labels.add("Meeting");
+  if (hasAny(lower, ["risk", "concern", "blocked", "unhappy", "delay", "issue", "cancel", "churn", "escalat"])) labels.add("Risk");
+  if (hasAny(lower, ["demo", "trial", "interested", "buying", "proposal", "intro"])) labels.add(linkedToCrm ? "Opportunity" : "Lead");
+  if (linkedToCrm) labels.add("CRM linked");
+  if (!linkedToCrm) labels.add("No CRM link");
+  if (linkedToCrm) labels.add("Customer");
+  if (!linkedToCrm && labels.has("Lead")) labels.add("Prospect");
+  if (automated) labels.add("Automated");
+  if (personal) labels.add("Personal / Low Priority");
+  if (!automated && !personal && (linkedToCrm || labels.size > 1)) labels.add("Work");
+
+  return [...labels].slice(0, 8);
+}
+
 export async function classifyEmailLog(
   actor: WorkspaceActor,
   input: { emailLogId: unknown },
@@ -143,19 +244,30 @@ export async function classifyEmailLog(
   const emailLogId = normalizeEmailLogId(input.emailLogId);
   const context = await buildEmailReplyContext(actor, emailLogId);
   const readiness = emailClassificationReadiness(options.env);
+  const generatedAt = options.now ?? new Date();
 
   if (!readiness.configured && !options.provider) {
-    throw new ApiError("AI_EMAIL_CLASSIFICATION_NOT_CONFIGURED", readiness.message, 503);
+    const localClassification = buildLocalEmailSmartClassification(emailLocalClassificationInputFromContext(context), { now: generatedAt });
+    await saveEmailSmartClassification(emailLogId, localClassification, generatedAt, "local_rules");
+    return localClassification;
   }
 
   const provider = options.provider ?? createOpenAIEmailClassificationProvider(options.env, options.fetchImpl);
   if (!provider) {
-    throw new ApiError("AI_EMAIL_CLASSIFICATION_NOT_CONFIGURED", readiness.message, 503);
+    const localClassification = buildLocalEmailSmartClassification(emailLocalClassificationInputFromContext(context), { now: generatedAt });
+    await saveEmailSmartClassification(emailLogId, localClassification, generatedAt, "local_rules");
+    return localClassification;
   }
 
   const prompt = buildEmailClassificationPrompt({ context });
-  const generated = normalizeProviderOutput(await provider.classify({ context, prompt }));
-  const generatedAt = options.now ?? new Date();
+  let generated: EmailSmartClassification;
+  try {
+    generated = normalizeProviderOutput(await provider.classify({ context, prompt }));
+  } catch {
+    const localClassification = buildLocalEmailSmartClassification(emailLocalClassificationInputFromContext(context), { now: generatedAt });
+    await saveEmailSmartClassification(emailLogId, localClassification, generatedAt, "local_rules");
+    return localClassification;
+  }
   const classification = {
     ...generated,
     generatedAt,
@@ -163,16 +275,25 @@ export async function classifyEmailLog(
     providerName: provider.name
   };
 
-  await prisma.emailLog.update({
+  await saveEmailSmartClassification(emailLogId, classification, generatedAt, provider.id);
+
+  return classification;
+}
+
+function saveEmailSmartClassification(
+  emailLogId: string,
+  classification: EmailSmartClassification,
+  generatedAt: Date,
+  providerId: string
+) {
+  return prisma.emailLog.update({
     where: { id: emailLogId },
     data: {
       smartLabelGeneratedAt: generatedAt,
       smartLabelJson: classificationToJson(classification),
-      smartLabelProvider: provider.id
+      smartLabelProvider: providerId
     }
   });
-
-  return classification;
 }
 
 export function buildEmailClassificationPrompt({ context }: { context: EmailReplyContext }) {
@@ -260,7 +381,12 @@ export function readEmailSmartClassification(emailLog: {
     ...parsed,
     generatedAt: generatedAt && !Number.isNaN(generatedAt.getTime()) ? generatedAt : undefined,
     providerId: emailLog.smartLabelProvider ?? undefined,
-    providerName: emailLog.smartLabelProvider === "openai" ? "OpenAI" : undefined
+    providerName:
+      emailLog.smartLabelProvider === "openai"
+        ? "OpenAI"
+        : emailLog.smartLabelProvider === "local_rules"
+          ? "Local rules"
+          : undefined
   };
 }
 
@@ -398,6 +524,147 @@ function formatClassificationContext(context: EmailReplyContext) {
       return items.length ? `${title}:\n${items.map((item) => `- ${truncate(item, maxContextItemChars)}`).join("\n")}` : `${title}: none available`;
     })
     .join("\n\n");
+}
+
+function emailLocalClassificationInputFromContext(context: EmailReplyContext): EmailLocalClassificationInput {
+  return {
+    body: context.email.body,
+    deal: context.deal,
+    direction: context.email.direction,
+    fromText: context.email.fromText,
+    lead: context.lead,
+    organization: context.organization,
+    person: context.contact,
+    providerSnippet: null,
+    subject: context.email.subject,
+    toText: context.email.toText
+  };
+}
+
+function localEmailSearchText(email: EmailLocalClassificationInput) {
+  return [email.subject, email.fromText, email.toText, email.providerSnippet, email.body].filter(Boolean).join(" ");
+}
+
+function emailLinkedToCrm(email: EmailLocalClassificationInput) {
+  return Boolean(
+    email.personId ||
+      email.organizationId ||
+      email.dealId ||
+      email.leadId ||
+      email.person ||
+      email.organization ||
+      email.deal ||
+      email.lead
+  );
+}
+
+function localEmailIsAutomated(email: EmailLocalClassificationInput, lower: string) {
+  const labels = Array.isArray(email.providerLabels) ? email.providerLabels.filter((item): item is string => typeof item === "string") : [];
+  return (
+    hasAny(lower, [
+      "unsubscribe",
+      "newsletter",
+      "view in browser",
+      "marketing",
+      "promotion",
+      "webinar",
+      "digest",
+      "no-reply",
+      "noreply",
+      "notification"
+    ]) || labels.some((label) => ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"].includes(label))
+  );
+}
+
+function localEmailHasQuestion(value: string) {
+  return /\?|\b(can|could|would|will|are|is|do|does|did|when|what|where|who|how)\b[^.!?]{0,120}\?/i.test(value);
+}
+
+function localEvidence(email: EmailLocalClassificationInput, labels: string[], signals: EmailSmartSignal[]) {
+  const source = compactLine(email.body || email.providerSnippet || email.subject || "Stored email metadata was available.");
+  const evidence = [
+    labels.length ? `Local labels: ${labels.join(", ")}.` : "",
+    signals.length ? `Local signals: ${signals.map(emailSmartSignalLabel).join(", ")}.` : "",
+    source ? `Source text reviewed: ${truncate(source, maxStructuredEvidenceExcerptChars)}` : ""
+  ];
+  return dedupeStrings(evidence).slice(0, 4);
+}
+
+function localCategoryEvidence(
+  category: EmailSmartCategory,
+  email: EmailLocalClassificationInput,
+  linkedToCrm: boolean,
+  automated: boolean,
+  personal: boolean
+): EmailSmartCategoryEvidence | undefined {
+  if (category === "UNKNOWN") return undefined;
+  const reason = automated
+    ? "Local rules detected newsletter, notification, or promotional patterns."
+    : personal
+      ? "Local rules found personal or low-work signals without CRM linkage."
+      : linkedToCrm
+        ? "The email is linked to an existing CRM record."
+        : "Local rules found prospect or opportunity language.";
+  const excerpt = compactLine(email.body || email.providerSnippet || email.subject || "");
+  return {
+    category,
+    confidence: localConfidence(category, [], linkedToCrm),
+    excerpts: excerpt ? [truncate(excerpt, maxStructuredEvidenceExcerptChars)] : [],
+    reason
+  };
+}
+
+function localSignalEvidence(signal: EmailSmartSignal, email: EmailLocalClassificationInput, lower: string): EmailSmartSignalEvidence {
+  const source = compactLine(email.body || email.providerSnippet || email.subject || "");
+  return {
+    signal,
+    excerpts: source ? [truncate(source, maxStructuredEvidenceExcerptChars)] : [],
+    reason: localSignalReason(signal),
+    severity: signal === "URGENT" || signal === "RELATIONSHIP_RISK" ? "high" : signal === "NEEDS_REPLY" ? "medium" : "low",
+    confidence: hasAny(lower, localSignalNeedles(signal)) ? 0.7 : 0.55
+  };
+}
+
+function localSignalReason(signal: EmailSmartSignal) {
+  if (signal === "URGENT") return "Local rules found urgency or deadline language.";
+  if (signal === "NEEDS_REPLY") return "Local rules found an inbound question or action request.";
+  if (signal === "WAITING_ON_CUSTOMER") return "Local rules found waiting-on-customer language.";
+  if (signal === "PRICING_QUOTE") return "Local rules found pricing, quote, or proposal language.";
+  if (signal === "CONTRACT_LEGAL") return "Local rules found contract, legal, MSA, SOW, or terms language.";
+  if (signal === "OBJECTION_CONCERN") return "Local rules found concern, objection, delay, or issue language.";
+  if (signal === "POSITIVE_BUYING_SIGNAL") return "Local rules found buying, demo, approval, or move-forward language.";
+  if (signal === "RELATIONSHIP_RISK") return "Local rules found risk, churn, cancellation, or escalation language.";
+  if (signal === "FOLLOW_UP_NEEDED") return "Local rules found follow-up or next-step language.";
+  return "Local rules found potential lead language without a CRM link.";
+}
+
+function localSignalNeedles(signal: EmailSmartSignal) {
+  if (signal === "URGENT") return ["urgent", "asap", "today", "deadline", "blocked", "escalat"];
+  if (signal === "NEEDS_REPLY") return ["can you", "could you", "please", "let me know", "thoughts?", "available?"];
+  if (signal === "WAITING_ON_CUSTOMER") return ["waiting on customer", "waiting for customer", "pending customer", "customer owes"];
+  if (signal === "PRICING_QUOTE") return ["pricing", "price", "quote", "proposal"];
+  if (signal === "CONTRACT_LEGAL") return ["contract", "msa", "sow", "legal", "terms"];
+  if (signal === "OBJECTION_CONCERN") return ["objection", "concern", "issue", "blocked", "unhappy", "delay"];
+  if (signal === "POSITIVE_BUYING_SIGNAL") return ["interested", "buying", "demo", "trial", "move forward", "approved"];
+  if (signal === "RELATIONSHIP_RISK") return ["risk", "churn", "cancel", "unhappy", "escalat"];
+  if (signal === "FOLLOW_UP_NEEDED") return ["follow up", "follow-up", "next step", "circle back", "check in"];
+  return ["demo", "pricing", "interested", "trial", "intro", "proposal"];
+}
+
+function localConfidence(category: EmailSmartCategory, signals: EmailSmartSignal[], linkedToCrm: boolean) {
+  if (linkedToCrm && signals.length >= 2) return 0.72;
+  if (signals.length >= 2) return 0.64;
+  if (linkedToCrm || category !== "UNKNOWN") return 0.56;
+  return 0.42;
+}
+
+function localClassificationSummary(labels: string[], category: EmailSmartCategory, signals: EmailSmartSignal[]) {
+  if (labels.length > 0) return `Local rules suggest ${labels.slice(0, 5).join(", ")}.`;
+  return defaultClassificationSummary(category, signals);
+}
+
+function hasAny(value: string, needles: string[]) {
+  return needles.some((needle) => value.includes(needle));
 }
 
 function normalizeEmailLogId(value: unknown) {

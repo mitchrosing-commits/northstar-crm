@@ -12,9 +12,10 @@ type CliOptions = {
 const requestedOptions = readCliOptions(process.argv.slice(2));
 
 async function main(options: CliOptions) {
+  const actorEmail = normalizeDiagnosticActorEmail(options.actorEmail);
   const [user, workspace] = await Promise.all([
     prisma.user.findFirst({
-      where: { email: options.actorEmail, deletedAt: null },
+      where: { email: actorEmail, deletedAt: null },
       select: { id: true }
     }),
     prisma.workspace.findFirst({
@@ -71,6 +72,10 @@ function readCliOptions(args: string[]): CliOptions {
   }
 
   return options;
+}
+
+function normalizeDiagnosticActorEmail(value: string) {
+  return value.trim().toLowerCase();
 }
 
 function safeDiagnosticRequest(options: CliOptions) {

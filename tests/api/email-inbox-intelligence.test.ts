@@ -55,6 +55,43 @@ describe("work inbox intelligence", () => {
     expect(inbox.items[0].categories).not.toContain("priority");
   });
 
+  it("does not penalize .info and other custom-domain business senders by TLD", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Can you send the updated proposal and contract today? We are ready to move forward after the demo.",
+          fromText: "Sales Lead <sales@veridian.info>",
+          linkedRecordLabel: "Organization: Veridian",
+          subject: "Proposal and contract timing"
+        }),
+        thread({
+          body: "Can we review pricing after the pilot?",
+          fromText: "Founder <founder@startup.ai>",
+          id: "gmail_thread_ai",
+          subject: "Pilot pricing question"
+        })
+      ]
+    });
+
+    const infoItem = inbox.items.find((item) => item.thread.id === "gmail_thread_1");
+    const aiItem = inbox.items.find((item) => item.thread.id === "gmail_thread_ai");
+
+    expect(infoItem).toMatchObject({
+      categories: expect.arrayContaining(["priority", "work", "crm-linked", "leads-opportunities"]),
+      priorityLevel: "high",
+      relatedRecordLabel: "Organization: Veridian",
+      tags: expect.arrayContaining(["Needs reply", "Pricing", "Contract", "CRM linked"])
+    });
+    expect(infoItem?.categories).not.toContain("personal-low-priority");
+    expect(infoItem?.categories).not.toContain("automated-marketing");
+    expect(aiItem).toMatchObject({
+      categories: expect.arrayContaining(["work", "needs-reply", "leads-opportunities"]),
+      tags: expect.arrayContaining(["Needs reply", "Pricing", "No CRM link"])
+    });
+    expect(aiItem?.categories).not.toContain("personal-low-priority");
+    expect(aiItem?.categories).not.toContain("automated-marketing");
+  });
+
   it("keeps personal low-priority mail out of work tabs", () => {
     const inbox = buildWorkInbox({
       threads: [
@@ -100,6 +137,12 @@ describe("work inbox intelligence", () => {
 
     expect(filtered.visibleItems).toHaveLength(1);
     expect(filtered.visibleItems[0].thread.subject).toBe("Contract question");
+    expect(filtered.visibleItems[0].href).toContain("inbox=priority");
+    expect(filtered.visibleItems[0].href).toContain("thread=gmail_thread_1");
+    expect(filtered.visibleItems[0].href).toContain("q=contract");
+    expect(filtered.visibleItems[0].href).toContain("priority=high");
+    expect(filtered.visibleItems[0].href).toContain("crm=linked");
+    expect(filtered.visibleItems[0].href).toContain("sort=recent");
     expect(filtered.tabs.find((tab) => tab.id === "all")?.href).toContain("q=contract");
     expect(filtered.tabs.find((tab) => tab.id === "all")?.href).toContain("priority=high");
     expect(filtered.tabs.find((tab) => tab.id === "all")?.href).toContain("crm=linked");
@@ -198,6 +241,9 @@ function thread({
   } as EmailInboxThreadSummary["messages"][number];
 
   return {
+    accountEmail: "me@example.test",
+    emailConnectionId: "email_connection_1",
+    emailConnectionRef: "nection_1",
     id,
     isUnread: true,
     latestAt: message.occurredAt,

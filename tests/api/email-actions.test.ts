@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   generateEmailReplyDraft: vi.fn(),
   getCurrentWorkspaceContext: vi.fn(),
   refreshGmailInboxThread: vi.fn(),
+  runAllGmailInboxSyncNow: vi.fn(),
   runGmailInboxSyncNow: vi.fn(),
   sendGmailReplyFromEmailLog: vi.fn(),
   redirect: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/lib/services/crm", () => ({
   disconnectEmailConnection: mocks.disconnectEmailConnection,
   generateEmailReplyDraft: mocks.generateEmailReplyDraft,
   refreshGmailInboxThread: mocks.refreshGmailInboxThread,
+  runAllGmailInboxSyncNow: mocks.runAllGmailInboxSyncNow,
   runGmailInboxSyncNow: mocks.runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog: mocks.sendGmailReplyFromEmailLog,
   syncOlderGmailInboxMessages: mocks.syncOlderGmailInboxMessages,
@@ -102,6 +104,45 @@ describe("email sync server actions", () => {
 
     expect(mocks.runGmailInboxSyncNow).toHaveBeenCalledWith(actor);
     expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it("syncs all connected Gmail inboxes when unified inbox is selected", async () => {
+    mocks.runAllGmailInboxSyncNow.mockResolvedValue({
+      created: 5,
+      skippedDuplicates: 2,
+      skippedUnmatched: 0,
+      totalFetched: 7,
+      unmatchedPreviews: []
+    });
+    const formData = new FormData();
+    formData.set("account", "all");
+
+    await expect(syncGmailInboxFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?created=5&duplicates=2&emailConnection=gmail-synced&messageSkips=0&skipped=0&syncStatus=1&total=7&account=all#gmail-sync-progress"
+    });
+
+    expect(mocks.runAllGmailInboxSyncNow).toHaveBeenCalledWith(actor);
+    expect(mocks.runGmailInboxSyncNow).not.toHaveBeenCalled();
+  });
+
+  it("syncs only the selected Gmail inbox account from the email page", async () => {
+    mocks.runGmailInboxSyncNow.mockResolvedValue({
+      created: 1,
+      skippedDuplicates: 0,
+      skippedUnmatched: 0,
+      totalFetched: 1,
+      unmatchedPreviews: []
+    });
+    const formData = new FormData();
+    formData.set("account", "email_connection_selected");
+
+    await expect(syncGmailInboxFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?created=1&duplicates=0&emailConnection=gmail-synced&messageSkips=0&skipped=0&syncStatus=1&total=1&account=email_connection_selected#gmail-sync-progress"
+    });
+
+    expect(mocks.runGmailInboxSyncNow).toHaveBeenCalledWith(actor, { connectionId: "email_connection_selected" });
   });
 
   it("redirects Full Inbox Gmail sync warnings with skipped-message counts", async () => {
@@ -292,6 +333,27 @@ describe("email sync server actions", () => {
     expect(mocks.disconnectEmailConnection).toHaveBeenCalledWith(actor, "GOOGLE_WORKSPACE");
   });
 
+  it("disconnects only the selected Gmail inbox connection when provided", async () => {
+    mocks.disconnectEmailConnection.mockResolvedValue({
+      accountEmail: "alex@example.test",
+      provider: "GOOGLE_WORKSPACE"
+    });
+    const formData = new FormData();
+    formData.set("provider", "GOOGLE_WORKSPACE");
+    formData.set("connectionId", "email_connection_selected");
+
+    await expect(disconnectEmailProviderFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?emailConnection=gmail-disconnected"
+    });
+
+    expect(mocks.disconnectEmailConnection).toHaveBeenCalledWith(
+      actor,
+      "GOOGLE_WORKSPACE",
+      "email_connection_selected"
+    );
+  });
+
   it("redirects email disconnect failures without leaking provider details", async () => {
     mocks.disconnectEmailConnection.mockRejectedValue(new Error("raw-oauth-token"));
     const formData = new FormData();
@@ -402,6 +464,30 @@ describe("email sync server actions", () => {
     await expect(classifyEmailLogAction({}, formData)).resolves.toEqual({
       emailLogId: "email_log_2",
       error: "Smart Email Labels could not be generated."
+    });
+  });
+
+  it("reports local smart-label fallback as a graceful refinement notice", async () => {
+    const generatedAt = new Date("2030-01-04T12:00:00.000Z");
+    mocks.classifyEmailLog.mockResolvedValue({
+      category: "PROSPECT",
+      cautions: ["Suggested label only."],
+      confidence: 0.64,
+      evidence: ["Local labels: Needs reply, Pricing, No CRM link."],
+      generatedAt,
+      providerId: "local_rules",
+      providerName: "Local rules",
+      signalEvidence: [],
+      signals: ["NEEDS_REPLY", "PRICING_QUOTE", "POTENTIAL_LEAD"],
+      summary: "Local rules suggest Needs reply, Pricing, No CRM link."
+    });
+    const formData = new FormData();
+    formData.set("emailLogId", "email_log_2");
+
+    await expect(classifyEmailLogAction({}, formData)).resolves.toMatchObject({
+      classification: expect.objectContaining({ providerId: "local_rules" }),
+      emailLogId: "email_log_2",
+      message: "AI refinement is unavailable right now. Northstar generated local labels instead."
     });
   });
 

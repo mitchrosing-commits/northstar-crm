@@ -3,7 +3,7 @@ import type { Route } from "next";
 import type { AiPreferences } from "./ai-preferences-service";
 import type { EmailInboxThreadSummary } from "./email-connection-service";
 import type { EmailPriorityFollowUpDetail } from "./email-priority-queue-service";
-import { readEmailSmartClassification } from "./email-classification-service";
+import { buildLocalEmailLabelSuggestions, readEmailSmartClassification } from "./email-classification-service";
 import { summarizeStoredEmailForAi, type StoredEmailSummary } from "./ai-email-summary-service";
 
 export const workInboxTabs = [
@@ -86,7 +86,15 @@ export function buildWorkInbox({
   threads: EmailInboxThreadSummary[];
 }) {
   const normalizedQuery = normalizeWorkInboxSearch(query).toLowerCase();
-  const items = threads.map((thread) => buildWorkInboxItem({ followUpDetails, preferences, thread })).sort(compareWorkInboxItems);
+  const items = threads
+    .map((thread) => {
+      const item = buildWorkInboxItem({ followUpDetails, preferences, thread });
+      return {
+        ...item,
+        href: workInboxThreadHref(thread.id, { crmFilter, priorityFilter, query, selectedTab, sort })
+      };
+    })
+    .sort(compareWorkInboxItems);
   const tabs = workInboxTabs.map((tab) => ({
     ...tab,
     count: tab.id === "all" ? items.length : items.filter((item) => item.categories.includes(tab.id)).length,
@@ -102,6 +110,30 @@ export function buildWorkInbox({
     return searchableThreadText(item).toLowerCase().includes(normalizedQuery);
   });
   return { items, tabs, visibleItems };
+}
+
+function workInboxThreadHref(
+  threadId: string,
+  {
+    crmFilter,
+    priorityFilter,
+    query,
+    selectedTab,
+    sort
+  }: {
+    crmFilter: WorkInboxCrmFilter;
+    priorityFilter: WorkInboxPriorityFilter;
+    query: string;
+    selectedTab: WorkInboxTabId;
+    sort: WorkInboxSort;
+  }
+) {
+  const params = new URLSearchParams({ inbox: selectedTab, thread: threadId });
+  if (query) params.set("q", query);
+  if (priorityFilter !== "all") params.set("priority", priorityFilter);
+  if (crmFilter !== "all") params.set("crm", crmFilter);
+  if (sort !== "priority") params.set("sort", sort);
+  return `/email?${params.toString()}` as Route;
 }
 
 function workInboxTabHref(
@@ -192,8 +224,8 @@ function buildWorkInboxItem({
   if (isAutomated) categories.add("automated-marketing");
   if (!categories.has("priority") && categories.has("work") && score >= 62) categories.add("priority");
 
-  const tags = new Set<string>();
   const summary = summarizeStoredEmailForAi(primaryMessage, preferences);
+  const tags = new Set(buildLocalEmailLabelSuggestions(primaryMessage));
   if (needsReply) tags.add("Needs reply");
   if (followUpSignal) tags.add("Follow-up");
   if (customerSignal) tags.add(customerSignal && linkedRecordLabel ? "Customer" : "Prospect");
@@ -202,9 +234,12 @@ function buildWorkInboxItem({
   if (riskSignal) tags.add("Risk");
   if (isAutomated) tags.add("Automated");
   if (isPersonal) tags.add("Personal");
+  if (linkedRecordLabel) tags.delete("No CRM link");
+  else tags.delete("CRM linked");
   tags.add(linkedRecordLabel ? "CRM linked" : "No CRM link");
   tags.add(summary.status === "ready" ? "AI summary" : "Summary unavailable");
   if (smartClassification) tags.add("Smart Label");
+  const displayTags = prioritizeWorkInboxTags(tags, linkedRecordLabel);
 
   const priorityLevel: WorkInboxPriorityLevel = score >= 70 ? "high" : score >= 45 ? "medium" : "low";
   const reasonList = trimByPreference(reasons, preferences?.assistantDetailLevel);
@@ -225,7 +260,7 @@ function buildWorkInboxItem({
     relatedRecordLabel: linkedRecordLabel,
     summary,
     suggestedNextAction,
-    tags: [...tags].slice(0, 7),
+    tags: displayTags.slice(0, 7),
     thread,
     unansweredQuestions,
     urgencyRisk: urgencySignal || riskSignal ? "Review timing, risk language, and customer impact before replying." : null,
@@ -236,6 +271,13 @@ function buildWorkInboxItem({
     score += delta;
     if (delta > 0) reasons.push(reason);
   }
+}
+
+function prioritizeWorkInboxTags(tags: Set<string>, linkedRecordLabel: string | null) {
+  const linkTag = linkedRecordLabel ? "CRM linked" : "No CRM link";
+  const oppositeLinkTag = linkedRecordLabel ? "No CRM link" : "CRM linked";
+  const values = [...tags].filter((tag) => tag !== linkTag && tag !== oppositeLinkTag);
+  return [linkTag, ...values];
 }
 
 function compareWorkInboxItems(left: WorkInboxItem, right: WorkInboxItem) {

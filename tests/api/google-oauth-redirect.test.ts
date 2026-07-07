@@ -7,6 +7,8 @@ import { buildAppUrl } from "@/lib/public-url";
 import {
   buildGoogleAuthorizationUrl,
   buildMicrosoftAuthorizationUrl,
+  extractEmailDomain,
+  gmailAccountDomainType,
   resolveGoogleOAuthConfig,
   resolveMicrosoftOAuthConfig
 } from "@/lib/services/email-connection-service";
@@ -20,6 +22,7 @@ const microsoftCallbackRoute = readFileSync(
   "utf8"
 );
 const deploymentReadiness = readFileSync(join(process.cwd(), "docs/deployment-readiness.md"), "utf8");
+const gmailDiagnoseScript = readFileSync(join(process.cwd(), "scripts/gmail-diagnose.ts"), "utf8");
 
 afterEach(() => {
   vi.doUnmock("@/lib/auth/request-context");
@@ -61,6 +64,16 @@ describe("hosted email OAuth redirects", () => {
     expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/gmail.readonly");
     expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/gmail.send");
     expect(url.searchParams.get("scope")).not.toContain("https://www.googleapis.com/auth/gmail.metadata");
+  });
+
+  it("accepts Google Workspace and modern custom-domain account emails without TLD allowlists", () => {
+    expect(extractEmailDomain("Mitch <mitch@veridian.info>")).toBe("veridian.info");
+    expect(extractEmailDomain("support@mail.veridian.info")).toBe("mail.veridian.info");
+    expect(extractEmailDomain("person@company.co.uk")).toBe("company.co.uk");
+    expect(extractEmailDomain("founder@startup.ai")).toBe("startup.ai");
+    expect(gmailAccountDomainType("mitch.rosing@gmail.com")).toBe("consumer_gmail");
+    expect(gmailAccountDomainType("sales@veridian.info")).toBe("google_workspace_or_custom_domain");
+    expect(gmailAccountDomainType("not-an-email")).toBe("unknown");
   });
 
   it("keeps legacy local dev redirect behavior when only legacy env is configured", () => {
@@ -228,6 +241,30 @@ describe("hosted email OAuth redirects", () => {
     );
   });
 
+  it("passes custom-domain Google profile emails through the OAuth callback without requiring gmail.com", async () => {
+    const { storeGoogleOAuthConnection } = mockGoogleCallbackDependencies({ profileEmail: "Sales@Veridian.INFO" });
+    const { GET } = await import("@/app/api/email-connections/google/callback/route");
+
+    const response = await GET(
+      oauthCallbackRequest(
+        "https://northstar.example.test/api/email-connections/google/callback?code=one-time-code&state=signed-state"
+      )
+    );
+
+    expect(response.headers.get("location")).toBe("https://northstar.example.test/settings?emailConnection=gmail-connected");
+    expect(storeGoogleOAuthConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({ email: "Sales@Veridian.INFO" })
+      })
+    );
+  });
+
+  it("normalizes custom-domain diagnostic actor emails instead of requiring gmail.com", () => {
+    expect(gmailDiagnoseScript).toContain("normalizeDiagnosticActorEmail(options.actorEmail)");
+    expect(gmailDiagnoseScript).toContain("value.trim().toLowerCase()");
+    expect(gmailDiagnoseScript).not.toContain("endsWith(\"@gmail.com\")");
+  });
+
   it("redirects Microsoft provider errors without preserving provider query details", async () => {
     mockMicrosoftCallbackDependencies();
     const { GET } = await import("@/app/api/email-connections/microsoft/callback/route");
@@ -284,6 +321,7 @@ function oauthCallbackRequest(url: string) {
 }
 
 function mockGoogleCallbackDependencies({
+  profileEmail = "alex@example.test",
   state = {
     actorUserId: "user_123",
     expiresAt: Date.parse("2030-01-01T12:10:00.000Z"),
@@ -291,6 +329,7 @@ function mockGoogleCallbackDependencies({
     workspaceId: "workspace_123"
   }
 }: {
+  profileEmail?: string;
   state?: {
     actorUserId: string;
     expiresAt: number;
@@ -339,7 +378,7 @@ function mockGoogleCallbackDependencies({
     })),
     exchangeGoogleAuthorizationCode,
     fetchGoogleUserProfile: vi.fn(async () => ({
-      email: "alex@example.test",
+      email: profileEmail,
       name: "Alex"
     })),
     resolveGoogleOAuthGrantedScopes,

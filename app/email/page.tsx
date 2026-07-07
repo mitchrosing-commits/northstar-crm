@@ -30,6 +30,8 @@ import {
   buildNorthstarAssistantInsight,
   buildEmailFollowUpDraftFromEmailLog,
   buildWorkInbox,
+  buildLocalEmailLabelSuggestions,
+  buildLocalEmailSmartClassification,
   emailClassificationReadiness,
   emailFollowUpStateLabel,
   emailReplyAssistantReadiness,
@@ -40,6 +42,7 @@ import {
   listEmailLogs,
   listEmailTemplates,
   isGmailPartialSyncWarning,
+  listGmailInboxAccounts,
   normalizeWorkInboxCrmFilter,
   normalizeWorkInboxPriorityFilter,
   normalizeWorkInboxSearch,
@@ -64,7 +67,7 @@ import type {
   WorkInboxPriorityFilter,
   WorkInboxSort
 } from "@/lib/services/email-inbox-intelligence-service";
-import type { EmailInboxThreadSummary, EmailSyncPreview } from "@/lib/services/email-connection-service";
+import type { EmailInboxThreadSummary, EmailSyncPreview, GmailInboxAccountSummary } from "@/lib/services/email-connection-service";
 import {
   disconnectEmailProviderFromEmailPageAction,
   loadOlderGmailInboxFromEmailPageAction,
@@ -82,6 +85,7 @@ type EmailPageProps = {
     created?: string;
     duplicates?: string;
     emailConnection?: string;
+    account?: string;
     inbox?: string;
     messageSkips?: string;
     crm?: string;
@@ -99,19 +103,22 @@ type EmailPageProps = {
 
 export default async function EmailPage({ searchParams }: EmailPageProps) {
   const resolvedSearchParams = await searchParams;
-  const { workspace, actor } = await getCurrentWorkspaceContext();
+  const { workspace, actor, user } = await getCurrentWorkspaceContext();
   const cookieStore = await cookies();
   const latestSyncReview = isSyncResult(resolvedSearchParams?.emailConnection)
     ? decodeEmailSyncReview(cookieStore.get(emailSyncReviewCookieName)?.value)
     : null;
-  const [providers, recentEmailLogs, emailTemplates, inboxThreads, northstarContext, aiPreferences] = await Promise.all([
+  const [providers, recentEmailLogs, emailTemplates, northstarContext, aiPreferences, gmailAccounts] = await Promise.all([
     listEmailConnectionProviderCards(actor),
     listEmailLogs(actor, { limit: 25 }),
     listEmailTemplates(actor, { activeOnly: true }),
-    listEmailInboxThreads(actor, { limit: 75 }),
     buildInboxAssistantContext(actor),
-    getAiPreferences(actor)
+    getAiPreferences(actor),
+    listGmailInboxAccounts(actor)
   ]);
+  const selectedInboxAccount = selectedGmailInboxAccount(resolvedSearchParams?.account, gmailAccounts);
+  const selectedInboxConnectionId = selectedInboxAccount === "all" ? null : selectedInboxAccount;
+  const inboxThreads = await listEmailInboxThreads(actor, { connectionId: selectedInboxConnectionId, limit: 75 });
   const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
   const defaultAiReplyTone = aiReplyToneFromPreferences(aiPreferences);
   const oldestInboxMessageAt = oldestInboxMessageDate(inboxThreads);
@@ -198,12 +205,13 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             </Link>
           }
           eyebrow="Communication"
-          subtitle="Connect Gmail to sync work emails, summarize threads, draft replies, and link messages to CRM records."
+          subtitle="Connect Gmail or Google Workspace to sync work emails, summarize threads, draft replies, and link messages to CRM records."
           title="Inbox"
         />
         <FullInboxSetupState
           gmailReadiness={gmailReadiness}
           provider={gmailProvider}
+          loginEmail={user.email}
           statusCopy={statusCopy}
         />
         <AdvancedEmailDiagnostics
@@ -234,26 +242,39 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
 
       <section aria-label="Full Inbox synced Gmail mailbox" className="data-card section-separated" id="full-inbox">
         <PanelTitleRow
-          actions={<FullInboxHeaderActions provider={gmailProvider} threadCount={workInbox.items.length} />}
-          description="A work-prioritized view of synced Gmail messages with local Northstar tags, summaries, and review-first actions."
+          actions={
+            <FullInboxHeaderActions
+              provider={gmailProvider}
+              selectedAccount={selectedInboxAccount}
+              threadCount={workInbox.items.length}
+            />
+          }
+          description="A work-prioritized view of synced Gmail and Google Workspace messages with local Northstar tags, summaries, and review-first actions."
           title="Work Inbox"
         />
         <WorkInboxToolbar
           activeTab={activeWorkInboxTab}
+          accounts={gmailAccounts}
           crmFilter={activeWorkInboxCrm}
           provider={gmailProvider}
           priorityFilter={activeWorkInboxPriority}
           query={activeWorkInboxSearch}
+          selectedAccount={selectedInboxAccount}
           sort={activeWorkInboxSort}
           syncProgress={gmailSyncProgress}
           tabs={workInbox.tabs}
         />
         {workInbox.visibleItems.length > 0 && selectedInboxThread && selectedWorkInboxItem ? (
-          <div className="email-inbox-layout">
-            <div className="email-inbox-thread-list-shell">
-              <WorkInboxThreadList activeThreadId={selectedInboxThread.id} items={workInbox.visibleItems} />
+          <div className="email-inbox-layout inbox-main">
+            <div className="email-inbox-thread-list-shell inbox-thread-list-shell">
+              <WorkInboxThreadList
+                activeThreadId={selectedInboxThread.id}
+                items={workInbox.visibleItems}
+                selectedAccount={selectedInboxAccount}
+              />
               {gmailProvider?.syncAvailable && oldestInboxMessageAt ? (
                 <form action={loadOlderGmailInboxFromEmailPageAction} className="email-inbox-load-more">
+                  <input name="account" type="hidden" value={selectedInboxAccount} />
                   <input name="before" type="hidden" value={oldestInboxMessageAt.toISOString()} />
                   <input name="threadId" type="hidden" value={selectedInboxThread.id} />
                   <button
@@ -280,7 +301,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             />
           </div>
         ) : workInbox.items.length > 0 ? (
-          <WorkInboxFilteredEmptyState activeTab={activeWorkInboxTab} provider={gmailProvider} />
+          <WorkInboxFilteredEmptyState activeTab={activeWorkInboxTab} provider={gmailProvider} selectedAccount={selectedInboxAccount} />
         ) : (
           <EmailInboxEmptyShell
             emptyState={fullInboxEmptyState}
@@ -398,6 +419,9 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                             : syncGmailInboxFromEmailPageAction
                         }
                       >
+                        {provider.provider === "GOOGLE_WORKSPACE" ? (
+                          <input name="account" type="hidden" value={provider.connectionId ?? "all"} />
+                        ) : null}
                         <button
                           aria-label={providerSyncActionLabel}
                           className="button-secondary button-compact"
@@ -410,6 +434,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                     ) : null}
                     {showDisconnect ? (
                       <form action={disconnectEmailProviderFromEmailPageAction}>
+                        {provider.connectionId ? <input name="connectionId" type="hidden" value={provider.connectionId} /> : null}
                         <input name="provider" type="hidden" value={provider.provider} />
                         <button
                           aria-label={providerDisconnectLabel}
@@ -427,10 +452,11 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             );
           })}
         </div>
+        <ConnectedGmailAccountsPanel accounts={gmailAccounts} selectedAccount={selectedInboxAccount} />
         {imapProvider ? (
           <EmailScopeCallout title="Provider roadmap">
-            IMAP/SMTP is planned as a fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, custom domains, and
-            hosting-provider email. It is not live yet.
+            IMAP/SMTP is planned as a fallback for Yahoo Mail, Zoho Mail, Fastmail, iCloud, and non-Google
+            hosting-provider email. Gmail-backed custom-domain mailboxes connect through Google Workspace.
           </EmailScopeCallout>
         ) : null}
       </section>
@@ -665,10 +691,12 @@ function EmailScopeCallout({ children, title }: { children: ReactNode; title: st
 
 function FullInboxSetupState({
   gmailReadiness,
+  loginEmail,
   provider,
   statusCopy
 }: {
   gmailReadiness: ReturnType<typeof gmailFullInboxReadiness>;
+  loginEmail: string;
   provider: ProviderCard | undefined;
   statusCopy: string | null;
 }) {
@@ -676,13 +704,16 @@ function FullInboxSetupState({
     <section className="email-setup-panel section-separated" aria-label="Connect Gmail for Northstar Inbox">
       <PanelTitleRow
         actions={<FullInboxPrimaryAction provider={provider} />}
-        description="Connect Gmail to bring your work inbox into Northstar. Messages are synced for review, summaries, reply drafts, and CRM matching; Northstar never sends or creates CRM records without your explicit action."
+        description="Connect Gmail or Google Workspace to bring your work inbox into Northstar. Messages are synced for review, summaries, reply drafts, and CRM matching; Northstar never sends or creates CRM records without your explicit action."
         title={gmailReadiness.title}
       />
       <div className="email-setup-grid">
         <div>
           <h3>What Northstar needs</h3>
           <p>{gmailReadiness.description}</p>
+          <p className="form-hint">
+            Suggested inbox: {loginEmail}. Northstar suggests your login email first, but you can connect any Gmail or Google Workspace inbox you have access to.
+          </p>
           <p className="form-hint">Required access: Gmail read for synced messages and Gmail send for explicit replies you submit.</p>
         </div>
         <div>
@@ -717,31 +748,66 @@ function AdvancedEmailDiagnostics({
 
 function WorkInboxToolbar({
   activeTab,
+  accounts,
   crmFilter,
   provider,
   priorityFilter,
   query,
+  selectedAccount,
   sort,
   syncProgress,
   tabs
 }: {
   activeTab: string;
+  accounts: GmailInboxAccountSummary[];
   crmFilter: WorkInboxCrmFilter;
   provider: ProviderCard | undefined;
   priorityFilter: WorkInboxPriorityFilter;
   query: string;
+  selectedAccount: string;
   sort: WorkInboxSort;
   syncProgress: GmailSyncProgress;
   tabs: Array<{ count: number; href: Route; id: string; label: string }>;
 }) {
+  const accountOptionsVisible = accounts.length > 1;
   return (
     <div className="work-inbox-toolbar">
+      <div className="work-inbox-account-row">
+        <div>
+          <span className="relationship-inbox-explainer-label">Viewing</span>
+          <strong>{selectedInboxAccountLabel(selectedAccount, accounts)}</strong>
+        </div>
+        {accountOptionsVisible ? (
+          <ActionGroup className="work-inbox-tabs" label="Inbox account selector">
+            <Link
+              aria-current={selectedAccount === "all" ? "page" : undefined}
+              className={selectedAccount === "all" ? "button-primary button-compact" : "button-secondary button-compact"}
+              href={inboxAccountHref("all", { activeTab, crmFilter, priorityFilter, query, sort })}
+            >
+              Unified inbox
+            </Link>
+            {accounts.map((account) => (
+              <Link
+                aria-current={selectedAccount === account.connectionId ? "page" : undefined}
+                className={selectedAccount === account.connectionId ? "button-primary button-compact" : "button-secondary button-compact"}
+                href={inboxAccountHref(account.connectionId, { activeTab, crmFilter, priorityFilter, query, sort })}
+                key={account.connectionId}
+                title={`View ${account.accountEmail ?? account.connectionRef}`}
+              >
+                {account.accountEmail ?? account.connectionRef}
+              </Link>
+            ))}
+          </ActionGroup>
+        ) : (
+          <Badge>{accounts[0]?.accountEmail ?? provider?.accountEmail ?? "No connected inbox"}</Badge>
+        )}
+      </div>
       <ActionGroup className="work-inbox-tabs" label="Work inbox categories">
         {tabs.map((tab) => (
           <Link
             aria-current={tab.id === activeTab ? "page" : undefined}
             className={tab.id === activeTab ? "button-primary button-compact" : "button-secondary button-compact"}
-            href={tab.href}
+            href={appendInboxAccountParam(tab.href, selectedAccount)}
             key={tab.id}
             title={`Show ${tab.label} emails`}
           >
@@ -750,6 +816,7 @@ function WorkInboxToolbar({
         ))}
       </ActionGroup>
       <form action="/email" className="work-inbox-filter-form">
+        <input name="account" type="hidden" value={selectedAccount} />
         <input name="inbox" type="hidden" value={activeTab} />
         <label>
           <span>Search</span>
@@ -789,7 +856,7 @@ function WorkInboxToolbar({
           Apply
         </button>
         {query || priorityFilter !== "all" || crmFilter !== "all" || sort !== "priority" ? (
-          <Link className="button-secondary button-compact" href={`/email?inbox=${activeTab}` as Route}>
+          <Link className="button-secondary button-compact" href={inboxAccountHref(selectedAccount, { activeTab })}>
             Clear
           </Link>
         ) : null}
@@ -797,7 +864,7 @@ function WorkInboxToolbar({
       <div className="work-inbox-sync-strip">
         <Badge>{syncProgress.statusLabel}</Badge>
         <span>{provider?.lastSyncAt ? `Last sync ${formatDate(provider.lastSyncAt)}` : "Sync when ready"}</span>
-        <FullInboxPrimaryAction provider={provider} />
+        <FullInboxPrimaryAction provider={provider} selectedAccount={selectedAccount} />
       </div>
     </div>
   );
@@ -805,14 +872,16 @@ function WorkInboxToolbar({
 
 function WorkInboxThreadList({
   activeThreadId,
-  items
+  items,
+  selectedAccount
 }: {
   activeThreadId: string;
   items: WorkInboxItem[];
+  selectedAccount: string;
 }) {
   if (items.length === 0) {
     return (
-      <div className="email-inbox-thread-list" aria-label="Work inbox threads">
+      <div className="inbox-thread-list" aria-label="Work inbox threads">
         <EmptyState
           className="email-inbox-empty-rail"
           description="No synced threads match this category yet. Try All or sync Gmail again."
@@ -824,36 +893,43 @@ function WorkInboxThreadList({
   }
 
   return (
-    <div className="email-inbox-thread-list" aria-label="Work inbox threads">
+    <div className="inbox-thread-list" aria-label="Work inbox threads">
       {items.map((item) => {
         const thread = item.thread;
+        const sender = thread.latestMessage.direction === "INBOUND" ? thread.latestMessage.fromText : thread.latestMessage.toText;
+        const visibleTags = item.tags.slice(0, 2);
+        const hiddenTagCount = Math.max(0, item.tags.length - visibleTags.length);
         return (
           <Link
             aria-current={thread.id === activeThreadId ? "page" : undefined}
             aria-label={`Open inbox thread ${thread.subject}`}
-            className={thread.id === activeThreadId ? "email-inbox-thread-row work-inbox-row active" : "email-inbox-thread-row work-inbox-row"}
-            href={item.href}
+            className={thread.id === activeThreadId ? "inbox-thread-row inbox-thread-row-selected" : "inbox-thread-row"}
+            href={emailInboxThreadHref(thread.id, selectedAccount)}
             key={thread.id}
             title={`Open inbox thread ${thread.subject}`}
           >
-            <span className="email-inbox-thread-main">
-              <span className="work-inbox-row-topline">
-                <span className="work-inbox-sender">
-                  {thread.latestMessage.direction === "INBOUND" ? thread.latestMessage.fromText : thread.latestMessage.toText}
-                </span>
-                <span className="muted">{formatDate(thread.latestAt)}</span>
-              </span>
-              <span className="email-inbox-thread-subject">{thread.subject}</span>
-              <span className="work-inbox-summary">{item.summary.summary}</span>
-              <span className="work-inbox-tag-row">
-                {item.tags.slice(0, 4).map((tag) => (
-                  <Badge key={tag}>{tag}</Badge>
-                ))}
-              </span>
+            <span className="inbox-thread-status" aria-hidden="true">
+              {thread.isUnread ? <span className="inbox-thread-unread-dot" /> : null}
             </span>
-            <span className="email-inbox-thread-meta">
-              <Badge>{priorityLevelLabel(item.priorityLevel)}</Badge>
-              {thread.isUnread ? <Badge>Unread</Badge> : null}
+            <span className="inbox-thread-sender">{sender || "Unknown sender"}</span>
+            <span className="inbox-thread-tags" aria-label={`${thread.subject} inbox tags`}>
+              {visibleTags.map((tag) => (
+                <Badge className="badge inbox-thread-tag" key={tag}>{tag}</Badge>
+              ))}
+              {hiddenTagCount > 0 ? <Badge className="badge inbox-thread-tag">+{hiddenTagCount}</Badge> : null}
+            </span>
+            <span className="inbox-thread-subject-line">
+              <span className="inbox-thread-subject">{thread.subject}</span>
+              <span className="inbox-thread-preview">{item.summary.summary}</span>
+            </span>
+            <span className="inbox-thread-meta">
+              {thread.accountEmail ? <span className="inbox-thread-account">{thread.accountEmail}</span> : null}
+              <span
+                aria-label={priorityLevelLabel(item.priorityLevel)}
+                className={`inbox-thread-priority inbox-thread-priority-${item.priorityLevel}`}
+                title={priorityLevelLabel(item.priorityLevel)}
+              />
+              <time dateTime={thread.latestAt.toISOString()}>{formatInboxThreadDate(thread.latestAt)}</time>
             </span>
           </Link>
         );
@@ -862,17 +938,31 @@ function WorkInboxThreadList({
   );
 }
 
+function formatInboxThreadDate(value: Date) {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+  const time = value.getTime();
+  if (time >= startOfToday) {
+    return value.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+  if (time >= startOfYesterday) return "Yesterday";
+  return value.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 function WorkInboxFilteredEmptyState({
   activeTab,
-  provider
+  provider,
+  selectedAccount
 }: {
   activeTab: string;
   provider: ProviderCard | undefined;
+  selectedAccount: string;
 }) {
   return (
     <div className="email-inbox-layout email-inbox-empty-layout" aria-label="Filtered work inbox results">
-      <div className="email-inbox-thread-list-shell">
-        <WorkInboxThreadList activeThreadId="" items={[]} />
+      <div className="email-inbox-thread-list-shell inbox-thread-list-shell">
+        <WorkInboxThreadList activeThreadId="" items={[]} selectedAccount={selectedAccount} />
       </div>
       <div className="email-inbox-thread-detail email-inbox-empty-detail" aria-label="No matching inbox messages">
         <EmptyState
@@ -881,7 +971,7 @@ function WorkInboxFilteredEmptyState({
               <Link className="button-primary button-compact" href={`/email?inbox=${activeTab}` as Route}>
                 Clear filters
               </Link>
-              <FullInboxPrimaryAction provider={provider} />
+              <FullInboxPrimaryAction provider={provider} selectedAccount={selectedAccount} />
             </ActionGroup>
           }
           actionsLabel="Filtered inbox empty actions"
@@ -1022,6 +1112,79 @@ function InboxWorkflowItem({ detail, label }: { detail: string; label: string })
       <strong>{label}</strong>
       <span>{detail}</span>
     </div>
+  );
+}
+
+function ConnectedGmailAccountsPanel({
+  accounts,
+  selectedAccount
+}: {
+  accounts: GmailInboxAccountSummary[];
+  selectedAccount: string;
+}) {
+  if (accounts.length === 0) {
+    return (
+      <EmailScopeCallout title="Connected inboxes">
+        Northstar will suggest your login email first, but you can connect any Gmail or Google Workspace inbox you have access to.
+      </EmailScopeCallout>
+    );
+  }
+
+  return (
+    <section className="connected-inbox-panel" aria-label="Connected Gmail and Google Workspace inboxes">
+      <CompactTitleRow actions={<Badge>{accounts.length === 1 ? "1 inbox" : `${accounts.length} inboxes`}</Badge>} title="Connected inboxes" />
+      <div className="connected-inbox-list">
+        {accounts.map((account) => (
+          <div className="connected-inbox-row" key={account.connectionId}>
+            <div>
+              <strong>{account.accountEmail ?? account.connectionRef}</strong>
+              <span>
+                {account.accountDomainType === "consumer_gmail" ? "Consumer Gmail" : "Google Workspace / custom-domain Gmail"} · Ref{" "}
+                {account.connectionRef}
+              </span>
+              <span>{account.lastSyncAt ? `Last sync ${formatDate(account.lastSyncAt)}` : "Not synced yet"}</span>
+              {account.lastError ? <span>Last issue: {account.lastError}</span> : null}
+            </div>
+            <ActionGroup className="filter-actions" label={`${account.accountEmail ?? account.connectionRef} inbox actions`}>
+              <Badge>{account.status}</Badge>
+              {account.syncStatusLabel ? <Badge>{account.syncStatusLabel}</Badge> : null}
+              <Link className="button-secondary button-compact" href={inboxAccountHref(account.connectionId, { activeTab: "priority" })}>
+                View inbox
+              </Link>
+              {account.syncAvailable ? (
+                <form action={syncGmailInboxFromEmailPageAction}>
+                  <input name="account" type="hidden" value={account.connectionId} />
+                  <button className="button-secondary button-compact" type="submit">
+                    Sync this inbox
+                  </button>
+                </form>
+              ) : (
+                <Link className="button-secondary button-compact" href="/api/email-connections/google/connect">
+                  Reconnect
+                </Link>
+              )}
+              <form action={disconnectEmailProviderFromEmailPageAction}>
+                <input name="connectionId" type="hidden" value={account.connectionId} />
+                <input name="provider" type="hidden" value="GOOGLE_WORKSPACE" />
+                <button className="button-secondary button-compact" type="submit">
+                  Disconnect
+                </button>
+              </form>
+            </ActionGroup>
+          </div>
+        ))}
+      </div>
+      {accounts.length > 1 ? (
+        <p className="form-hint">
+          Unified Inbox combines your connected inboxes only. It does not show other workspace members&apos; Gmail accounts.
+        </p>
+      ) : (
+        <p className="form-hint">
+          Add another inbox with Connect Gmail or Google Workspace, then switch between this inbox and Unified Inbox.
+        </p>
+      )}
+      <p className="form-hint">Viewing now: {selectedInboxAccountLabel(selectedAccount, accounts)}.</p>
+    </section>
   );
 }
 
@@ -1223,16 +1386,16 @@ function shouldShowProviderDisconnect(provider: ProviderCard) {
 function gmailFullInboxReadiness(provider: ProviderCard | undefined) {
   if (!provider) {
     return {
-      description: "Configure Google OAuth and token encryption before Gmail Full Inbox can connect.",
+      description: "Configure Google OAuth and token encryption before Gmail or Google Workspace Full Inbox can connect.",
       ready: false,
-      statusLine: "Gmail Full Inbox is not configured yet.",
+      statusLine: "Gmail / Google Workspace Full Inbox is not configured yet.",
       title: "Gmail setup required"
     };
   }
 
   if (provider.status === "Not configured") {
     return {
-      description: "Add Google OAuth client id, client secret, redirect URI, and token encryption env vars before connecting Gmail.",
+      description: "Add Google OAuth client id, client secret, redirect URI, and token encryption env vars before connecting Gmail or Google Workspace.",
       ready: false,
       statusLine: "Gmail OAuth is not configured for Full Inbox sync.",
       title: "Gmail OAuth is not configured"
@@ -1250,7 +1413,7 @@ function gmailFullInboxReadiness(provider: ProviderCard | undefined) {
 
   if (provider.status === "Reconnect required") {
     return {
-      description: "Reconnect Gmail with the current read/send scopes before syncing inbox threads or sending explicit replies.",
+      description: "Reconnect Gmail or Google Workspace with the current read/send scopes before syncing inbox threads or sending explicit replies.",
       ready: false,
       statusLine: `Gmail is connected${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}, but Full Inbox scopes are missing.`,
       title: "Reconnect Gmail for Full Inbox"
@@ -1259,7 +1422,7 @@ function gmailFullInboxReadiness(provider: ProviderCard | undefined) {
 
   if (!provider.syncAvailable) {
     return {
-      description: "Connect Gmail with Full Inbox scopes, or keep using Relationship Inbox and manual email logging from CRM records.",
+      description: "Connect Gmail or Google Workspace with Full Inbox scopes, or keep using Relationship Inbox and manual email logging from CRM records.",
       ready: false,
       statusLine: "Gmail Full Inbox is not connected yet.",
       title: "Gmail is not connected"
@@ -1605,72 +1768,43 @@ type DraftTemplate = {
   subject: string;
 };
 
-function EmailInboxThreadList({
-  activeThreadId,
-  threads
+function FullInboxHeaderActions({
+  provider,
+  selectedAccount = "all",
+  threadCount
 }: {
-  activeThreadId: string;
-  threads: EmailInboxThreadSummary[];
+  provider: ProviderCard | undefined;
+  selectedAccount?: string;
+  threadCount: number;
 }) {
-  return (
-    <div className="email-inbox-thread-list" aria-label="Synced inbox threads">
-      {threads.map((thread) => {
-        const href = emailInboxThreadHref(thread.id);
-        return (
-          <Link
-            aria-current={thread.id === activeThreadId ? "page" : undefined}
-            aria-label={`Open inbox thread ${thread.subject}`}
-            className={thread.id === activeThreadId ? "email-inbox-thread-row active" : "email-inbox-thread-row"}
-            href={href}
-            key={thread.id}
-            title={`Open inbox thread ${thread.subject}`}
-          >
-            <span className="email-inbox-thread-main">
-              <span className="email-inbox-thread-subject">{thread.subject}</span>
-              <span className="muted">
-                {thread.latestMessage.direction === "INBOUND" ? thread.latestMessage.fromText : thread.latestMessage.toText} ·{" "}
-                {formatDate(thread.latestAt)}
-              </span>
-              <span className="muted">{thread.linkedRecordLabel ?? "No linked CRM record"}</span>
-            </span>
-            <span className="email-inbox-thread-meta">
-              {thread.isUnread ? <Badge>Unread</Badge> : <Badge>Read</Badge>}
-              <Badge>{thread.messageCount === 1 ? "1 message" : `${thread.messageCount} messages`}</Badge>
-            </span>
-          </Link>
-        );
-      })}
-    </div>
-  );
-}
-
-function FullInboxHeaderActions({ provider, threadCount }: { provider: ProviderCard | undefined; threadCount: number }) {
   return (
     <>
       <Badge>{threadCount ? `${threadCount} threads` : "No synced threads"}</Badge>
-      <FullInboxPrimaryAction provider={provider} />
+      <FullInboxPrimaryAction provider={provider} selectedAccount={selectedAccount} />
     </>
   );
 }
 
-function FullInboxPrimaryAction({ provider }: { provider: ProviderCard | undefined }) {
+function FullInboxPrimaryAction({ provider, selectedAccount = "all" }: { provider: ProviderCard | undefined; selectedAccount?: string }) {
   if (provider?.syncAvailable) {
+    const label = selectedAccount === "all" ? "Sync all inboxes" : "Sync this inbox";
     return (
       <form action={syncGmailInboxFromEmailPageAction}>
+        <input name="account" type="hidden" value={selectedAccount} />
         <button
-          aria-label="Sync Gmail inbox"
+          aria-label={label}
           className="button-primary button-compact"
-          title="Sync Gmail inbox"
+          title={label}
           type="submit"
         >
-          Sync Gmail inbox
+          {label}
         </button>
       </form>
     );
   }
 
   if (provider && !provider.disabled && provider.href) {
-    const label = provider.status === "Reconnect required" ? "Reconnect Gmail" : "Connect Gmail";
+    const label = provider.status === "Reconnect required" ? "Reconnect Gmail" : "Connect Gmail or Google Workspace";
     return (
       <Link
         aria-label={`${label} for Full Inbox`}
@@ -1704,8 +1838,8 @@ function EmailInboxEmptyShell({
 }) {
   return (
     <div className="email-inbox-layout email-inbox-empty-layout" aria-label="Full Inbox mailbox reader">
-      <div className="email-inbox-thread-list-shell">
-        <div className="email-inbox-thread-list" aria-label="Synced inbox threads">
+      <div className="email-inbox-thread-list-shell inbox-thread-list-shell">
+        <div className="inbox-thread-list" aria-label="Synced inbox threads">
           <EmptyState
             className="email-inbox-empty-rail"
             description="Synced Gmail conversations will appear in this list after inbox sync stores messages."
@@ -1755,7 +1889,7 @@ function EmailInboxThreadDetail({
     [...thread.messages].reverse().find((message) => message.provider === "GOOGLE_WORKSPACE") ??
     null;
   return (
-    <div className="email-inbox-thread-detail" aria-label={`Inbox thread ${thread.subject}`}>
+    <div className="email-inbox-thread-detail inbox-reader-pane" aria-label={`Inbox thread ${thread.subject}`}>
       <div className="email-inbox-thread-header">
         <CompactTitleRow
           actions={
@@ -1765,6 +1899,7 @@ function EmailInboxThreadDetail({
               <Badge>{thread.messageCount === 1 ? "1 message" : `${thread.messageCount} messages`}</Badge>
               {thread.provider === "GOOGLE_WORKSPACE" ? (
                 <form action={refreshGmailThreadFromEmailPageAction}>
+                  <input name="account" type="hidden" value={thread.emailConnectionId ?? "all"} />
                   <input name="threadId" type="hidden" value={thread.id} />
                   <button
                     aria-label={`Refresh Gmail thread ${thread.subject}`}
@@ -1778,7 +1913,7 @@ function EmailInboxThreadDetail({
               ) : null}
             </ActionGroup>
           }
-          description={`${thread.linkedRecordLabel ?? "No linked CRM record"} · Latest ${formatDate(thread.latestAt)}`}
+          description={`${thread.linkedRecordLabel ?? "No linked CRM record"} · ${thread.accountEmail ? `Inbox ${thread.accountEmail} · ` : ""}Latest ${formatDate(thread.latestAt)}`}
           title={thread.subject}
         />
         <WorkInboxInsightPanel item={insight} />
@@ -1803,11 +1938,12 @@ function EmailInboxThreadDetail({
 }
 
 function GmailReplyComposer({ replyTarget, threadId }: { replyTarget: EmailInboxThreadSummary["messages"][number]; threadId: string }) {
+  const sourceAccount = replyTarget.emailConnection?.accountEmail ?? "the source Gmail account";
   return (
     <details className="email-draft-panel email-inbox-reply-panel">
       <summary>Send Gmail reply</summary>
       <p className="form-hint">
-        Explicit send only. Northstar sends this reply through the connected Gmail account and logs the sent message.
+        Explicit send only. Northstar sends this reply through {sourceAccount} and logs the sent message.
       </p>
       <form action={sendGmailReplyFromEmailPageAction} className="email-follow-up-form">
         <input name="emailLogId" type="hidden" value={replyTarget.id} />
@@ -1828,9 +1964,46 @@ function GmailReplyComposer({ replyTarget, threadId }: { replyTarget: EmailInbox
   );
 }
 
-function emailInboxThreadHref(threadId: string) {
+function emailInboxThreadHref(threadId: string, account: string = "all") {
   const params = new URLSearchParams({ thread: threadId });
+  if (account) params.set("account", account);
   return `/email?${params.toString()}` as Route;
+}
+
+function selectedGmailInboxAccount(value: string | undefined, accounts: GmailInboxAccountSummary[]) {
+  if (value === "all") return "all";
+  if (value && accounts.some((account) => account.connectionId === value)) return value;
+  return accounts.length > 1 ? "all" : accounts[0]?.connectionId ?? "all";
+}
+
+function selectedInboxAccountLabel(selectedAccount: string, accounts: GmailInboxAccountSummary[]) {
+  if (selectedAccount === "all") return accounts.length > 1 ? "All connected inboxes" : "Unified inbox";
+  return accounts.find((account) => account.connectionId === selectedAccount)?.accountEmail ?? "Selected inbox";
+}
+
+function inboxAccountHref(
+  account: string,
+  options: {
+    activeTab: string;
+    crmFilter?: WorkInboxCrmFilter;
+    priorityFilter?: WorkInboxPriorityFilter;
+    query?: string;
+    sort?: WorkInboxSort;
+  }
+) {
+  const params = new URLSearchParams({ account, inbox: options.activeTab });
+  if (options.query) params.set("q", options.query);
+  if (options.priorityFilter && options.priorityFilter !== "all") params.set("priority", options.priorityFilter);
+  if (options.crmFilter && options.crmFilter !== "all") params.set("crm", options.crmFilter);
+  if (options.sort && options.sort !== "priority") params.set("sort", options.sort);
+  return `/email?${params.toString()}` as Route;
+}
+
+function appendInboxAccountParam(href: Route, account: string) {
+  const [path, query = ""] = String(href).split("?");
+  const params = new URLSearchParams(query);
+  params.set("account", account);
+  return `${path}?${params.toString()}` as Route;
 }
 
 function oldestInboxMessageDate(threads: EmailInboxThreadSummary[]) {
@@ -1865,11 +2038,18 @@ function EmailLogCard({
   const emailActionsLabel = `${emailLog.subject} email actions`;
   const createDealFromEmailLabel = `Create deal from email ${emailLog.subject}`;
   const smartClassification = readEmailSmartClassification(emailLog);
+  const localSmartClassification = buildLocalEmailSmartClassification(emailLog);
+  const localSmartLabels = buildLocalEmailLabelSuggestions(emailLog);
   const followUpDraft = buildEmailFollowUpDraftFromEmailLog(emailLog);
   return (
     <article className="email-command-card" id={`email-card-${emailLog.id}`}>
       <CompactTitleRow
-        actions={<Badge>{formatEmailProvider(emailLog.provider)}</Badge>}
+        actions={
+          <ActionGroup className="filter-actions" label={`${emailLog.subject} source account`}>
+            <Badge>{formatEmailProvider(emailLog.provider)}</Badge>
+            {emailLog.emailConnection?.accountEmail ? <Badge>{emailLog.emailConnection.accountEmail}</Badge> : null}
+          </ActionGroup>
+        }
         description={
           <>
             {emailLog.direction === "INBOUND" ? "From" : "To"}{" "}
@@ -1889,6 +2069,8 @@ function EmailLogCard({
       <EmailSmartLabelPanel
         emailLogId={emailLog.id}
         initialClassification={smartClassification}
+        localClassification={localSmartClassification}
+        localLabels={localSmartLabels}
         readiness={smartLabelReadiness}
         subject={emailLog.subject}
       />

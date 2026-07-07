@@ -11,6 +11,7 @@ export type EmailLogRecordType = "DEAL" | "LEAD" | "PERSON" | "ORGANIZATION";
 const emailLogInclude = {
   createdBy: { select: userDisplaySelect },
   deal: true,
+  emailConnection: true,
   lead: true,
   person: true,
   organization: true

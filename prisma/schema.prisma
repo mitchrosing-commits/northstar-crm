@@ -476,6 +476,7 @@ model Note {
 model EmailLog {
   id                    String                   @id @default(cuid())
   workspaceId           String
+  emailConnectionId     String?
   createdById           String?
   dealId                String?
   leadId                String?
@@ -497,6 +498,7 @@ model EmailLog {
   smartLabelProvider    String?
   smartLabelGeneratedAt DateTime?
   workspace             Workspace                @relation(fields: [workspaceId], references: [id])
+  emailConnection       EmailConnection?         @relation(fields: [emailConnectionId], references: [id], onDelete: SetNull)
   createdBy             User?                    @relation("EmailLogCreator", fields: [createdById], references: [id])
   deal                  Deal?                    @relation(fields: [dealId], references: [id])
   lead                  Lead?                    @relation(fields: [leadId], references: [id])
@@ -506,8 +508,9 @@ model EmailLog {
   createdAt             DateTime                 @default(now())
   updatedAt             DateTime                 @updatedAt
 
-  @@unique([workspaceId, provider, providerMessageId])
+  @@unique([workspaceId, provider, emailConnectionId, providerMessageId])
   @@index([workspaceId, occurredAt])
+  @@index([workspaceId, emailConnectionId])
   @@index([workspaceId, dealId])
   @@index([workspaceId, leadId])
   @@index([workspaceId, personId])
@@ -560,11 +563,12 @@ model EmailConnection {
   workspace      Workspace               @relation(fields: [workspaceId], references: [id])
   createdBy      User?                   @relation("EmailConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
   secret         EmailConnectionSecret?
+  emailLogs      EmailLog[]
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt
   deletedAt      DateTime?
 
-  @@unique([workspaceId, provider, accountEmail])
+  @@unique([workspaceId, provider, accountEmail, createdById])
   @@index([workspaceId, provider])
   @@index([workspaceId, status])
   @@index([createdById])

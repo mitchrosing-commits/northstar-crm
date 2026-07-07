@@ -17,41 +17,56 @@ import type {
 type EmailSmartLabelPanelProps = {
   emailLogId: string;
   initialClassification: EmailSmartClassification | null;
+  localClassification: EmailSmartClassification | null;
+  localLabels: string[];
   readiness: EmailClassificationReadiness;
   subject: string;
 };
 
 const initialState: ClassifyEmailLogActionState = {};
+type SmartLabelDescriptor = {
+  kind: EmailSmartCategory | EmailSmartSignal;
+  value: string;
+};
 
-export function EmailSmartLabelPanel({ emailLogId, initialClassification, readiness, subject }: EmailSmartLabelPanelProps) {
+export function EmailSmartLabelPanel({
+  emailLogId,
+  initialClassification,
+  localClassification,
+  localLabels,
+  readiness,
+  subject
+}: EmailSmartLabelPanelProps) {
   const [state, formAction, isPending] = useActionState(classifyEmailLogAction, initialState);
-  const classification = state.emailLogId === emailLogId && state.classification ? state.classification : initialClassification;
-  const labels = classification ? smartClassificationLabels(classification) : [];
+  const classification = state.emailLogId === emailLogId && state.classification ? state.classification : initialClassification ?? localClassification;
+  const isLocalClassification = classification?.providerId === "local_rules";
+  const labels = classification ? smartClassificationLabels(classification, isLocalClassification ? localLabels : undefined) : localLabelDescriptors(localLabels);
   const labelGroup = `${subject} Smart Email Labels`;
-  const classifyLabel = classification ? `Refresh smart labels for ${subject}` : `Classify email ${subject} with AI`;
+  const classifyLabel = classification ? `Refine smart labels for ${subject} with AI` : `Classify email ${subject} with AI`;
+  const hasLabels = labels.length > 0;
 
   return (
     <section aria-label={labelGroup} className="email-smart-label-panel">
       <ActionGroup className="email-smart-label-row filter-actions" label={labelGroup}>
-        {classification ? (
+        {hasLabels ? (
           <>
             {labels.map((label) => (
               <Badge className={smartBadgeClassName(label.kind)} key={`${label.kind}-${label.value}`}>
                 {label.value}
               </Badge>
             ))}
-            <Badge label={`${Math.round(classification.confidence * 100)} percent confidence`}>
+            {classification ? <Badge label={`${Math.round(classification.confidence * 100)} percent confidence`}>
               {Math.round(classification.confidence * 100)}% confidence
-            </Badge>
+            </Badge> : null}
           </>
         ) : (
-          <Badge>Not classified</Badge>
+          <Badge>No labels yet</Badge>
         )}
       </ActionGroup>
       <div className="email-smart-label-body">
         {classification ? (
           <details className="email-smart-label-evidence">
-            <summary>Why this was labeled</summary>
+            <summary>{isLocalClassification ? "Why local labels were suggested" : "Why this was labeled"}</summary>
             <p>{classification.summary}</p>
             {classification.evidence.length > 0 ? (
               <ul className="email-ai-context-list">
@@ -66,15 +81,15 @@ export function EmailSmartLabelPanel({ emailLogId, initialClassification, readin
             {classification.generatedAt ? <p className="form-hint">Generated {formatSmartLabelDate(classification.generatedAt)}</p> : null}
           </details>
         ) : (
-          <p className="form-hint">Generate suggested relationship-inbox labels for this stored email. Labels do not create tasks or change CRM records.</p>
+          <p className="form-hint">Review suggested relationship-inbox labels for this stored email. Labels do not create tasks or change CRM records.</p>
         )}
         {!readiness.configured ? (
-          <p className="form-hint">{readiness.message}</p>
+          <p className="form-hint">Local labels suggested. AI refinement is unavailable until Smart Email Labels are configured.</p>
         ) : (
           <form action={formAction}>
             <input name="emailLogId" type="hidden" value={emailLogId} />
             <button aria-label={classifyLabel} className="button-secondary button-compact" disabled={isPending} title={classifyLabel} type="submit">
-              {isPending ? "Classifying..." : classification ? "Refresh labels" : "Classify with AI"}
+              {isPending ? "Refining..." : "Refine with AI"}
             </button>
           </form>
         )}
@@ -85,11 +100,31 @@ export function EmailSmartLabelPanel({ emailLogId, initialClassification, readin
   );
 }
 
-function smartClassificationLabels(classification: EmailSmartClassification) {
+function smartClassificationLabels(classification: EmailSmartClassification, localLabels?: string[]): SmartLabelDescriptor[] {
+  if (localLabels?.length) {
+    return localLabelDescriptors(localLabels);
+  }
   return [
     { kind: classification.category, value: smartCategoryLabel(classification.category) },
     ...classification.signals.map((signal) => ({ kind: signal, value: smartSignalLabel(signal) }))
-  ];
+  ].filter((label) => label.value !== "Unknown");
+}
+
+function localLabelDescriptors(labels: string[]): SmartLabelDescriptor[] {
+  return labels.map((label) => ({ kind: localLabelKind(label), value: label }));
+}
+
+function localLabelKind(label: string): EmailSmartCategory | EmailSmartSignal {
+  if (label === "Risk") return "RELATIONSHIP_RISK";
+  if (label === "Needs reply") return "NEEDS_REPLY";
+  if (label === "Pricing") return "PRICING_QUOTE";
+  if (label === "Contract") return "CONTRACT_LEGAL";
+  if (label === "Follow-up") return "FOLLOW_UP_NEEDED";
+  if (label === "Customer" || label === "CRM linked") return "CUSTOMER";
+  if (label === "Lead" || label === "Prospect" || label === "Opportunity") return "PROSPECT";
+  if (label === "Personal / Low Priority") return "PERSONAL";
+  if (label === "Automated") return "NOT_CRM_RELEVANT";
+  return "UNKNOWN";
 }
 
 function smartCategoryLabel(category: EmailSmartCategory) {

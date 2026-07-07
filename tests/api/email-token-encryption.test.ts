@@ -74,8 +74,10 @@ describe("encrypted email token storage", () => {
     expect(schema).toContain("encryptedRefreshToken");
     expect(schema).toContain("accessTokenExpiresAt");
     expect(schema).toMatch(/connection\s+EmailConnection/);
+    expect(schema).toContain("emailConnectionId");
     expect(schema).toContain("providerMessageId");
-    expect(schema).toContain("@@unique([workspaceId, provider, providerMessageId])");
+    expect(schema).toContain("@@unique([workspaceId, provider, emailConnectionId, providerMessageId])");
+    expect(schema).toContain("@@index([workspaceId, emailConnectionId])");
     expect(migration).toContain("Only encrypted token payloads are stored");
     expect(migration).toContain("\"encryptedAccessToken\" TEXT NOT NULL");
     expect(migration).toContain("\"encryptedRefreshToken\" TEXT");
