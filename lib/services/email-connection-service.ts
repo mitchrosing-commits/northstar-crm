@@ -871,6 +871,9 @@ export async function syncRecentGmailMessages({
 
   return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
   } catch (error) {
+    if (error instanceof ApiError && error.code === "EMAIL_GMAIL_MESSAGE_AUTH_FAILED") {
+      await markGmailFullInboxScopesRejected(connection.id);
+    }
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
     throw error;
   }
@@ -1093,6 +1096,9 @@ export async function syncGmailInboxMessages({
       unmatchedPreviews: []
     };
   } catch (error) {
+    if (error instanceof ApiError && error.code === "EMAIL_GMAIL_MESSAGE_AUTH_FAILED") {
+      await markGmailFullInboxScopesRejected(connection.id);
+    }
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
     throw error;
   }
@@ -1165,6 +1171,9 @@ export async function syncOlderGmailInboxMessages({
       unmatchedPreviews: []
     };
   } catch (error) {
+    if (error instanceof ApiError && error.code === "EMAIL_GMAIL_MESSAGE_AUTH_FAILED") {
+      await markGmailFullInboxScopesRejected(connection.id);
+    }
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
     throw error;
   }
@@ -1239,6 +1248,9 @@ export async function refreshGmailInboxThread({
       unmatchedPreviews: []
     };
   } catch (error) {
+    if (error instanceof ApiError && error.code === "EMAIL_GMAIL_MESSAGE_AUTH_FAILED") {
+      await markGmailFullInboxScopesRejected(connection.id);
+    }
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
     throw error;
   }
@@ -2696,11 +2708,7 @@ function normalizeScopes(scope: unknown, fallback: readonly string[] = gmailOAut
 }
 
 function normalizeGoogleOAuthScopes(scope: unknown) {
-  const scopes = new Set(normalizeScopes(scope));
-  for (const requiredScope of gmailOAuthScopes) {
-    scopes.add(requiredScope);
-  }
-  return [...scopes];
+  return normalizeScopes(scope, []);
 }
 
 function normalizeStoredScopes(scopes: Prisma.JsonValue | null | undefined) {
@@ -2715,6 +2723,32 @@ function mergeProviderScopes(...scopeSources: unknown[]) {
     }
   }
   return [...scopes];
+}
+
+async function markGmailFullInboxScopesRejected(connectionId: string) {
+  const gmailFullInboxPermissionScopes = gmailOAuthScopes.filter((scope) => scope.includes("/auth/gmail."));
+  const withoutFullInboxPermissionScopes = (scopes: Prisma.JsonValue | null | undefined) =>
+    normalizeStoredScopes(scopes).filter((scope) => !gmailFullInboxPermissionScopes.includes(scope as (typeof gmailFullInboxPermissionScopes)[number]));
+
+  try {
+    const connection = await prisma.emailConnection.findUnique({
+      where: { id: connectionId },
+      include: { secret: { select: { id: true, scopes: true } } }
+    });
+    if (!connection || connection.provider !== "GOOGLE_WORKSPACE") return;
+    await prisma.emailConnection.update({
+      where: { id: connection.id },
+      data: { scopes: withoutFullInboxPermissionScopes(connection.scopes) }
+    });
+    if (connection.secret) {
+      await prisma.emailConnectionSecret.update({
+        where: { id: connection.secret.id },
+        data: { scopes: withoutFullInboxPermissionScopes(connection.secret.scopes) }
+      });
+    }
+  } catch {
+    // Preserve the original Gmail sync failure if readiness repair cannot be recorded.
+  }
 }
 
 function providerConnectionCardPriority(connection: {

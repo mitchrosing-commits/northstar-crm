@@ -131,7 +131,7 @@ describe("Gmail metadata sync", () => {
           access_token: "gmail-access-token",
           expires_in: { seconds: 3600 } as unknown as number,
           refresh_token: "gmail-refresh-token",
-          scope: { value: "openid email" } as unknown as string
+          scope: gmailFullInboxScopes.join(" ")
         }
       });
       const secret = await fixture.prisma.emailConnectionSecret.findUniqueOrThrow({
@@ -155,6 +155,44 @@ describe("Gmail metadata sync", () => {
       });
       expect(JSON.stringify(syncJob.payload)).not.toContain("gmail-access-token");
       expect(JSON.stringify(syncJob.payload)).not.toContain("gmail-refresh-token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("stores only Google-returned scopes and does not mark metadata-only reconnects Full Inbox ready", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await storeGoogleOAuthConnection({
+        actor: fixture.actorA,
+        env,
+        profile: {
+          email: "alex@example.test",
+          name: "Alex Gmail"
+        },
+        tokenResponse: {
+          access_token: "gmail-metadata-only-access-token",
+          expires_in: 3600,
+          refresh_token: "gmail-metadata-only-refresh-token",
+          scope: "openid email https://www.googleapis.com/auth/gmail.metadata"
+        }
+      });
+      const [secret, providerCard, jobs] = await Promise.all([
+        fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } }),
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        ),
+        fixture.prisma.job.findMany({ where: { type: gmailInboxSyncJobType, workspaceId: fixture.workspaceA.id } })
+      ]);
+
+      expect(connection.scopes).toEqual(["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"]);
+      expect(secret.scopes).toEqual(["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"]);
+      expect(providerCard).toMatchObject({
+        accountEmail: "alex@example.test",
+        status: "Reconnect required",
+        syncAvailable: false
+      });
+      expect(jobs).toHaveLength(0);
     } finally {
       await fixture.cleanup();
     }
@@ -206,7 +244,7 @@ describe("Gmail metadata sync", () => {
           access_token: "gmail-reconnect-access-token",
           expires_in: 3600,
           refresh_token: "gmail-reconnect-refresh-token",
-          scope: "openid email"
+          scope: gmailFullInboxScopes.join(" ")
         }
       });
       expect(reconnected.id).toBe(legacyConnection.id);
@@ -1504,9 +1542,13 @@ describe("Gmail metadata sync", () => {
         )
       });
 
-      const [job, reloadedConnection, logs] = await Promise.all([
+      const [job, reloadedConnection, reloadedSecret, providerCard, logs] = await Promise.all([
         fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
         fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+        fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } }),
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        ),
         fixture.prisma.emailLog.findMany({
           where: { provider: "GOOGLE_WORKSPACE", workspaceId: fixture.workspaceA.id }
         })
@@ -1571,9 +1613,13 @@ describe("Gmail metadata sync", () => {
           "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync."
       });
 
-      const [job, reloadedConnection, logs] = await Promise.all([
+      const [job, reloadedConnection, reloadedSecret, providerCard, logs] = await Promise.all([
         fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
         fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+        fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } }),
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        ),
         fixture.prisma.emailLog.findMany({
           where: { provider: "GOOGLE_WORKSPACE", workspaceId: fixture.workspaceA.id }
         })
@@ -1587,6 +1633,13 @@ describe("Gmail metadata sync", () => {
       expect(reloadedConnection.lastError).toBe(
         "EMAIL_GMAIL_MESSAGE_AUTH_FAILED: Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync."
       );
+      expect(reloadedConnection.scopes).toEqual(["openid", "email"]);
+      expect(reloadedSecret.scopes).toEqual(["openid", "email"]);
+      expect(providerCard).toMatchObject({
+        accountEmail: "alex@example.test",
+        status: "Reconnect required",
+        syncAvailable: false
+      });
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
       expect(logs).toHaveLength(0);

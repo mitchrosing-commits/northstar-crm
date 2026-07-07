@@ -93,6 +93,7 @@ describe("encrypted email token storage", () => {
     expect(service).toContain("normalizeProviderAccountEmail(profile.email, \"Gmail\")");
     expect(service).toContain("normalizeAccessTokenExpiresAt(tokenResponse.expires_in)");
     expect(service).toContain("function normalizeScopes(scope: unknown");
+    expect(service).toContain("return normalizeScopes(scope, [])");
     expect(service).toContain("encryptedAccessToken: encryptEmailToken(tokenResponse.access_token");
     expect(service).toContain("encryptedRefreshToken");
     expect(service).toContain("actionLabel: connection?.status === \"CONNECTED\" ? \"Reconnect Gmail\" : \"Connect Gmail\"");
