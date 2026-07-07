@@ -51,6 +51,8 @@ export type GoogleTokenResponse = {
 };
 
 type GoogleTokenInfoResponse = {
+  aud?: string;
+  email?: string;
   scope?: string;
 };
 
@@ -199,17 +201,106 @@ type GmailFullMessageLoadResult = {
 };
 
 type GmailSkippedMessageReason =
+  | "message_load_account_mismatch"
+  | "message_load_api_disabled"
   | "message_fetch_failed"
   | "message_load_http_failed"
+  | "message_load_invalid_token"
   | "message_load_not_found"
   | "message_load_provider_unavailable"
   | "message_load_rate_limited"
   | "message_missing_id"
   | "message_parse_failed";
 
-type GmailFatalMessageLoadReason = "message_load_auth_or_scope_failed";
+type GmailFatalMessageLoadReason =
+  | "message_load_account_mismatch"
+  | "message_load_api_disabled"
+  | "message_load_auth_or_scope_failed"
+  | "message_load_invalid_token";
 
 type GmailMessageLoadFailureReason = GmailFatalMessageLoadReason | GmailSkippedMessageReason;
+
+type GmailProviderErrorCategory =
+  | "account_mismatch"
+  | "api_disabled"
+  | "deleted_message"
+  | "http_error"
+  | "insufficient_permissions"
+  | "invalid_token"
+  | "parse_failure"
+  | "provider_unavailable"
+  | "rate_limited";
+
+type GmailProviderErrorInfo = {
+  category: GmailProviderErrorCategory;
+  providerReason: string | null;
+  providerStatus: number | null;
+  providerStatusText: string | null;
+};
+
+export type GmailConnectionDiagnosticResult = {
+  accountEmail: string | null;
+  connectionRef: string;
+  fullMessageGet: {
+    category: GmailProviderErrorCategory | "not_attempted" | "success";
+    messageRef: string | null;
+    providerReason: string | null;
+    providerStatus: number | null;
+    success: boolean;
+  };
+  hasEncryptedSecret: boolean;
+  list: {
+    category: GmailProviderErrorCategory | "not_attempted" | "success";
+    messageCount: number;
+    providerReason: string | null;
+    providerStatus: number | null;
+    success: boolean;
+  };
+  job: {
+    connectionMatchesSelected: boolean | null;
+    found: boolean;
+    jobRef: string | null;
+    payloadConnectionRef: string | null;
+    payloadWorkspaceMatches: boolean | null;
+    requestedJobRef: string | null;
+    status: JobStatus | null;
+    typeMatches: boolean | null;
+  };
+  missingRequiredScopeCategories: string[];
+  oauth: {
+    includeGrantedScopes: boolean;
+    promptConsent: boolean;
+    redirectUriConfigured: boolean;
+    requestedScopeCategories: string[];
+    responseTypeCode: boolean;
+    usesOfflineAccess: boolean;
+  };
+  selectedConnectionId: string;
+  secretAccountMatchesConnection: boolean | null;
+  storedScopeCategories: string[];
+  tokenRefresh: {
+    category: GmailProviderErrorCategory | "missing_refresh_token" | "not_attempted" | "success";
+    providerReason: string | null;
+    providerStatus: number | null;
+    success: boolean | null;
+  };
+  tokeninfo: {
+    accountEmail: string | null;
+    accountMatchesConnection: boolean | null;
+    category: GmailProviderErrorCategory | "not_attempted" | "success";
+    missingRequiredScopeCategories: string[];
+    providerReason: string | null;
+    providerStatus: number | null;
+    scopeCategories: string[];
+    success: boolean;
+  };
+  tokenResolution: {
+    category: GmailProviderErrorCategory | "success";
+    providerReason: string | null;
+    providerStatus: number | null;
+    success: boolean;
+  };
+};
 
 export type EmailInboxMessageSummary = Prisma.EmailLogGetPayload<{ include: typeof emailInboxLogInclude }>;
 
@@ -549,12 +640,29 @@ async function fetchGoogleAccessTokenInfoScopes({
   accessToken: string;
   fetchImpl: typeof fetch;
 }) {
+  return (await fetchGoogleAccessTokenInfo({ accessToken, fetchImpl })).scopes;
+}
+
+async function fetchGoogleAccessTokenInfo({
+  accessToken,
+  fetchImpl
+}: {
+  accessToken: string;
+  fetchImpl: typeof fetch;
+}) {
   const url = new URL("https://oauth2.googleapis.com/tokeninfo");
   url.searchParams.set("access_token", accessToken);
   const response = await fetchImpl(url);
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED", "Gmail granted scopes could not be verified.", 400);
+    const info = await readGmailProviderErrorInfo(response);
+    throw new ApiError("EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED", "Gmail granted scopes could not be verified.", 400, {
+      providerErrorCategory: info.category,
+      providerReason: info.providerReason,
+      providerStatus: info.providerStatus,
+      providerStatusText: info.providerStatusText,
+      phase: "tokeninfo"
+    });
   }
 
   const tokenInfo = await readEmailProviderJson<GoogleTokenInfoResponse>(response, {
@@ -562,7 +670,11 @@ async function fetchGoogleAccessTokenInfoScopes({
     message: "Gmail granted scopes could not be verified."
   });
 
-  return normalizeGoogleOAuthScopes(tokenInfo.scope);
+  return {
+    accountEmail: normalizeEmailAddress(tokenInfo.email),
+    audience: readNonEmptyValue(tokenInfo.aud),
+    scopes: normalizeGoogleOAuthScopes(tokenInfo.scope)
+  };
 }
 
 export async function fetchMicrosoftUserProfile({
@@ -1433,6 +1545,229 @@ export function parseGmailInboxSyncJobPayload(payload: unknown): GmailInboxSyncJ
   return { connectionId, workspaceId };
 }
 
+export async function diagnoseGmailConnection(
+  actor: WorkspaceActor,
+  options: { connectionRef?: string; env?: EmailConnectionEnv; fetchImpl?: GmailFetch; jobRef?: string; maxResults?: number } = {}
+): Promise<GmailConnectionDiagnosticResult> {
+  await ensureWorkspaceAccess(actor);
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const config = assertGoogleOAuthReady(env);
+  const connection = await findGmailConnectionForDiagnostic(actor.workspaceId, options.connectionRef);
+  if (!connection) {
+    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Selected Gmail connection could not be found in this workspace.", 404);
+  }
+
+  const storedScopes = mergeScopeLists(normalizeStoredScopes(connection.scopes), normalizeStoredScopes(connection.secret?.scopes));
+  const missingRequiredScopes = missingProviderScopes(storedScopes, gmailOAuthScopes);
+  const secretAccountMatchesConnection = connection.secret
+    ? normalizeEmailAddress(connection.accountEmail) === normalizeEmailAddress(connection.secret.accountEmail)
+    : null;
+  const diagnostic: GmailConnectionDiagnosticResult = {
+    accountEmail: connection.accountEmail,
+    connectionRef: shortJobRef(connection.id),
+    fullMessageGet: {
+      category: "not_attempted",
+      messageRef: null,
+      providerReason: null,
+      providerStatus: null,
+      success: false
+    },
+    hasEncryptedSecret: Boolean(connection.secret),
+    list: {
+      category: "not_attempted",
+      messageCount: 0,
+      providerReason: null,
+      providerStatus: null,
+      success: false
+    },
+    job: await diagnoseGmailSyncJob({
+      connectionId: connection.id,
+      jobRef: options.jobRef,
+      workspaceId: actor.workspaceId
+    }),
+    missingRequiredScopeCategories: scopeCategoryLabels(missingRequiredScopes),
+    oauth: diagnoseGoogleOAuthAuthorizationRequest(config),
+    selectedConnectionId: connection.id,
+    secretAccountMatchesConnection,
+    storedScopeCategories: scopeCategoryLabels(storedScopes),
+    tokenRefresh: {
+      category: "not_attempted",
+      providerReason: null,
+      providerStatus: null,
+      success: null
+    },
+    tokeninfo: {
+      accountEmail: null,
+      accountMatchesConnection: null,
+      category: "not_attempted",
+      missingRequiredScopeCategories: [],
+      providerReason: null,
+      providerStatus: null,
+      scopeCategories: [],
+      success: false
+    },
+    tokenResolution: {
+      category: "success",
+      providerReason: null,
+      providerStatus: null,
+      success: true
+    }
+  };
+
+  if (!connection.secret) return diagnostic;
+
+  const tokenRefreshRequired = Boolean(
+    connection.secret.accessTokenExpiresAt && connection.secret.accessTokenExpiresAt.getTime() <= Date.now() + 60_000
+  );
+
+  try {
+    assertEmailConnectionSecretIntegrity(connection, "Gmail");
+    const tokenResolution = await resolveUsableGoogleAccessTokenForDiagnostic({ config, connection, env, fetchImpl });
+    const accessToken = tokenResolution.accessToken;
+    diagnostic.tokenRefresh = tokenResolution.tokenRefresh;
+    diagnostic.tokeninfo = await diagnoseGoogleTokenInfo({ accessToken, connection, fetchImpl });
+
+    const listResult = await diagnoseGmailInboxList({ accessToken, fetchImpl, maxResults: options.maxResults ?? 1 });
+    diagnostic.list = listResult.summary;
+    if (listResult.messageId) {
+      diagnostic.fullMessageGet = await diagnoseGmailFullMessageGet({ accessToken, fetchImpl, messageId: listResult.messageId });
+    }
+  } catch (error) {
+    const summary = gmailProviderErrorSummaryFromError(error, "invalid_token");
+    diagnostic.tokenResolution = {
+      ...summary,
+      success: false
+    };
+    if (tokenRefreshRequired && diagnostic.tokenRefresh.category === "not_attempted") {
+      diagnostic.tokenRefresh = connection.secret.encryptedRefreshToken
+        ? { ...summary, success: false }
+        : { category: "missing_refresh_token", providerReason: null, providerStatus: null, success: false };
+    }
+  }
+
+  return diagnostic;
+}
+
+async function diagnoseGmailSyncJob({
+  connectionId,
+  jobRef,
+  workspaceId
+}: {
+  connectionId: string;
+  jobRef?: string;
+  workspaceId: string;
+}): Promise<GmailConnectionDiagnosticResult["job"]> {
+  const requestedJobRef = readNonEmptyValue(jobRef);
+  if (!requestedJobRef) {
+    return {
+      connectionMatchesSelected: null,
+      found: false,
+      jobRef: null,
+      payloadConnectionRef: null,
+      payloadWorkspaceMatches: null,
+      requestedJobRef: null,
+      status: null,
+      typeMatches: null
+    };
+  }
+
+  const job = await findGmailSyncJobForDiagnostic(workspaceId, requestedJobRef);
+  if (!job) {
+    return {
+      connectionMatchesSelected: null,
+      found: false,
+      jobRef: null,
+      payloadConnectionRef: null,
+      payloadWorkspaceMatches: null,
+      requestedJobRef,
+      status: null,
+      typeMatches: null
+    };
+  }
+
+  const payload = safeParseGmailInboxSyncJobPayload(job.payload);
+  return {
+    connectionMatchesSelected: payload ? payload.connectionId === connectionId : false,
+    found: true,
+    jobRef: shortJobRef(job.id),
+    payloadConnectionRef: payload ? shortJobRef(payload.connectionId) : null,
+    payloadWorkspaceMatches: payload ? payload.workspaceId === workspaceId : false,
+    requestedJobRef,
+    status: job.status,
+    typeMatches: job.type === gmailInboxSyncJobType
+  };
+}
+
+async function resolveUsableGoogleAccessTokenForDiagnostic({
+  config,
+  connection,
+  env,
+  fetchImpl
+}: {
+  config: Required<ProviderConfig>;
+  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  env: EmailConnectionEnv;
+  fetchImpl: GmailFetch;
+}): Promise<{ accessToken: string; tokenRefresh: GmailConnectionDiagnosticResult["tokenRefresh"] }> {
+  const secret = connection.secret;
+  if (!secret) {
+    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
+  }
+
+  if (!secret.accessTokenExpiresAt || secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000) {
+    return {
+      accessToken: decryptEmailToken(secret.encryptedAccessToken, env),
+      tokenRefresh: { category: "not_attempted", providerReason: null, providerStatus: null, success: null }
+    };
+  }
+
+  if (!secret.encryptedRefreshToken) {
+    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING", "Reconnect Gmail before syncing; the access token expired.", 400);
+  }
+
+  const refreshed = await refreshGoogleAccessToken({
+    config,
+    fetchImpl,
+    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
+  });
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(refreshed.expires_in);
+
+  await prisma.emailConnectionSecret.update({
+    where: { connectionId: connection.id },
+    data: {
+      accessTokenExpiresAt,
+      encryptedAccessToken: encryptEmailToken(refreshed.access_token as string, env)
+    }
+  });
+
+  return {
+    accessToken: refreshed.access_token as string,
+    tokenRefresh: { category: "success", providerReason: null, providerStatus: null, success: true }
+  };
+}
+
+function diagnoseGoogleOAuthAuthorizationRequest(config: Required<ProviderConfig>): GmailConnectionDiagnosticResult["oauth"] {
+  const url = buildGoogleAuthorizationUrl({ config, state: "gmail-diagnostic-state" });
+  const requestedScopes = normalizeGoogleOAuthScopes(url.searchParams.get("scope"));
+  return {
+    includeGrantedScopes: url.searchParams.get("include_granted_scopes") === "true",
+    promptConsent: url.searchParams.get("prompt") === "consent",
+    redirectUriConfigured: Boolean(readNonEmptyValue(url.searchParams.get("redirect_uri"))),
+    requestedScopeCategories: scopeCategoryLabels(requestedScopes),
+    responseTypeCode: url.searchParams.get("response_type") === "code",
+    usesOfflineAccess: url.searchParams.get("access_type") === "offline"
+  };
+}
+
+function safeParseGmailInboxSyncJobPayload(payload: unknown) {
+  try {
+    return parseGmailInboxSyncJobPayload(payload);
+  } catch {
+    return null;
+  }
+}
+
 async function enqueueGmailInboxSyncJobForConnection(actor: WorkspaceActor, connectionId: string) {
   return enqueueJob({
     type: gmailInboxSyncJobType,
@@ -1697,11 +2032,13 @@ async function getGmailFullMessages({
       });
     } catch (error) {
       const reason = gmailMessageLoadFailureReason(error);
-      if (reason === "message_load_auth_or_scope_failed") {
+      if (isFatalGmailMessageLoadFailureReason(reason)) {
+        const diagnostic = gmailMessageLoadErrorInfo(error);
         throw new ApiError(
           "EMAIL_GMAIL_MESSAGE_AUTH_FAILED",
-          "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync.",
-          400
+          gmailMessageAuthFailureMessage(diagnostic),
+          400,
+          diagnostic
         );
       }
       if (!reason) throw error;
@@ -1770,15 +2107,68 @@ function gmailMessageLoadFailureReason(error: unknown): GmailMessageLoadFailureR
 
 function isGmailMessageLoadFailureReason(value: unknown): value is GmailMessageLoadFailureReason {
   return (
+    value === "message_load_account_mismatch" ||
+    value === "message_load_api_disabled" ||
     value === "message_fetch_failed" ||
     value === "message_load_auth_or_scope_failed" ||
     value === "message_load_http_failed" ||
+    value === "message_load_invalid_token" ||
     value === "message_load_not_found" ||
     value === "message_load_provider_unavailable" ||
     value === "message_load_rate_limited" ||
     value === "message_missing_id" ||
     value === "message_parse_failed"
   );
+}
+
+function isFatalGmailMessageLoadFailureReason(value: GmailMessageLoadFailureReason | null): value is GmailFatalMessageLoadReason {
+  return (
+    value === "message_load_account_mismatch" ||
+    value === "message_load_api_disabled" ||
+    value === "message_load_auth_or_scope_failed" ||
+    value === "message_load_invalid_token"
+  );
+}
+
+function gmailMessageLoadErrorInfo(error: unknown): GmailProviderErrorInfo {
+  if (!(error instanceof ApiError) || !isRecord(error.details)) {
+    return { category: "http_error", providerReason: null, providerStatus: null, providerStatusText: null };
+  }
+  return providerErrorInfoFromDetails(error.details);
+}
+
+function providerErrorInfoFromDetails(details: Record<string, unknown>): GmailProviderErrorInfo {
+  const providerStatus = typeof details.providerStatus === "number" ? details.providerStatus : null;
+  const providerReason = readNonEmptyValue(details.providerReason);
+  const providerStatusText = readNonEmptyValue(details.providerStatusText);
+  const category = readNonEmptyValue(details.providerErrorCategory);
+  return {
+    category: isGmailProviderErrorCategory(category) ? category : gmailProviderErrorCategory(providerStatus, providerReason),
+    providerReason,
+    providerStatus,
+    providerStatusText
+  };
+}
+
+function gmailMessageAuthFailureMessage(info: GmailProviderErrorInfo) {
+  const reasonDetail = [
+    info.providerStatus ? `Google status ${info.providerStatus}` : null,
+    info.providerReason ? `reason ${info.providerReason}` : null,
+    `category ${info.category}`
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  if (info.category === "api_disabled") {
+    return `Gmail listed inbox messages, but Gmail API full-message loading was rejected (${reasonDetail}). Enable the Gmail API for the OAuth project, then reconnect Gmail.`;
+  }
+  if (info.category === "invalid_token") {
+    return `Gmail listed inbox messages, but Google rejected the stored access token during full-message loading (${reasonDetail}). Reconnect Gmail, then retry sync.`;
+  }
+  if (info.category === "account_mismatch") {
+    return `Gmail listed inbox messages, but the selected Gmail connection does not match the verified token account (${reasonDetail}). Disconnect and reconnect the intended Gmail account.`;
+  }
+  return `Gmail listed inbox messages, but Gmail rejected full-message loading (${reasonDetail}). Reconnect Gmail with Full Inbox scopes, then retry sync.`;
 }
 
 function pluralize(label: string, count: number) {
@@ -2169,6 +2559,133 @@ async function resolveUsableGoogleAccessToken({
   return refreshed.access_token as string;
 }
 
+async function diagnoseGoogleTokenInfo({
+  accessToken,
+  connection,
+  fetchImpl
+}: {
+  accessToken: string;
+  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  fetchImpl: GmailFetch;
+}): Promise<GmailConnectionDiagnosticResult["tokeninfo"]> {
+  try {
+    const tokenInfo = await fetchGoogleAccessTokenInfo({ accessToken, fetchImpl });
+    const missing = missingProviderScopes(tokenInfo.scopes, gmailOAuthScopes);
+    const accountMatchesConnection = tokenInfo.accountEmail
+      ? tokenInfo.accountEmail === normalizeEmailAddress(connection.accountEmail)
+      : null;
+    return {
+      accountEmail: tokenInfo.accountEmail,
+      accountMatchesConnection,
+      category: accountMatchesConnection === false ? "account_mismatch" : "success",
+      missingRequiredScopeCategories: scopeCategoryLabels(missing),
+      providerReason: null,
+      providerStatus: null,
+      scopeCategories: scopeCategoryLabels(tokenInfo.scopes),
+      success: true
+    };
+  } catch (error) {
+    return {
+      accountEmail: null,
+      accountMatchesConnection: null,
+      ...gmailProviderErrorSummaryFromError(error, "invalid_token"),
+      missingRequiredScopeCategories: [],
+      scopeCategories: [],
+      success: false
+    };
+  }
+}
+
+async function diagnoseGmailInboxList({
+  accessToken,
+  fetchImpl,
+  maxResults
+}: {
+  accessToken: string;
+  fetchImpl: GmailFetch;
+  maxResults: number;
+}): Promise<{ messageId: string | null; summary: GmailConnectionDiagnosticResult["list"] }> {
+  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  url.searchParams.set("labelIds", "INBOX");
+  url.searchParams.set("maxResults", String(normalizeRecentEmailSyncMaxResults(maxResults)));
+  const response = await fetchImpl(url, {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!response.ok) {
+    const info = await readGmailProviderErrorInfo(response);
+    return {
+      messageId: null,
+      summary: {
+        category: info.category,
+        messageCount: 0,
+        providerReason: info.providerReason,
+        providerStatus: info.providerStatus,
+        success: false
+      }
+    };
+  }
+
+  try {
+    const body = await readEmailProviderJson<GmailListResponse>(response, {
+      code: "EMAIL_GMAIL_LIST_FAILED",
+      message: "Gmail inbox messages could not be listed."
+    });
+    const messages = body.messages?.filter((message) => message.id) ?? [];
+    return {
+      messageId: messages[0]?.id ?? null,
+      summary: {
+        category: "success",
+        messageCount: messages.length,
+        providerReason: null,
+        providerStatus: response.status,
+        success: true
+      }
+    };
+  } catch {
+    return {
+      messageId: null,
+      summary: {
+        category: "parse_failure",
+        messageCount: 0,
+        providerReason: null,
+        providerStatus: response.status,
+        success: false
+      }
+    };
+  }
+}
+
+async function diagnoseGmailFullMessageGet({
+  accessToken,
+  fetchImpl,
+  messageId
+}: {
+  accessToken: string;
+  fetchImpl: GmailFetch;
+  messageId: string;
+}): Promise<GmailConnectionDiagnosticResult["fullMessageGet"]> {
+  try {
+    await getGmailMessageFull({ accessToken, fetchImpl, messageId });
+    return {
+      category: "success",
+      messageRef: safeGmailMessageRef(messageId),
+      providerReason: null,
+      providerStatus: 200,
+      success: true
+    };
+  } catch (error) {
+    const summary = gmailProviderErrorSummaryFromError(error, "http_error");
+    return {
+      category: summary.category,
+      messageRef: safeGmailMessageRef(messageId),
+      providerReason: summary.providerReason,
+      providerStatus: summary.providerStatus,
+      success: false
+    };
+  }
+}
+
 async function resolveUsableMicrosoftAccessToken({
   config,
   connection,
@@ -2233,7 +2750,14 @@ async function refreshGoogleAccessToken({
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Gmail access token could not be refreshed.", 400);
+    const info = await readGmailProviderErrorInfo(response);
+    throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Gmail access token could not be refreshed.", 400, {
+      providerErrorCategory: info.category,
+      providerReason: info.providerReason,
+      providerStatus: info.providerStatus,
+      providerStatusText: info.providerStatusText,
+      phase: "token_refresh"
+    });
   }
 
   const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(response, {
@@ -2436,10 +2960,14 @@ async function getGmailMessageFull({
   });
 
   if (!response.ok) {
-    const reason = gmailMessageHttpFailureReason(response.status);
+    const info = await readGmailProviderErrorInfo(response);
+    const reason = gmailMessageHttpFailureReason(info.providerStatus ?? response.status, info.providerReason);
     throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", gmailMessageHttpFailureMessage(reason), 400, {
       gmailMessageLoadReason: reason,
-      providerStatus: response.status,
+      providerErrorCategory: info.category,
+      providerReason: info.providerReason,
+      providerStatus: info.providerStatus ?? response.status,
+      providerStatusText: info.providerStatusText,
       phase: "message_fetch"
     });
   }
@@ -2451,7 +2979,14 @@ async function getGmailMessageFull({
   });
 }
 
-function gmailMessageHttpFailureReason(status: number): GmailMessageLoadFailureReason {
+function gmailMessageHttpFailureReason(status: number, providerReason?: string | null): GmailMessageLoadFailureReason {
+  const category = gmailProviderErrorCategory(status, providerReason);
+  if (category === "api_disabled") return "message_load_api_disabled";
+  if (category === "invalid_token") return "message_load_invalid_token";
+  if (category === "insufficient_permissions") return "message_load_auth_or_scope_failed";
+  if (category === "rate_limited") return "message_load_rate_limited";
+  if (category === "provider_unavailable") return "message_load_provider_unavailable";
+  if (category === "deleted_message") return "message_load_not_found";
   if (status === 401 || status === 403) return "message_load_auth_or_scope_failed";
   if (status === 404 || status === 410) return "message_load_not_found";
   if (status === 429) return "message_load_rate_limited";
@@ -2463,6 +2998,15 @@ function gmailMessageHttpFailureMessage(reason: GmailMessageLoadFailureReason) {
   if (reason === "message_load_auth_or_scope_failed") {
     return "Gmail listed inbox messages, but full-message loading was rejected. Reconnect Gmail with Full Inbox scopes.";
   }
+  if (reason === "message_load_api_disabled") {
+    return "Gmail listed inbox messages, but Gmail API full-message loading was rejected for this OAuth project.";
+  }
+  if (reason === "message_load_invalid_token") {
+    return "Gmail listed inbox messages, but Google rejected the stored access token.";
+  }
+  if (reason === "message_load_account_mismatch") {
+    return "Gmail listed inbox messages, but the selected Gmail connection does not match the verified token account.";
+  }
   if (reason === "message_load_not_found") {
     return "Gmail message could not be loaded because it was unavailable or deleted after listing.";
   }
@@ -2473,6 +3017,112 @@ function gmailMessageHttpFailureMessage(reason: GmailMessageLoadFailureReason) {
     return "Gmail message could not be loaded because Gmail was temporarily unavailable.";
   }
   return "Gmail message could not be loaded.";
+}
+
+async function readGmailProviderErrorInfo(response: Response): Promise<GmailProviderErrorInfo> {
+  const providerStatus = response.status;
+  try {
+    const body = (await response.json()) as unknown;
+    const errorValue = isRecord(body) ? body.error : null;
+    const error = isRecord(errorValue) ? errorValue : null;
+    const nestedErrors = Array.isArray(error?.errors) ? error.errors : [];
+    const firstNestedError = nestedErrors.find(isRecord);
+    const providerReason =
+      readSafeGmailProviderReason(firstNestedError?.reason) ??
+      readSafeGmailProviderReason(error?.reason) ??
+      readSafeGmailProviderReason(errorValue);
+    const providerStatusText = readNonEmptyValue(error?.status) ?? (response.statusText || null);
+    return {
+      category: gmailProviderErrorCategory(providerStatus, providerReason),
+      providerReason,
+      providerStatus,
+      providerStatusText
+    };
+  } catch {
+    return {
+      category: gmailProviderErrorCategory(providerStatus, null),
+      providerReason: null,
+      providerStatus,
+      providerStatusText: response.statusText || null
+    };
+  }
+}
+
+function readSafeGmailProviderReason(value: unknown) {
+  const reason = readNonEmptyValue(value);
+  if (!reason) return null;
+  const normalized = reason.toLowerCase();
+  const safeReasons = new Set([
+    "accessnotconfigured",
+    "apihasnotbeenused",
+    "autherror",
+    "dailylimitexceeded",
+    "deleted",
+    "forbiddeninsufficientpermissions",
+    "insufficientpermission",
+    "insufficientpermissions",
+    "invalid_grant",
+    "invalidcredentials",
+    "invalidgrant",
+    "notfound",
+    "ratelimitexceeded",
+    "servicedisabled",
+    "userratelimitexceeded"
+  ]);
+  return safeReasons.has(normalized) ? reason : null;
+}
+
+function gmailProviderErrorCategory(status: number | null, providerReason: string | null | undefined): GmailProviderErrorCategory {
+  const reason = providerReason?.toLowerCase();
+  if (
+    status === 401 ||
+    reason === "autherror" ||
+    reason === "invalid_grant" ||
+    reason === "invalidcredentials" ||
+    reason === "invalidgrant"
+  ) {
+    return "invalid_token";
+  }
+  if (
+    reason === "accessnotconfigured" ||
+    reason === "servicedisabled" ||
+    reason === "apihasnotbeenused"
+  ) {
+    return "api_disabled";
+  }
+  if (
+    reason === "insufficientpermissions" ||
+    reason === "insufficientpermission" ||
+    reason === "forbiddeninsufficientpermissions"
+  ) {
+    return "insufficient_permissions";
+  }
+  if (status === 403) return "insufficient_permissions";
+  if (
+    status === 429 ||
+    reason === "ratelimitexceeded" ||
+    reason === "userratelimitexceeded" ||
+    reason === "dailylimitexceeded"
+  ) {
+    return "rate_limited";
+  }
+  if (status === 404 || status === 410 || reason === "notfound" || reason === "deleted") return "deleted_message";
+  if (status && status >= 500) return "provider_unavailable";
+  return "http_error";
+}
+
+function isGmailProviderErrorCategory(value: unknown): value is GmailProviderErrorCategory {
+  return (
+    value === "account_mismatch" ||
+    value === "api_disabled" ||
+    value === "deleted_message" ||
+    value === "http_error" ||
+    value === "insufficient_permissions" ||
+    value === "invalid_token" ||
+    value === "parse_failure" ||
+    value === "provider_unavailable" ||
+    value === "rate_limited"
+  );
 }
 
 async function getGmailThreadFull({
@@ -2931,6 +3581,10 @@ function formatGoogleScopeCategories(scopes: readonly string[]) {
   return categories.size > 0 ? [...categories].join(", ") : "none";
 }
 
+function scopeCategoryLabels(scopes: readonly string[]) {
+  return [...new Set(scopes.map(googleScopeCategoryLabel))].sort((a, b) => a.localeCompare(b));
+}
+
 function googleScopeCategoryLabel(scope: string) {
   if (scope === "openid") return "sign-in";
   if (scope === "email") return "email";
@@ -2939,6 +3593,24 @@ function googleScopeCategoryLabel(scope: string) {
   if (scope === "https://www.googleapis.com/auth/gmail.send") return "Gmail send";
   if (scope === "https://www.googleapis.com/auth/gmail.metadata") return "Gmail metadata";
   return scope.startsWith("https://www.googleapis.com/auth/gmail.") ? "other Gmail permission" : "other";
+}
+
+function gmailProviderErrorSummaryFromError(
+  error: unknown,
+  fallbackCategory: GmailProviderErrorCategory
+): { category: GmailProviderErrorCategory; providerReason: string | null; providerStatus: number | null } {
+  if (error instanceof ApiError && isRecord(error.details)) {
+    const info = providerErrorInfoFromDetails(error.details);
+    return {
+      category: info.category,
+      providerReason: info.providerReason,
+      providerStatus: info.providerStatus
+    };
+  }
+  if (error instanceof TypeError) {
+    return { category: "provider_unavailable", providerReason: null, providerStatus: null };
+  }
+  return { category: fallbackCategory, providerReason: null, providerStatus: null };
 }
 
 async function markGmailFullInboxScopesRejected(connectionId: string) {
@@ -3415,6 +4087,57 @@ function findConnectedEmailConnection(
     include: { secret: true },
     orderBy: { updatedAt: "desc" }
   });
+}
+
+async function findGmailConnectionForDiagnostic(workspaceId: string, connectionRef: string | undefined) {
+  const trimmedRef = readNonEmptyValue(connectionRef);
+  if (!trimmedRef) return findConnectedEmailConnection(workspaceId, "GOOGLE_WORKSPACE");
+
+  const exact = await findConnectedEmailConnection(workspaceId, "GOOGLE_WORKSPACE", trimmedRef);
+  if (exact) return exact;
+
+  const matches = await prisma.emailConnection.findMany({
+    where: {
+      workspaceId,
+      provider: "GOOGLE_WORKSPACE",
+      status: "CONNECTED",
+      deletedAt: null
+    },
+    include: { secret: true },
+    orderBy: { updatedAt: "desc" }
+  });
+  const shortMatches = matches.filter((connection) => shortJobRef(connection.id) === trimmedRef);
+  if (shortMatches.length === 1) return shortMatches[0];
+  if (shortMatches.length > 1) {
+    throw new ApiError("EMAIL_CONNECTION_AMBIGUOUS", "Gmail connection short reference matched more than one row.", 409);
+  }
+  return null;
+}
+
+async function findGmailSyncJobForDiagnostic(workspaceId: string, jobRef: string) {
+  const exact = await prisma.job.findFirst({
+    where: {
+      id: jobRef,
+      type: gmailInboxSyncJobType,
+      workspaceId
+    },
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+  });
+  if (exact) return exact;
+
+  const matches = await prisma.job.findMany({
+    where: {
+      type: gmailInboxSyncJobType,
+      workspaceId
+    },
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+  });
+  const shortMatches = matches.filter((job) => shortJobRef(job.id) === jobRef);
+  if (shortMatches.length === 1) return shortMatches[0];
+  if (shortMatches.length > 1) {
+    throw new ApiError("EMAIL_SYNC_JOB_AMBIGUOUS", "Gmail sync job short reference matched more than one row.", 409);
+  }
+  return null;
 }
 
 function isUniqueConstraintError(error: unknown) {

@@ -8,6 +8,7 @@ import {
   CalendarPlus,
   CircleDollarSign,
   Contact,
+  FileText,
   Inbox,
   LayoutDashboard,
   Package,
@@ -57,6 +58,7 @@ const searchNavigationIcons: Record<AppNavigationIconName, LucideIcon> = {
   CalendarCheck,
   CircleDollarSign,
   Contact,
+  FileText,
   Inbox,
   LayoutDashboard,
   Package,
@@ -143,7 +145,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
         </form>
       </section>
 
-      <SearchActionPanel query={hasQuery ? results.query : undefined} />
+      {!hasQuery ? <SearchActionPanel /> : null}
 
       {!hasQuery ? (
         <EmptyState
@@ -371,6 +373,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
           </div>
         </>
       )}
+      {hasQuery ? <SearchActionPanel query={results.query} /> : null}
     </AppShell>
   );
 }

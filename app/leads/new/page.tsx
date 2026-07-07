@@ -11,7 +11,14 @@ export const dynamic = "force-dynamic";
 export default async function NewLeadPage({
   searchParams
 }: {
-  searchParams?: Promise<{ source?: string; title?: string }>;
+  searchParams?: Promise<{
+    organizationId?: string;
+    ownerId?: string;
+    personId?: string;
+    source?: string;
+    status?: string;
+    title?: string;
+  }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
@@ -27,7 +34,15 @@ export default async function NewLeadPage({
   }));
   const defaultSource = firstSearchParam(resolvedSearchParams?.source);
   const defaultTitle = firstSearchParam(resolvedSearchParams?.title);
-  const hasPrefill = Boolean(defaultSource || defaultTitle);
+  const requestedPersonId = firstSearchParam(resolvedSearchParams?.personId);
+  const requestedOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId);
+  const requestedOwnerId = firstSearchParam(resolvedSearchParams?.ownerId);
+  const defaultPersonId = people.some((person) => person.id === requestedPersonId) ? requestedPersonId : undefined;
+  const defaultOrganizationId = organizations.some((organization) => organization.id === requestedOrganizationId) ? requestedOrganizationId : undefined;
+  const defaultOwnerId = owners.some((owner) => owner.id === requestedOwnerId) ? requestedOwnerId : actorUserId;
+  const defaultStatus = leadStatusSearchParam(resolvedSearchParams?.status);
+  const hasSearchPrefill = Boolean(defaultSource || defaultTitle);
+  const hasRelatedRecordPrefill = Boolean(defaultPersonId || defaultOrganizationId);
 
   return (
     <AppShell workspace={workspace}>
@@ -39,16 +54,21 @@ export default async function NewLeadPage({
       />
       <LeadForm
         cancelHref="/leads"
-        defaultOwnerId={actorUserId}
+        defaultOrganizationId={defaultOrganizationId}
+        defaultOwnerId={defaultOwnerId}
+        defaultPersonId={defaultPersonId}
         defaultSource={defaultSource}
+        defaultStatus={defaultStatus}
         defaultTitle={defaultTitle}
         mode="create"
         organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
         owners={owners}
         people={people.map((person) => ({ id: person.id, name: formatPersonName(person) ?? "Unnamed contact" }))}
         prefillNotice={
-          hasPrefill
+          hasSearchPrefill
             ? "We prefilled this lead from your search shortcut. Review the details, then capture the opportunity."
+            : hasRelatedRecordPrefill
+              ? "We linked the newly created record to this lead draft. Review the details, then capture the opportunity."
             : undefined
         }
         workspaceId={workspace.id}
@@ -60,4 +80,9 @@ export default async function NewLeadPage({
 function firstSearchParam(value: string | string[] | undefined) {
   const first = Array.isArray(value) ? value[0] : value;
   return first?.slice(0, 160);
+}
+
+function leadStatusSearchParam(value: string | string[] | undefined) {
+  const status = firstSearchParam(value);
+  return status === "QUALIFIED" || status === "DISQUALIFIED" ? status : undefined;
 }

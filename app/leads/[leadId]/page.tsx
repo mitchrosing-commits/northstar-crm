@@ -201,13 +201,13 @@ export default async function LeadDetailPage({ params }: PageProps) {
         </div>
       </section>
 
-      <RecordCustomFieldsPanel
-        emptyMessage="No lead custom fields have been created yet."
-        entityId={lead.id}
-        entityType="LEAD"
-        fields={customFields}
-        lockedMessage={convertedLeadLockMessage("customFields")}
-        readOnly={lead.status === "CONVERTED"}
+      <NotesPanel
+        attachment={{ leadId: lead.id }}
+        emptyMessage="No notes are linked to this lead."
+        lockedMessage={convertedLeadLockMessage("notes")}
+        notes={lead.notes}
+        showDeleteActions={lead.status !== "CONVERTED"}
+        showForm={lead.status !== "CONVERTED"}
         workspaceId={workspace.id}
       />
 
@@ -230,13 +230,13 @@ export default async function LeadDetailPage({ params }: PageProps) {
         workspaceId={workspace.id}
       />
 
-      <NotesPanel
-        attachment={{ leadId: lead.id }}
-        emptyMessage="No notes are linked to this lead."
-        lockedMessage={convertedLeadLockMessage("notes")}
-        notes={lead.notes}
-        showDeleteActions={lead.status !== "CONVERTED"}
-        showForm={lead.status !== "CONVERTED"}
+      <RecordCustomFieldsPanel
+        emptyMessage="No lead custom fields have been created yet."
+        entityId={lead.id}
+        entityType="LEAD"
+        fields={customFields}
+        lockedMessage={convertedLeadLockMessage("customFields")}
+        readOnly={lead.status === "CONVERTED"}
         workspaceId={workspace.id}
       />
 

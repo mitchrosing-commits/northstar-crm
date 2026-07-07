@@ -1962,10 +1962,16 @@ describe("database-backed CRM service workflows", () => {
 
   it("blocks normal edits and stage moves after a deal is closed", async () => {
     const fx = currentFixture();
+    const completedAt = new Date("2030-01-01T13:00:00.000Z");
     const dealActivity = await crm.createActivity(fx.actorA, {
       dealId: fx.recordsA.deal.id,
       type: "TASK",
       title: "Close lock follow-up"
+    });
+    const dismissibleDealActivity = await crm.createActivity(fx.actorA, {
+      dealId: fx.recordsA.deal.id,
+      type: "TASK",
+      title: "Close lock dismissible follow-up"
     });
     const dealNote = await crm.createNote(fx.actorA, {
       dealId: fx.recordsA.deal.id,
@@ -2047,13 +2053,13 @@ describe("database-backed CRM service workflows", () => {
       crm.updateActivity(fx.actorA, dealActivity.id, { title: "Should not edit closed deal activity" })
     ).rejects.toMatchObject({ code: "DEAL_CLOSED", status: 409 });
 
-    await expect(
-      crm.updateActivity(fx.actorA, dealActivity.id, { completedAt: new Date("2030-01-01T13:00:00.000Z") })
-    ).rejects.toMatchObject({ code: "DEAL_CLOSED", status: 409 });
+    await expect(crm.updateActivity(fx.actorA, dealActivity.id, { completedAt })).resolves.toMatchObject({
+      completedAt
+    });
 
-    await expect(crm.softDeleteActivity(fx.actorA, dealActivity.id)).rejects.toMatchObject({
-      code: "DEAL_CLOSED",
-      status: 409
+    await expect(crm.softDeleteActivity(fx.actorA, dismissibleDealActivity.id)).resolves.toBeUndefined();
+    await expect(fx.prisma.activity.findUnique({ where: { id: dismissibleDealActivity.id } })).resolves.toMatchObject({
+      deletedAt: expect.any(Date)
     });
 
     await expect(
@@ -2104,7 +2110,7 @@ describe("database-backed CRM service workflows", () => {
       blockedNoteCount,
       blockedEmailLogCount,
       blockedLineItemCount,
-      blockedActivityAuditCount,
+      clearedActivityAuditCount,
       blockedLineItemRemovalAuditCount
     ] = await Promise.all([
       fx.prisma.deal.findUnique({ where: { id: fx.recordsA.deal.id } }),
@@ -2153,7 +2159,7 @@ describe("database-backed CRM service workflows", () => {
       status: "WON"
     });
     expect(activity).toMatchObject({
-      completedAt: null,
+      completedAt,
       deletedAt: null,
       title: "Close lock follow-up"
     });
@@ -2170,7 +2176,7 @@ describe("database-backed CRM service workflows", () => {
     expect(blockedNoteCount).toBe(0);
     expect(blockedEmailLogCount).toBe(0);
     expect(blockedLineItemCount).toBe(0);
-    expect(blockedActivityAuditCount).toBe(0);
+    expect(clearedActivityAuditCount).toBe(1);
     expect(blockedLineItemRemovalAuditCount).toBe(0);
   });
 
@@ -2817,6 +2823,28 @@ describe("database-backed CRM service workflows", () => {
       expect(leadUpdateAuditCountAfterNoop).toBe(leadUpdateAuditCountBeforeNoop);
       expect(leadUpdateAuditCountBeforeMalformedUpdate).toBe(1);
       expect(leadUpdateAuditCountAfterMalformedUpdate).toBe(leadUpdateAuditCountBeforeMalformedUpdate);
+
+      const leadReturnContact = await crm.createPerson(fx.actorA, {
+        firstName: "Lead",
+        lastName: "Returnflow",
+        email: "lead-returnflow@example.test"
+      });
+      const leadReturnOrganization = await crm.createOrganization(fx.actorA, {
+        name: "Lead Returnflow Org"
+      });
+      const leadWithNewRelations = await crm.updateLead(fx.actorA, boundaryLead.id, {
+        personId: leadReturnContact.id,
+        organizationId: leadReturnOrganization.id
+      });
+      expect(leadWithNewRelations).toMatchObject({
+        id: boundaryLead.id,
+        personId: leadReturnContact.id,
+        organizationId: leadReturnOrganization.id
+      });
+      await expect(fx.prisma.lead.findUnique({ where: { id: boundaryLead.id } })).resolves.toMatchObject({
+        personId: leadReturnContact.id,
+        organizationId: leadReturnOrganization.id
+      });
 
       await expect(
         crm.createLead(fx.actorA, {
@@ -4015,6 +4043,33 @@ describe("database-backed CRM service workflows", () => {
     const healthBeforeStaleAttachments = await crm.getFollowUpHealthSummary(fx.actorA, now);
 
     expect(await crm.getActivityWorkQueueSummary(fx.actorA, now)).toEqual(expectedSummary);
+
+    const closedDealWithOverdueActivity = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      ownerId: fx.userA.id,
+      title: "Closed deal should not own urgent work",
+      valueCents: 42000,
+      currency: "USD"
+    });
+    const closedDealActivity = await crm.createActivity(fx.actorA, {
+      dealId: closedDealWithOverdueActivity.id,
+      ownerId: fx.userA.id,
+      type: "TASK",
+      title: "Closed deal overdue cleanup",
+      dueAt: new Date("2030-01-14T10:00:00.000Z")
+    });
+    await crm.closeDeal(fx.actorA, closedDealWithOverdueActivity.id, { status: "WON" });
+
+    const [summaryAfterClosedDeal, dashboardAfterClosedDeal, needsAttentionAfterClosedDeal] = await Promise.all([
+      crm.getActivityWorkQueueSummary(fx.actorA, now),
+      crm.getDashboardSummary(fx.actorA, now),
+      crm.getNeedsAttentionSummary(fx.actorA, now)
+    ]);
+
+    expect(summaryAfterClosedDeal).toEqual(expectedSummary);
+    expect(dashboardAfterClosedDeal.priorityActivities.map((activity) => activity.id)).not.toContain(closedDealActivity.id);
+    expect(needsAttentionAfterClosedDeal.map((item) => item.id)).not.toContain(`activity-${closedDealActivity.id}`);
 
     await fx.prisma.activity.createMany({
       data: [
@@ -5217,6 +5272,30 @@ describe("database-backed CRM service workflows", () => {
         totalCents: 33000
       }
     });
+    const typoRankClosedDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        title: "Needle Priority Closed Search",
+        valueCents: 15000,
+        currency: "USD",
+        status: "WON"
+      }
+    });
+    const typoRankOpenDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        title: "Needle Priority Open Search",
+        valueCents: 25000,
+        currency: "USD",
+        status: "OPEN"
+      }
+    });
     const deletedOrganization = await fx.prisma.organization.create({
       data: {
         workspaceId: fx.workspaceA.id,
@@ -5325,6 +5404,7 @@ describe("database-backed CRM service workflows", () => {
     const directLeadResults = await crm.searchCrm(fx.actorA, directRelationLead.title);
     const directPersonResults = await crm.searchCrm(fx.actorA, directRelationPerson.email ?? "");
     const directQuoteResults = await crm.searchCrm(fx.actorA, directRelationQuote.number);
+    const typoRankResults = await crm.searchCrm(fx.actorA, "Nedle Prority");
     const crossWorkspaceOrganizationResults = await crm.searchCrm(fx.actorA, fx.recordsB.organization.name);
     const crossWorkspacePersonResults = await crm.searchCrm(fx.actorA, fx.recordsB.person.email ?? fx.recordsB.person.firstName);
     const deletedOrganizationResults = await crm.searchCrm(fx.actorA, deletedOrganization.name);
@@ -5370,6 +5450,8 @@ describe("database-backed CRM service workflows", () => {
     expect(directLeadResult).toMatchObject({ person: null, organization: null });
     expect(directPersonResult).toMatchObject({ organization: null });
     expect(directQuoteResult?.deal).toMatchObject({ person: null, organization: null });
+    expect(typoRankResults.deals.map((deal) => deal.id)).toContain(typoRankClosedDeal.id);
+    expect(typoRankResults.deals.map((deal) => deal.id)[0]).toBe(typoRankOpenDeal.id);
     expect(crossWorkspaceOrganizationResults.quotes.map((quote) => quote.id)).not.toContain(directRelationQuote.id);
     expect(crossWorkspaceOrganizationResults.deals.map((deal) => deal.id)).not.toContain(directRelationDeal.id);
     expect(crossWorkspaceOrganizationResults.leads.map((lead) => lead.id)).not.toContain(directRelationLead.id);

@@ -142,6 +142,15 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("meeting-review-section");
     expect(meetingIntelligenceReview).toContain("meeting-match-review-list");
     expect(meetingIntelligenceReview).toContain("No match signals found");
+    expect(meetingIntelligenceReview).toContain("UnmatchedEntityActions");
+    expect(meetingIntelligenceReview).toContain("unmatchedEntityActions(entity)");
+    expect(meetingIntelligenceReview).toContain("Create contact");
+    expect(meetingIntelligenceReview).toContain("Create organization");
+    expect(meetingIntelligenceReview).toContain("Create deal");
+    expect(meetingIntelligenceReview).toContain("Create lead");
+    expect(meetingIntelligenceReview).toContain("Search CRM");
+    expect(meetingIntelligenceReview).toContain("for unmatched meeting mention");
+    expect(globalStyles).toContain(".meeting-unmatched-actions");
     expect(meetingIntelligenceReview).toContain("meeting-proposal-evidence");
     expect(meetingIntelligenceReview).toContain("{selectedUpdateCount} selected");
     expect(meetingIntelligenceReview).toContain("Review-first safety");

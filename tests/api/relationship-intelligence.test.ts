@@ -102,7 +102,12 @@ describe("Relationship Intelligence for contact profiles", () => {
     expect(contactPage).toContain("change.target?.id && change.target.id !== personId");
     expect(contactPage).toContain("fieldKey: relationshipBriefHistoryFieldKey(change)");
     expect(contactPage).toContain("newValue: change.newValue ?? null");
+    expect(contactPage).toContain('href: "#profile" as Route');
+    expect(contactPage).toContain('label: "Profile"');
     expect(contactPage).toContain("href: \"#relationship-brief\" as Route");
+    expect(contactPage.indexOf('id="profile"')).toBeLessThan(contactPage.indexOf("<RelatedRecordsPanel"));
+    expect(contactPage.indexOf("<RelatedRecordsPanel")).toBeLessThan(contactPage.indexOf("<RecordActivitiesPanel"));
+    expect(contactPage.indexOf("<RecordActivitiesPanel")).toBeLessThan(contactPage.indexOf("<RecordCustomFieldsPanel"));
     expect(contactPage).toContain("<RelationshipBriefPanel");
     expect(contactPage).toContain("recentChanges={relationshipBriefChanges}");
     expect(relationshipBriefPanel).toContain('title="Relationship Memory"');

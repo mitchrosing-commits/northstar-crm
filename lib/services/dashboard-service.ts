@@ -3,7 +3,7 @@ import { DealStatus, LeadStatus, QuoteStatus } from "@prisma/client";
 import { startOfDay } from "@/lib/activity-due";
 import { prisma } from "@/lib/db/prisma";
 import { getFollowUpHealthSummary } from "@/lib/services/activity-service";
-import { activityAttachmentRelationsWhere, noteAttachmentRelationsWhere } from "./record-guards";
+import { actionableActivityRelationsWhere, activityAttachmentRelationsWhere, noteAttachmentRelationsWhere } from "./record-guards";
 import { scopeWorkspaceRelation, type WorkspaceScopedRelation } from "./relation-scope";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
 import { userDisplaySelect } from "./user-select";
@@ -26,6 +26,11 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
   const scopedActivityWhere = {
     workspaceId: actor.workspaceId,
     ...activityAttachmentRelationsWhere(actor.workspaceId),
+    ...activeWhere
+  };
+  const actionableActivityWhere = {
+    workspaceId: actor.workspaceId,
+    ...actionableActivityRelationsWhere(actor.workspaceId),
     ...activeWhere
   };
 
@@ -87,7 +92,7 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
       take: 5
     }),
     prisma.activity.findMany({
-      where: { ...scopedActivityWhere, completedAt: null },
+      where: { ...actionableActivityWhere, completedAt: null },
       include: {
         deal: true,
         lead: true,
@@ -141,13 +146,13 @@ export async function getDashboardSummary(actor: WorkspaceActor, now = new Date(
       where: { workspaceId: actor.workspaceId, ...noteAttachmentRelationsWhere(actor.workspaceId), ...activeWhere }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { lt: today } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { lt: today } }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: tomorrow } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { gte: tomorrow } }
     }),
     prisma.activity.count({
       where: { ...scopedActivityWhere, completedAt: { not: null } }

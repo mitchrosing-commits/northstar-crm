@@ -4,10 +4,12 @@ import { Prisma, type QuoteAdjustmentType, type QuoteStatus } from "@prisma/clie
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
+import { resolvePagination, type PaginationInput } from "@/lib/list-page-query";
 import { quoteIntColumnMax } from "@/lib/product-limits";
 import { activityAttachmentRelationsWhere } from "./record-guards";
 import { scopeWorkspaceRelation, type WorkspaceScopedRelation } from "./relation-scope";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
+import { userDisplaySelect } from "./user-select";
 
 const quoteItemsOrderBy = [{ createdAt: "asc" }, { name: "asc" }] satisfies Prisma.QuoteItemOrderByWithRelationInput[];
 
@@ -32,6 +34,101 @@ export type QuoteAdjustmentInput = {
   taxType?: unknown;
   taxValue?: unknown;
 };
+export type QuoteListFilters = {
+  q?: string;
+  status?: QuoteStatus;
+  sortBy?: "createdAt" | "updatedAt" | "number" | "totalCents";
+  sortDirection?: "asc" | "desc";
+};
+
+export async function listQuotesPage(actor: WorkspaceActor, filters: QuoteListFilters = {}, pagination: PaginationInput) {
+  await ensureWorkspaceAccess(actor);
+  const where = quoteWhere(actor.workspaceId, filters);
+  const total = await prisma.quote.count({ where });
+  const pageInfo = resolvePagination(total, pagination);
+  const items = await prisma.quote.findMany({
+    where,
+    include: {
+      deal: {
+        include: {
+          owner: { select: userDisplaySelect },
+          person: true,
+          organization: true,
+          stage: true
+        }
+      },
+      _count: { select: { items: true } }
+    },
+    orderBy: quoteOrderBy(filters),
+    skip: pageInfo.skip,
+    take: pageInfo.pageSize
+  });
+
+  return { ...pageInfo, items: items.map((quote) => scopeQuoteDealRelations(actor.workspaceId, quote)) };
+}
+
+function quoteWhere(workspaceId: string, filters: QuoteListFilters): Prisma.QuoteWhereInput {
+  const where: Prisma.QuoteWhereInput = {
+    workspaceId,
+    deal: { workspaceId, ...activeWhere }
+  };
+
+  if (filters.status) where.status = normalizeQuoteListStatus(filters.status);
+  if (filters.q) {
+    where.OR = [
+      { number: { contains: filters.q, mode: "insensitive" } },
+      { deal: { is: { workspaceId, ...activeWhere, title: { contains: filters.q, mode: "insensitive" } } } },
+      { deal: { is: { workspaceId, ...activeWhere, organization: { is: { workspaceId, ...activeWhere, name: { contains: filters.q, mode: "insensitive" } } } } } },
+      {
+        deal: {
+          is: {
+            workspaceId,
+            ...activeWhere,
+            person: {
+              is: {
+                workspaceId,
+                ...activeWhere,
+                OR: [
+                  { firstName: { contains: filters.q, mode: "insensitive" } },
+                  { lastName: { contains: filters.q, mode: "insensitive" } },
+                  { email: { contains: filters.q, mode: "insensitive" } }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ];
+  }
+
+  return where;
+}
+
+function normalizeQuoteListStatus(value: unknown): QuoteStatus {
+  if (value === "DRAFT" || value === "SENT" || value === "ACCEPTED" || value === "DECLINED") return value;
+  throw new ApiError("VALIDATION_ERROR", "Quote status filter must be DRAFT, SENT, ACCEPTED, or DECLINED.", 422);
+}
+
+function quoteOrderBy(filters: QuoteListFilters): Prisma.QuoteOrderByWithRelationInput {
+  const direction = normalizeQuoteSortDirection(filters.sortDirection);
+  const sortBy = normalizeQuoteSortBy(filters.sortBy);
+  if (sortBy === "createdAt") return { createdAt: direction };
+  if (sortBy === "number") return { number: direction };
+  if (sortBy === "totalCents") return { totalCents: direction };
+  return { updatedAt: direction };
+}
+
+function normalizeQuoteSortBy(value: unknown): NonNullable<QuoteListFilters["sortBy"]> {
+  if (value === undefined) return "updatedAt";
+  if (value === "createdAt" || value === "updatedAt" || value === "number" || value === "totalCents") return value;
+  throw new ApiError("VALIDATION_ERROR", "Quote sort field must be createdAt, updatedAt, number, or totalCents.", 422);
+}
+
+function normalizeQuoteSortDirection(value: unknown): NonNullable<QuoteListFilters["sortDirection"]> {
+  if (value === undefined) return "desc";
+  if (value === "asc" || value === "desc") return value;
+  throw new ApiError("VALIDATION_ERROR", "Quote sort direction must be asc or desc.", 422);
+}
 
 export async function createQuoteFromDeal(actor: WorkspaceActor, dealId: string) {
   await ensureWorkspaceAccess(actor);

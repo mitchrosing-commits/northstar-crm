@@ -25,7 +25,8 @@ import type {
   ProposedNote,
   ProposedRelationshipBriefFact,
   RelationshipBriefFields,
-  RelationshipBriefSensitivityCategory
+  RelationshipBriefSensitivityCategory,
+  UnmatchedEntity
 } from "@/lib/meeting-intelligence/types";
 import { relationshipBriefUsageItems } from "@/lib/relationship-brief-usage";
 
@@ -380,6 +381,7 @@ export function MeetingIntelligenceReview({
                       <strong>{entity.name}</strong>
                       <span className="muted">{entity.reason}</span>
                       <span className="muted">{entity.evidenceExcerpt}</span>
+                      <UnmatchedEntityActions entity={entity} />
                     </CompactListItem>
                   ))}
                 </CompactList>
@@ -797,6 +799,44 @@ function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets
       </CompactListItem>
     </CompactList>
   );
+}
+
+function UnmatchedEntityActions({ entity }: { entity: UnmatchedEntity }) {
+  const actions = unmatchedEntityActions(entity);
+  if (actions.length === 0) return null;
+
+  return (
+    <ActionGroup className="meeting-unmatched-actions" label={`Create or search CRM records for ${entity.name}`}>
+      {actions.map((action) => (
+        <Link
+          aria-label={`${action.label} for unmatched meeting mention ${entity.name}`}
+          className="button-secondary button-compact"
+          href={action.href}
+          key={action.label}
+          title={`${action.label} for unmatched meeting mention ${entity.name}`}
+        >
+          {action.label}
+        </Link>
+      ))}
+    </ActionGroup>
+  );
+}
+
+function unmatchedEntityActions(entity: UnmatchedEntity): Array<{ href: Route; label: string }> {
+  const name = entity.name.trim();
+  if (!name) return [];
+  const encodedName = encodeURIComponent(name);
+  if (entity.entityType === "person") return [{ href: `/contacts/new?name=${encodedName}` as Route, label: "Create contact" }];
+  if (entity.entityType === "organization") {
+    return [{ href: `/organizations/new?name=${encodedName}` as Route, label: "Create organization" }];
+  }
+  if (entity.entityType === "deal_or_lead") {
+    return [
+      { href: `/deals/new?title=${encodedName}` as Route, label: "Create deal" },
+      { href: `/leads/new?title=${encodedName}&source=Meeting%20Intelligence` as Route, label: "Create lead" }
+    ];
+  }
+  return [{ href: `/search?q=${encodedName}` as Route, label: "Search CRM" }];
 }
 
 function TargetSelect({

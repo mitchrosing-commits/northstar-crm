@@ -200,6 +200,30 @@ export function activityAttachmentRelationsWhere(workspaceId: string): Prisma.Ac
   return attachmentRelationConstraints(workspaceId) as Prisma.ActivityWhereInput;
 }
 
+export function actionableActivityRelationsWhere(workspaceId: string): Prisma.ActivityWhereInput {
+  const constraints = attachmentRelationConstraints(workspaceId) as { AND: Prisma.ActivityWhereInput[] };
+
+  return {
+    AND: [
+      ...constraints.AND,
+      {
+        OR: [
+          { dealId: null },
+          {
+            deal: {
+              is: {
+                workspaceId,
+                status: "OPEN",
+                ...activeWhere
+              }
+            }
+          }
+        ]
+      }
+    ]
+  };
+}
+
 export function noteAttachmentRelationsWhere(workspaceId: string): Prisma.NoteWhereInput {
   return attachmentRelationConstraints(workspaceId) as Prisma.NoteWhereInput;
 }

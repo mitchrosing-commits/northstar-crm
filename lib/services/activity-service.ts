@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db/prisma";
 import { resolvePagination, type PaginationInput } from "@/lib/list-page-query";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 import {
+  actionableActivityRelationsWhere,
   activityAttachmentRelationsWhere,
   assertActivityAttachmentNotChanged,
   assertActivityLinks
@@ -83,19 +84,24 @@ export async function getActivityWorkQueueSummary(actor: WorkspaceActor, now = n
     ...activityAttachmentRelationsWhere(actor.workspaceId),
     ...activeWhere
   } satisfies Prisma.ActivityWhereInput;
+  const actionableActivityWhere = {
+    workspaceId: actor.workspaceId,
+    ...actionableActivityRelationsWhere(actor.workspaceId),
+    ...activeWhere
+  } satisfies Prisma.ActivityWhereInput;
 
   const [overdue, dueToday, upcoming, unscheduled, completed, completedRecently] = await Promise.all([
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { lt: today } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { lt: today } }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: tomorrow } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { gte: tomorrow } }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: null }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: null }
     }),
     prisma.activity.count({
       where: { ...scopedActivityWhere, completedAt: { not: null } }
@@ -126,6 +132,11 @@ export async function getFollowUpHealthSummary(actor: WorkspaceActor, now = new 
     ...activityAttachmentRelationsWhere(actor.workspaceId),
     ...activeWhere
   } satisfies Prisma.ActivityWhereInput;
+  const actionableActivityWhere = {
+    workspaceId: actor.workspaceId,
+    ...actionableActivityRelationsWhere(actor.workspaceId),
+    ...activeWhere
+  } satisfies Prisma.ActivityWhereInput;
 
   const [
     openActivitiesOverdue,
@@ -135,10 +146,10 @@ export async function getFollowUpHealthSummary(actor: WorkspaceActor, now = new 
     recentlyCompletedActivities
   ] = await Promise.all([
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { lt: today } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { lt: today } }
     }),
     prisma.activity.count({
-      where: { ...scopedActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
+      where: { ...actionableActivityWhere, completedAt: null, dueAt: { gte: today, lt: tomorrow } }
     }),
     prisma.deal.count({
       where: {
@@ -484,7 +495,7 @@ export async function updateActivity(actor: WorkspaceActor, activityId: string, 
   if (existing.completedAt) {
     throw new ApiError("ACTIVITY_COMPLETED", "Completed activities cannot be edited.", 409);
   }
-  assertActivityParentUnlocked(existing);
+  assertActivityParentUnlocked(existing, { allowClosedDeal: isActivityCompletionOnlyUpdate(normalized) });
   if (Object.keys(normalized).length === 0 || !activityUpdateChanges(normalized, existing)) {
     return existing;
   }
@@ -516,7 +527,7 @@ export async function softDeleteActivity(actor: WorkspaceActor, activityId: stri
   if (existing.completedAt) {
     throw new ApiError("ACTIVITY_COMPLETED", "Completed activities cannot be removed.", 409);
   }
-  assertActivityParentUnlocked(existing);
+  assertActivityParentUnlocked(existing, { allowClosedDeal: true });
   await prisma.activity.update({ where: { id: activityId }, data: { deletedAt: new Date() } });
   await writeAuditLog(actor, "activity.deleted", "Activity", activityId);
 }
@@ -524,13 +535,18 @@ export async function softDeleteActivity(actor: WorkspaceActor, activityId: stri
 function assertActivityParentUnlocked(activity: {
   deal: { status: string } | null;
   lead: { status: string } | null;
-}) {
-  if (activity.deal?.status !== undefined && activity.deal.status !== "OPEN") {
+}, options: { allowClosedDeal?: boolean } = {}) {
+  if (activity.deal?.status !== undefined && activity.deal.status !== "OPEN" && !options.allowClosedDeal) {
     throw new ApiError("DEAL_CLOSED", "Closed deals cannot be edited.", 409);
   }
   if (activity.lead?.status === "CONVERTED") {
     throw new ApiError("LEAD_CONVERTED", "Update follow-up activities on the converted deal.", 409);
   }
+}
+
+function isActivityCompletionOnlyUpdate(input: ReturnType<typeof normalizeUpdateActivityInput>) {
+  const keys = Object.keys(input);
+  return keys.length === 1 && keys[0] === "completedAt" && input.completedAt instanceof Date;
 }
 
 function activityUpdateChanges(

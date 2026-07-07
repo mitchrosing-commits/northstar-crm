@@ -14,6 +14,7 @@ const leadsPage = readFileSync(join(process.cwd(), "app/leads/page.tsx"), "utf8"
 const navigation = readFileSync(join(process.cwd(), "lib/navigation.ts"), "utf8");
 const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
 const pipelinePage = readFileSync(join(process.cwd(), "app/pipeline/page.tsx"), "utf8");
+const quotesPage = readFileSync(join(process.cwd(), "app/quotes/page.tsx"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 const smokeSpec = readFileSync(join(process.cwd(), "tests/browser/smoke.spec.ts"), "utf8");
 
@@ -53,8 +54,8 @@ describe("main navigation visibility", () => {
     expect(appShell).toContain("<SidebarCommand globalSearchDefaultValue={globalSearchDefaultValue} />");
     expect(sidebarCommand).toContain("export function SidebarCommand");
     expect(sidebarCommand).toContain("\"use client\";");
-    expect(sidebarCommand).toContain('import { usePathname } from "next/navigation"');
-    expect(sidebarCommand).toContain("const pathname = usePathname() ?? \"\"");
+    expect(sidebarCommand).not.toContain('import { usePathname } from "next/navigation"');
+    expect(sidebarCommand).not.toContain("const pathname = usePathname() ?? \"\"");
     expect(sidebarCommand).toContain("sidebar-command");
     expect(sidebarCommand).toContain('const globalActionsLabel = "Global actions"');
     expect(sidebarCommand).toContain("aria-label={globalActionsLabel}");
@@ -94,12 +95,12 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain('const quickActionsLabel = "Quick actions"');
     expect(sidebarCommand).toContain("import { ActionGroup }");
     expect(sidebarCommand).toContain('<ActionGroup className="sidebar-quick-actions" label={quickActionsLabel}>');
-    expect(sidebarCommand).toContain("sidebarJumpNavigationItems.map((item) => ({");
-    expect(sidebarCommand).toContain("sidebarJumpActionIcons[item.icon]");
-    expect(sidebarCommand).toContain("const isActive = quickActionMatchesPathname(pathname, action.href);");
-    expect(sidebarCommand).toContain("aria-current={isActive ? \"page\" : undefined}");
-    expect(sidebarCommand).toContain("aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}");
-    expect(sidebarCommand).toContain("className={isActive ? \"sidebar-quick-action sidebar-quick-action-active\" : \"sidebar-quick-action\"}");
+    expect(sidebarCommand).toContain("sidebarSearchActionIcons[item.icon]");
+    expect(sidebarCommand).not.toContain("sidebarJumpNavigationItems.map((item) => ({");
+    expect(sidebarCommand).not.toContain("const isActive = quickActionMatchesPathname(pathname, action.href);");
+    expect(sidebarCommand).not.toContain("aria-current={isActive ? \"page\" : undefined}");
+    expect(sidebarCommand).toContain("aria-label={actionTitle}");
+    expect(sidebarCommand).toContain("className=\"sidebar-quick-action\"");
     expect(sidebarCommand).toContain("const actionTitle = `${action.label}: ${action.helper}`");
     expect(sidebarCommand).toContain("title={actionTitle}");
     expect(sidebarCommand).not.toContain("buildSearchCreateActions(globalSearchDefaultValue)");
@@ -129,8 +130,8 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("title={clearSearchActionLabel}");
     expect(sidebarCommand).toContain("function clearSearchLabel(searchValue: string)");
     expect(sidebarCommand).toContain("return `Clear workspace search for ${searchValue}`;");
-    expect(sidebarCommand).toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
-    expect(sidebarCommand).toContain("const hrefPath = String(href).split(\"?\")[0];");
+    expect(sidebarCommand).not.toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
+    expect(sidebarCommand).not.toContain("const hrefPath = String(href).split(\"?\")[0];");
     expect(sidebarCommand).toContain("sidebar-quick-action-group");
     expect(sidebarCommand).toContain("className=\"sidebar-quick-action-group\" aria-labelledby={headingId} key={group.label} role=\"group\"");
     expect(sidebarCommand).toContain("const headingId = `sidebar-quick-actions-${group.label.toLowerCase()}`");
@@ -143,9 +144,14 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("helper: \"Mailbox + priority\"");
     expect(navigation).toContain("Open synced email, Relationship Inbox priorities, Smart Labels, AI reply drafts, and follow-ups.");
     expect(primaryNav).toContain("pathname === hrefPath || pathname.startsWith(`${hrefPath}/`)");
-    expect(navigation).toContain("href: \"/deals?commercial=hasQuote\"");
+    expect(navigation).toContain("href: \"/quotes\" as Route");
     expect(navigation).toContain("label: \"Quotes\"");
-    expect(navigation).toContain("primary: false");
+    expect(navigation).toContain("icon: \"FileText\"");
+    expect(navigation).toContain("Review quote snapshots and their related deals.");
+    expect(quotesPage).toContain("export default async function QuotesPage");
+    expect(quotesPage).toContain("listQuotesPage");
+    expect(quotesPage).toContain("resetHref=\"/quotes\"");
+    expect(quotesPage).toContain("PaginationControls basePath=\"/quotes\"");
     expect(navigation).not.toContain("label: \"Smart Labels\"");
     expect(navigation).not.toContain("label: \"AI Reply Assistant\"");
     expect(navigation).not.toContain("label: \"Relationship Inbox\"");
@@ -174,6 +180,7 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("href: \"/dashboard\"");
     expect(navigation).toContain("href: \"/pipeline\"");
     expect(navigation).toContain("href: \"/deals\"");
+    expect(navigation).toContain("href: \"/quotes\" as Route");
     expect(navigation).toContain("href: \"/contacts\"");
     expect(navigation).toContain("href: \"/organizations\"");
     expect(navigation).toContain("href: \"/leads\"");
@@ -187,7 +194,6 @@ describe("main navigation visibility", () => {
     expect(globalStyles).toContain(".sidebar-quick-actions");
     expect(globalStyles).toContain(".sidebar-quick-action-grid");
     expect(globalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));");
-    expect(globalStyles).toContain(".sidebar-quick-action-active");
     expect(globalStyles).toContain(".sidebar-quick-action-icon");
     expect(globalStyles).toContain(".nav-item-label");
     expect(globalStyles).toContain("text-overflow: ellipsis;");

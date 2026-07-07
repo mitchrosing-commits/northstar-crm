@@ -154,6 +154,9 @@ describe("dashboard summary behavior", () => {
     expect(statCard).toContain("export function StatCard");
     expect(statCard).toContain('className="stat-card-link"');
     expect(statCard).toContain('className="stat-card"');
+    expect(globalStyles).toContain("align-items: stretch;");
+    expect(globalStyles).toContain(".stat-card-link {\n  display: block;\n  height: 100%;");
+    expect(globalStyles).toContain(".dashboard-scorecard .stat-grid {\n  grid-auto-rows: 1fr;");
     expect(statCard).toContain(
       "const resolvedActionLabel = actionLabel ?? `View ${label.toLowerCase()}`",
     );
@@ -235,7 +238,7 @@ describe("dashboard summary behavior", () => {
     );
     expect(dashboardPage).toContain("aria-label={reviewUnquotedLabel}");
     expect(dashboardPage).toContain("title={reviewUnquotedLabel}");
-    expect(dashboardPage).toContain('href="/deals?commercial=hasQuote"');
+    expect(dashboardPage).toContain('href={"/quotes" as Route}');
     expect(dashboardPage).toContain(
       'href="/deals?commercial=valueNoLineItems"',
     );

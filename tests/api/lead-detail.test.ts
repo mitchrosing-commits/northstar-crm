@@ -15,6 +15,7 @@ const leadDetail = readFileSync(join(process.cwd(), "app/leads/[leadId]/page.tsx
 const personName = readFileSync(join(process.cwd(), "lib/person-name.ts"), "utf8");
 const auditHistoryPanel = readFileSync(join(process.cwd(), "components/audit-history-panel.tsx"), "utf8");
 const recordActivityCopy = readFileSync(join(process.cwd(), "lib/record-activity-copy.ts"), "utf8");
+const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 
 describe("lead list and detail behavior", () => {
   it("adds a workspace-scoped getLead service and read route", () => {
@@ -69,9 +70,13 @@ describe("lead list and detail behavior", () => {
     expect(leadDetail).toContain("timeline: timelineItems.length");
     expect(leadDetail).toContain("id=\"convert-lead\"");
     expect(leadDetail).toContain("LeadConversionForm");
+    expect(leadDetail.indexOf("<NotesPanel")).toBeLessThan(leadDetail.indexOf("<RecordActivitiesPanel"));
+    expect(leadDetail.indexOf("<RecordActivitiesPanel")).toBeLessThan(leadDetail.indexOf("<RecordCustomFieldsPanel"));
     expect(leadDetail).toContain("AuditHistoryPanel");
     expect(auditHistoryPanel).toContain("Audit History");
     expect(leadDetail).toContain('recordActivitySectionCopy("lead")');
     expect(recordActivityCopy).toContain("No activities are linked to this lead.");
+    expect(globalStyles).toContain("overflow-wrap: break-word;");
+    expect(globalStyles).toContain("word-break: normal;");
   });
 });

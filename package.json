@@ -14,6 +14,7 @@
     "test:browser": "AUTH_MODE=local AUTH_SESSION_SECRET=${AUTH_SESSION_SECRET:-browser-smoke-session-secret-32-chars-minimum} env -u NO_COLOR playwright test --config=playwright.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
+    "gmail:diagnose": "tsx scripts/gmail-diagnose.ts",
     "jobs:run-once": "tsx scripts/jobs-run-once.ts",
     "jobs:cleanup": "tsx scripts/jobs-cleanup.ts",
     "jobs:status": "tsx scripts/jobs-status.ts",

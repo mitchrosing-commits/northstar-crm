@@ -67,7 +67,7 @@ describe("pipeline board demo interactivity", () => {
     expect(moveControl).toContain("/api/v1/workspaces/${workspaceId}/deals/${dealId}");
     expect(moveControl).toContain("JSON.stringify({ pipelineId, stageId: selectedStage.id })");
     expect(moveControl).toContain("router.refresh()");
-    expect(moveControl).toContain("disabled={!canMove || unchanged || isSaving}");
+    expect(moveControl).toContain("disabled={!canMove || unchanged || isSaving || selectedStageRequiresCloseOutcome}");
     expect(moveControl).toContain("const helperId = `pipeline-move-${dealId}-helper`");
     expect(moveControl).toContain("const selectLabel = `Choose a new stage for ${dealTitle}`");
     expect(moveControl).toContain("aria-describedby={helperId}");
@@ -75,5 +75,7 @@ describe("pipeline board demo interactivity", () => {
     expect(moveControl).toContain("title={moveTitle}");
     expect(moveControl).toContain("Choose a different stage before moving this deal.");
     expect(moveControl).toContain("Closed deals cannot be moved from the pipeline board.");
+    expect(moveControl).toContain("Open the deal and use Mark won or Mark lost to close it intentionally.");
+    expect(moveControl).toContain("pipeline-card-move-guidance");
   });
 });

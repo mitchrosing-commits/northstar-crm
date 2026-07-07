@@ -34,6 +34,7 @@ export function DealStageMoveForm({
   const [isSaving, setIsSaving] = useState(false);
   const hasStages = stages.length > 0;
   const selectedStage = useMemo(() => stages.find((stage) => stage.id === stageId), [stageId, stages]);
+  const selectedStageRequiresCloseOutcome = Boolean(selectedStage && isCloseStageName(selectedStage.name));
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,6 +42,10 @@ export function DealStageMoveForm({
 
     if (!selectedStage) {
       setError("Choose a valid stage in this pipeline.");
+      return;
+    }
+    if (selectedStageRequiresCloseOutcome) {
+      setError("Use Mark won or Mark lost to close this deal intentionally.");
       return;
     }
 
@@ -87,13 +92,26 @@ export function DealStageMoveForm({
           ))}
         </select>
       </label>
+      {selectedStageRequiresCloseOutcome ? (
+        <p className="form-hint form-hint-info">
+          Closing a deal requires an outcome. Use Mark won or Mark lost so the pipeline status stays clear.
+        </p>
+      ) : null}
       <FormActionBar
-        disabledHint="Choose a different stage before moving this deal."
+        disabledHint={
+          selectedStageRequiresCloseOutcome
+            ? "Use Mark won or Mark lost to close this deal intentionally."
+            : "Choose a different stage before moving this deal."
+        }
         isSaving={isSaving}
         pendingLabel="Moving..."
-        submitDisabled={stageId === currentStageId}
+        submitDisabled={stageId === currentStageId || selectedStageRequiresCloseOutcome}
         submitLabel="Move deal"
       />
     </form>
   );
+}
+
+function isCloseStageName(name: string) {
+  return /\bclosed?\b/i.test(name.trim());
 }

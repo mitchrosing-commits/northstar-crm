@@ -20,6 +20,7 @@ import { FormIntroCallout } from "@/components/form-intro-callout";
 import { formatActivityType, formatDate, formatMoney } from "@/components/format";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
+import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -42,7 +43,20 @@ import { closedDealLockedLabel, closedDealLockMessage } from "@/lib/record-lock-
 import { formatPersonName } from "@/lib/person-name";
 import { recordSubtitle } from "@/lib/record-subtitle";
 import { buildDealAttentionBadges, type DealAttentionBadge } from "@/lib/sales-assistant";
-import { getDeal, getRecordTimeline, getWorkspace, listDealContractSteps, listDealCustomFields, listEmailLogsForRecord, listEmailTemplates, listProducts, listStages, type AutomationTemplateId } from "@/lib/services/crm";
+import {
+  buildDealAssistantContext,
+  buildNorthstarAssistantInsight,
+  getDeal,
+  getRecordTimeline,
+  getWorkspace,
+  listDealContractSteps,
+  listDealCustomFields,
+  listEmailLogsForRecord,
+  listEmailTemplates,
+  listProducts,
+  listStages,
+  type AutomationTemplateId
+} from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +72,7 @@ export default async function DealDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [stages, workspaceDetail, customFields, contractSteps, timelineItems, products, emailTemplates, emailLogs] = await Promise.all([
+  const [stages, workspaceDetail, customFields, contractSteps, timelineItems, products, emailTemplates, emailLogs, northstarContext] = await Promise.all([
     listStages(actor, deal.pipelineId),
     getWorkspace(actor),
     listDealCustomFields(actor, deal.id),
@@ -66,8 +80,10 @@ export default async function DealDetailPage({ params }: PageProps) {
     getRecordTimeline(actor, { type: "DEAL", id: deal.id }),
     listProducts(actor),
     listEmailTemplates(actor, { activeOnly: true }),
-    listEmailLogsForRecord(actor, { type: "DEAL", id: deal.id })
+    listEmailLogsForRecord(actor, { type: "DEAL", id: deal.id }),
+    buildDealAssistantContext(actor, deal.id)
   ]);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
@@ -154,6 +170,12 @@ export default async function DealDetailPage({ params }: PageProps) {
             }}
             extraJumps={[
               {
+                href: "#northstar-assistant" as Route,
+                label: "AI",
+                count: northstarInsight.findings.length,
+                countLabel: { singular: "AI finding", plural: "AI findings" }
+              },
+              {
                 href: "#contract-workflow" as Route,
                 label: "Contract",
                 count: contractSteps.length,
@@ -204,6 +226,8 @@ export default async function DealDetailPage({ params }: PageProps) {
         ]}
         title="Deal workspace"
       />
+
+      <NorthstarAssistantPanel insight={northstarInsight} />
 
       <section className="deal-context-grid">
         <DealNextStepCard activity={nextActivity} attention={attention} badges={attentionBadges} dealTitle={deal.title} />

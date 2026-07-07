@@ -89,14 +89,16 @@ describe("CRM form header UX", () => {
     expect(newDealPage).toContain("We prefilled this deal from your search or related-record shortcut.");
     expect(newContactPage).toContain("Add a person record that can be linked to deals, organizations, activities, and email.");
     expect(newContactPage).toContain("backHref=\"/contacts\"");
-    expect(newContactPage).toContain("cancelHref=\"/contacts\"");
+    expect(newContactPage).toContain("cancelHref={(returnTo ?? \"/contacts\") as Route}");
     expect(newContactPage).toContain("prefillNotice={");
     expect(newContactPage).toContain("We prefilled this contact from your search or related-record shortcut.");
+    expect(newContactPage).toContain("Northstar will return to the lead form with the contact selected.");
     expect(newOrganizationPage).toContain("Create an account record for grouping contacts, deals, activities, and notes.");
     expect(newOrganizationPage).toContain("backHref=\"/organizations\"");
-    expect(newOrganizationPage).toContain("cancelHref=\"/organizations\"");
+    expect(newOrganizationPage).toContain("cancelHref={(returnTo ?? \"/organizations\") as Route}");
     expect(newOrganizationPage).toContain("prefillNotice={");
     expect(newOrganizationPage).toContain("We prefilled this organization from your search shortcut.");
+    expect(newOrganizationPage).toContain("Northstar will return to the lead form with the company selected.");
     expect(newLeadPage).toContain("Capture an early opportunity before it is qualified into the active deal pipeline.");
     expect(newLeadPage).toContain("backHref=\"/leads\"");
     expect(newLeadPage).toContain("cancelHref=\"/leads\"");

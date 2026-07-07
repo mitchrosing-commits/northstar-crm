@@ -609,7 +609,8 @@ textarea {
   font-size: 30px;
   line-height: 1.12;
   letter-spacing: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .page-subtitle {
@@ -698,6 +699,7 @@ textarea {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
+  align-items: stretch;
   margin-bottom: 20px;
 }
 
@@ -1007,7 +1009,10 @@ textarea {
 }
 
 .stat-card {
+  display: grid;
+  align-content: start;
   padding: 16px;
+  height: 100%;
   min-height: 94px;
   transition:
     border-color 140ms ease,
@@ -1018,6 +1023,7 @@ textarea {
 
 .stat-card-link {
   display: block;
+  height: 100%;
 }
 
 .stat-card-link:hover .stat-card {
@@ -1087,6 +1093,7 @@ textarea {
 }
 
 .dashboard-scorecard .stat-grid {
+  grid-auto-rows: 1fr;
   margin-bottom: 0;
 }
 
@@ -3726,6 +3733,13 @@ textarea {
   font-size: 12px;
 }
 
+.pipeline-card-move-guidance {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .pipeline-card-move-error {
   grid-column: 1 / -1;
   margin: 0;
@@ -4620,6 +4634,11 @@ textarea {
   background: var(--surface-muted);
 }
 
+.meeting-unmatched-actions {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
 .meeting-proposal-evidence {
   margin-top: 0;
   padding-left: 0;
@@ -5234,6 +5253,13 @@ textarea {
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.form-related-record-actions {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  min-width: 0;
 }
 
 .form-hint-info,
@@ -5997,6 +6023,162 @@ textarea {
 
   .activity-row-header {
     align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+.northstar-assistant-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.northstar-assistant-summary {
+  display: grid;
+  gap: 7px;
+  border-left: 3px solid var(--accent);
+  padding-left: 11px;
+}
+
+.northstar-assistant-summary p {
+  margin: 0;
+  color: var(--muted-strong);
+}
+
+.northstar-assistant-status {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.northstar-assistant-reviewed {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 2px;
+  color: var(--muted-strong);
+}
+
+.northstar-assistant-reviewed strong {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.northstar-assistant-reviewed span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.northstar-assistant-status-attention {
+  background: #fee4e2;
+  color: var(--red);
+}
+
+.northstar-assistant-status-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.northstar-assistant-status-success {
+  background: #dcfce7;
+  color: var(--green);
+}
+
+.northstar-assistant-status-info {
+  background: #dbeafe;
+  color: var(--blue);
+}
+
+.northstar-confidence-high {
+  background: #dcfce7;
+  color: var(--green);
+}
+
+.northstar-confidence-medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.northstar-confidence-low {
+  background: #fee4e2;
+  color: var(--red);
+}
+
+.northstar-assistant-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.northstar-assistant-grid > div,
+.northstar-assistant-footer {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.northstar-assistant-grid h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.northstar-assistant-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.northstar-assistant-list li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted-strong);
+}
+
+.northstar-assistant-list strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.northstar-assistant-list span,
+.northstar-assistant-list small {
+  overflow-wrap: anywhere;
+}
+
+.northstar-assistant-list small {
+  color: var(--muted);
+}
+
+.northstar-assistant-footer {
+  display: flex;
+  gap: 8px;
+  color: var(--muted-strong);
+  padding-bottom: 0;
+}
+
+.northstar-assistant-footer strong {
+  flex: 0 0 auto;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.northstar-assistant-footer span {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 920px) {
+  .northstar-assistant-grid,
+  .northstar-assistant-reviewed,
+  .northstar-assistant-footer {
+    grid-template-columns: 1fr;
     flex-direction: column;
   }
 }

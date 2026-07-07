@@ -17,10 +17,12 @@ export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ leadId: string }>;
+  searchParams?: Promise<{ organizationId?: string; personId?: string }>;
 };
 
-export default async function EditLeadPage({ params }: PageProps) {
+export default async function EditLeadPage({ params, searchParams }: PageProps) {
   const { leadId } = await params;
+  const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
   const lead = await getLead(actor, leadId).catch((error: unknown) => {
@@ -37,6 +39,13 @@ export default async function EditLeadPage({ params }: PageProps) {
     id: membership.user.id,
     name: membership.user.name ?? membership.user.email
   }));
+  const requestedPersonId = firstSearchParam(resolvedSearchParams?.personId);
+  const requestedOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId);
+  const selectedPersonId = people.some((person) => person.id === requestedPersonId) ? requestedPersonId ?? null : lead.personId;
+  const selectedOrganizationId = organizations.some((organization) => organization.id === requestedOrganizationId)
+    ? requestedOrganizationId ?? null
+    : lead.organizationId;
+  const hasRelatedRecordPrefill = selectedPersonId !== lead.personId || selectedOrganizationId !== lead.organizationId;
 
   return (
     <AppShell workspace={workspace}>
@@ -70,13 +79,18 @@ export default async function EditLeadPage({ params }: PageProps) {
               source: lead.source,
               status: lead.status,
               ownerId: lead.ownerId,
-              personId: lead.personId,
-              organizationId: lead.organizationId
+              personId: selectedPersonId,
+              organizationId: selectedOrganizationId
             }}
             mode="edit"
             organizations={organizations.map((organization) => ({ id: organization.id, name: organization.name }))}
             owners={owners}
             people={people.map((person) => ({ id: person.id, name: formatPersonName(person) ?? "Unnamed contact" }))}
+            prefillNotice={
+              hasRelatedRecordPrefill
+                ? "We selected the newly created related record. Save changes to attach it to this lead."
+                : undefined
+            }
             workspaceId={workspace.id}
           />
           <RecordCustomFieldsPanel
@@ -90,4 +104,9 @@ export default async function EditLeadPage({ params }: PageProps) {
       )}
     </AppShell>
   );
+}
+
+function firstSearchParam(value: string | string[] | undefined) {
+  const first = Array.isArray(value) ? value[0] : value;
+  return first?.slice(0, 160);
 }

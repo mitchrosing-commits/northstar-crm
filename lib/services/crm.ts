@@ -22,6 +22,7 @@ export * from "./lead-service";
 export * from "./lead-import-service";
 export * from "./meeting-intelligence-service";
 export * from "./note-service";
+export * from "./northstar-ai-service";
 export * from "./organization-service";
 export * from "./organization-import-service";
 export * from "./pipeline-service";

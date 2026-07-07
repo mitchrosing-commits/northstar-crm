@@ -1,3 +1,5 @@
+import type { Route } from "next";
+
 import { AppShell } from "@/components/app-shell";
 import { ContactForm } from "@/components/contact-form";
 import { FormHeaderActions } from "@/components/form-header-actions";
@@ -10,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function NewContactPage({
   searchParams
 }: {
-  searchParams?: Promise<{ email?: string; name?: string; organizationId?: string }>;
+  searchParams?: Promise<{ email?: string; name?: string; organizationId?: string; returnTo?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
@@ -26,6 +28,7 @@ export default async function NewContactPage({
   const defaultEmail = firstSearchParam(resolvedSearchParams?.email);
   const defaultName = firstSearchParam(resolvedSearchParams?.name);
   const defaultOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId);
+  const returnTo = leadReturnToParam(resolvedSearchParams?.returnTo);
   const organizationOptions = organizations.map((organization) => ({ id: organization.id, name: organization.name }));
   const hasPrefill = Boolean(defaultEmail || defaultName || defaultOrganizationId);
 
@@ -38,7 +41,7 @@ export default async function NewContactPage({
         title="New contact"
       />
       <ContactForm
-        cancelHref="/contacts"
+        cancelHref={(returnTo ?? "/contacts") as Route}
         defaultEmail={defaultEmail}
         defaultName={defaultName}
         defaultOrganizationId={organizationOptions.some((organization) => organization.id === defaultOrganizationId) ? defaultOrganizationId : undefined}
@@ -47,10 +50,13 @@ export default async function NewContactPage({
         organizations={organizationOptions}
         owners={owners}
         prefillNotice={
-          hasPrefill
+          returnTo
+            ? "Create this contact, then Northstar will return to the lead form with the contact selected."
+            : hasPrefill
             ? "We prefilled this contact from your search or related-record shortcut. Review the details, then add the person."
             : undefined
         }
+        returnTo={returnTo ? { href: returnTo, paramName: "personId" } : undefined}
         workspaceId={workspace.id}
       />
     </AppShell>
@@ -60,4 +66,13 @@ export default async function NewContactPage({
 function firstSearchParam(value: string | string[] | undefined) {
   const first = Array.isArray(value) ? value[0] : value;
   return first?.slice(0, 160);
+}
+
+function leadReturnToParam(value: string | string[] | undefined) {
+  const first = Array.isArray(value) ? value[0] : value;
+  const returnTo = first?.slice(0, 700);
+  if (!returnTo) return null;
+  if (returnTo === "/leads/new" || returnTo.startsWith("/leads/new?")) return returnTo;
+  if (/^\/leads\/[^/?#]+\/edit(?:\?.*)?$/.test(returnTo)) return returnTo;
+  return null;
 }

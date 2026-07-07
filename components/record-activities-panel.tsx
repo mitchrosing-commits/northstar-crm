@@ -166,7 +166,7 @@ function ActivitySectionContent({
                 href={addActivityHref}
                 title={addActivityLabel}
               >
-                Add follow-up
+                Add activity
               </a>
             ) : null
           }

@@ -7,6 +7,7 @@ import {
   CalendarCheck,
   CircleDollarSign,
   Contact,
+  FileText,
   Inbox,
   LayoutDashboard,
   Package,
@@ -19,13 +20,12 @@ import {
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useId } from "react";
 
 import { ActionGroup } from "@/components/action-group";
 import { queryListHref } from "@/lib/search-create-actions";
 import { SidebarSearchShortcut } from "@/components/sidebar-search-shortcut";
-import { searchListNavigationItems, sidebarJumpNavigationItems, type AppNavigationIconName } from "@/lib/navigation";
+import { searchListNavigationItems, type AppNavigationIconName } from "@/lib/navigation";
 
 type SidebarCommandProps = {
   globalSearchDefaultValue?: string;
@@ -38,13 +38,14 @@ type SidebarQuickAction = {
   label: string;
 };
 
-const sidebarJumpActionIcons: Record<AppNavigationIconName, LucideIcon> = {
+const sidebarSearchActionIcons: Record<AppNavigationIconName, LucideIcon> = {
   BarChart3,
   BrainCircuit,
   Building2,
   CalendarCheck,
   CircleDollarSign,
   Contact,
+  FileText,
   Inbox,
   LayoutDashboard,
   Package,
@@ -54,20 +55,12 @@ const sidebarJumpActionIcons: Record<AppNavigationIconName, LucideIcon> = {
   SlidersHorizontal
 };
 
-const sidebarJumpActions: SidebarQuickAction[] = sidebarJumpNavigationItems.map((item) => ({
-  href: item.href,
-  label: item.label,
-  helper: item.helper,
-  icon: sidebarJumpActionIcons[item.icon]
-}));
-
 const globalActionsLabel = "Global actions";
 const quickActionsLabel = "Quick actions";
 const searchFormLabel = "Search workspace records";
 const submitSearchLabel = "Submit workspace search";
 
 export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps) {
-  const pathname = usePathname() ?? "";
   const generatedSearchId = useId();
   const searchInputId = `${generatedSearchId}-global-search`;
   const searchHelperId = `${generatedSearchId}-sidebar-command-helper`;
@@ -79,12 +72,11 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
         href: queryListHref(item.href, searchValue),
         label: item.label,
         helper: sidebarSearchListHelper(item.label, searchValue),
-        icon: sidebarJumpActionIcons[item.icon]
+        icon: sidebarSearchActionIcons[item.icon]
       }))
     : [];
   const sidebarQuickActionGroups: Array<{ actions: SidebarQuickAction[]; label: string }> = [
-    ...(findActions.length > 0 ? [{ label: "Find", actions: findActions }] : []),
-    { label: "Jump", actions: sidebarJumpActions }
+    ...(findActions.length > 0 ? [{ label: "Find", actions: findActions }] : [])
   ];
 
   return (
@@ -140,43 +132,43 @@ export function SidebarCommand({ globalSearchDefaultValue }: SidebarCommandProps
           </Link>
         </div>
       ) : null}
-      <ActionGroup className="sidebar-quick-actions" label={quickActionsLabel}>
-        {sidebarQuickActionGroups.map((group) => {
-          const headingId = `sidebar-quick-actions-${group.label.toLowerCase()}`;
-          return (
-            <section className="sidebar-quick-action-group" aria-labelledby={headingId} key={group.label} role="group">
-              <p className="sidebar-quick-action-label" id={headingId}>
-                {group.label}
-              </p>
-              <div className="sidebar-quick-action-grid">
-                {group.actions.map((action) => {
-                  const Icon = action.icon;
-                  const actionTitle = `${action.label}: ${action.helper}`;
-                  const isActive = quickActionMatchesPathname(pathname, action.href);
-                  return (
-                    <Link
-                      aria-current={isActive ? "page" : undefined}
-                      aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}
-                      className={isActive ? "sidebar-quick-action sidebar-quick-action-active" : "sidebar-quick-action"}
-                      href={action.href}
-                      key={`${group.label}-${action.href}`}
-                      title={actionTitle}
-                    >
-                      <span className="sidebar-quick-action-icon">
-                        <Icon size={14} aria-hidden="true" />
-                      </span>
-                      <span>
-                        <strong>{action.label}</strong>
-                        <small>{action.helper}</small>
-                      </span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </section>
-          );
-        })}
-      </ActionGroup>
+      {sidebarQuickActionGroups.length > 0 ? (
+        <ActionGroup className="sidebar-quick-actions" label={quickActionsLabel}>
+          {sidebarQuickActionGroups.map((group) => {
+            const headingId = `sidebar-quick-actions-${group.label.toLowerCase()}`;
+            return (
+              <section className="sidebar-quick-action-group" aria-labelledby={headingId} key={group.label} role="group">
+                <p className="sidebar-quick-action-label" id={headingId}>
+                  {group.label}
+                </p>
+                <div className="sidebar-quick-action-grid">
+                  {group.actions.map((action) => {
+                    const Icon = action.icon;
+                    const actionTitle = `${action.label}: ${action.helper}`;
+                    return (
+                      <Link
+                        aria-label={actionTitle}
+                        className="sidebar-quick-action"
+                        href={action.href}
+                        key={`${group.label}-${action.href}`}
+                        title={actionTitle}
+                      >
+                        <span className="sidebar-quick-action-icon">
+                          <Icon size={14} aria-hidden="true" />
+                        </span>
+                        <span>
+                          <strong>{action.label}</strong>
+                          <small>{action.helper}</small>
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </ActionGroup>
+      ) : null}
     </section>
   );
 }
@@ -187,9 +179,4 @@ function clearSearchLabel(searchValue: string) {
 
 function sidebarSearchListHelper(label: string, searchValue: string) {
   return `Find "${searchValue}" in ${label.toLowerCase()}`;
-}
-
-function quickActionMatchesPathname(pathname: string, href: Route) {
-  const hrefPath = String(href).split("?")[0];
-  return pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
 }

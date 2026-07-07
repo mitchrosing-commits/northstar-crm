@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api/responses";
 import { decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
 import {
   disconnectEmailConnection,
+  diagnoseGmailConnection,
   enqueueGmailInboxSyncJob,
   gmailInboxSyncJobType,
   listEmailInboxThreads,
@@ -1816,7 +1817,7 @@ describe("Gmail metadata sync", () => {
       ).rejects.toMatchObject({
         code: "EMAIL_GMAIL_MESSAGE_AUTH_FAILED",
         message:
-          "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync."
+          "Gmail listed inbox messages, but Gmail rejected full-message loading (Google status 403; category insufficient_permissions). Reconnect Gmail with Full Inbox scopes, then retry sync."
       });
 
       const [job, reloadedConnection, reloadedSecret, providerCard, logs] = await Promise.all([
@@ -1832,12 +1833,12 @@ describe("Gmail metadata sync", () => {
       ]);
       expect(job).toMatchObject({
         lastError:
-          "Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync.",
+          "Gmail listed inbox messages, but Gmail rejected full-message loading (Google status 403; category insufficient_permissions). Reconnect Gmail with Full Inbox scopes, then retry sync.",
         status: "PENDING",
         type: gmailInboxSyncJobType
       });
       expect(reloadedConnection.lastError).toBe(
-        "EMAIL_GMAIL_MESSAGE_AUTH_FAILED: Gmail listed inbox messages, but Gmail rejected full-message loading. Reconnect Gmail with Full Inbox scopes, then retry sync."
+        "EMAIL_GMAIL_MESSAGE_AUTH_FAILED: Gmail listed inbox messages, but Gmail rejected full-message loading (Google status 403; category insufficient_permissions). Reconnect Gmail with Full Inbox scopes, then retry sync."
       );
       expect(reloadedConnection.scopes).toEqual(["openid", "email"]);
       expect(reloadedSecret.scopes).toEqual(["openid", "email"]);
@@ -1849,6 +1850,362 @@ describe("Gmail metadata sync", () => {
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
       expect(logs).toHaveLength(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("diagnoses the selected Gmail connection with tokeninfo, refresh, list, and full-get categories without leaking secrets", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "expired-diagnostic-access-token",
+        expiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        refreshToken: "diagnostic-refresh-token"
+      });
+      const diagnosticJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      let refreshCallCount = 0;
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url === "https://oauth2.googleapis.com/token") {
+          refreshCallCount += 1;
+          const body = init?.body as URLSearchParams;
+          expect(body.get("refresh_token")).toBe("diagnostic-refresh-token");
+          return Response.json({ access_token: "diagnostic-refreshed-access-token", expires_in: 3600 });
+        }
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo?")) {
+          const requestUrl = new URL(url);
+          expect(requestUrl.searchParams.get("access_token")).toBe("diagnostic-refreshed-access-token");
+          return Response.json({
+            email: "alex@example.test",
+            scope: gmailFullInboxScopes.join(" ")
+          });
+        }
+        expect(authorization).toBe("Bearer diagnostic-refreshed-access-token");
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
+          return Response.json({ messages: [{ id: "diagnostic-message-1", threadId: "diagnostic-thread-1" }] });
+        }
+        if (url.includes("/messages/diagnostic-message-1?")) {
+          return Response.json(
+            {
+              error: {
+                code: 403,
+                errors: [{ reason: "accessNotConfigured" }],
+                message: "provider-body-secret-token",
+                status: "PERMISSION_DENIED"
+              }
+            },
+            { status: 403 }
+          );
+        }
+        throw new Error(`Unexpected diagnostic fetch URL ${url}`);
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: connection.id.slice(-8),
+        env,
+        fetchImpl,
+        jobRef: diagnosticJob.id.slice(-8),
+        maxResults: 1
+      });
+      const serialized = JSON.stringify(diagnostic);
+
+      expect(diagnostic).toMatchObject({
+        accountEmail: "alex@example.test",
+        connectionRef: connection.id.slice(-8),
+        fullMessageGet: {
+          category: "api_disabled",
+          messageRef: "message:...essage-1",
+          providerReason: "accessNotConfigured",
+          providerStatus: 403,
+          success: false
+        },
+        hasEncryptedSecret: true,
+        list: {
+          category: "success",
+          messageCount: 1,
+          providerStatus: 200,
+          success: true
+        },
+        job: {
+          connectionMatchesSelected: true,
+          found: true,
+          jobRef: diagnosticJob.id.slice(-8),
+          payloadConnectionRef: connection.id.slice(-8),
+          payloadWorkspaceMatches: true,
+          requestedJobRef: diagnosticJob.id.slice(-8),
+          status: "PENDING",
+          typeMatches: true
+        },
+        oauth: {
+          includeGrantedScopes: true,
+          promptConsent: true,
+          redirectUriConfigured: true,
+          requestedScopeCategories: ["email", "Gmail read", "Gmail send", "sign-in"],
+          responseTypeCode: true,
+          usesOfflineAccess: true
+        },
+        selectedConnectionId: connection.id,
+        secretAccountMatchesConnection: true,
+        tokenRefresh: {
+          category: "success",
+          success: true
+        },
+        tokeninfo: {
+          accountEmail: "alex@example.test",
+          accountMatchesConnection: true,
+          category: "success",
+          missingRequiredScopeCategories: [],
+          success: true
+        },
+        tokenResolution: {
+          category: "success",
+          success: true
+        }
+      });
+      expect(diagnostic.storedScopeCategories).toEqual(expect.arrayContaining(["email", "Gmail read", "Gmail send", "sign-in"]));
+      expect(diagnostic.tokeninfo.scopeCategories).toEqual(expect.arrayContaining(["email", "Gmail read", "Gmail send", "sign-in"]));
+      expect(refreshCallCount).toBe(1);
+      expect(serialized).not.toContain("diagnostic-refresh-token");
+      expect(serialized).not.toContain("diagnostic-refreshed-access-token");
+      expect(serialized).not.toContain("provider-body-secret-token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("diagnoses when the supplied Gmail sync job does not match the selected connection", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const selectedConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "selected-job-diagnostic@example.test",
+        accessToken: "selected-job-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      const otherConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "other-job-diagnostic@example.test",
+        accessToken: "other-job-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      });
+      await fixture.prisma.emailConnection.update({
+        where: { id: selectedConnection.id },
+        data: { updatedAt: new Date("2030-07-01T12:45:00.000Z") }
+      });
+      await fixture.prisma.emailConnection.update({
+        where: { id: otherConnection.id },
+        data: { updatedAt: new Date("2030-07-01T12:44:00.000Z") }
+      });
+      const mismatchedJob = await fixture.prisma.job.create({
+        data: {
+          dedupeKey: `gmail-inbox-sync:${otherConnection.id}`,
+          payload: {
+            connectionId: otherConnection.id,
+            workspaceId: fixture.workspaceA.id
+          },
+          status: JobStatus.PENDING,
+          type: gmailInboxSyncJobType,
+          workspaceId: fixture.workspaceA.id
+        }
+      });
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo?")) {
+          return Response.json({
+            email: "selected-job-diagnostic@example.test",
+            scope: gmailFullInboxScopes.join(" ")
+          });
+        }
+        expect(authorization).toBe("Bearer selected-job-access-token");
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
+          return Response.json({ messages: [] });
+        }
+        throw new Error(`Unexpected mismatched job diagnostic fetch URL ${url}`);
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: selectedConnection.id.slice(-8),
+        env,
+        fetchImpl,
+        jobRef: mismatchedJob.id.slice(-8),
+        maxResults: 1
+      });
+
+      expect(diagnostic.job).toMatchObject({
+        connectionMatchesSelected: false,
+        found: true,
+        jobRef: mismatchedJob.id.slice(-8),
+        payloadConnectionRef: otherConnection.id.slice(-8),
+        payloadWorkspaceMatches: true,
+        requestedJobRef: mismatchedJob.id.slice(-8),
+        status: "PENDING",
+        typeMatches: true
+      });
+      expect(diagnostic.selectedConnectionId).toBe(selectedConnection.id);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("diagnoses expired-token refresh failures with safe provider categories", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "expired-refresh-diagnostic-access-token",
+        expiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        refreshToken: "diagnostic-invalid-refresh-token"
+      });
+      let refreshCallCount = 0;
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(String(input)).toBe("https://oauth2.googleapis.com/token");
+        refreshCallCount += 1;
+        const body = init?.body as URLSearchParams;
+        expect(body.get("refresh_token")).toBe("diagnostic-invalid-refresh-token");
+        return Response.json(
+          {
+            error: "invalid_grant",
+            error_description: "refresh-token-secret-description"
+          },
+          { status: 400 }
+        );
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: connection.id.slice(-8),
+        env,
+        fetchImpl
+      });
+      const serialized = JSON.stringify(diagnostic);
+
+      expect(diagnostic).toMatchObject({
+        connectionRef: connection.id.slice(-8),
+        fullMessageGet: {
+          category: "not_attempted",
+          success: false
+        },
+        list: {
+          category: "not_attempted",
+          success: false
+        },
+        selectedConnectionId: connection.id,
+        tokenRefresh: {
+          category: "invalid_token",
+          providerReason: "invalid_grant",
+          providerStatus: 400,
+          success: false
+        },
+        tokenResolution: {
+          category: "invalid_token",
+          providerReason: "invalid_grant",
+          providerStatus: 400,
+          success: false
+        },
+        tokeninfo: {
+          category: "not_attempted",
+          success: false
+        }
+      });
+      expect(refreshCallCount).toBe(1);
+      expect(serialized).not.toContain("diagnostic-invalid-refresh-token");
+      expect(serialized).not.toContain("expired-refresh-diagnostic-access-token");
+      expect(serialized).not.toContain("refresh-token-secret-description");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("diagnoses the requested Gmail connection instead of a newer stale row", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const selectedConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "selected-diagnostic@example.test",
+        accessToken: "selected-diagnostic-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        refreshToken: "selected-diagnostic-refresh-token"
+      });
+      const newerConnection = await createConnectedGmailSecret(fixture, {
+        accountEmail: "newer-stale-diagnostic@example.test",
+        accessToken: "newer-stale-access-token",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        refreshToken: "newer-stale-refresh-token"
+      });
+      await fixture.prisma.emailConnection.update({
+        where: { id: newerConnection.id },
+        data: {
+          scopes: ["openid", "email"],
+          updatedAt: new Date("2030-07-01T12:40:00.000Z")
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.update({
+        where: { connectionId: newerConnection.id },
+        data: { scopes: ["openid", "email"] }
+      });
+
+      const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (url === "https://oauth2.googleapis.com/token") {
+          const body = init?.body as URLSearchParams;
+          expect(body.get("refresh_token")).toBe("selected-diagnostic-refresh-token");
+          return Response.json({ access_token: "selected-refreshed-access-token", expires_in: 3600 });
+        }
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo?")) {
+          const requestUrl = new URL(url);
+          expect(requestUrl.searchParams.get("access_token")).toBe("selected-diagnostic-access-token");
+          return Response.json({
+            email: "selected-diagnostic@example.test",
+            scope: gmailFullInboxScopes.join(" ")
+          });
+        }
+        expect(authorization).toBe("Bearer selected-diagnostic-access-token");
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
+          return Response.json({ messages: [{ id: "selected-diagnostic-message", threadId: "selected-diagnostic-thread" }] });
+        }
+        if (url.includes("/messages/selected-diagnostic-message?")) {
+          return Response.json({
+            id: "selected-diagnostic-message",
+            labelIds: ["INBOX"],
+            payload: { headers: [] },
+            threadId: "selected-diagnostic-thread"
+          });
+        }
+        throw new Error(`Unexpected selected diagnostic fetch URL ${url}`);
+      };
+
+      const diagnostic = await diagnoseGmailConnection(fixture.actorA, {
+        connectionRef: selectedConnection.id.slice(-8),
+        env,
+        fetchImpl,
+        maxResults: 1
+      });
+
+      expect(diagnostic).toMatchObject({
+        accountEmail: "selected-diagnostic@example.test",
+        fullMessageGet: {
+          category: "success",
+          messageRef: "message:...-message",
+          providerStatus: 200,
+          success: true
+        },
+        list: {
+          category: "success",
+          messageCount: 1,
+          success: true
+        },
+        selectedConnectionId: selectedConnection.id,
+        tokenRefresh: {
+          category: "not_attempted",
+          success: null
+        },
+        tokeninfo: {
+          accountEmail: "selected-diagnostic@example.test",
+          accountMatchesConnection: true,
+          category: "success",
+          success: true
+        }
+      });
+      expect(diagnostic.selectedConnectionId).not.toBe(newerConnection.id);
     } finally {
       await fixture.cleanup();
     }

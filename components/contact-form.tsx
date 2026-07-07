@@ -37,6 +37,10 @@ type ContactFormProps = {
   defaultName?: string;
   defaultOrganizationId?: string;
   prefillNotice?: string;
+  returnTo?: {
+    href: string;
+    paramName: "personId";
+  };
   initialContact?: ContactFormInitial;
   cancelHref: Route;
 };
@@ -51,6 +55,7 @@ export function ContactForm({
   defaultName,
   defaultOrganizationId,
   prefillNotice,
+  returnTo,
   initialContact,
   cancelHref
 }: ContactFormProps) {
@@ -105,7 +110,7 @@ export function ContactForm({
     }
 
     const contact = await response.json();
-    router.push(`/contacts/${contact.id}`);
+    router.push((mode === "create" && returnTo ? appendReturnParam(returnTo.href, returnTo.paramName, contact.id) : `/contacts/${contact.id}`) as Route);
     router.refresh();
   }
 
@@ -188,4 +193,12 @@ function parseName(value: string) {
     firstName,
     lastName: rest.length > 0 ? rest.join(" ") : null
   };
+}
+
+function appendReturnParam(returnTo: string, paramName: "personId", id: string) {
+  const [path, query = ""] = returnTo.split("?");
+  const params = new URLSearchParams(query);
+  params.set(paramName, id);
+  const nextQuery = params.toString();
+  return `${path}${nextQuery ? `?${nextQuery}` : ""}`;
 }

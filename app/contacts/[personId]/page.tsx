@@ -8,6 +8,7 @@ import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel
 import { DetailFieldGrid } from "@/components/detail-field-grid";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
+import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
@@ -24,7 +25,15 @@ import type { RelationshipBriefChangeSummary } from "@/lib/meeting-intelligence/
 import { formatPersonName } from "@/lib/person-name";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
-import { getPerson, getRecordTimeline, getWorkspace, listEmailTemplates, listPersonCustomFields } from "@/lib/services/crm";
+import {
+  buildContactAssistantContext,
+  buildNorthstarAssistantInsight,
+  getPerson,
+  getRecordTimeline,
+  getWorkspace,
+  listEmailTemplates,
+  listPersonCustomFields
+} from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -60,12 +69,14 @@ export default async function ContactDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [workspaceDetail, timelineItems, customFields, emailTemplates] = await Promise.all([
+  const [workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext] = await Promise.all([
     getWorkspace(actor),
     getRecordTimeline(actor, { type: "PERSON", id: person.id }),
     listPersonCustomFields(actor, person.id),
-    listEmailTemplates(actor, { activeOnly: true })
+    listEmailTemplates(actor, { activeOnly: true }),
+    buildContactAssistantContext(actor, person.id)
   ]);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext);
   const personName = formatPersonName(person) ?? person.email ?? "Unnamed contact";
   const nextActivity = getNextOpenActivity(person.activities);
   const activityCopy = recordActivitySectionCopy("contact");
@@ -118,6 +129,18 @@ export default async function ContactDetailPage({ params }: PageProps) {
             }}
             extraJumps={[
               {
+                href: "#profile" as Route,
+                label: "Profile",
+                count: 4,
+                countLabel: { singular: "profile field", plural: "profile fields" }
+              },
+              {
+                href: "#northstar-assistant" as Route,
+                label: "AI",
+                count: northstarInsight.findings.length,
+                countLabel: { singular: "AI finding", plural: "AI findings" }
+              },
+              {
                 href: "#relationship-brief" as Route,
                 label: "Memory",
                 count: relationshipBriefCount,
@@ -158,6 +181,8 @@ export default async function ContactDetailPage({ params }: PageProps) {
         title="Contact workspace"
       />
 
+      <NorthstarAssistantPanel insight={northstarInsight} />
+
       <RelationshipBriefPanel
         contactName={personName}
         initialBrief={relationshipBrief}
@@ -166,7 +191,7 @@ export default async function ContactDetailPage({ params }: PageProps) {
         workspaceId={workspace.id}
       />
 
-      <section className="detail-grid">
+      <section className="detail-grid" id="profile">
         <DetailFieldGrid
           fields={[
             { emptyLabel: "No email", label: "Email", value: person.email },
@@ -193,14 +218,6 @@ export default async function ContactDetailPage({ params }: PageProps) {
           workspaceId={workspace.id}
         />
       </section>
-
-      <RecordCustomFieldsPanel
-        emptyMessage="No contact custom fields have been created yet."
-        entityId={person.id}
-        entityType="PERSON"
-        fields={customFields}
-        workspaceId={workspace.id}
-      />
 
       <RelatedRecordsPanel count={person.deals.length} id="related-deals" title="Linked Deals">
         <RelatedDealsTable
@@ -233,6 +250,14 @@ export default async function ContactDetailPage({ params }: PageProps) {
             title: activityCopy.title
           }
         ]}
+        workspaceId={workspace.id}
+      />
+
+      <RecordCustomFieldsPanel
+        emptyMessage="No contact custom fields have been created yet."
+        entityId={person.id}
+        entityType="PERSON"
+        fields={customFields}
         workspaceId={workspace.id}
       />
 

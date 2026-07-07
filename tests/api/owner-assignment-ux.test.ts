@@ -24,7 +24,8 @@ const newActivityPage = readFileSync(join(process.cwd(), "app/activities/new/pag
 describe("owner assignment UX", () => {
   it("defaults create forms to the current workspace user when available", () => {
     expect(newDealPage).toContain("defaultOwnerId={actorUserId}");
-    expect(newLeadPage).toContain("defaultOwnerId={actorUserId}");
+    expect(newLeadPage).toContain("const defaultOwnerId = owners.some((owner) => owner.id === requestedOwnerId) ? requestedOwnerId : actorUserId;");
+    expect(newLeadPage).toContain("defaultOwnerId={defaultOwnerId}");
     expect(newContactPage).toContain("defaultOwnerId={actorUserId}");
     expect(newOrganizationPage).toContain("defaultOwnerId={actorUserId}");
     expect(newActivityPage).toContain("defaultOwnerId={actorUserId}");

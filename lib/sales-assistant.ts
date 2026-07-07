@@ -3,6 +3,7 @@ import { DealStatus, LeadStatus, QuoteStatus } from "@prisma/client";
 import { classifyActivityDue } from "@/lib/activity-due";
 import { prisma } from "@/lib/db/prisma";
 import {
+  actionableActivityRelationsWhere,
   activityAttachmentRelationsWhere,
   emailLogAttachmentRelationsWhere,
   noteAttachmentRelationsWhere
@@ -108,7 +109,7 @@ export async function getNeedsAttentionSummary(actor: WorkspaceActor, now = new 
     prisma.activity.findMany({
       where: {
         workspaceId: actor.workspaceId,
-        ...activityAttachmentRelationsWhere(actor.workspaceId),
+        ...actionableActivityRelationsWhere(actor.workspaceId),
         completedAt: null,
         dueAt: { lt: tomorrow },
         ...activeWhere

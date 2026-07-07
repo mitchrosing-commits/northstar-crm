@@ -211,7 +211,10 @@ describe("activity create and completion behavior", () => {
     expect(service).toContain("Attach the activity to a CRM record.");
     expect(service).toContain("assertOpenDealInWorkspace");
     expect(service).toContain("Closed deals cannot be edited.");
-    expect(service).toContain("assertActivityParentUnlocked(existing)");
+    expect(service).toContain("isActivityCompletionOnlyUpdate");
+    expect(service).toContain("assertActivityParentUnlocked(existing, { allowClosedDeal: isActivityCompletionOnlyUpdate(normalized) })");
+    expect(service).toContain("assertActivityParentUnlocked(existing, { allowClosedDeal: true })");
+    expect(service).toContain("actionableActivityRelationsWhere");
     expect(service).toContain("assertRecordInWorkspace(\"person\"");
     expect(service).toContain("assertRecordInWorkspace(\"organization\"");
     expect(service).toContain("lead.status === \"CONVERTED\"");
@@ -249,7 +252,7 @@ describe("activity create and completion behavior", () => {
     expect(recordActivitiesPanel).toContain("aria-label={addActivityLabel}");
     expect(recordActivitiesPanel).toContain("href={addActivityHref}");
     expect(recordActivitiesPanel).toContain("title={addActivityLabel}");
-    expect(recordActivitiesPanel).toContain("Add follow-up");
+    expect(recordActivitiesPanel).toContain("Add activity");
     expect(recordActivitiesPanel).toContain("empty-state-compact empty-state-panel");
     expect(recordActivitiesPanel).toContain("title={section.emptyMessage}");
     expect(panelTitleRow).toContain("description ? <p className=\"form-hint\">{description}</p> : null");

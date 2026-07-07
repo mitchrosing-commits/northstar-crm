@@ -66,9 +66,9 @@ describe("global workspace search", () => {
     expect(sidebarCommand).toContain("htmlFor={searchInputId}");
     expect(sidebarCommand).toContain("id={searchInputId}");
     expect(sidebarCommand).toContain("id={searchHelperId}");
-    expect(sidebarCommand).toContain("const isActive = quickActionMatchesPathname(pathname, action.href)");
-    expect(sidebarCommand).toContain("aria-current={isActive ? \"page\" : undefined}");
-    expect(sidebarCommand).toContain("aria-label={isActive ? `Current shortcut: ${actionTitle}` : actionTitle}");
+    expect(sidebarCommand).not.toContain("const isActive = quickActionMatchesPathname(pathname, action.href)");
+    expect(sidebarCommand).not.toContain("aria-current={isActive ? \"page\" : undefined}");
+    expect(sidebarCommand).toContain("aria-label={actionTitle}");
     expect(sidebarCommand).toContain("href={action.href}");
     expect(sidebarCommand).not.toContain("getCrmCreateActionDefinition(action.href)");
     expect(sidebarCommand).not.toContain("createSidebarHelperForQuery(createMetadata, searchValue)");
@@ -78,7 +78,7 @@ describe("global workspace search", () => {
     expect(sidebarCommand).not.toContain("map((action, index)");
     expect(sidebarCommand).toContain("const actionTitle = `${action.label}: ${action.helper}`");
     expect(sidebarCommand).toContain("title={actionTitle}");
-    expect(sidebarCommand).toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
+    expect(sidebarCommand).not.toContain("function quickActionMatchesPathname(pathname: string, href: Route)");
     expect(sidebarCommand).toContain("Open matching list shortcuts for this search.");
     expect(sidebarCommand).toContain("Use page-level New buttons for contacts, organizations, leads, deals, and activities.");
     expect(sidebarCommand).toContain("aria-label=\"Active workspace search\"");
@@ -94,8 +94,8 @@ describe("global workspace search", () => {
     expect(sidebarCommand).toContain("import { ActionGroup }");
     expect(sidebarCommand).toContain('<ActionGroup className="sidebar-quick-actions" label={quickActionsLabel}>');
     expect(sidebarCommand).not.toContain('label: "Create"');
-    expect(sidebarCommand).toContain("sidebarJumpNavigationItems.map((item) => ({");
-    expect(sidebarCommand).toContain("sidebarJumpActionIcons[item.icon]");
+    expect(sidebarCommand).not.toContain("sidebarJumpNavigationItems.map((item) => ({");
+    expect(sidebarCommand).toContain("sidebarSearchActionIcons[item.icon]");
     expect(sidebarCommand).toContain("searchListNavigationItems.map((item) => ({");
     expect(sidebarCommand).toContain("href: queryListHref(item.href, searchValue)");
     expect(sidebarCommand).toContain("helper: sidebarSearchListHelper(item.label, searchValue)");
@@ -118,15 +118,27 @@ describe("global workspace search", () => {
     expect(createRecordActions).toContain('sidebarLabel: "New activity"');
   });
 
-  it("searches workspace-scoped CRM records with limited contains queries", () => {
+  it("searches workspace-scoped CRM records with deterministic typo-tolerant ranking", () => {
     expect(service).toContain("export async function searchCrm");
     expect(service).toContain("await ensureWorkspaceAccess(actor)");
     expect(service).toContain("normalizeSearchQuery(rawQuery)");
     expect(service).toContain("const maxSearchQueryLength = 120");
+    expect(service).toContain("const searchCandidateTake = 80");
     expect(service).toContain("typeof rawQuery === \"string\" ? rawQuery.trim().slice(0, maxSearchQueryLength) : \"\"");
     expect(service).toContain("mode: \"insensitive\"");
     expect(service).toContain("workspaceId: actor.workspaceId");
     expect(service).toContain("take: searchTake");
+    expect(service).toContain("rankedSearchResults(query, deals");
+    expect(service).toContain("rankedSearchResults(query, leads");
+    expect(service).toContain("rankedSearchResults(query, people");
+    expect(service).toContain("rankedSearchResults(query, organizations");
+    expect(service).toContain("rankedSearchResults(");
+    expect(service).toContain("recordSearchScore(query, fields(record))");
+    expect(service).toContain("fuzzyTokenScore(queryTokens, searchTokens(normalizedField))");
+    expect(service).toContain("damerauLevenshteinDistance(queryToken, fieldToken, typoTolerance(queryToken))");
+    expect(service).toContain("workspaceRelationField(actor.workspaceId");
+    expect(service).toContain("!relation.deletedAt");
+    expect(service).toContain("const requiredMatches = queryTokens.length === 1 ? 1 : Math.ceil(queryTokens.length / 2);");
     expect(service).toContain("prisma.deal.findMany");
     expect(service).toContain("prisma.lead.findMany");
     expect(service).toContain("prisma.person.findMany");
@@ -135,9 +147,6 @@ describe("global workspace search", () => {
     expect(service).toContain("prisma.note.findMany");
     expect(service).toContain("prisma.quote.findMany");
     expect(service).toContain("deal: { is: { workspaceId: actor.workspaceId, ...activeWhere } }");
-    expect(service).toContain("organization: { is: { workspaceId: actor.workspaceId, ...activeWhere, name: contains } }");
-    expect(service).toContain("person: {");
-    expect(service).toContain("OR: [{ firstName: contains }, { lastName: contains }, { email: contains }]");
     expect(service).toContain("scopeWorkspaceRelation");
     expect(service).toContain("activityAttachmentRelationsWhere(actor.workspaceId)");
     expect(service).toContain("noteAttachmentRelationsWhere(actor.workspaceId)");
@@ -171,7 +180,8 @@ describe("global workspace search", () => {
     expect(searchPage).toContain("aria-label={searchSubmitLabel}");
     expect(searchPage).toContain("title={searchSubmitLabel}");
     expect(searchPage).toContain("globalSearchDefaultValue={hasQuery ? results.query : undefined}");
-    expect(searchPage).toContain("SearchActionPanel query={hasQuery ? results.query : undefined}");
+    expect(searchPage).toContain("{!hasQuery ? <SearchActionPanel /> : null}");
+    expect(searchPage).toContain("{hasQuery ? <SearchActionPanel query={results.query} /> : null}");
     expect(searchPage).toContain("const resultOverview = [");
     expect(searchPage).toContain("SearchResultOverview items={resultOverview}");
     expect(searchPage).toContain("quick ${shownResults === 1 ? \"match\" : \"matches\"} shown");
@@ -297,7 +307,8 @@ describe("global workspace search", () => {
     expect(searchCreateActions).toContain('import { searchJumpNavigationItems, searchListNavigationItems } from "@/lib/navigation"');
     expect(sidebarCommand).toContain('import { queryListHref } from "@/lib/search-create-actions"');
     expect(sidebarCommand).not.toContain("import { buildSearchCreateActions, queryListHref }");
-    expect(sidebarCommand).toContain("import { searchListNavigationItems, sidebarJumpNavigationItems");
+    expect(sidebarCommand).toContain("import { searchListNavigationItems, type AppNavigationIconName } from \"@/lib/navigation\"");
+    expect(sidebarCommand).not.toContain("import { searchListNavigationItems, sidebarJumpNavigationItems");
     expect(navigation).toContain('listDescription: "Browse follow-ups and tasks."');
     expect(navigation).toContain("export const searchListNavigationItems");
     expect(navigation).toContain("export const searchJumpNavigationItems");
@@ -428,7 +439,7 @@ describe("global workspace search", () => {
     expect(buildSearchJumpActions().map((action) => action.href)).toEqual([
       "/dashboard",
       "/pipeline",
-      "/deals?commercial=hasQuote",
+      "/quotes",
       "/activities",
       "/email",
       "/meeting-intelligence",

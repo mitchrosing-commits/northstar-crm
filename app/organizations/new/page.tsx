@@ -1,3 +1,5 @@
+import type { Route } from "next";
+
 import { AppShell } from "@/components/app-shell";
 import { FormHeaderActions } from "@/components/form-header-actions";
 import { OrganizationForm } from "@/components/organization-form";
@@ -10,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function NewOrganizationPage({
   searchParams
 }: {
-  searchParams?: Promise<{ name?: string }>;
+  searchParams?: Promise<{ name?: string; returnTo?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
@@ -20,6 +22,7 @@ export default async function NewOrganizationPage({
     name: membership.user.name ?? membership.user.email
   }));
   const defaultName = firstSearchParam(resolvedSearchParams?.name);
+  const returnTo = leadReturnToParam(resolvedSearchParams?.returnTo);
   const hasPrefill = Boolean(defaultName);
 
   return (
@@ -31,16 +34,19 @@ export default async function NewOrganizationPage({
         title="New organization"
       />
       <OrganizationForm
-        cancelHref="/organizations"
+        cancelHref={(returnTo ?? "/organizations") as Route}
         defaultName={defaultName}
         defaultOwnerId={actorUserId}
         mode="create"
         owners={owners}
         prefillNotice={
-          hasPrefill
+          returnTo
+            ? "Create this organization, then Northstar will return to the lead form with the company selected."
+            : hasPrefill
             ? "We prefilled this organization from your search shortcut. Review the details, then create the account."
             : undefined
         }
+        returnTo={returnTo ? { href: returnTo, paramName: "organizationId" } : undefined}
         workspaceId={workspace.id}
       />
     </AppShell>
@@ -50,4 +56,13 @@ export default async function NewOrganizationPage({
 function firstSearchParam(value: string | string[] | undefined) {
   const first = Array.isArray(value) ? value[0] : value;
   return first?.slice(0, 160);
+}
+
+function leadReturnToParam(value: string | string[] | undefined) {
+  const first = Array.isArray(value) ? value[0] : value;
+  const returnTo = first?.slice(0, 700);
+  if (!returnTo) return null;
+  if (returnTo === "/leads/new" || returnTo.startsWith("/leads/new?")) return returnTo;
+  if (/^\/leads\/[^/?#]+\/edit(?:\?.*)?$/.test(returnTo)) return returnTo;
+  return null;
 }

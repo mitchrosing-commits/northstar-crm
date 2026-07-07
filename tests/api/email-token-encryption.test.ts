@@ -25,6 +25,8 @@ const migration = readFileSync(
   "utf8"
 );
 const service = readFileSync(join(process.cwd(), "lib/services/email-connection-service.ts"), "utf8");
+const gmailDiagnoseScript = readFileSync(join(process.cwd(), "scripts/gmail-diagnose.ts"), "utf8");
+const packageJson = readFileSync(join(process.cwd(), "package.json"), "utf8");
 const connectRoute = readFileSync(join(process.cwd(), "app/api/email-connections/google/connect/route.ts"), "utf8");
 const callbackRoute = readFileSync(join(process.cwd(), "app/api/email-connections/google/callback/route.ts"), "utf8");
 const microsoftConnectRoute = readFileSync(join(process.cwd(), "app/api/email-connections/microsoft/connect/route.ts"), "utf8");
@@ -103,6 +105,39 @@ describe("encrypted email token storage", () => {
     expect(service).toContain("disabled: false");
     expect(service).not.toContain("console.log");
     expect(service).not.toContain("console.error");
+  });
+
+  it("adds a safe Gmail full-message diagnostic path without exposing provider secrets", () => {
+    expect(service).toContain("export async function diagnoseGmailConnection");
+    expect(service).toContain("findGmailConnectionForDiagnostic(actor.workspaceId, options.connectionRef)");
+    expect(service).toContain("resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl })");
+    expect(service).toContain("resolveUsableGoogleAccessTokenForDiagnostic");
+    expect(service).toContain("diagnoseGoogleTokenInfo");
+    expect(service).toContain("diagnoseGmailInboxList");
+    expect(service).toContain("diagnoseGmailFullMessageGet");
+    expect(service).toContain("diagnoseGmailSyncJob");
+    expect(service).toContain("diagnoseGoogleOAuthAuthorizationRequest");
+    expect(service).toContain("findGmailSyncJobForDiagnostic");
+    expect(service).toContain("readGmailProviderErrorInfo");
+    expect(service).toContain("providerErrorCategory");
+    expect(service).toContain("providerReason");
+    expect(service).toContain("providerStatus");
+    expect(service).not.toContain("provider-body-secret-token");
+
+    expect(packageJson).toContain("\"gmail:diagnose\": \"tsx scripts/gmail-diagnose.ts\"");
+    expect(gmailDiagnoseScript).toContain("diagnoseGmailConnection");
+    expect(gmailDiagnoseScript).toContain("GMAIL_DIAGNOSTIC_CONNECTION_REF");
+    expect(gmailDiagnoseScript).toContain("GMAIL_DIAGNOSTIC_JOB_REF");
+    expect(gmailDiagnoseScript).toContain("GMAIL_DIAGNOSTIC_WORKSPACE");
+    expect(gmailDiagnoseScript).toContain("--connection-ref");
+    expect(gmailDiagnoseScript).toContain("--job-ref");
+    expect(gmailDiagnoseScript).toContain("safeDiagnosticRequest");
+    expect(gmailDiagnoseScript).toContain("console.log(JSON.stringify");
+    expect(gmailDiagnoseScript).toContain("Gmail diagnostic failed.");
+    expect(gmailDiagnoseScript).not.toContain("console.error(error");
+    expect(gmailDiagnoseScript).not.toContain("error.stack");
+    expect(gmailDiagnoseScript).not.toContain("encryptedAccessToken");
+    expect(gmailDiagnoseScript).not.toContain("encryptedRefreshToken");
   });
 
   it("adds safe Gmail connect and callback routes without mailbox sync", () => {

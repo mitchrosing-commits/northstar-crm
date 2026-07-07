@@ -19,6 +19,7 @@ const editPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/edit/page.
 const closeActions = readFileSync(join(process.cwd(), "components/deal-close-actions.tsx"), "utf8");
 const dealForm = readFileSync(join(process.cwd(), "components/deal-form.tsx"), "utf8");
 const pipelineBoard = readFileSync(join(process.cwd(), "components/pipeline-board.tsx"), "utf8");
+const pipelineMoveControl = readFileSync(join(process.cwd(), "components/pipeline-stage-move-control.tsx"), "utf8");
 const recordHeaderActions = readFileSync(join(process.cwd(), "components/record-header-actions.tsx"), "utf8");
 
 describe("deal close behavior", () => {
@@ -134,5 +135,7 @@ describe("deal close behavior", () => {
   it("keeps closed deals visible but distinct on the pipeline board", () => {
     expect(pipelineBoard).toContain("deal-card-closed");
     expect(pipelineBoard).toContain("isClosed ? \"Closed\"");
+    expect(pipelineMoveControl).toContain("Open the deal and use Mark won or Mark lost to close it intentionally.");
+    expect(pipelineMoveControl).toContain("selectedStageRequiresCloseOutcome");
   });
 });

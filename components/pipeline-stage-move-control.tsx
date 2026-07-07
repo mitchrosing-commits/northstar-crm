@@ -34,17 +34,25 @@ export function PipelineStageMoveControl({
   const canMove = status === "OPEN" && stages.length > 1;
   const selectedStage = useMemo(() => stages.find((stage) => stage.id === stageId), [stageId, stages]);
   const unchanged = stageId === currentStageId;
+  const selectedStageRequiresCloseOutcome = Boolean(selectedStage && isCloseStageName(selectedStage.name));
   const helperId = `pipeline-move-${dealId}-helper`;
   const selectLabel = `Choose a new stage for ${dealTitle}`;
   const moveActionLabel = isSaving ? `Moving ${dealTitle}` : `Move ${dealTitle} to ${selectedStage?.name ?? "selected stage"}`;
-  const disabledReason = pipelineMoveDisabledReason({ canMove, isSaving, status, stages, unchanged });
+  const disabledReason = pipelineMoveDisabledReason({
+    canMove,
+    isSaving,
+    selectedStageRequiresCloseOutcome,
+    status,
+    stages,
+    unchanged
+  });
   const moveTitle = disabledReason ? `${moveActionLabel}: ${disabledReason}` : moveActionLabel;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
 
-    if (!selectedStage || unchanged || !canMove) return;
+    if (!selectedStage || unchanged || !canMove || selectedStageRequiresCloseOutcome) return;
 
     setIsSaving(true);
     const response = await fetch(`/api/v1/workspaces/${workspaceId}/deals/${dealId}`, {
@@ -88,13 +96,13 @@ export function PipelineStageMoveControl({
         aria-describedby={disabledReason ? helperId : undefined}
         aria-label={moveActionLabel}
         className="button-secondary button-compact"
-        disabled={!canMove || unchanged || isSaving}
+        disabled={!canMove || unchanged || isSaving || selectedStageRequiresCloseOutcome}
         title={moveTitle}
         type="submit"
       >
         {isSaving ? "Moving..." : "Move"}
       </button>
-      <span className="sr-only" id={helperId}>
+      <span className={disabledReason ? "pipeline-card-move-guidance" : "sr-only"} id={helperId}>
         {disabledReason ?? `Move ${dealTitle} from its current stage to ${selectedStage?.name ?? "the selected stage"}.`}
       </span>
       {error ? <p className="pipeline-card-move-error">{error}</p> : null}
@@ -105,12 +113,14 @@ export function PipelineStageMoveControl({
 function pipelineMoveDisabledReason({
   canMove,
   isSaving,
+  selectedStageRequiresCloseOutcome,
   status,
   stages,
   unchanged
 }: {
   canMove: boolean;
   isSaving: boolean;
+  selectedStageRequiresCloseOutcome: boolean;
   status: string;
   stages: StageOption[];
   unchanged: boolean;
@@ -118,7 +128,12 @@ function pipelineMoveDisabledReason({
   if (isSaving) return "Stage move is in progress.";
   if (status !== "OPEN") return "Closed deals cannot be moved from the pipeline board.";
   if (stages.length <= 1) return "Add another stage before moving deals on the board.";
+  if (selectedStageRequiresCloseOutcome) return "Open the deal and use Mark won or Mark lost to close it intentionally.";
   if (!canMove) return "This deal cannot be moved from the pipeline board.";
   if (unchanged) return "Choose a different stage before moving this deal.";
   return null;
+}
+
+function isCloseStageName(name: string) {
+  return /\bclosed?\b/i.test(name.trim());
 }

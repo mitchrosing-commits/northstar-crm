@@ -125,7 +125,7 @@ export default async function DashboardPage() {
             value={formatMoney(summary.metrics.openPipelineValueCents)}
           />
           <MetricCard
-            href="/deals?commercial=hasQuote"
+            href={"/quotes" as Route}
             label="Open quoted value"
             value={formatMoney(
               summary.commercialSnapshot.openQuotedDealValueCents,
@@ -430,7 +430,7 @@ export default async function DashboardPage() {
               <Link
                 aria-label={viewQuotedDealsLabel}
                 className="inline-link"
-                href="/deals?commercial=hasQuote"
+                href={"/quotes" as Route}
                 title={viewQuotedDealsLabel}
               >
                 Quoted deals
@@ -873,7 +873,7 @@ function CommercialSnapshotPanel({
       />
       <div className="field-grid">
         <DashboardHealthItem
-          href="/deals?commercial=hasQuote"
+          href={"/quotes" as Route}
           label="Open quoted value"
           value={formatMoney(snapshot.openQuotedDealValueCents)}
         />

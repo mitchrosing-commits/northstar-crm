@@ -9,6 +9,7 @@ export type AppNavigationIconName =
   | "CalendarCheck"
   | "CircleDollarSign"
   | "Contact"
+  | "FileText"
   | "Inbox"
   | "LayoutDashboard"
   | "Package"
@@ -65,13 +66,13 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     searchListOrder: 10
   },
   {
-    href: "/deals?commercial=hasQuote" as Route,
+    href: "/quotes" as Route,
     label: "Quotes",
-    icon: "CircleDollarSign",
+    icon: "FileText",
     group: "Work",
     helper: "Quote review",
     commandJump: true,
-    searchDescription: "Review deals with quote activity.",
+    searchDescription: "Review quote snapshots and their related deals.",
     searchJump: true
   },
   {

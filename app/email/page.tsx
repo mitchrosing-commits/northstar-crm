@@ -16,6 +16,7 @@ import { EmailSmartLabelPanel } from "@/components/email-smart-label-panel";
 import { formatDate } from "@/components/format";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
+import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { StatCard } from "@/components/stat-card";
@@ -24,6 +25,8 @@ import { formatPersonName } from "@/lib/person-name";
 import {
   buildEmailPriorityQueue,
   buildEmailPriorityQueueSummary,
+  buildInboxAssistantContext,
+  buildNorthstarAssistantInsight,
   buildEmailFollowUpDraftFromEmailLog,
   emailClassificationReadiness,
   emailFollowUpStateLabel,
@@ -83,12 +86,14 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const latestSyncReview = isSyncResult(resolvedSearchParams?.emailConnection)
     ? decodeEmailSyncReview(cookieStore.get(emailSyncReviewCookieName)?.value)
     : null;
-  const [providers, recentEmailLogs, emailTemplates, inboxThreads] = await Promise.all([
+  const [providers, recentEmailLogs, emailTemplates, inboxThreads, northstarContext] = await Promise.all([
     listEmailConnectionProviderCards(actor),
     listEmailLogs(actor, { limit: 25 }),
     listEmailTemplates(actor, { activeOnly: true }),
-    listEmailInboxThreads(actor, { limit: 75 })
+    listEmailInboxThreads(actor, { limit: 75 }),
+    buildInboxAssistantContext(actor)
   ]);
+  const northstarInsight = await buildNorthstarAssistantInsight(northstarContext);
   const selectedInboxThread =
     inboxThreads.find((thread) => thread.id === resolvedSearchParams?.thread) ?? inboxThreads[0] ?? null;
   const oldestInboxMessageAt = oldestInboxMessageDate(inboxThreads);
@@ -152,6 +157,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
         subtitle="Work synced mailbox threads, relationship-priority messages, Smart Labels, AI reply drafts, and review-first follow-ups from one place."
         title="Inbox"
       />
+
+      <NorthstarAssistantPanel insight={northstarInsight} />
 
       <section aria-label="Full Inbox synced Gmail mailbox" className="data-card section-separated" id="full-inbox">
         <PanelTitleRow

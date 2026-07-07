@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
@@ -36,7 +37,10 @@ type LeadFormProps = {
   organizations: EntityOption[];
   owners: EntityOption[];
   defaultOwnerId?: string;
+  defaultOrganizationId?: string;
+  defaultPersonId?: string;
   defaultSource?: string;
+  defaultStatus?: LeadStatus;
   defaultTitle?: string;
   prefillNotice?: string;
   initialLead?: LeadFormInitial;
@@ -50,7 +54,10 @@ export function LeadForm({
   organizations,
   owners,
   defaultOwnerId,
+  defaultOrganizationId,
+  defaultPersonId,
   defaultSource,
+  defaultStatus,
   defaultTitle,
   prefillNotice,
   initialLead,
@@ -61,12 +68,30 @@ export function LeadForm({
     mode === "create" ? defaultOwnerId || (owners.length === 1 ? owners[0]?.id ?? "" : "") : "";
   const [title, setTitle] = useState(initialLead?.title ?? defaultTitle ?? "");
   const [source, setSource] = useState(initialLead?.source ?? defaultSource ?? "");
-  const [status, setStatus] = useState<LeadStatus>(initialLead?.status ?? "NEW");
+  const [status, setStatus] = useState<LeadStatus>(initialLead?.status ?? defaultStatus ?? "NEW");
   const [ownerId, setOwnerId] = useState(initialLead?.ownerId ?? defaultCreateOwnerId);
-  const [personId, setPersonId] = useState(initialLead?.personId ?? "");
-  const [organizationId, setOrganizationId] = useState(initialLead?.organizationId ?? "");
+  const [personId, setPersonId] = useState(initialLead?.personId ?? defaultPersonId ?? "");
+  const [organizationId, setOrganizationId] = useState(initialLead?.organizationId ?? defaultOrganizationId ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const leadReturnTo = buildLeadReturnTo({
+    initialLeadId: initialLead?.id,
+    mode,
+    organizationId,
+    ownerId,
+    personId,
+    source,
+    status,
+    title
+  });
+  const createContactHref = relatedRecordCreateHref("/contacts/new", {
+    organizationId,
+    returnTo: leadReturnTo
+  });
+  const createOrganizationHref = relatedRecordCreateHref("/organizations/new", {
+    name: title,
+    returnTo: leadReturnTo
+  });
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,7 +145,7 @@ export function LeadForm({
           records later when you know more.
         </FormIntroCallout>
       ) : null}
-      {mode === "create" && prefillNotice ? (
+      {prefillNotice ? (
         <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
       ) : null}
       {mode === "create" && (people.length === 0 || organizations.length === 0) ? (
@@ -165,31 +190,47 @@ export function LeadForm({
           <OwnerAssignmentHint owners={owners} />
         </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Person</FormFieldLabel>
-          <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
-            <option value="">{people.length === 0 ? "No contacts yet - save lead without contact" : "None"}</option>
-            {people.map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.name}
-              </option>
-            ))}
-          </select>
+        <div className="form-field">
+          <label>
+            <FormFieldLabel>Person</FormFieldLabel>
+            <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
+              <option value="">{people.length === 0 ? "No contacts yet - save lead without contact" : "None"}</option>
+              {people.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="form-related-record-actions">
+            <Link className="inline-link" href={createContactHref}>
+              Create contact
+            </Link>
+            <small className="form-hint">Create a contact, then return here with it selected for this lead.</small>
+          </div>
           {people.length === 0 ? <small className="form-hint">Add a contact later when the lead is clearer.</small> : null}
-        </label>
+        </div>
 
-        <label className="form-field">
-          <FormFieldLabel>Organization</FormFieldLabel>
-          <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-            <option value="">{organizations.length === 0 ? "No organizations yet - save lead without one" : "None"}</option>
-            {organizations.map((organization) => (
-              <option key={organization.id} value={organization.id}>
-                {organization.name}
-              </option>
-            ))}
-          </select>
+        <div className="form-field">
+          <label>
+            <FormFieldLabel>Organization</FormFieldLabel>
+            <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
+              <option value="">{organizations.length === 0 ? "No organizations yet - save lead without one" : "None"}</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="form-related-record-actions">
+            <Link className="inline-link" href={createOrganizationHref}>
+              Create organization
+            </Link>
+            <small className="form-hint">Create a company, then return here with it selected for this lead.</small>
+          </div>
           {organizations.length === 0 ? <small className="form-hint">Add the company later or create it before saving.</small> : null}
-        </label>
+        </div>
       </div>
 
       <FormActionBar
@@ -202,4 +243,48 @@ export function LeadForm({
       />
     </form>
   );
+}
+
+function buildLeadReturnTo({
+  initialLeadId,
+  mode,
+  organizationId,
+  ownerId,
+  personId,
+  source,
+  status,
+  title
+}: {
+  initialLeadId?: string;
+  mode: "create" | "edit";
+  organizationId: string;
+  ownerId: string;
+  personId: string;
+  source: string;
+  status: LeadStatus;
+  title: string;
+}) {
+  if (mode === "edit" && initialLeadId) return `/leads/${initialLeadId}/edit`;
+
+  const params = new URLSearchParams();
+  const trimmedTitle = title.trim();
+  const trimmedSource = source.trim();
+  if (trimmedTitle) params.set("title", trimmedTitle);
+  if (trimmedSource) params.set("source", trimmedSource);
+  if (status !== "NEW") params.set("status", status);
+  if (ownerId) params.set("ownerId", ownerId);
+  if (personId) params.set("personId", personId);
+  if (organizationId) params.set("organizationId", organizationId);
+  const query = params.toString();
+  return query ? `/leads/new?${query}` : "/leads/new";
+}
+
+function relatedRecordCreateHref(path: "/contacts/new" | "/organizations/new", params: Record<string, string | undefined>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    const trimmed = value?.trim();
+    if (trimmed) query.set(key, trimmed);
+  }
+  const queryText = query.toString();
+  return `${path}${queryText ? `?${queryText}` : ""}` as Route;
 }

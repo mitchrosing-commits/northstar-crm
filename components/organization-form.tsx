@@ -30,6 +30,10 @@ type OrganizationFormProps = {
   defaultName?: string;
   defaultOwnerId?: string;
   prefillNotice?: string;
+  returnTo?: {
+    href: string;
+    paramName: "organizationId";
+  };
   initialOrganization?: OrganizationFormInitial;
   cancelHref: Route;
 };
@@ -41,6 +45,7 @@ export function OrganizationForm({
   defaultName,
   defaultOwnerId,
   prefillNotice,
+  returnTo,
   initialOrganization,
   cancelHref
 }: OrganizationFormProps) {
@@ -89,7 +94,11 @@ export function OrganizationForm({
     }
 
     const organization = await response.json();
-    router.push(`/organizations/${organization.id}`);
+    router.push((
+      mode === "create" && returnTo
+        ? appendReturnParam(returnTo.href, returnTo.paramName, organization.id)
+        : `/organizations/${organization.id}`
+    ) as Route);
     router.refresh();
   }
 
@@ -139,4 +148,12 @@ export function OrganizationForm({
       />
     </form>
   );
+}
+
+function appendReturnParam(returnTo: string, paramName: "organizationId", id: string) {
+  const [path, query = ""] = returnTo.split("?");
+  const params = new URLSearchParams(query);
+  params.set(paramName, id);
+  const nextQuery = params.toString();
+  return `${path}${nextQuery ? `?${nextQuery}` : ""}`;
 }
