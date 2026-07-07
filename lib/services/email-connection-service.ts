@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { EmailConnectionProvider, EmailConnectionStatus, JobStatus, Prisma, type EmailDirection } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
@@ -243,18 +245,29 @@ export type GmailConnectionDiagnosticResult = {
   connectionRef: string;
   fullMessageGet: {
     category: GmailProviderErrorCategory | "not_attempted" | "success";
+    connectionRef: string | null;
+    endpoint: {
+      fieldsParamPresent: boolean;
+      format: string;
+      messageRef: string | null;
+      path: string;
+      userId: string;
+    } | null;
     messageRef: string | null;
     providerReason: string | null;
     providerStatus: number | null;
     success: boolean;
+    tokenRef: string | null;
   };
   hasEncryptedSecret: boolean;
   list: {
     category: GmailProviderErrorCategory | "not_attempted" | "success";
     messageCount: number;
+    connectionRef: string | null;
     providerReason: string | null;
     providerStatus: number | null;
     success: boolean;
+    tokenRef: string | null;
   };
   job: {
     connectionMatchesSelected: boolean | null;
@@ -278,6 +291,10 @@ export type GmailConnectionDiagnosticResult = {
   selectedConnectionId: string;
   secretAccountMatchesConnection: boolean | null;
   storedScopeCategories: string[];
+  storedMetadataRepair: {
+    repaired: boolean;
+    staleRelativeToTokeninfo: boolean | null;
+  };
   tokenRefresh: {
     category: GmailProviderErrorCategory | "missing_refresh_token" | "not_attempted" | "success";
     providerReason: string | null;
@@ -288,11 +305,16 @@ export type GmailConnectionDiagnosticResult = {
     accountEmail: string | null;
     accountMatchesConnection: boolean | null;
     category: GmailProviderErrorCategory | "not_attempted" | "success";
+    connectionRef: string | null;
+    gmailReadSatisfiedBy: string | null;
+    gmailSendSatisfiedBy: string | null;
     missingRequiredScopeCategories: string[];
     providerReason: string | null;
     providerStatus: number | null;
     scopeCategories: string[];
+    scopeUrls: string[];
     success: boolean;
+    tokenRef: string | null;
   };
   tokenResolution: {
     category: GmailProviderErrorCategory | "success";
@@ -1559,27 +1581,33 @@ export async function diagnoseGmailConnection(
   }
 
   const storedScopes = mergeScopeLists(normalizeStoredScopes(connection.scopes), normalizeStoredScopes(connection.secret?.scopes));
-  const missingRequiredScopes = missingProviderScopes(storedScopes, gmailOAuthScopes);
+  const missingRequiredScopes = missingGoogleFullInboxScopeCategories(storedScopes);
+  const connectionRef = shortJobRef(connection.id);
   const secretAccountMatchesConnection = connection.secret
     ? normalizeEmailAddress(connection.accountEmail) === normalizeEmailAddress(connection.secret.accountEmail)
     : null;
   const diagnostic: GmailConnectionDiagnosticResult = {
     accountEmail: connection.accountEmail,
-    connectionRef: shortJobRef(connection.id),
+    connectionRef,
     fullMessageGet: {
       category: "not_attempted",
+      connectionRef: null,
+      endpoint: null,
       messageRef: null,
       providerReason: null,
       providerStatus: null,
-      success: false
+      success: false,
+      tokenRef: null
     },
     hasEncryptedSecret: Boolean(connection.secret),
     list: {
       category: "not_attempted",
+      connectionRef: null,
       messageCount: 0,
       providerReason: null,
       providerStatus: null,
-      success: false
+      success: false,
+      tokenRef: null
     },
     job: await diagnoseGmailSyncJob({
       connectionId: connection.id,
@@ -1591,6 +1619,10 @@ export async function diagnoseGmailConnection(
     selectedConnectionId: connection.id,
     secretAccountMatchesConnection,
     storedScopeCategories: scopeCategoryLabels(storedScopes),
+    storedMetadataRepair: {
+      repaired: false,
+      staleRelativeToTokeninfo: null
+    },
     tokenRefresh: {
       category: "not_attempted",
       providerReason: null,
@@ -1601,11 +1633,16 @@ export async function diagnoseGmailConnection(
       accountEmail: null,
       accountMatchesConnection: null,
       category: "not_attempted",
+      connectionRef: null,
+      gmailReadSatisfiedBy: null,
+      gmailSendSatisfiedBy: null,
       missingRequiredScopeCategories: [],
       providerReason: null,
       providerStatus: null,
       scopeCategories: [],
-      success: false
+      scopeUrls: [],
+      success: false,
+      tokenRef: null
     },
     tokenResolution: {
       category: "success",
@@ -1628,10 +1665,22 @@ export async function diagnoseGmailConnection(
     diagnostic.tokenRefresh = tokenResolution.tokenRefresh;
     diagnostic.tokeninfo = await diagnoseGoogleTokenInfo({ accessToken, connection, fetchImpl });
 
-    const listResult = await diagnoseGmailInboxList({ accessToken, fetchImpl, maxResults: options.maxResults ?? 1 });
+    const listResult = await diagnoseGmailInboxList({ accessToken, connectionId: connection.id, fetchImpl, maxResults: options.maxResults ?? 1 });
     diagnostic.list = listResult.summary;
     if (listResult.messageId) {
-      diagnostic.fullMessageGet = await diagnoseGmailFullMessageGet({ accessToken, fetchImpl, messageId: listResult.messageId });
+      diagnostic.fullMessageGet = await diagnoseGmailFullMessageGet({
+        accessToken,
+        connectionId: connection.id,
+        fetchImpl,
+        messageId: listResult.messageId
+      });
+    }
+    if (diagnostic.tokeninfo.success) {
+      diagnostic.storedMetadataRepair = await repairGmailStoredScopesFromTokenInfo({
+        connection,
+        fullMessageGet: diagnostic.fullMessageGet,
+        tokenInfoScopes: diagnostic.tokeninfo.scopeUrls
+      });
     }
   } catch (error) {
     const summary = gmailProviderErrorSummaryFromError(error, "invalid_token");
@@ -1758,6 +1807,70 @@ function diagnoseGoogleOAuthAuthorizationRequest(config: Required<ProviderConfig
     responseTypeCode: url.searchParams.get("response_type") === "code",
     usesOfflineAccess: url.searchParams.get("access_type") === "offline"
   };
+}
+
+async function repairGmailStoredScopesFromTokenInfo({
+  connection,
+  fullMessageGet,
+  tokenInfoScopes
+}: {
+  connection: NonNullable<Awaited<ReturnType<typeof findGmailConnectionForDiagnostic>>>;
+  fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"];
+  tokenInfoScopes: string[];
+}): Promise<GmailConnectionDiagnosticResult["storedMetadataRepair"]> {
+  const normalizedTokenInfoScopes = normalizeScopeList(tokenInfoScopes);
+  const storedScopes = mergeScopeLists(normalizeStoredScopes(connection.scopes), normalizeStoredScopes(connection.secret?.scopes));
+  const staleRelativeToTokeninfo = !sameScopeSet(storedScopes, normalizedTokenInfoScopes);
+  if (!staleRelativeToTokeninfo && !fullMessageGetRequiresLastError(fullMessageGet)) {
+    return { repaired: false, staleRelativeToTokeninfo };
+  }
+
+  const lastError = fullMessageGetRequiresLastError(fullMessageGet)
+    ? formatGmailFullMessagePermissionLastError(fullMessageGet)
+    : null;
+  await prisma.$transaction([
+    prisma.emailConnection.update({
+      where: { id: connection.id },
+      data: {
+        lastError,
+        scopes: normalizedTokenInfoScopes
+      }
+    }),
+    ...(connection.secret
+      ? [
+          prisma.emailConnectionSecret.update({
+            where: { connectionId: connection.id },
+            data: { scopes: normalizedTokenInfoScopes }
+          })
+        ]
+      : [])
+  ]);
+
+  return { repaired: true, staleRelativeToTokeninfo };
+}
+
+function fullMessageGetRequiresLastError(fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"]) {
+  return (
+    fullMessageGet.category === "account_mismatch" ||
+    fullMessageGet.category === "api_disabled" ||
+    fullMessageGet.category === "insufficient_permissions" ||
+    fullMessageGet.category === "invalid_token"
+  );
+}
+
+function formatGmailFullMessagePermissionLastError(fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"]) {
+  const detail = [
+    fullMessageGet.providerStatus ? `Google status ${fullMessageGet.providerStatus}` : null,
+    fullMessageGet.providerReason ? `reason ${fullMessageGet.providerReason}` : null,
+    `category ${fullMessageGet.category}`
+  ]
+    .filter(Boolean)
+    .join("; ");
+  return [
+    "EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED:",
+    `Google granted Gmail read/send in tokeninfo, but Gmail rejected messages.get(format=full) (${detail}).`,
+    "Check Gmail API/consent/app verification or reconnect with Gmail read permission."
+  ].join(" ");
 }
 
 function safeParseGmailInboxSyncJobPayload(payload: unknown) {
@@ -2570,7 +2683,8 @@ async function diagnoseGoogleTokenInfo({
 }): Promise<GmailConnectionDiagnosticResult["tokeninfo"]> {
   try {
     const tokenInfo = await fetchGoogleAccessTokenInfo({ accessToken, fetchImpl });
-    const missing = missingProviderScopes(tokenInfo.scopes, gmailOAuthScopes);
+    const scopeAccess = googleScopeAccessSummary(tokenInfo.scopes);
+    const missing = missingGoogleFullInboxScopeCategories(tokenInfo.scopes);
     const accountMatchesConnection = tokenInfo.accountEmail
       ? tokenInfo.accountEmail === normalizeEmailAddress(connection.accountEmail)
       : null;
@@ -2578,30 +2692,42 @@ async function diagnoseGoogleTokenInfo({
       accountEmail: tokenInfo.accountEmail,
       accountMatchesConnection,
       category: accountMatchesConnection === false ? "account_mismatch" : "success",
+      connectionRef: shortJobRef(connection.id),
+      gmailReadSatisfiedBy: scopeAccess.gmailReadSatisfiedBy,
+      gmailSendSatisfiedBy: scopeAccess.gmailSendSatisfiedBy,
       missingRequiredScopeCategories: scopeCategoryLabels(missing),
       providerReason: null,
       providerStatus: null,
       scopeCategories: scopeCategoryLabels(tokenInfo.scopes),
-      success: true
+      scopeUrls: tokenInfo.scopes,
+      success: true,
+      tokenRef: gmailAccessTokenRef(accessToken)
     };
   } catch (error) {
     return {
       accountEmail: null,
       accountMatchesConnection: null,
       ...gmailProviderErrorSummaryFromError(error, "invalid_token"),
+      connectionRef: shortJobRef(connection.id),
+      gmailReadSatisfiedBy: null,
+      gmailSendSatisfiedBy: null,
       missingRequiredScopeCategories: [],
       scopeCategories: [],
-      success: false
+      scopeUrls: [],
+      success: false,
+      tokenRef: gmailAccessTokenRef(accessToken)
     };
   }
 }
 
 async function diagnoseGmailInboxList({
   accessToken,
+  connectionId,
   fetchImpl,
   maxResults
 }: {
   accessToken: string;
+  connectionId: string;
   fetchImpl: GmailFetch;
   maxResults: number;
 }): Promise<{ messageId: string | null; summary: GmailConnectionDiagnosticResult["list"] }> {
@@ -2618,10 +2744,12 @@ async function diagnoseGmailInboxList({
       messageId: null,
       summary: {
         category: info.category,
+        connectionRef: shortJobRef(connectionId),
         messageCount: 0,
         providerReason: info.providerReason,
         providerStatus: info.providerStatus,
-        success: false
+        success: false,
+        tokenRef: gmailAccessTokenRef(accessToken)
       }
     };
   }
@@ -2636,10 +2764,12 @@ async function diagnoseGmailInboxList({
       messageId: messages[0]?.id ?? null,
       summary: {
         category: "success",
+        connectionRef: shortJobRef(connectionId),
         messageCount: messages.length,
         providerReason: null,
         providerStatus: response.status,
-        success: true
+        success: true,
+        tokenRef: gmailAccessTokenRef(accessToken)
       }
     };
   } catch {
@@ -2647,10 +2777,12 @@ async function diagnoseGmailInboxList({
       messageId: null,
       summary: {
         category: "parse_failure",
+        connectionRef: shortJobRef(connectionId),
         messageCount: 0,
         providerReason: null,
         providerStatus: response.status,
-        success: false
+        success: false,
+        tokenRef: gmailAccessTokenRef(accessToken)
       }
     };
   }
@@ -2658,30 +2790,39 @@ async function diagnoseGmailInboxList({
 
 async function diagnoseGmailFullMessageGet({
   accessToken,
+  connectionId,
   fetchImpl,
   messageId
 }: {
   accessToken: string;
+  connectionId: string;
   fetchImpl: GmailFetch;
   messageId: string;
 }): Promise<GmailConnectionDiagnosticResult["fullMessageGet"]> {
+  const endpoint = gmailFullMessageEndpointDiagnostic(messageId);
   try {
     await getGmailMessageFull({ accessToken, fetchImpl, messageId });
     return {
       category: "success",
+      connectionRef: shortJobRef(connectionId),
+      endpoint,
       messageRef: safeGmailMessageRef(messageId),
       providerReason: null,
       providerStatus: 200,
-      success: true
+      success: true,
+      tokenRef: gmailAccessTokenRef(accessToken)
     };
   } catch (error) {
     const summary = gmailProviderErrorSummaryFromError(error, "http_error");
     return {
       category: summary.category,
+      connectionRef: shortJobRef(connectionId),
+      endpoint,
       messageRef: safeGmailMessageRef(messageId),
       providerReason: summary.providerReason,
       providerStatus: summary.providerStatus,
-      success: false
+      success: false,
+      tokenRef: gmailAccessTokenRef(accessToken)
     };
   }
 }
@@ -3585,14 +3726,62 @@ function scopeCategoryLabels(scopes: readonly string[]) {
   return [...new Set(scopes.map(googleScopeCategoryLabel))].sort((a, b) => a.localeCompare(b));
 }
 
+const gmailReadScopePriority = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://mail.google.com/"
+] as const;
+const gmailSendScopePriority = ["https://www.googleapis.com/auth/gmail.send"] as const;
+
+function googleScopeAccessSummary(scopes: readonly string[]) {
+  const normalized = new Set(normalizeScopeList(scopes));
+  return {
+    gmailReadSatisfiedBy: gmailReadScopePriority.find((scope) => normalized.has(scope)) ?? null,
+    gmailSendSatisfiedBy: gmailSendScopePriority.find((scope) => normalized.has(scope)) ?? null
+  };
+}
+
+function missingGoogleFullInboxScopeCategories(scopes: readonly string[]) {
+  const access = googleScopeAccessSummary(scopes);
+  return [access.gmailReadSatisfiedBy ? null : "https://www.googleapis.com/auth/gmail.readonly", access.gmailSendSatisfiedBy ? null : "https://www.googleapis.com/auth/gmail.send"].filter(
+    (scope): scope is string => Boolean(scope)
+  );
+}
+
 function googleScopeCategoryLabel(scope: string) {
   if (scope === "openid") return "sign-in";
   if (scope === "email") return "email";
   if (scope === "profile") return "profile";
   if (scope === "https://www.googleapis.com/auth/gmail.readonly") return "Gmail read";
+  if (scope === "https://www.googleapis.com/auth/gmail.modify") return "Gmail read/write";
   if (scope === "https://www.googleapis.com/auth/gmail.send") return "Gmail send";
   if (scope === "https://www.googleapis.com/auth/gmail.metadata") return "Gmail metadata";
+  if (scope === "https://mail.google.com/") return "Gmail full mailbox";
   return scope.startsWith("https://www.googleapis.com/auth/gmail.") ? "other Gmail permission" : "other";
+}
+
+function gmailAccessTokenRef(accessToken: string) {
+  return `tok_${createHash("sha256").update(accessToken).digest("hex").slice(0, 12)}`;
+}
+
+function gmailFullMessageEndpointDiagnostic(messageId: string) {
+  return {
+    fieldsParamPresent: false,
+    format: "full",
+    messageRef: safeGmailMessageRef(messageId),
+    path: "/gmail/v1/users/me/messages/{messageId}",
+    userId: "me"
+  };
+}
+
+function sameScopeSet(left: readonly string[], right: readonly string[]) {
+  const leftSet = new Set(normalizeScopeList(left));
+  const rightSet = new Set(normalizeScopeList(right));
+  if (leftSet.size !== rightSet.size) return false;
+  for (const scope of leftSet) {
+    if (!rightSet.has(scope)) return false;
+  }
+  return true;
 }
 
 function gmailProviderErrorSummaryFromError(

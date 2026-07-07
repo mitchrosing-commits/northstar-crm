@@ -270,7 +270,7 @@ describe("Gmail metadata sync", () => {
     try {
       const scopeResolution = await resolveGoogleOAuthGrantedScopes({
         accessToken: "gmail-partial-access-token",
-        fetchImpl: async () => Response.json({ scope: "openid email" }),
+        fetchImpl: async () => Response.json({ scope: "openid email https://www.googleapis.com/auth/gmail.metadata" }),
         tokenResponse: {
           access_token: "gmail-partial-access-token",
           expires_in: 3600,
@@ -301,11 +301,11 @@ describe("Gmail metadata sync", () => {
 
       expect(scopeResolution).toMatchObject({
         missingRequiredScopes: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
-        scopes: ["openid", "email"],
+        scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"],
         source: "tokeninfo"
       });
       expect(connection.lastError).toContain("EMAIL_OAUTH_GMAIL_SCOPES_MISSING");
-      expect(connection.lastError).toContain("Granted scope categories: sign-in, email.");
+      expect(connection.lastError).toContain("Granted scope categories: sign-in, email, Gmail metadata.");
       expect(connection.lastError).toContain("Missing: Gmail read, Gmail send.");
       expect(connection.lastError).not.toContain("gmail-partial-access-token");
       expect(providerCard).toMatchObject({
@@ -1864,6 +1864,17 @@ describe("Gmail metadata sync", () => {
         refreshToken: "diagnostic-refresh-token"
       });
       const diagnosticJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      await fixture.prisma.emailConnection.update({
+        where: { id: connection.id },
+        data: {
+          lastError: "Previous stale scope warning",
+          scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"]
+        }
+      });
+      await fixture.prisma.emailConnectionSecret.update({
+        where: { connectionId: connection.id },
+        data: { scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.metadata"] }
+      });
       let refreshCallCount = 0;
       const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -1956,7 +1967,11 @@ describe("Gmail metadata sync", () => {
           accountEmail: "alex@example.test",
           accountMatchesConnection: true,
           category: "success",
+          connectionRef: connection.id.slice(-8),
+          gmailReadSatisfiedBy: "https://www.googleapis.com/auth/gmail.readonly",
+          gmailSendSatisfiedBy: "https://www.googleapis.com/auth/gmail.send",
           missingRequiredScopeCategories: [],
+          scopeUrls: gmailFullInboxScopes,
           success: true
         },
         tokenResolution: {
@@ -1964,9 +1979,31 @@ describe("Gmail metadata sync", () => {
           success: true
         }
       });
-      expect(diagnostic.storedScopeCategories).toEqual(expect.arrayContaining(["email", "Gmail read", "Gmail send", "sign-in"]));
+      expect(diagnostic.storedScopeCategories).toEqual(["email", "Gmail metadata", "sign-in"]);
       expect(diagnostic.tokeninfo.scopeCategories).toEqual(expect.arrayContaining(["email", "Gmail read", "Gmail send", "sign-in"]));
+      expect(diagnostic.storedMetadataRepair).toEqual({ repaired: true, staleRelativeToTokeninfo: true });
+      expect(diagnostic.tokeninfo.tokenRef).toMatch(/^tok_[a-f0-9]{12}$/);
+      expect(diagnostic.list.tokenRef).toBe(diagnostic.tokeninfo.tokenRef);
+      expect(diagnostic.fullMessageGet.tokenRef).toBe(diagnostic.tokeninfo.tokenRef);
+      expect(diagnostic.list.connectionRef).toBe(connection.id.slice(-8));
+      expect(diagnostic.fullMessageGet.connectionRef).toBe(connection.id.slice(-8));
+      expect(diagnostic.fullMessageGet.endpoint).toEqual({
+        fieldsParamPresent: false,
+        format: "full",
+        messageRef: "message:...essage-1",
+        path: "/gmail/v1/users/me/messages/{messageId}",
+        userId: "me"
+      });
       expect(refreshCallCount).toBe(1);
+      const [repairedConnection, repairedSecret] = await Promise.all([
+        fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+        fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } })
+      ]);
+      expect(repairedConnection.scopes).toEqual(gmailFullInboxScopes);
+      expect(repairedSecret.scopes).toEqual(gmailFullInboxScopes);
+      expect(repairedConnection.lastError).toContain("EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED");
+      expect(repairedConnection.lastError).toContain("Google status 403");
+      expect(repairedConnection.lastError).toContain("category api_disabled");
       expect(serialized).not.toContain("diagnostic-refresh-token");
       expect(serialized).not.toContain("diagnostic-refreshed-access-token");
       expect(serialized).not.toContain("provider-body-secret-token");
