@@ -432,6 +432,9 @@ describe("Email UX v1 discoverability", () => {
     );
     expect(emailActions).toContain("safeGmailSyncActionError(error)");
     expect(emailActions).toContain("redactSensitiveText(message)");
+    expect(emailActions).toContain("normalizeEmailPageReturnTo");
+    expect(emailActions).toContain("emailActionRedirectHref(params, returnTo");
+    expect(emailActions).toContain('url.pathname === "/email"');
     expect(emailActions).toContain(
       "syncError: safeGmailSyncActionError(error)",
     );
@@ -558,7 +561,10 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Sync Gmail inbox");
     expect(emailPage).toContain("No synced emails yet");
     expect(emailPage).toContain(
-      "Sync your inbox to bring Gmail messages into Northstar.",
+      "No stored synced Gmail threads are available for this view yet.",
+    );
+    expect(emailPage).toContain(
+      "older history becomes available through bounded Load older batches",
     );
     expect(emailPage).toContain("EmailInboxEmptyShell");
   });
@@ -587,13 +593,33 @@ describe("Email UX v1 discoverability", () => {
       ".email-inbox-thread-detail .email-inbox-thread-subject",
     );
     expect(globalCss).toContain(".email-inbox-load-more");
+    expect(globalCss).toContain(".mailbox-coverage-strip");
     expect(globalCss).toContain(".email-inbox-empty-layout");
     expect(globalCss).toContain(".email-inbox-empty-rail");
     expect(globalCss).toContain(".email-inbox-empty-detail");
     expect(globalCss).toContain(".email-inbox-message-list .email-preview");
     expect(emailPage).toContain("Load older messages");
+    expect(emailPage).toContain("MailboxCoverageStrip");
+    expect(emailPage).toContain("oldestInboxMessageCoverage({");
+    expect(emailPage).toContain("loadOlderAccountId");
+    expect(emailPage).toContain("viewLastSyncAt");
+    expect(emailPage).toContain("newestAccountSyncAt(accounts)");
+    expect(emailPage).toContain("LoadOlderGmailHistoryAction");
+    expect(emailPage).toContain(
+      "Unified Inbox will load older history for",
+    );
+    expect(emailPage).toContain(
+      "the account with the oldest stored message",
+    );
+    expect(emailPage).toContain(
+      "No stored synced Gmail threads are available for this view yet.",
+    );
+    expect(emailPage).toContain("activeInboxFilterLabels");
+    expect(emailPage).toContain("inbox-empty-filter-chips");
+    expect(globalCss).toContain(".inbox-empty-filter-chips");
+    expect(emailPage).toContain('name="returnTo"');
+    expect(emailPage).toContain("currentInboxReturnHref");
     expect(emailPage).toContain("Refresh thread");
-    expect(emailPage).toContain("oldestInboxMessageDate(inboxThreads)");
     expect(globalCss).toContain(".email-draft-panel summary");
     expect(globalCss).toContain(".email-linked-follow-up-row > *");
     expect(globalCss).toContain(
@@ -966,11 +992,13 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("item.tags.slice(0, 3)");
     expect(emailPage).toContain("hiddenTagCount > 0");
     expect(emailPage).toContain(
-      "href={inboxAccountHref(selectedAccount, { activeTab })}",
+      "href={inboxAccountHref(selectedAccount, { activeTab, pageSize })}",
     );
     expect(emailPage).toContain(
       "href={inboxAccountHref(account.connectionId, {",
     );
+    expect(emailPage).toContain("appendInboxToolbarParams(tab.href, {");
+    expect(emailPage).toContain("params.set(\"pageSize\", String(pageSize))");
     expect(emailPage).toContain('activeTab: "all"');
     expect(globalCss).toContain(".inbox-thread-row");
     expect(rowCss).toContain("height: 36px");

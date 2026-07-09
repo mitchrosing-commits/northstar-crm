@@ -10,6 +10,7 @@ type EmailOAuthStatePayload = {
   actorUserId: string;
   expiresAt: number;
   provider: EmailOAuthProvider;
+  returnTo?: string;
   workspaceId: string;
 };
 
@@ -54,6 +55,7 @@ export function verifyEmailOAuthState(state: string | null | undefined, env: Env
     !isEmailOAuthProvider(payload.provider) ||
     !isNonEmptyString(payload.workspaceId) ||
     !isNonEmptyString(payload.actorUserId) ||
+    (payload.returnTo !== undefined && !isSafeEmailOAuthReturnTo(payload.returnTo)) ||
     typeof payload.expiresAt !== "number" ||
     !Number.isFinite(payload.expiresAt)
   ) {
@@ -73,6 +75,16 @@ function isEmailOAuthProvider(provider: unknown): provider is EmailOAuthProvider
 
 function isNonEmptyString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isSafeEmailOAuthReturnTo(value: unknown) {
+  if (typeof value !== "string" || value.length > 1200) return false;
+  try {
+    const url = new URL(value, "https://northstar.local");
+    return url.pathname === "/email" && value.startsWith("/email");
+  } catch {
+    return false;
+  }
 }
 
 function signState(encodedPayload: string, env: EnvInput) {

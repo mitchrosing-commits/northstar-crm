@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildDraftActionAssistantAnswer,
   buildDealRiskAssistantAnswer,
   buildEmailReplyAssistantAnswer,
   buildTodayAssistantAnswer,
   buildUnsupportedAssistantAnswer,
   parseAssistantCommand
 } from "@/lib/services/assistant/assistant-command-service";
+import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
 import type {
   AssistantDealRiskContext,
   AssistantEmailReplyContext,
@@ -17,23 +19,35 @@ import type {
 } from "@/lib/services/assistant/assistant-context-service";
 
 const assistantPage = readFileSync(join(process.cwd(), "app/assistant/page.tsx"), "utf8");
+const assistantActions = readFileSync(join(process.cwd(), "app/assistant/actions.ts"), "utf8");
 const assistantConsole = readFileSync(join(process.cwd(), "components/assistant-console.tsx"), "utf8");
+const assistantDraftCard = readFileSync(join(process.cwd(), "components/assistant-draft-action-card.tsx"), "utf8");
+const assistantReviewQueue = readFileSync(join(process.cwd(), "components/assistant-action-review-queue.tsx"), "utf8");
+const actionRequestService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-action-request-service.ts"), "utf8");
 const commandService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-command-service.ts"), "utf8");
 const contextService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-context-service.ts"), "utf8");
+const draftActionService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-draft-action-service.ts"), "utf8");
+const emailConnectionService = readFileSync(join(process.cwd(), "lib/services/email-connection-service.ts"), "utf8");
 const crmBarrel = readFileSync(join(process.cwd(), "lib/services/crm.ts"), "utf8");
 const navigation = readFileSync(join(process.cwd(), "lib/navigation.ts"), "utf8");
 const primaryNav = readFileSync(join(process.cwd(), "components/primary-nav.tsx"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+const assistantActionRequestMigration = readFileSync(join(process.cwd(), "prisma/migrations/20260709130000_assistant_action_requests/migration.sql"), "utf8");
 
-describe("read-only Northstar Assistant command service", () => {
-  it("parses the three supported deterministic commands", () => {
+describe("read-only and draft-only Northstar Assistant command service", () => {
+  it("parses supported deterministic commands", () => {
     expect(parseAssistantCommand("Tell me what I have to do today.")).toEqual({ kind: "today" });
     expect(parseAssistantCommand("Show me the highest-risk deals this week.")).toEqual({ kind: "deal_risk" });
     expect(parseAssistantCommand("Check whether Mike Fox replied to my recent email.")).toEqual({
       kind: "email_reply_check",
       target: "Mike Fox"
     });
+    expect(parseAssistantCommand("Remind me to follow up with Jane Doe next Tuesday.")).toEqual({ kind: "draft_activity" });
+    expect(parseAssistantCommand("Add a note for Jane Doe: Prefers Monday morning check-ins.")).toEqual({ kind: "draft_note" });
+    expect(parseAssistantCommand("Update Jane Doe's profile to include that she is going on vacation.")).toEqual({ kind: "draft_contact_relationship" });
+    expect(parseAssistantCommand("Create an organization for Acme and add Mike Fox as CFO from this note: met at event.")).toEqual({ kind: "draft_record_creation" });
+    expect(parseAssistantCommand("Make email replies more casual and concise.")).toEqual({ kind: "draft_ai_preferences" });
     expect(parseAssistantCommand("Create a deal and send a quote.")).toEqual({ kind: "unsupported" });
   });
 
@@ -87,42 +101,107 @@ describe("read-only Northstar Assistant command service", () => {
 
     expect(answer.command).toBe("unsupported");
     expect(answer.reviewFirst).toBe(true);
-    expect(answer.summary).toContain("read-only CRM questions");
-    expect(answer.items).toHaveLength(3);
+    expect(answer.summary).toContain("draft a small set of review-first actions");
+    expect(answer.items).toHaveLength(8);
     expect(answer.safetyNotice).toContain("does not create, update, delete");
   });
 
-  it("wires the route, nav, console, and styles without adding schema or mutation paths", () => {
+  it("returns draft-only action previews without implying apply behavior", () => {
+    const answer = buildDraftActionAssistantAnswer(
+      [sampleDraftActivityAction()],
+      "draft_activity",
+      "Remind me to follow up with Jane Doe next Tuesday.",
+      fixedNow()
+    );
+
+    expect(answer.command).toBe("draft_activity");
+    expect(answer.reviewFirst).toBe(true);
+    expect(answer.draftActions?.[0]).toMatchObject({
+      applyState: "disabled",
+      reviewLabel: "Draft only",
+      targetLabel: "Jane Doe"
+    });
+    expect(answer.summary).toContain("Nothing has been saved or applied");
+    expect(answer.safetyNotice).toContain("save settings");
+    expect(JSON.stringify(answer)).not.toMatch(secretOrRawProviderTerms);
+  });
+
+  it("wires the route, nav, console, queue, and styles", () => {
     expect(navigation).toContain('href: "/assistant" as Route');
     expect(navigation).toContain('label: "Assistant"');
-    expect(navigation).toContain('helper: "Read-only AI"');
+    expect(navigation).toContain('helper: "Review-first AI"');
     expect(primaryNav).toContain("appShellNavigationManifest");
     expect(assistantPage).toContain("export default async function AssistantPage");
     expect(assistantPage).toContain("answerAssistantCommand(actor, command)");
-    expect(assistantPage).toContain("<AssistantConsole answer={answer} command={command} />");
+    expect(assistantPage).toContain("listAssistantActionRequests(actor)");
+    expect(assistantPage).toContain("pendingActionRequests={pendingActionRequests}");
     expect(assistantConsole).toContain("assistantSuggestedCommands");
+    expect(assistantConsole).toContain("AssistantDraftActionCard");
+    expect(assistantConsole).toContain("AssistantActionReviewQueue");
     expect(assistantConsole).toContain('action="/assistant"');
     expect(assistantConsole).toContain("Context-only");
-    expect(assistantConsole).toContain("Review-first");
+    expect(assistantConsole).toContain("Draft only");
+    expect(assistantActions).toContain("saveAssistantDraftActionRequest");
+    expect(assistantActions).toContain("applyAssistantActionRequestAction");
+    expect(assistantActions).toContain("rejectAssistantActionRequestAction");
+    expect(assistantDraftCard).toContain("Review required");
+    expect(assistantDraftCard).toContain("Save for review first");
+    expect(assistantDraftCard).toContain("Save to review queue");
+    expect(assistantReviewQueue).toContain("Review queue");
+    expect(assistantReviewQueue).toContain("activity or note drafts");
+    expect(assistantReviewQueue).toContain("Review-first");
+    expect(assistantReviewQueue).toContain("Apply {applyNoun(request)}");
+    expect(assistantReviewQueue).toContain("Apply not available yet");
+    expect(assistantReviewQueue).toContain("Reject request");
     expect(globalStyles).toContain(".assistant-console");
     expect(globalStyles).toContain(".assistant-answer-card");
+    expect(globalStyles).toContain(".assistant-draft-card");
+    expect(globalStyles).toContain(".assistant-review-queue");
+    expect(globalStyles).toContain(".assistant-review-request");
     expect(crmBarrel).toContain('export * from "./assistant/assistant-command-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-context-service"');
-    expect(schema).not.toContain("model AiAssistantConversation");
-    expect(schema).not.toContain("model AiActionRequest");
+    expect(crmBarrel).toContain('export * from "./assistant/assistant-draft-action-service"');
+    expect(crmBarrel).toContain('export * from "./assistant/assistant-action-request-service"');
+    expect(schema).toContain("model AssistantActionRequest");
+    expect(schema).toContain("enum AssistantActionRequestStatus");
+    expect(assistantActionRequestMigration).toContain('CREATE TABLE IF NOT EXISTS "AssistantActionRequest"');
   });
 
-  it("keeps the first Assistant slice workspace-scoped and read-only", () => {
+  it("keeps Assistant slices workspace-scoped and non-mutating", () => {
     expect(contextService).toContain("await ensureWorkspaceAccess(actor)");
     expect(contextService).toContain("workspaceId: actor.workspaceId");
     expect(contextService).toContain("emailLogAttachmentRelationsWhere(actor.workspaceId)");
     expect(contextService).not.toMatch(/prisma\.(create|update|delete|upsert|createMany|deleteMany|updateMany)\b/);
+    expect(draftActionService).toContain("await ensureWorkspaceAccess(actor)");
+    expect(draftActionService).toContain("workspaceId: actor.workspaceId");
+    expect(draftActionService).toContain("redactSensitiveText");
+    expect(draftActionService).not.toMatch(/prisma\.(create|update|delete|upsert|createMany|deleteMany|updateMany)\b/);
+    expect(actionRequestService).toContain("await ensureWorkspaceAccess(actor)");
+    expect(actionRequestService).toContain("createdById: actor.actorUserId");
+    expect(actionRequestService).toContain("workspaceId: actor.workspaceId");
+    expect(actionRequestService).toContain("redactSensitiveText");
+    expect(actionRequestService).toContain("writeAuditLog");
+    expect(actionRequestService).toContain("applyAssistantActionRequest");
+    expect(actionRequestService).toContain("isSupportedAssistantActionApply");
+    expect(actionRequestService).toContain("createActivity(actor, activityInput)");
+    expect(actionRequestService).toContain("createNote(actor, noteInput)");
+    expect(actionRequestService).toContain("AssistantActionRequestStatus.APPLIED");
+    expect(actionRequestService).toContain("assistant_action_request.applied");
+    expect(actionRequestService).not.toContain("updateAiPreferences");
     expect(commandService).not.toContain("sendGmailReplyFromEmailLog");
     expect(commandService).not.toContain("runGmailInboxSyncNow");
     expect(commandService).not.toContain("syncOlderGmailInboxMessages");
     expect(commandService).not.toContain("refreshGmailInboxThread");
     expect(commandService).not.toContain("writeAuditLog");
     expect(commandService).not.toMatch(/prisma\.(create|update|delete|upsert|createMany|deleteMany|updateMany)\b/);
+  });
+
+  it("does not regress Gmail OAuth scopes from Assistant work", () => {
+    const requestedScopes = emailConnectionService.match(/export const gmailOAuthScopes = \[[\s\S]*?\] as const;/)?.[0] ?? "";
+    expect(requestedScopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
+    expect(requestedScopes).toContain("https://www.googleapis.com/auth/gmail.send");
+    expect(requestedScopes).not.toContain("https://www.googleapis.com/auth/gmail.metadata");
+    expect(emailConnectionService).toContain('url.searchParams.set("include_granted_scopes", "false")');
   });
 });
 
@@ -248,5 +327,35 @@ function sampleEmailReplyContext(): AssistantEmailReplyContext {
       }
     ],
     target: "Mike Fox"
+  };
+}
+
+function sampleDraftActivityAction(): AssistantDraftAction {
+  return {
+    applyState: "disabled",
+    candidates: [
+      {
+        detail: "jane@example.test",
+        href: "/contacts/person_1",
+        id: "person_1",
+        label: "Jane Doe",
+        type: "person"
+      }
+    ],
+    confidence: "high",
+    evidence: ["Remind me to follow up with Jane Doe next Tuesday."],
+    fields: [
+      { label: "Title", value: "Follow up with Jane Doe" },
+      { label: "Due date", value: "8 Jan 2030" }
+    ],
+    id: "draft-activity",
+    kind: "activity",
+    missingInfo: [],
+    reviewLabel: "Draft only",
+    targetHref: "/contacts/person_1",
+    targetKind: "Activity",
+    targetLabel: "Jane Doe",
+    title: "Draft activity",
+    warnings: []
   };
 }

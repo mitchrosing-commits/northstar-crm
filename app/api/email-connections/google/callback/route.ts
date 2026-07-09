@@ -19,7 +19,12 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
 
   if (error) {
-    return redirectToSettings(settingsUrl, "gmail-error");
+    return redirectToOAuthDestination(
+      request,
+      settingsUrl,
+      safeStateReturnTo(request.nextUrl.searchParams.get("state")),
+      "gmail-error",
+    );
   }
 
   try {
@@ -57,7 +62,12 @@ export async function GET(request: NextRequest) {
       tokenResponse
     });
 
-    return redirectToSettings(settingsUrl, "gmail-connected");
+    return redirectToOAuthDestination(
+      request,
+      settingsUrl,
+      state.returnTo,
+      "gmail-connected",
+    );
   } catch {
     return redirectToSettings(settingsUrl, "gmail-error");
   }
@@ -66,4 +76,25 @@ export async function GET(request: NextRequest) {
 function redirectToSettings(settingsUrl: URL, status: string) {
   settingsUrl.searchParams.set("emailConnection", status);
   return NextResponse.redirect(settingsUrl);
+}
+
+function redirectToOAuthDestination(
+  request: NextRequest,
+  settingsUrl: URL,
+  returnTo: string | undefined,
+  status: string,
+) {
+  if (!returnTo) return redirectToSettings(settingsUrl, status);
+  const emailUrl = new URL(buildAppUrl(returnTo, { requestUrl: request.url }));
+  emailUrl.searchParams.set("emailConnection", status);
+  return NextResponse.redirect(emailUrl);
+}
+
+function safeStateReturnTo(stateValue: string | null) {
+  try {
+    const state = verifyEmailOAuthState(stateValue);
+    return state.provider === "GOOGLE_WORKSPACE" ? state.returnTo : undefined;
+  } catch {
+    return undefined;
+  }
 }

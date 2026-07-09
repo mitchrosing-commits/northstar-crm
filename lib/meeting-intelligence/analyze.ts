@@ -2,6 +2,7 @@ import { extractSections } from "./markdown-normalizer";
 import { targetFromMatch } from "./match-records";
 import type {
   MatchedCrmObject,
+  MeetingProposalFactCategory,
   MeetingIntelligenceDraft,
   MeetingSourceMetadata,
   RelationshipBriefFields,
@@ -17,9 +18,9 @@ type AnalyzeMeetingInput = {
 };
 
 const companyFactPattern =
-  /\b(wms|oms|erp|tms|warehouse|warehouses|dc|dcs|distribution center|distribution|facility|facilities|site|sites|go-live|go live|uat|integration|integrations|data migration|vendor|system|pain|pain point|throughput|inventory|labor|slotting|implementation|implementation phase|hypercare|support|optimization|selection process|sponsor|stakeholder|decision maker)\b/i;
+  /\b(wms|oms|erp|tms|warehouse|warehouses|dc|dcs|distribution center|distribution|facility|facilities|site|sites|go-live|go live|uat|integration|integrations|data migration|vendor|system|pain|pain point|throughput|inventory|labor|slotting|implementation|implementation phase|hypercare|support|optimization|selection process)\b/i;
 const personalFactPattern =
-  /\b(birthday|hobby|hobbies|family|spouse|child|children|kid|kids|vacation|trip|travel|fan|sports|game|prefers|preference|likes|communication preference|sponsor|stakeholder|decision maker)\b/i;
+  /\b(birthday|hobby|hobbies|family|spouse|child|children|kid|kids|vacation|trip|travel|fan|sports|game|prefers|preference|likes|communication preference)\b/i;
 const communicationStylePattern =
   /\b(prefers?|preference|communication style|concise|short|brief|detailed|email|emails|call|calls|phone|text|morning|afternoon|reply|replies|responds)\b/i;
 const businessConcernPattern =
@@ -32,6 +33,9 @@ const protectedTraitPattern =
   /\b(race|ethnicity|religion|religious|church|mosque|synagogue|political|politics|party affiliation|disability|disabled|medical diagnosis|pregnant|pregnancy|sexual orientation|gender identity)\b/i;
 const dealFactPattern = /\b(budget|scope|sow|proposal|buying signal|decision|decision process|stakeholder|risk|timeline|procurement|legal|approval|pilot|renewal|expansion)\b/i;
 const leadFactPattern = /\b(discovery|qualification|qualify|lead source|source|interest|interested|evaluation|pilot|timeline|budget|approval|stakeholder|decision process|next step|pain|risk)\b/i;
+const stakeholderPattern = /\b(stakeholder|sponsor|champion|decision maker|economic buyer|influencer|buyer committee|buying committee)\b/i;
+const actionLinePattern = /^(action|action item|todo|to do|next step|follow[- ]?up)\s*:/i;
+const rawSpeakerPrefixPattern = /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})\s*:\s+(.+)$/;
 const genericTargetTerms = new Set([
   "account",
   "company",
@@ -100,11 +104,28 @@ function buildRelationshipBriefUpdates(matches: MatchedCrmObject[], lines: strin
     .map((match) => {
       const target = targetFromMatch(match);
       const safeLines = relationshipLinesForTarget(lines, match, personCount);
+      const lineFacts = safeLines.map((line) => ({ line, category: classifyLineForMatch(line, match) }));
       const proposed: RelationshipBriefFields = {
-        relationshipPersonalContext: summarizeRelationshipLines(safeLines.filter((line) => personalFactPattern.test(line))),
-        relationshipCommunicationStyle: summarizeRelationshipLines(safeLines.filter((line) => communicationStylePattern.test(line))),
-        relationshipBusinessConcerns: summarizeRelationshipLines(safeLines.filter((line) => businessConcernPattern.test(line))),
-        relationshipFollowUpReminders: summarizeRelationshipLines(safeLines.filter((line) => relationshipReminderPattern.test(line))),
+        relationshipPersonalContext: summarizeRelationshipLines(
+          lineFacts.filter(({ category, line }) => category === "personFact" && personalFactPattern.test(line)).map(({ line }) => line),
+          match,
+          "personFact"
+        ),
+        relationshipCommunicationStyle: summarizeRelationshipLines(
+          lineFacts.filter(({ category, line }) => category === "personFact" && communicationStylePattern.test(line)).map(({ line }) => line),
+          match,
+          "personFact"
+        ),
+        relationshipBusinessConcerns: summarizeRelationshipLines(
+          lineFacts.filter(({ category, line }) => category === "personFact" && businessConcernPattern.test(line)).map(({ line }) => line),
+          match,
+          "personFact"
+        ),
+        relationshipFollowUpReminders: summarizeRelationshipLines(
+          lineFacts.filter(({ category, line }) => category === "personFact" && relationshipReminderPattern.test(line)).map(({ line }) => line),
+          match,
+          "personFact"
+        ),
         relationshipInternalGuidance: summarizeInternalGuidance(safeLines)
       };
       const populated = compactRelationshipFields(proposed);
@@ -113,6 +134,11 @@ function buildRelationshipBriefUpdates(matches: MatchedCrmObject[], lines: strin
         confidence: match.confidence,
         evidence: [match.evidenceExcerpt, ...safeLines].filter(Boolean).slice(0, 5),
         existing: {},
+        facts: relationshipFactsFromProposedFields(populated, {
+          evidence: [match.evidenceExcerpt, ...safeLines].filter(Boolean).slice(0, 5),
+          id: `relationship-brief-${match.id}`,
+          warnings: relationshipFactWarnings(lineFacts)
+        }),
         id: `relationship-brief-${match.id}`,
         include: true,
         matchedReason: match.matchedReason,
@@ -129,6 +155,8 @@ function relationshipLinesForTarget(lines: string[], match: MatchedCrmObject, pe
     .filter((line) => !isMeetingMetadataLine(line))
     .filter((line) => !protectedTraitPattern.test(line))
     .filter((line) => {
+      const category = classifyLineForMatch(line, match);
+      if (category !== "personFact") return false;
       if (lineMentionsMatch(line, match)) return true;
       if (personCount <= 1) {
         return (
@@ -156,8 +184,12 @@ function isMeetingMetadataLine(line: string) {
   );
 }
 
-function summarizeRelationshipLines(lines: string[]) {
-  const unique = uniqueNormalizedLines(lines).slice(0, 3);
+function summarizeRelationshipLines(
+  lines: string[],
+  match?: MatchedCrmObject,
+  category: MeetingProposalFactCategory = "personFact"
+) {
+  const unique = uniqueNormalizedLines(lines.map((line) => summarizeFactLine(line, { category, match }))).slice(0, 3);
   return unique.length > 0 ? unique.join("\n") : undefined;
 }
 
@@ -168,6 +200,45 @@ function summarizeInternalGuidance(lines: string[]) {
     return "Use personal context naturally for thoughtful follow-up; do not overdo personal references.";
   }
   return undefined;
+}
+
+function relationshipFactsFromProposedFields(
+  fields: RelationshipBriefFields,
+  proposal: { evidence: string[]; id: string; warnings?: string[] }
+) {
+  return Object.entries(fields).flatMap(([field, value]) =>
+    splitFactText(value).map((text, index) => ({
+      category: "personFact" as const,
+      evidence: proposal.evidence,
+      field: field as keyof RelationshipBriefFields,
+      id: `${proposal.id}-${field}-${index + 1}`,
+      include: true,
+      text,
+      warnings: proposal.warnings
+    }))
+  );
+}
+
+function relationshipFactWarnings(lines: Array<{ category: MeetingProposalFactCategory; line: string }>) {
+  const warnings = new Set<string>();
+  if (lines.some(({ category }) => category === "stakeholderNote")) {
+    warnings.add("Stakeholder context was kept out of Relationship Memory unless a reviewer explicitly rewrites it as contact-specific context.");
+  }
+  if (lines.some(({ category }) => category === "organizationFact" || category === "dealFact")) {
+    warnings.add("Company, deal, and opportunity facts were excluded from contact Relationship Memory.");
+  }
+  if (lines.some(({ category }) => category === "followUpAction")) {
+    warnings.add("Follow-up actions were excluded from Relationship Memory and should be reviewed as activities.");
+  }
+  return Array.from(warnings);
+}
+
+function splitFactText(value: string | undefined) {
+  if (!value) return [];
+  return value
+    .split(/\n{1,}|\s[•]\s/g)
+    .map((item) => item.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
 }
 
 function compactRelationshipFields(fields: RelationshipBriefFields) {
@@ -197,10 +268,15 @@ function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeo
   const objectCounts = objectTypeCounts(usableMatches);
   for (const match of usableMatches.slice(0, 8)) {
     const target = targetFromMatch(match);
-    const factLines = relevantFactLines(match, lines, { objectCounts, primaryTarget });
-    if (factLines.length === 0 && !sameTarget(target, primaryTarget)) continue;
-    const kind = noteKind(match.objectType, factLines);
-    const noteSummary = kind === "meeting_summary" || factLines.length === 0 ? summary : factLines.slice(0, 3).join(" ");
+    const factGroups = noteFactGroups(match, lines, { objectCounts, primaryTarget });
+    if (factGroups.length === 0 && sameTarget(target, primaryTarget)) {
+      factGroups.push({ category: "ambiguousNeedsReview", lines: [] });
+    }
+    for (const group of factGroups) {
+      const factLines = group.lines;
+      const category = group.category;
+      const kind = noteKind(match.objectType, factLines, category);
+      const noteSummary = kind === "meeting_summary" || factLines.length === 0 ? summary : factLines.slice(0, 3).join(" ");
     const body = [
       noteTitle(kind, target.label ?? match.displayName),
       "",
@@ -217,6 +293,7 @@ function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeo
       .trim();
     notes.push({
       body,
+      category,
       confidence: match.confidence,
       evidence: [match.evidenceExcerpt, ...factLines].filter(Boolean).slice(0, 4),
       id: `note-${match.objectType}-${match.id}`,
@@ -226,6 +303,7 @@ function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeo
       targetWarning: match.warning,
       target
     });
+    }
   }
   return notes;
 }
@@ -239,6 +317,7 @@ function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[]) {
     const dueAt = parseDueDate(item);
     const ownerHint = parseOwnerHint(item);
     return {
+      category: "followUpAction" as const,
       confidence: match?.confidence,
       description: [
         `Source: ${item}`,
@@ -309,23 +388,48 @@ function sameTarget(left: ReturnType<typeof targetFromMatch> | null, right: Retu
   return Boolean(left && right && left.id === right.id && left.type === right.type);
 }
 
-function relevantFactLines(
+function noteFactGroups(
+  match: MatchedCrmObject,
+  lines: string[],
+  options: { objectCounts: Map<MatchedCrmObject["objectType"], number>; primaryTarget: ReturnType<typeof pickPrimaryTarget> }
+) {
+  const groups = new Map<MeetingProposalFactCategory, { category: MeetingProposalFactCategory; lines: string[] }>();
+  for (const item of noteFactItems(match, lines, options)) {
+    const existing = groups.get(item.category) ?? { category: item.category, lines: [] };
+    existing.lines.push(item.line);
+    groups.set(item.category, existing);
+  }
+  return Array.from(groups.values());
+}
+
+function noteFactItems(
   match: MatchedCrmObject,
   lines: string[],
   options: { objectCounts: Map<MatchedCrmObject["objectType"], number>; primaryTarget: ReturnType<typeof pickPrimaryTarget> }
 ) {
   const pattern = factPatternForObject(match.objectType);
-  return lines
+  const items: Array<{ category: MeetingProposalFactCategory; line: string }> = [];
+  for (const line of lines
     .filter((line) => !isMeetingMetadataLine(line))
     .filter((line) => !protectedTraitPattern.test(line))
     .filter((line) => pattern.test(line))
-    .filter((line) => lineBelongsToMatch(line, match, options))
-    .map((line) => line.replace(/^[-*]\s*/, "").trim())
-    .filter(Boolean)
-    .slice(0, 8);
+    .filter((line) => lineBelongsToMatch(line, match, options))) {
+    const category = classifyLineForMatch(line, match);
+    const summarized = summarizeFactLine(line, { category, match });
+    if (!summarized) continue;
+    items.push({ category, line: summarized });
+    if (items.length >= 8) break;
+  }
+  return items;
 }
 
-function noteKind(objectType: MatchedCrmObject["objectType"], factLines: string[]) {
+function noteKind(
+  objectType: MatchedCrmObject["objectType"],
+  factLines: string[],
+  category: MeetingProposalFactCategory
+) {
+  if (category === "stakeholderNote") return "stakeholder_note" as const;
+  if (objectType === "person" && category === "personFact") return "personal_fact" as const;
   if (objectType === "person" && factLines.some((line) => personalFactPattern.test(line))) return "personal_fact" as const;
   if (objectType === "organization" && factLines.some((line) => companyFactPattern.test(line))) return "company_fact" as const;
   if (objectType === "lead" && factLines.some((line) => leadFactPattern.test(line) || dealFactPattern.test(line))) return "lead_fact" as const;
@@ -337,6 +441,8 @@ function noteTitle(kind: ReturnType<typeof noteKind>, targetLabel: string) {
   const label =
     kind === "personal_fact"
       ? "Meeting intelligence personal facts"
+      : kind === "stakeholder_note"
+        ? "Meeting intelligence stakeholder notes"
       : kind === "company_fact"
         ? "Meeting intelligence company facts"
         : kind === "deal_fact"
@@ -348,7 +454,7 @@ function noteTitle(kind: ReturnType<typeof noteKind>, targetLabel: string) {
 }
 
 function factPatternForObject(objectType: MatchedCrmObject["objectType"]) {
-  if (objectType === "person") return personalFactPattern;
+  if (objectType === "person") return new RegExp(`${personalFactPattern.source}|${stakeholderPattern.source}|${communicationStylePattern.source}|${businessConcernPattern.source}`, "i");
   if (objectType === "organization") return companyFactPattern;
   if (objectType === "lead") return new RegExp(`${dealFactPattern.source}|${leadFactPattern.source}`, "i");
   return dealFactPattern;
@@ -359,10 +465,92 @@ function lineBelongsToMatch(
   match: MatchedCrmObject,
   options: { objectCounts: Map<MatchedCrmObject["objectType"], number>; primaryTarget: ReturnType<typeof pickPrimaryTarget> }
 ) {
+  const category = classifyLineForMatch(line, match);
+  if (match.objectType === "person" && category !== "personFact" && category !== "stakeholderNote") return false;
+  if (match.objectType === "organization" && category !== "organizationFact" && category !== "stakeholderNote") return false;
+  if ((match.objectType === "deal" || match.objectType === "lead") && category !== "dealFact" && category !== "stakeholderNote") {
+    return false;
+  }
   if (lineMentionsMatch(line, match)) return true;
   if ((match.objectType === "deal" || match.objectType === "lead") && companyFactPattern.test(line)) return false;
   if (sameTarget(targetFromMatch(match), options.primaryTarget)) return true;
   return (options.objectCounts.get(match.objectType) ?? 0) === 1;
+}
+
+function classifyLineForMatch(line: string, match?: MatchedCrmObject): MeetingProposalFactCategory {
+  const cleaned = line.replace(/^[-*]\s*/, "").trim();
+  const content = speakerContentForClassification(cleaned, match);
+  if (!content) return "ambiguousNeedsReview";
+  if (actionLinePattern.test(content)) return "followUpAction";
+
+  const hasStakeholder = stakeholderPattern.test(content);
+  const hasCompany = companyFactPattern.test(content);
+  const hasDeal = dealFactPattern.test(content) || leadFactPattern.test(content);
+  const hasPersonal = personalFactPattern.test(content) || communicationStylePattern.test(content) || relationshipReminderPattern.test(content);
+  const hasContactConcern = contactConcernPattern(content, cleaned, match);
+
+  if (hasStakeholder) return "stakeholderNote";
+  if ((hasPersonal || hasContactConcern) && !hasCompany && !hasDeal) return "personFact";
+  if (hasContactConcern && match?.objectType === "person") return "personFact";
+  if (hasCompany) return "organizationFact";
+  if (hasDeal) return "dealFact";
+  if (businessConcernPattern.test(content)) return match?.objectType === "person" ? "personFact" : "dealFact";
+  return "ambiguousNeedsReview";
+}
+
+function speakerContentForClassification(line: string, match?: MatchedCrmObject) {
+  const speaker = line.match(rawSpeakerPrefixPattern);
+  if (!speaker) return line;
+  if (match && lineMentionsMatch(speaker[1], match)) return speaker[2].trim();
+  return line;
+}
+
+function contactConcernPattern(content: string, fullLine: string, match?: MatchedCrmObject) {
+  if (!businessConcernPattern.test(content)) return false;
+  if (/\b(?:is|was|seems|sounds|feels|felt)\s+(?:concerned|worried)\b/i.test(content)) return true;
+  return Boolean(match && lineMentionsMatch(fullLine, match) && match.objectType === "person" && /\bconcerned|worried|worry\b/i.test(content));
+}
+
+function summarizeFactLine(
+  line: string,
+  options: { category: MeetingProposalFactCategory; match?: MatchedCrmObject }
+) {
+  const cleaned = line
+    .replace(/^[-*]\s*/, "")
+    .replace(/^(decision|risk|note|fact|summary)\s*:\s*/i, "")
+    .trim();
+  const speaker = cleaned.match(rawSpeakerPrefixPattern);
+  if (speaker) {
+    const speakerName = speaker[1].trim();
+    const content = speaker[2].trim();
+    if (options.match && lineMentionsMatch(speakerName, options.match)) {
+      return truncateFact(`${options.match.displayName} mentioned ${quoteToThirdPerson(content)}.`);
+    }
+    return truncateFact(`${speakerName} mentioned ${lowercaseFirst(content)}.`);
+  }
+  if (options.category === "followUpAction") {
+    return truncateFact(cleaned.replace(/^(action|action item|todo|to do|next step|follow[- ]?up)\s*:\s*/i, ""));
+  }
+  return truncateFact(cleaned);
+}
+
+function quoteToThirdPerson(value: string) {
+  return lowercaseFirst(value)
+    .replace(/^i am\b/i, "they are")
+    .replace(/^i'm\b/i, "they are")
+    .replace(/^i will\b/i, "they will")
+    .replace(/^i\b/i, "they")
+    .replace(/\bmy\b/gi, "their")
+    .replace(/\bme\b/gi, "them");
+}
+
+function lowercaseFirst(value: string) {
+  return value ? value[0].toLowerCase() + value.slice(1) : value;
+}
+
+function truncateFact(value: string) {
+  const normalized = value.replace(/\s+/g, " ").replace(/\s+\./g, ".").trim();
+  return normalized.length > 260 ? `${normalized.slice(0, 257)}...` : normalized;
 }
 
 function lineMentionsMatch(line: string, match: MatchedCrmObject) {

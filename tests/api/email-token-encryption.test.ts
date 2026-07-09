@@ -225,9 +225,13 @@ describe("encrypted email token storage", () => {
   it("adds safe Gmail connect and callback routes without mailbox sync", () => {
     expect(connectRoute).toContain("assertGoogleOAuthReady");
     expect(connectRoute).toContain("createEmailOAuthState");
+    expect(connectRoute).toContain("safeEmailOAuthReturnTo");
+    expect(connectRoute).toContain('url.pathname === "/email"');
     expect(connectRoute).toContain("buildGoogleAuthorizationUrl");
     expect(callbackRoute).toContain("verifyEmailOAuthState");
     expect(callbackRoute).toContain('state.provider !== "GOOGLE_WORKSPACE"');
+    expect(callbackRoute).toContain("redirectToOAuthDestination");
+    expect(callbackRoute).toContain("state.returnTo");
     expect(callbackRoute).toContain("exchangeGoogleAuthorizationCode");
     expect(callbackRoute).toContain("fetchGoogleUserProfile");
     expect(callbackRoute).toContain("storeGoogleOAuthConnection");
@@ -360,6 +364,26 @@ describe("encrypted email token storage", () => {
       provider: "GOOGLE_WORKSPACE",
       workspaceId: "workspace_123",
     });
+    const validEmailReturnState = createEmailOAuthState(
+      {
+        actorUserId: "user_123",
+        provider: "GOOGLE_WORKSPACE",
+        returnTo:
+          "/email?account=all&inbox=priority&page=2&pageSize=100#important",
+        workspaceId: "workspace_123",
+      },
+      env,
+      now,
+    );
+    expect(verifyEmailOAuthState(validEmailReturnState, env, now)).toMatchObject(
+      {
+        actorUserId: "user_123",
+        provider: "GOOGLE_WORKSPACE",
+        returnTo:
+          "/email?account=all&inbox=priority&page=2&pageSize=100#important",
+        workspaceId: "workspace_123",
+      },
+    );
     expect(() =>
       verifyEmailOAuthState(
         signedState(
@@ -367,6 +391,38 @@ describe("encrypted email token storage", () => {
             actorUserId: { id: "user_123" },
             expiresAt: now + 60_000,
             provider: "GOOGLE_WORKSPACE",
+            workspaceId: "workspace_123",
+          },
+          env,
+        ),
+        env,
+        now,
+      ),
+    ).toThrow("Email connection state is invalid.");
+    expect(() =>
+      verifyEmailOAuthState(
+        signedState(
+          {
+            actorUserId: "user_123",
+            expiresAt: now + 60_000,
+            provider: "GOOGLE_WORKSPACE",
+            returnTo: "/settings?emailConnection=gmail-connected",
+            workspaceId: "workspace_123",
+          },
+          env,
+        ),
+        env,
+        now,
+      ),
+    ).toThrow("Email connection state is invalid.");
+    expect(() =>
+      verifyEmailOAuthState(
+        signedState(
+          {
+            actorUserId: "user_123",
+            expiresAt: now + 60_000,
+            provider: "GOOGLE_WORKSPACE",
+            returnTo: "https://example.test/email",
             workspaceId: "workspace_123",
           },
           env,

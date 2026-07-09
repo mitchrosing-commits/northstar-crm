@@ -2999,6 +2999,41 @@ textarea {
   min-height: 30px;
 }
 
+.mailbox-coverage-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  background: var(--surface-muted);
+}
+
+.mailbox-coverage-strip > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mailbox-coverage-strip strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.mailbox-coverage-strip span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.mailbox-coverage-strip .email-inbox-load-more {
+  flex: 0 0 auto;
+  border-top: 0;
+  padding: 0;
+}
+
 .connected-inbox-panel {
   display: grid;
   gap: 12px;
@@ -3034,6 +3069,11 @@ textarea {
 
   .work-inbox-filter-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mailbox-coverage-strip {
+    align-items: stretch;
+    display: grid;
   }
 }
 
@@ -3473,10 +3513,20 @@ textarea {
   font-size: 15px;
 }
 
+.inbox-empty-filter-chips {
+  justify-content: center;
+  margin-top: 10px;
+}
+
 .email-inbox-load-more {
   align-items: start;
   border-top: 1px solid var(--line);
   padding: 8px 10px;
+}
+
+.mailbox-coverage-strip .email-inbox-load-more {
+  border-top: 0;
+  padding: 0;
 }
 
 .email-inbox-thread-main,
@@ -3821,6 +3871,17 @@ textarea {
 .email-smart-label-evidence p {
   margin-top: 6px;
   overflow-wrap: anywhere;
+}
+
+.email-smart-label-diagnostics summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.email-smart-label-diagnostics p {
+  margin-top: 6px;
 }
 
 .relationship-inbox-signal-list {
@@ -6949,6 +7010,163 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.assistant-draft-list {
+  display: grid;
+  gap: 12px;
+}
+
+.assistant-draft-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+}
+
+.assistant-draft-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.assistant-draft-card-header h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.assistant-draft-eyebrow {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.assistant-draft-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.assistant-draft-meta,
+.assistant-draft-field-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assistant-draft-meta {
+  margin: 0;
+}
+
+.assistant-draft-meta div,
+.assistant-draft-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-strong);
+}
+
+.assistant-draft-meta dt,
+.assistant-draft-field span,
+.assistant-draft-section > strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.assistant-draft-meta dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.assistant-draft-field strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.assistant-draft-field small {
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+
+.assistant-draft-section {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.assistant-draft-section ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted-strong);
+}
+
+.assistant-draft-section li {
+  overflow-wrap: anywhere;
+}
+
+.assistant-draft-section small {
+  display: block;
+  color: var(--muted);
+}
+
+.assistant-draft-review-notes {
+  border-left: 3px solid var(--warning);
+  padding-left: 10px;
+}
+
+.assistant-draft-actions,
+.assistant-review-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.assistant-draft-actions small {
+  color: var(--muted-strong);
+}
+
+.assistant-review-queue,
+.assistant-review-request-list,
+.assistant-review-request {
+  display: grid;
+  gap: 14px;
+}
+
+.assistant-review-request {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+}
+
+.assistant-review-request-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.assistant-review-request-header h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
 .northstar-assistant-summary {
   display: grid;
   gap: 7px;
@@ -7094,6 +7312,10 @@ textarea {
 @media (max-width: 920px) {
   .ai-record-brief-grid,
   .assistant-command-form,
+  .assistant-draft-card-header,
+  .assistant-draft-field-list,
+  .assistant-draft-meta,
+  .assistant-review-request-header,
   .assistant-suggestion-grid,
   .crm-ai-insight-list,
   .northstar-assistant-grid,

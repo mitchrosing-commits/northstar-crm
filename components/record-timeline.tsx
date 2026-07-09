@@ -59,7 +59,7 @@ function RecordTimelineItem({ item }: { item: RecordTimelineItem }) {
     const noteActionsLabel = `Note by ${item.authorName} timeline note actions`;
 
     return (
-      <li className="timeline-item timeline-item-note">
+      <li className="timeline-item timeline-item-note" id={item.id}>
         <strong>Added note</strong>
         <TimelineMetaRow items={[item.authorName, formatDate(item.timestamp)]} ariaLabel={`Note by ${item.authorName} timeline metadata`} />
         <TimelineBodyText>{item.body}</TimelineBodyText>
@@ -81,7 +81,7 @@ function RecordTimelineItem({ item }: { item: RecordTimelineItem }) {
     const activityActionsLabel = `${item.title} timeline activity actions`;
 
     return (
-      <li className={item.completedAt ? "timeline-item timeline-item-completed" : "timeline-item timeline-item-open"}>
+      <li className={item.completedAt ? "timeline-item timeline-item-completed" : "timeline-item timeline-item-open"} id={item.id}>
         <div className="timeline-item-heading">
           <strong>{item.title}</strong>
           <ActivityDueBadge activity={item} />
@@ -126,7 +126,7 @@ function RecordTimelineItem({ item }: { item: RecordTimelineItem }) {
     const emailActionsLabel = `${item.subject} timeline email actions`;
 
     return (
-      <li className="timeline-item timeline-item-email">
+      <li className="timeline-item timeline-item-email" id={item.id}>
         <strong>{item.subject}</strong>
         <TimelineMetaRow
           items={[formatEmailTimelineLabel(item.direction), formatDate(item.timestamp)]}
@@ -161,7 +161,7 @@ function RecordTimelineItem({ item }: { item: RecordTimelineItem }) {
   const auditActionsLabel = `${event.label} timeline audit actions`;
 
   return (
-    <li className="timeline-item timeline-item-audit">
+    <li className="timeline-item timeline-item-audit" id={item.id}>
       <strong>{event.label}</strong>
       <TimelineMetaRow items={[event.actorLabel, formatDate(item.timestamp)]} ariaLabel={`${event.label} audit timeline metadata`} />
       {event.metadataLabel ? <TimelineBodyText>{event.metadataLabel}</TimelineBodyText> : null}

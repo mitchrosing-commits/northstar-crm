@@ -141,7 +141,7 @@ describe("main navigation visibility", () => {
     expect(createRecordActions).toContain('sidebarHelper: "Opportunity"');
     expect(navigation).toContain("href: \"/assistant\" as Route");
     expect(navigation).toContain("label: \"Assistant\"");
-    expect(navigation).toContain("helper: \"Read-only AI\"");
+    expect(navigation).toContain("helper: \"Review-first AI\"");
     expect(navigation).toContain("Ask read-only CRM questions across activities, deals, and stored email context.");
     expect(navigation).toContain("href: \"/email\"");
     expect(navigation).toContain("label: \"Inbox\"");

@@ -1921,6 +1921,7 @@ function relationshipFactsFromFields(
 ): ProposedRelationshipBriefFact[] {
   return relationshipBriefFieldKeys.flatMap((field) =>
     splitRelationshipFacts(fields[field]).map((text, index) => ({
+      category: "personFact" as const,
       evidence: proposal.evidence,
       field,
       id: `${proposal.id}-${field}-${index + 1}`,

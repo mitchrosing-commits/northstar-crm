@@ -29,6 +29,7 @@ model User {
   createdMeetingIntakes    MeetingIntake[]         @relation("MeetingIntakeCreator")
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
   aiPreferences            AiPreference[]
+  assistantActionRequests  AssistantActionRequest[] @relation("AssistantActionRequestCreator")
   auditLogs                AuditLog[]
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
@@ -96,6 +97,7 @@ model Workspace {
   meetingIntakes              MeetingIntake[]
   meetingActivityAssociations MeetingActivityAssociation[]
   aiPreferences               AiPreference[]
+  assistantActionRequests     AssistantActionRequest[]
   auditLogs                   AuditLog[]
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
@@ -775,6 +777,41 @@ model AiPreference {
 
   @@unique([workspaceId, userId])
   @@index([userId])
+}
+
+model AssistantActionRequest {
+  id              String                       @id @default(cuid())
+  workspaceId     String
+  createdById     String?
+  status          AssistantActionRequestStatus @default(PENDING)
+  actionType      String
+  objectType      String
+  riskLevel       String
+  confidence      String
+  title           String
+  targetLabel     String
+  targetHref      String?
+  sourceSummary   String?
+  proposedPayload Json
+  evidence        Json?
+  warnings        Json?
+  missingInfo     Json?
+  workspace       Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy       User?                        @relation("AssistantActionRequestCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
+  rejectedAt      DateTime?
+  appliedAt       DateTime?
+
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, createdById, status])
+  @@index([createdById, status])
+}
+
+enum AssistantActionRequestStatus {
+  PENDING
+  REJECTED
+  APPLIED
 }
 
 enum MembershipRole {

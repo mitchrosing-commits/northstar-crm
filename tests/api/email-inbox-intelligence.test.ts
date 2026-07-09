@@ -41,7 +41,7 @@ describe("work inbox intelligence", () => {
       relatedRecordLabel: "Deal: Expansion",
       tags: expect.arrayContaining([
         "Needs reply",
-        "Pricing",
+        "Pricing / quote",
         "CRM linked",
         "AI summary",
       ]),
@@ -66,7 +66,11 @@ describe("work inbox intelligence", () => {
       detectedIntent: "Automated update or marketing message",
       priorityLevel: "low",
       isUnimportant: true,
-      tags: expect.arrayContaining(["Automated", "No CRM link", "Unimportant"]),
+      tags: expect.arrayContaining([
+        "Automated / no-reply",
+        "No CRM link",
+        "Unimportant",
+      ]),
       unimportantReasons: expect.arrayContaining([
         "Newsletter, promotion, digest, or provider category signals.",
       ]),
@@ -110,8 +114,8 @@ describe("work inbox intelligence", () => {
       relatedRecordLabel: "Organization: Veridian",
       tags: expect.arrayContaining([
         "Needs reply",
-        "Pricing",
-        "Contract",
+        "Pricing / quote",
+        "Contract / legal",
         "CRM linked",
       ]),
     });
@@ -123,7 +127,11 @@ describe("work inbox intelligence", () => {
         "needs-reply",
         "leads-opportunities",
       ]),
-      tags: expect.arrayContaining(["Needs reply", "Pricing", "No CRM link"]),
+      tags: expect.arrayContaining([
+        "Needs reply",
+        "Pricing / quote",
+        "No CRM link",
+      ]),
     });
     expect(aiItem?.categories).not.toContain("personal-low-priority");
     expect(aiItem?.categories).not.toContain("automated-marketing");
@@ -302,6 +310,31 @@ describe("work inbox intelligence", () => {
     ).toEqual(["Pricing question"]);
   });
 
+  it("keeps row tags compact and deterministic when a saved smart-label snapshot exists", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Can you send updated pricing and contract timing today?",
+          smartLabelJson: {
+            category: "CUSTOMER",
+            confidence: 0.91,
+            evidence: ["Provider evidence should stay in the reader."],
+            signals: ["PRICING_QUOTE", "CONTRACT_LEGAL"],
+            summary: "Provider summary should not become a row paragraph."
+          },
+          smartLabelProvider: "openai",
+          subject: "Pricing and contract timing"
+        })
+      ]
+    });
+
+    expect(inbox.items[0].tags).toEqual(
+      expect.arrayContaining(["Pricing / quote", "Contract / legal"])
+    );
+    expect(inbox.items[0].tags).not.toContain("Smart Label");
+    expect(inbox.items[0].tags.join(" ")).not.toContain("Provider summary");
+  });
+
   it("honors AI preference summary length and detail level", () => {
     const detailedPreferences: AiPreferences = {
       ...defaultAiPreferences,
@@ -368,6 +401,8 @@ function thread({
   linkedRecordLabel = null,
   occurredAt = new Date("2030-01-01T12:00:00.000Z"),
   providerLabels = [],
+  smartLabelJson = null,
+  smartLabelProvider = null,
   subject,
 }: {
   body: string;
@@ -377,6 +412,8 @@ function thread({
   linkedRecordLabel?: string | null;
   occurredAt?: Date;
   providerLabels?: string[];
+  smartLabelJson?: unknown;
+  smartLabelProvider?: string | null;
   subject: string;
 }): EmailInboxThreadSummary {
   const message = {
@@ -410,9 +447,9 @@ function thread({
     providerMessageId: `${id}_message_1`,
     providerSnippet: body.slice(0, 120),
     providerThreadId: id,
-    smartLabelGeneratedAt: null,
-    smartLabelJson: null,
-    smartLabelProvider: null,
+    smartLabelGeneratedAt: smartLabelProvider ? occurredAt : null,
+    smartLabelJson,
+    smartLabelProvider,
     subject,
     toText: "me@example.test",
     updatedAt: occurredAt,

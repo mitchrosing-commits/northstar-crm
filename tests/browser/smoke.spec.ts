@@ -149,7 +149,7 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByLabel("Suggested Assistant prompts")).toBeVisible();
         await expect(page.getByLabel("Command")).toBeVisible();
         await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
-        await expect(page.getByText("This first Assistant slice only reads workspace context")).toBeVisible();
+        await expect(page.getByText("draft a CRM action for review")).toBeVisible();
       }
       if (path === "/pipeline") {
         const contractSummaries = page.locator(".contract-status-summary");

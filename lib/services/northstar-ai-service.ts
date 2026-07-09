@@ -55,11 +55,13 @@ export type NorthstarAssistantActivityContext = {
 export type NorthstarAssistantEmailContext = {
   classificationSummary?: string;
   direction: string;
+  excerpt?: string;
   followUpCount?: number;
   id: string;
   linkedRecordLabel?: string;
   occurredAt: string;
   provider?: string | null;
+  sourceAccountLabel?: string;
   signals: string[];
   subject: string;
 };
@@ -100,6 +102,43 @@ export type NorthstarAssistantAuditContext = {
   metadataSummary?: string;
 };
 
+export type NorthstarAssistantNoteContext = {
+  authorLabel?: string;
+  body: string;
+  createdAt: string;
+  id: string;
+};
+
+export type NorthstarAssistantLinkedRecordContext = {
+  id: string;
+  label: string;
+  relationship: "customer" | "linked_deal" | "linked_organization" | "linked_person" | "meeting_association";
+  status?: string;
+  type: "deal" | "lead" | "organization" | "person";
+};
+
+export type NorthstarAssistantRelationshipFactContext = {
+  field: RelationshipBriefFieldKey;
+  label: string;
+  source?: {
+    auditId?: string;
+    changedAt?: string;
+    sourceIntakeId?: string;
+    sourceTitle?: string;
+    sourceType?: "manual" | "meeting_intelligence";
+  };
+  value: string;
+};
+
+export type NorthstarAssistantMeetingSourceContext = {
+  categories: string[];
+  href: string;
+  id: string;
+  label: string;
+  sourceType: string;
+  status: string;
+};
+
 export type NorthstarAssistantContext = {
   audits: NorthstarAssistantAuditContext[];
   generatedAt: string;
@@ -110,10 +149,12 @@ export type NorthstarAssistantContext = {
     connections: NorthstarAssistantConnectionContext[];
     emails: NorthstarAssistantEmailContext[];
     jobs: NorthstarAssistantJobContext[];
-    notes: Array<{ body: string; createdAt: string; id: string }>;
+    linkedRecords?: NorthstarAssistantLinkedRecordContext[];
+    meetingIntelligenceSources?: NorthstarAssistantMeetingSourceContext[];
+    notes: NorthstarAssistantNoteContext[];
     possibleLinks: Array<{ id: string; label: string; reason: string; type: "contact" | "deal" | "lead" | "organization" }>;
     proposalSummaries: string[];
-    relationshipFacts: Array<{ field: RelationshipBriefFieldKey; label: string; value: string }>;
+    relationshipFacts: NorthstarAssistantRelationshipFactContext[];
   };
   safety: {
     excludes: string[];
@@ -202,6 +243,11 @@ const maxTextLength = 700;
 const maxProviderPayloadChars = 9000;
 const companyFactPattern =
   /\b(account|company|contract|department|implementation|legal|msa|organization|procurement|rollout|security|sow|team|vendor)\b/i;
+const emailConnectionDisplaySelect = {
+  accountEmail: true,
+  displayName: true,
+  provider: true
+} satisfies Prisma.EmailConnectionSelect;
 
 export function northstarAssistantReadiness(env: EnvInput = process.env): NorthstarAssistantReadiness {
   if (!readNonEmpty(env.OPENAI_API_KEY)) {
@@ -235,8 +281,8 @@ export async function buildContactAssistantContext(
       include: {
         activities: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: [{ dueAt: "asc" }, { createdAt: "desc" }], take: 8 },
         deals: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: { updatedAt: "desc" }, take: 5 },
-        emailLogs: { orderBy: { occurredAt: "desc" }, take: 5 },
-        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: { createdAt: "desc" }, take: 5 },
+        emailLogs: { include: { emailConnection: { select: emailConnectionDisplaySelect } }, orderBy: { occurredAt: "desc" }, take: 5 },
+        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, include: { author: { select: userDisplaySelect } }, orderBy: { createdAt: "desc" }, take: 5 },
         organization: true,
         owner: { select: userDisplaySelect }
       }
@@ -271,10 +317,14 @@ export async function buildContactAssistantContext(
       connections: [],
       emails: person.emailLogs.map(toEmailContext),
       jobs: [],
+      linkedRecords: [
+        ...person.deals.map((deal) => linkedRecordContext({ id: deal.id, label: deal.title, relationship: "linked_deal", status: deal.status, type: "deal" })),
+        ...(person.organization ? [linkedRecordContext({ id: person.organization.id, label: person.organization.name, relationship: "linked_organization", type: "organization" })] : [])
+      ],
       notes: person.notes.map(toNoteContext),
       possibleLinks,
       proposalSummaries: person.deals.map((deal) => `Linked deal: ${deal.title} (${deal.status})`),
-      relationshipFacts: relationshipFactsFromPerson(person)
+      relationshipFacts: relationshipFactsFromPerson(person, relationshipFactSourcesFromAudits(auditLogs, person.id))
     },
     surface: "contact",
     workspaceId: actor.workspaceId
@@ -292,9 +342,9 @@ export async function buildDealAssistantContext(
       where: { id: dealId, workspaceId: actor.workspaceId, ...activeWhere },
       include: {
         activities: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }], take: 10 },
-        emailLogs: { orderBy: { occurredAt: "desc" }, take: 5 },
+        emailLogs: { include: { emailConnection: { select: emailConnectionDisplaySelect } }, orderBy: { occurredAt: "desc" }, take: 5 },
         lineItems: { orderBy: { createdAt: "asc" }, take: 5 },
-        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: { createdAt: "desc" }, take: 5 },
+        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, include: { author: { select: userDisplaySelect } }, orderBy: { createdAt: "desc" }, take: 5 },
         organization: true,
         person: true,
         quotes: { orderBy: { updatedAt: "desc" }, take: 3 },
@@ -331,6 +381,10 @@ export async function buildDealAssistantContext(
       connections: [],
       emails: deal.emailLogs.map(toEmailContext),
       jobs: [],
+      linkedRecords: [
+        ...(deal.organization ? [linkedRecordContext({ id: deal.organization.id, label: deal.organization.name, relationship: "customer", type: "organization" })] : []),
+        ...(deal.person ? [linkedRecordContext({ id: deal.person.id, label: formatPersonName(deal.person) ?? deal.person.email ?? "Unnamed contact", relationship: "customer", type: "person" })] : [])
+      ],
       notes: deal.notes.map(toNoteContext),
       possibleLinks,
       proposalSummaries: [
@@ -357,8 +411,8 @@ export async function buildLeadAssistantContext(
       where: { id: leadId, workspaceId: actor.workspaceId, ...activeWhere },
       include: {
         activities: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }], take: 8 },
-        emailLogs: { orderBy: { occurredAt: "desc" }, take: 5 },
-        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: { createdAt: "desc" }, take: 5 },
+        emailLogs: { include: { emailConnection: { select: emailConnectionDisplaySelect } }, orderBy: { occurredAt: "desc" }, take: 5 },
+        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, include: { author: { select: userDisplaySelect } }, orderBy: { createdAt: "desc" }, take: 5 },
         organization: true,
         person: true
       }
@@ -382,6 +436,10 @@ export async function buildLeadAssistantContext(
       connections: [],
       emails: lead.emailLogs.map(toEmailContext),
       jobs: [],
+      linkedRecords: [
+        ...(lead.person ? [linkedRecordContext({ id: lead.person.id, label: formatPersonName(lead.person) ?? lead.person.email ?? "Unnamed contact", relationship: "linked_person", type: "person" })] : []),
+        ...(lead.organization ? [linkedRecordContext({ id: lead.organization.id, label: lead.organization.name, relationship: "linked_organization", type: "organization" })] : [])
+      ],
       notes: lead.notes.map(toNoteContext),
       possibleLinks: [],
       proposalSummaries: [
@@ -408,8 +466,8 @@ export async function buildOrganizationAssistantContext(
       include: {
         activities: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }], take: 8 },
         deals: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: { updatedAt: "desc" }, take: 5 },
-        emailLogs: { orderBy: { occurredAt: "desc" }, take: 5 },
-        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: { createdAt: "desc" }, take: 5 },
+        emailLogs: { include: { emailConnection: { select: emailConnectionDisplaySelect } }, orderBy: { occurredAt: "desc" }, take: 5 },
+        notes: { where: { workspaceId: actor.workspaceId, ...activeWhere }, include: { author: { select: userDisplaySelect } }, orderBy: { createdAt: "desc" }, take: 5 },
         people: { where: { workspaceId: actor.workspaceId, ...activeWhere }, orderBy: [{ lastName: "asc" }, { firstName: "asc" }], take: 8 }
       }
     }),
@@ -432,6 +490,15 @@ export async function buildOrganizationAssistantContext(
       connections: [],
       emails: organization.emailLogs.map(toEmailContext),
       jobs: [],
+      linkedRecords: [
+        ...organization.people.map((person) => linkedRecordContext({
+          id: person.id,
+          label: formatPersonName(person) ?? person.email ?? "Unnamed contact",
+          relationship: "linked_person",
+          type: "person"
+        })),
+        ...organization.deals.map((deal) => linkedRecordContext({ id: deal.id, label: deal.title, relationship: "linked_deal", status: deal.status, type: "deal" }))
+      ],
       notes: organization.notes.map(toNoteContext),
       possibleLinks: [],
       proposalSummaries: [
@@ -439,7 +506,7 @@ export async function buildOrganizationAssistantContext(
         `Contacts: ${organization.people.length}`,
         `Deals: ${organization.deals.length}`
       ],
-      relationshipFacts: organization.people.flatMap(relationshipFactsFromPerson).slice(0, 8)
+      relationshipFacts: organization.people.flatMap((person) => relationshipFactsFromPerson(person)).slice(0, 8)
     },
     surface: "organization",
     workspaceId: actor.workspaceId
@@ -457,6 +524,7 @@ export async function buildInboxAssistantContext(
       include: {
         activityLinks: { include: { activity: true } },
         deal: true,
+        emailConnection: { select: emailConnectionDisplaySelect },
         lead: true,
         organization: true,
         person: true
@@ -491,6 +559,7 @@ export async function buildInboxAssistantContext(
       connections: connections.map(toConnectionContext),
       emails: emailLogs.map(toEmailContext),
       jobs: jobs.map(toJobContext),
+      linkedRecords: emailLogs.flatMap((email) => emailLinkedRecords(email)).slice(0, 8),
       notes: [],
       possibleLinks: [],
       proposalSummaries: [`Stored email logs reviewed: ${emailLogs.length}`, `Email connection rows reviewed: ${connections.length}`],
@@ -542,6 +611,7 @@ export async function buildMeetingIntelligenceProposalAssistantContext(
       jobs: [],
       notes: [],
       possibleLinks: intake.meetingActivityAssociations.flatMap((association) => associationLinks(association)),
+      meetingIntelligenceSources: [toMeetingSourceContext(intake)],
       proposalSummaries: meetingProposalSummaries(intake),
       relationshipFacts: []
     },
@@ -1200,6 +1270,35 @@ async function recentPeopleAndOrganizations(workspaceId: string) {
   ];
 }
 
+function linkedRecordContext(input: NorthstarAssistantLinkedRecordContext): NorthstarAssistantLinkedRecordContext {
+  return {
+    id: input.id,
+    label: truncate(input.label, 180) ?? input.label,
+    relationship: input.relationship,
+    status: input.status,
+    type: input.type
+  };
+}
+
+function emailLinkedRecords(emailLog: {
+  deal?: { id: string; title: string } | null;
+  lead?: { id: string; title: string } | null;
+  organization?: { id: string; name: string } | null;
+  person?: { email: string | null; firstName: string; id: string; lastName: string | null } | null;
+}) {
+  return [
+    emailLog.deal ? linkedRecordContext({ id: emailLog.deal.id, label: emailLog.deal.title, relationship: "linked_deal", type: "deal" }) : null,
+    emailLog.lead ? linkedRecordContext({ id: emailLog.lead.id, label: emailLog.lead.title, relationship: "meeting_association", type: "lead" }) : null,
+    emailLog.organization ? linkedRecordContext({ id: emailLog.organization.id, label: emailLog.organization.name, relationship: "linked_organization", type: "organization" }) : null,
+    emailLog.person ? linkedRecordContext({
+      id: emailLog.person.id,
+      label: formatPersonName(emailLog.person) ?? emailLog.person.email ?? "Unnamed contact",
+      relationship: "linked_person",
+      type: "person"
+    }) : null
+  ].filter((record): record is NorthstarAssistantLinkedRecordContext => Boolean(record));
+}
+
 function toActivityContext(activity: {
   completedAt: Date | string | null;
   dueAt: Date | string | null;
@@ -1262,6 +1361,7 @@ function toEmailContext(email: {
   activityLinks?: Array<{ activity?: unknown }>;
   deal?: { title: string } | null;
   direction: string;
+  emailConnection?: { accountEmail: string | null; displayName: string | null; provider: EmailConnectionProvider } | null;
   id: string;
   lead?: { title: string } | null;
   occurredAt: Date | string;
@@ -1281,6 +1381,7 @@ function toEmailContext(email: {
   return {
     classificationSummary: classification?.summary ? truncate(classification.summary, 260) : undefined,
     direction: email.direction,
+    excerpt: truncate(compactSourceText(classification?.summary ?? email.subject), 180),
     followUpCount: email.activityLinks?.length,
     id: email.id,
     linkedRecordLabel: email.deal?.title ??
@@ -1289,6 +1390,7 @@ function toEmailContext(email: {
       (email.person ? formatPersonName(email.person) ?? email.person.email ?? undefined : undefined),
     occurredAt: dateToIso(email.occurredAt) ?? new Date(0).toISOString(),
     provider: email.provider,
+    sourceAccountLabel: emailSourceAccountLabel(email.emailConnection),
     signals: classification?.signals ?? [],
     subject: truncate(email.subject, 240) ?? "Untitled email"
   };
@@ -1324,8 +1426,9 @@ function toJobContext(job: {
   };
 }
 
-function toNoteContext(note: { body: string; createdAt: Date | string; id: string }) {
+function toNoteContext(note: { author?: { email: string; name: string | null } | null; body: string; createdAt: Date | string; id: string }) {
   return {
+    authorLabel: note.author?.name ?? note.author?.email ?? undefined,
     body: truncate(note.body, maxTextLength) ?? "",
     createdAt: dateToIso(note.createdAt) ?? new Date(0).toISOString(),
     id: note.id
@@ -1338,7 +1441,7 @@ function relationshipFactsFromPerson(person: {
   relationshipFollowUpReminders?: string | null;
   relationshipInternalGuidance?: string | null;
   relationshipPersonalContext?: string | null;
-}) {
+}, sources: Map<RelationshipBriefFieldKey, NorthstarAssistantRelationshipFactContext["source"]> = new Map()) {
   const entries: Array<[RelationshipBriefFieldKey, string | null | undefined]> = [
     ["relationshipPersonalContext", person.relationshipPersonalContext],
     ["relationshipCommunicationStyle", person.relationshipCommunicationStyle],
@@ -1352,9 +1455,80 @@ function relationshipFactsFromPerson(person: {
     return [{
       field,
       label: relationshipBriefUsageForField(field).label,
+      source: sources.get(field),
       value: truncate(trimmed, maxTextLength) ?? trimmed
     }];
   });
+}
+
+function relationshipFactSourcesFromAudits(
+  auditLogs: Array<{ createdAt: Date | string; id: string; metadata?: Prisma.JsonValue | null }>,
+  personId: string
+) {
+  const sources = new Map<RelationshipBriefFieldKey, NonNullable<NorthstarAssistantRelationshipFactContext["source"]>>();
+  for (const audit of auditLogs) {
+    for (const change of relationshipBriefChangesFromAuditMetadata(audit.metadata)) {
+      const field = relationshipBriefSourceField(change.field, change.fieldLabel);
+      if (!field || sources.has(field)) continue;
+      if (change.target?.id && change.target.id !== personId) continue;
+      sources.set(field, {
+        auditId: audit.id,
+        changedAt: relationshipBriefSourceString(change.changedAt) ?? dateToIso(audit.createdAt) ?? undefined,
+        sourceIntakeId: relationshipBriefSourceString(change.source?.intakeId),
+        sourceTitle: relationshipBriefSourceString(change.source?.title),
+        sourceType: relationshipBriefSourceType(change.source?.type)
+      });
+    }
+  }
+  return sources;
+}
+
+function relationshipBriefChangesFromAuditMetadata(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") return [];
+  const changes = (metadata as { relationshipBriefChanges?: unknown }).relationshipBriefChanges;
+  if (!Array.isArray(changes)) return [];
+  return changes.flatMap((change) => {
+    if (!change || typeof change !== "object") return [];
+    const input = change as {
+      changedAt?: unknown;
+      field?: unknown;
+      fieldLabel?: unknown;
+      source?: { intakeId?: unknown; title?: unknown; type?: unknown };
+      target?: { id?: unknown; type?: unknown };
+    };
+    if (typeof input.fieldLabel !== "string") return [];
+    return [{
+      changedAt: input.changedAt,
+      field: input.field,
+      fieldLabel: input.fieldLabel,
+      source: input.source,
+      target: input.target
+    }];
+  });
+}
+
+function relationshipBriefSourceField(field: unknown, fieldLabel: string): RelationshipBriefFieldKey | undefined {
+  if (
+    field === "relationshipPersonalContext" ||
+    field === "relationshipCommunicationStyle" ||
+    field === "relationshipBusinessConcerns" ||
+    field === "relationshipFollowUpReminders" ||
+    field === "relationshipInternalGuidance"
+  ) return field;
+  if (fieldLabel === "Personal context") return "relationshipPersonalContext";
+  if (fieldLabel === "Communication style") return "relationshipCommunicationStyle";
+  if (fieldLabel === "Business concerns") return "relationshipBusinessConcerns";
+  if (fieldLabel === "Follow-up reminders") return "relationshipFollowUpReminders";
+  if (fieldLabel === "Internal guidance") return "relationshipInternalGuidance";
+  return undefined;
+}
+
+function relationshipBriefSourceString(value: unknown) {
+  return typeof value === "string" && value.trim() ? truncate(value.trim(), 180) ?? value.trim() : undefined;
+}
+
+function relationshipBriefSourceType(value: unknown) {
+  return value === "meeting_intelligence" || value === "manual" ? value : undefined;
 }
 
 function meetingProposalSummaries(intake: {
@@ -1377,6 +1551,23 @@ function meetingProposalSummaries(intake: {
   ].filter((summary): summary is string => Boolean(summary));
 }
 
+function toMeetingSourceContext(intake: {
+  id: string;
+  originalFilename: string | null;
+  proposedChangesJson: Prisma.JsonValue | null;
+  sourceType: string;
+  status: string;
+}): NorthstarAssistantMeetingSourceContext {
+  return {
+    categories: meetingProposalCategories(intake.proposedChangesJson),
+    href: `/meeting-intelligence/${intake.id}`,
+    id: intake.id,
+    label: truncate(intake.originalFilename ?? `Meeting intake ${shortId(intake.id)}`, 180) ?? `Meeting intake ${shortId(intake.id)}`,
+    sourceType: intake.sourceType,
+    status: intake.status
+  };
+}
+
 function summarizeProposalJson(value: Prisma.JsonValue | null) {
   if (!value || typeof value !== "object") return [];
   const text = JSON.stringify(value);
@@ -1390,6 +1581,35 @@ function summarizeProposalJson(value: Prisma.JsonValue | null) {
   if (relationshipCount > 0) summaries.push(`Relationship Memory proposal signals: ${relationshipCount}`);
   if (warningCount > 0) summaries.push(`Warnings or uncertain results: ${warningCount}`);
   return summaries.length > 0 ? summaries : [`Proposal JSON present (${Math.min(text.length, maxTextLength)} chars summarized)`];
+}
+
+function meetingProposalCategories(value: Prisma.JsonValue | null) {
+  const categories = new Set<string>();
+  collectMeetingProposalCategories(value, categories);
+  return [...categories].slice(0, 8);
+}
+
+function collectMeetingProposalCategories(value: unknown, categories: Set<string>) {
+  if (!value || categories.size >= 8) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectMeetingProposalCategories(item, categories);
+    return;
+  }
+  if (typeof value !== "object") return;
+  const input = value as Record<string, unknown>;
+  if (typeof input.category === "string" && isMeetingProposalCategory(input.category)) categories.add(input.category);
+  for (const item of Object.values(input)) collectMeetingProposalCategories(item, categories);
+}
+
+function isMeetingProposalCategory(value: string) {
+  return (
+    value === "ambiguousNeedsReview" ||
+    value === "dealFact" ||
+    value === "followUpAction" ||
+    value === "organizationFact" ||
+    value === "personFact" ||
+    value === "stakeholderNote"
+  );
 }
 
 function associationLinks(association: {
@@ -1483,6 +1703,27 @@ function summarizeJson(value: Prisma.JsonValue | null | undefined) {
 function sanitizeDiagnosticText(value: string | null | undefined) {
   const redacted = redactSensitiveText(value ?? "").trim();
   return redacted ? truncate(redacted, 600) ?? redacted : null;
+}
+
+function compactSourceText(value: string | null | undefined) {
+  const redacted = redactSensitiveText(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return redacted || "Stored email metadata was available.";
+}
+
+function emailSourceAccountLabel(connection: { accountEmail: string | null; displayName: string | null; provider: EmailConnectionProvider } | null | undefined) {
+  if (!connection) return undefined;
+  const display = connection.displayName?.trim();
+  const email = connection.accountEmail?.trim();
+  if (display && email) return `${display} (${email})`;
+  return display || email || providerDisplayLabel(connection.provider);
+}
+
+function providerDisplayLabel(provider: EmailConnectionProvider) {
+  if (provider === "GOOGLE_WORKSPACE") return "Google Workspace";
+  if (provider === "MICROSOFT_365") return "Microsoft 365";
+  return provider;
 }
 
 function recordHref(record: NorthstarAssistantRecordSummary | undefined, hash = "") {

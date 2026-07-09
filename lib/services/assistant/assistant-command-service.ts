@@ -11,8 +11,22 @@ import {
   type AssistantEmailReplyMessage,
   type AssistantTodayContext
 } from "./assistant-context-service";
+import {
+  buildAssistantDraftActions,
+  type AssistantDraftAction,
+  type AssistantDraftCommandKind
+} from "./assistant-draft-action-service";
 
-export type AssistantCommandKind = "deal_risk" | "email_reply_check" | "today" | "unsupported";
+export type AssistantCommandKind =
+  | "deal_risk"
+  | "draft_activity"
+  | "draft_ai_preferences"
+  | "draft_contact_relationship"
+  | "draft_note"
+  | "draft_record_creation"
+  | "email_reply_check"
+  | "today"
+  | "unsupported";
 export type AssistantAnswerTone = "attention" | "info" | "success" | "warning";
 
 export type AssistantAnswerItem = {
@@ -30,6 +44,7 @@ export type AssistantAnswerSource = {
 
 export type AssistantCommandResult = {
   command: AssistantCommandKind;
+  draftActions?: AssistantDraftAction[];
   generatedAt: string;
   items: AssistantAnswerItem[];
   query: string;
@@ -49,11 +64,16 @@ export type ParsedAssistantCommand = {
 export const assistantSuggestedCommands = [
   "Tell me what I have to do today.",
   "Show me the highest-risk deals this week.",
-  "Check whether Mike Fox replied to my recent email."
+  "Check whether Mike Fox replied to my recent email.",
+  "Remind me to follow up with Jane Doe next Tuesday.",
+  "Add a note for Jane Doe: Prefers Monday morning check-ins.",
+  "Update Jane Doe's profile to include that she is going on vacation to France in 3 weeks with her family.",
+  "Create an organization for Acme and add Mike Fox as CFO from this note: Mike said Acme is evaluating Q3 pricing.",
+  "Make email replies more casual and concise."
 ] as const;
 
 const readOnlySafetyNotice =
-  "Context-only and review-first: this Assistant does not create, update, delete, link, convert, close, send, sync, archive, mark read, or mutate provider mail in this version.";
+  "Context-only, draft-only, and review-first: this Assistant does not create, update, delete, link, convert, close, send, sync, archive, mark read, save settings, or mutate provider mail from suggestions. Only saved low-risk activity or note drafts can be applied after explicit review.";
 
 export async function answerAssistantCommand(
   actor: WorkspaceActor,
@@ -71,6 +91,14 @@ export async function answerAssistantCommand(
   if (parsed.kind === "email_reply_check" && parsed.target) {
     return buildEmailReplyAssistantAnswer(await buildAssistantEmailReplyContext(actor, parsed.target, now), query);
   }
+  if (isDraftCommandKind(parsed.kind)) {
+    return buildDraftActionAssistantAnswer(
+      await buildAssistantDraftActions(actor, { kind: parsed.kind, query }, now),
+      parsed.kind,
+      query,
+      now
+    );
+  }
   return buildUnsupportedAssistantAnswer(query, now);
 }
 
@@ -84,6 +112,21 @@ export function parseAssistantCommand(query: string): ParsedAssistantCommand {
   if (/\b(replied|reply|responded|response)\b/.test(normalized) && /\b(email|message|thread|inbox)\b/.test(normalized)) {
     const target = extractReplyTarget(query);
     return target ? { kind: "email_reply_check", target } : { kind: "unsupported" };
+  }
+  if (/\b(remind me|create (?:a )?(?:task|activity)|draft (?:a )?(?:task|activity)|follow up)\b/.test(normalized)) {
+    return { kind: "draft_activity" };
+  }
+  if (/\bupdate\b/.test(normalized) && /\b(profile|relationship memory|relationship)\b/.test(normalized)) {
+    return { kind: "draft_contact_relationship" };
+  }
+  if (/\bcreate\b/.test(normalized) && /\borganization\b/.test(normalized) && /\b(add|contact|person)\b/.test(normalized)) {
+    return { kind: "draft_record_creation" };
+  }
+  if (/\b(?:add|create|draft|log|save)\s+(?:a\s+|this\s+)?note\b/.test(normalized)) {
+    return { kind: "draft_note" };
+  }
+  if (/\b(make|set|change|update)\b/.test(normalized) && /\b(email replies|reply|replies|ai preference|assistant|tone|concise|casual|diagnostics|summaries)\b/.test(normalized)) {
+    return { kind: "draft_ai_preferences" };
   }
   return { kind: "unsupported" };
 }
@@ -232,7 +275,7 @@ export function buildUnsupportedAssistantAnswer(query: string, now = new Date())
     command: "unsupported",
     generatedAt: now.toISOString(),
     items: assistantSuggestedCommands.map((command): AssistantAnswerItem => ({
-      detail: "Supported in this read-only Assistant slice.",
+      detail: "Supported in this review-first Assistant slice.",
       href: `/assistant?command=${encodeURIComponent(command)}`,
       label: "Try",
       title: command,
@@ -241,10 +284,48 @@ export function buildUnsupportedAssistantAnswer(query: string, now = new Date())
     query,
     reviewFirst: true,
     safetyNotice: readOnlySafetyNotice,
-    sources: [{ label: "Supported commands", detail: "Today agenda, deal risk, and stored-email reply checks." }],
+    sources: [{ label: "Supported commands", detail: "Today agenda, deal risk, stored-email reply checks, and draft-only CRM action previews." }],
     suggestions: [...assistantSuggestedCommands],
-    summary: "I can answer a small set of deterministic, read-only CRM questions right now. I will not mutate CRM records or provider mail.",
+    summary: "I can answer deterministic CRM questions and draft a small set of review-first actions. Only saved low-risk activity or note drafts can be applied after explicit review; settings, email, sync, provider mail, and other CRM changes stay review-only.",
     title: "Try a supported Assistant command"
+  };
+}
+
+export function buildDraftActionAssistantAnswer(
+  draftActions: AssistantDraftAction[],
+  command: AssistantDraftCommandKind,
+  query: string,
+  now = new Date()
+): AssistantCommandResult {
+  const firstDraft = draftActions[0];
+  const needsClarification = draftActions.some((draft) => draft.confidence === "needs_clarification" || draft.missingInfo.length > 0);
+  return {
+    command,
+    draftActions,
+    generatedAt: now.toISOString(),
+    items: draftActions.map((draft): AssistantAnswerItem => ({
+      detail: [
+        draft.targetLabel,
+        `${draft.fields.length} proposed ${draft.fields.length === 1 ? "field" : "fields"}`,
+        draft.missingInfo.length > 0 ? "Missing information needs review" : "Ready for review"
+      ].join(" · "),
+      href: draft.targetHref,
+      label: draft.reviewLabel,
+      title: draft.title,
+      tone: draft.confidence === "high" ? "success" : needsClarification ? "warning" : "info"
+    })),
+    query,
+    reviewFirst: true,
+    safetyNotice: readOnlySafetyNotice,
+    sources: [
+      { label: "Draft status", detail: "Preview only. Save to the review queue before applying eligible activity or note drafts." },
+      { label: "Draft basis", detail: "Deterministic parsing plus bounded workspace record matching. No external AI provider was called." }
+    ],
+    suggestions: [...assistantSuggestedCommands],
+    summary: needsClarification
+      ? "I drafted a review-first CRM action, but it needs clarification before anyone should apply it later."
+      : `I drafted ${draftSummaryNoun(firstDraft)} for review. Nothing has been saved or applied.`,
+    title: "Draft action for review"
   };
 }
 
@@ -334,6 +415,23 @@ function participantSummary(message: AssistantEmailReplyMessage) {
   if (message.fromText) return `From ${message.fromText}`;
   if (message.toText) return `To ${message.toText}`;
   return "";
+}
+
+function isDraftCommandKind(kind: AssistantCommandKind): kind is AssistantDraftCommandKind {
+  return kind === "draft_activity" ||
+    kind === "draft_ai_preferences" ||
+    kind === "draft_contact_relationship" ||
+    kind === "draft_note" ||
+    kind === "draft_record_creation";
+}
+
+function draftSummaryNoun(draft: AssistantDraftAction | undefined) {
+  if (!draft) return "a CRM action";
+  if (draft.kind === "activity") return "an activity";
+  if (draft.kind === "ai_preference_update") return "an AI preference change";
+  if (draft.kind === "contact_relationship_update") return "a contact relationship update";
+  if (draft.kind === "note") return "a note";
+  return "an organization/contact creation preview";
 }
 
 function formatDate(value: string) {

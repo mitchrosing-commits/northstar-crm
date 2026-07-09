@@ -8,8 +8,11 @@ export type MeetingPlacementExplanation = {
   targetType: "activity" | "deal" | "lead" | "organization" | "person" | "unknown";
 };
 
-export function explainMeetingNotePlacement(note: Pick<ProposedNote, "body" | "kind" | "target">): MeetingPlacementExplanation {
+export function explainMeetingNotePlacement(note: Pick<ProposedNote, "body" | "category" | "kind" | "target">): MeetingPlacementExplanation {
   const targetType = normalizeTargetType(note.target);
+  if (note.category === "stakeholderNote") {
+    return explanation("Stakeholder context", "The proposal identifies buyer-role context and should be reviewed separately from personal memory.", targetType, "medium");
+  }
   if (note.kind === "personal_fact" || targetType === "person") {
     return explanation("Contact context", "The proposal contains person-level detail or targets a contact.", "person", "medium");
   }
@@ -34,7 +37,10 @@ export function explainMeetingActivityPlacement(activity: Pick<ProposedNextStepA
   return explanation("Needs target review", "No target is selected, so this follow-up will be skipped until a reviewer chooses one.", "activity", "low");
 }
 
-export function explainRelationshipFactPlacement(fact: Pick<ProposedRelationshipBriefFact, "field" | "text">): MeetingPlacementExplanation {
+export function explainRelationshipFactPlacement(fact: Pick<ProposedRelationshipBriefFact, "category" | "field" | "text">): MeetingPlacementExplanation {
+  if (fact.category === "personFact") {
+    return explanation("Contact memory", `This contact-specific fact maps to the ${fact.field.replace("relationship", "").replace(/([A-Z])/g, " $1").trim()} field.`, "person", "medium");
+  }
   if (/\b(company|contract|procurement|security|legal|implementation|rollout|msa|sow)\b/i.test(fact.text)) {
     return explanation("Check organization placement", "This fact may be account-level even though it was proposed for contact memory.", "organization", "low");
   }

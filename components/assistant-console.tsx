@@ -1,24 +1,29 @@
 import Link from "next/link";
 import type { Route } from "next";
 
+import { AssistantActionReviewQueue } from "@/components/assistant-action-review-queue";
 import { Badge } from "@/components/badge";
+import { AssistantDraftActionCard } from "@/components/assistant-draft-action-card";
 import { FormFieldLabel } from "@/components/form-field-label";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import type { AssistantCommandResult } from "@/lib/services/assistant/assistant-command-service";
 import { assistantSuggestedCommands } from "@/lib/services/assistant/assistant-command-service";
+import type { AssistantActionRequestView } from "@/lib/services/assistant/assistant-action-request-service";
 
 type AssistantConsoleProps = {
+  actionRequestStatus: string;
   answer: AssistantCommandResult | null;
   command: string;
+  pendingActionRequests: AssistantActionRequestView[];
 };
 
-export function AssistantConsole({ answer, command }: AssistantConsoleProps) {
+export function AssistantConsole({ actionRequestStatus, answer, command, pendingActionRequests }: AssistantConsoleProps) {
   return (
     <section className="assistant-console" aria-label="Northstar Assistant console">
       <section className="panel assistant-command-panel" aria-labelledby="assistant-command-title">
         <PanelTitleRow
-          actions={<Badge>Read-only</Badge>}
-          description="Ask a focused CRM question. This first Assistant slice only reads workspace context and never changes CRM records or provider mail."
+          actions={<Badge>Review-first</Badge>}
+          description="Ask a focused CRM question or draft a CRM action for review. Northstar applies only explicitly confirmed low-risk activity or note drafts; it does not save settings, send email, sync, or mutate provider mail from this page."
           title="Ask Northstar"
           titleId="assistant-command-title"
         />
@@ -39,7 +44,7 @@ export function AssistantConsole({ answer, command }: AssistantConsoleProps) {
             <input
               autoComplete="off"
               defaultValue={command}
-              maxLength={240}
+              maxLength={640}
               name="command"
               placeholder="Tell me what I have to do today."
             />
@@ -51,6 +56,7 @@ export function AssistantConsole({ answer, command }: AssistantConsoleProps) {
       </section>
 
       {answer ? <AssistantAnswerCard answer={answer} /> : <AssistantEmptyState />}
+      <AssistantActionReviewQueue requests={pendingActionRequests} status={actionRequestStatus} />
     </section>
   );
 }
@@ -62,7 +68,7 @@ function AssistantAnswerCard({ answer }: { answer: AssistantCommandResult }) {
         actions={
           <>
             <Badge>Context-only</Badge>
-            <Badge>Review-first</Badge>
+            <Badge>Draft only</Badge>
           </>
         }
         description={answer.safetyNotice}
@@ -87,6 +93,13 @@ function AssistantAnswerCard({ answer }: { answer: AssistantCommandResult }) {
           </li>
         ))}
       </ul>
+      {answer.draftActions?.length ? (
+        <div className="assistant-draft-list" aria-label="Assistant draft actions">
+          {answer.draftActions.map((draft) => (
+            <AssistantDraftActionCard draft={draft} key={draft.id} sourceCommand={answer.query} />
+          ))}
+        </div>
+      ) : null}
       {answer.sources.length > 0 ? (
         <div className="assistant-source-notes" aria-label="Assistant source context notes">
           <strong>Source notes</strong>
@@ -109,12 +122,12 @@ function AssistantEmptyState() {
     <section className="data-card assistant-answer-card" aria-label="Assistant getting started">
       <PanelTitleRow
         actions={<Badge>Deterministic</Badge>}
-        description="Choose a suggested command or ask one of the supported read-only questions."
+        description="Choose a suggested command or ask one of the supported read-only or draft-only questions."
         eyebrow="Assistant answer"
         title="Ready for a workspace question"
       />
       <p className="assistant-answer-summary">
-        Northstar can summarize today&apos;s work, identify deterministic deal risk, and check stored email logs for likely replies. It will not sync, send, edit, or apply changes.
+        Northstar can summarize today&apos;s work, identify deterministic deal risk, check stored email logs for likely replies, and draft CRM actions for review. It will not sync, send, save settings, or apply anything except an explicitly confirmed low-risk activity draft.
       </p>
     </section>
   );

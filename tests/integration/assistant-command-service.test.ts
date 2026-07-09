@@ -153,6 +153,435 @@ describe("read-only Assistant command service integration", () => {
     expect(serialized).not.toContain("provider-thread-secret");
     await expect(readOnlyCounts(fx)).resolves.toEqual(before);
   });
+
+  it("drafts an activity from a command without creating activities or crossing workspaces", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    await fx.prisma.person.create({
+      data: {
+        email: "assistant.hidden@example.test",
+        firstName: fx.recordsA.person.firstName,
+        lastName: fx.recordsA.person.lastName,
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const before = await readOnlyCounts(fx);
+    const contactName = [fx.recordsA.person.firstName, fx.recordsA.person.lastName].filter(Boolean).join(" ");
+
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${contactName} next Tuesday.`,
+      { now }
+    );
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("draft_activity");
+    expect(answer.draftActions?.[0]).toMatchObject({
+      applyState: "disabled",
+      reviewLabel: "Draft only",
+      targetLabel: contactName
+    });
+    expect(serialized).toContain("Jan 8, 2030");
+    expect(serialized).not.toContain("assistant.hidden@example.test");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("drafts a summarized contact relationship update without saving profile fields", async () => {
+    const fx = currentFixture();
+    const before = await readOnlyCounts(fx);
+    const contactName = [fx.recordsA.person.firstName, fx.recordsA.person.lastName].filter(Boolean).join(" ");
+
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Update ${contactName}'s profile to include that she is going on vacation to France in 3 weeks with her family.`
+    );
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("draft_contact_relationship");
+    expect(serialized).toContain("will be traveling to France with family in about three weeks");
+    expect(serialized).toContain("Relationship Memory field");
+    expect(serialized).toContain("Review for sensitivity before saving");
+    expect(serialized).not.toContain("raw provider");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+    await expect(fx.prisma.person.findUnique({
+      select: { relationshipPersonalContext: true },
+      where: { id: fx.recordsA.person.id }
+    })).resolves.toMatchObject({ relationshipPersonalContext: null });
+  });
+
+  it("drafts organization/contact creation and AI preference changes without writes", async () => {
+    const fx = currentFixture();
+    const beforeCreation = await readOnlyCounts(fx);
+
+    const creation = await crm.answerAssistantCommand(
+      fx.actorA,
+      "Create an organization for Acme Draft Co and add Mike Fox as CFO from this note: Mike said Acme Draft Co is evaluating Q3 pricing."
+    );
+    const creationJson = JSON.stringify(creation);
+
+    expect(creation.command).toBe("draft_record_creation");
+    expect(creationJson).toContain("Acme Draft Co");
+    expect(creationJson).toContain("Mike Fox");
+    expect(creationJson).toContain("CFO");
+    expect(creationJson).toContain("No records will be created");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(beforeCreation);
+
+    const beforePreferences = await readOnlyCounts(fx);
+    const preferences = await crm.answerAssistantCommand(fx.actorA, "Make email replies more casual and concise.");
+    const preferencesJson = JSON.stringify(preferences);
+
+    expect(preferences.command).toBe("draft_ai_preferences");
+    expect(preferencesJson).toContain("Reply Tone");
+    expect(preferencesJson).toContain("concise");
+    expect(preferencesJson).toContain("Email replies should be casual and concise");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(beforePreferences);
+  });
+
+  it("returns candidates and requires review when draft record matches are ambiguous", async () => {
+    const fx = currentFixture();
+    await fx.prisma.person.createMany({
+      data: [
+        {
+          email: "jane.one@example.test",
+          firstName: "Jane",
+          lastName: "Doe",
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          email: "jane.two@example.test",
+          firstName: "Jane",
+          lastName: "Doe",
+          workspaceId: fx.workspaceA.id
+        }
+      ]
+    });
+    const before = await readOnlyCounts(fx);
+
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      "Remind me to follow up with Jane Doe tomorrow."
+    );
+
+    expect(answer.command).toBe("draft_activity");
+    expect(answer.draftActions?.[0]?.confidence).toBe("needs_clarification");
+    expect(answer.draftActions?.[0]?.candidates.map((candidate) => candidate.label)).toEqual(["Jane Doe", "Jane Doe"]);
+    expect(answer.summary).toContain("needs clarification");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("saves draft actions as user-scoped pending requests without touching CRM records", async () => {
+    const fx = currentFixture();
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} tomorrow.`
+    );
+    const draft = answer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a draft action.");
+    const beforeCrm = await crmRecordCounts(fx);
+
+    const request = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: {
+        ...draft,
+        evidence: [
+          "Authorization: Bearer secret-token",
+          "refresh_token=super-secret",
+          "Provider payload: should be sanitized"
+        ]
+      },
+      sourceCommand: "Remind me with token=super-secret"
+    });
+    const pendingForA = await crm.listPendingAssistantActionRequests(fx.actorA);
+    const pendingForB = await crm.listPendingAssistantActionRequests(fx.actorB);
+    const stored = await fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: request.id } });
+    const audit = await fx.prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: "assistant_action_request.created",
+        entityId: request.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const serialized = JSON.stringify({ pendingForA, stored });
+
+    expect(request.status).toBe("PENDING");
+    expect(request.actionType).toBe("activity");
+    expect(request.riskLevel).toBe("low");
+    expect(pendingForA.map((item) => item.id)).toEqual([request.id]);
+    expect(pendingForB).toEqual([]);
+    expect(stored.workspaceId).toBe(fx.workspaceA.id);
+    expect(stored.createdById).toBe(fx.userA.id);
+    expect(serialized).not.toContain("secret-token");
+    expect(serialized).not.toContain("super-secret");
+    expect(serialized).not.toContain("Bearer secret");
+    expect(audit.metadata).toMatchObject({ actionType: "activity", status: "PENDING" });
+    await expect(crmRecordCounts(fx)).resolves.toEqual(beforeCrm);
+  });
+
+  it("rejects pending requests through the Assistant queue without touching CRM records or crossing users", async () => {
+    const fx = currentFixture();
+    const answer = await crm.answerAssistantCommand(fx.actorA, "Make email replies more casual and concise.");
+    const draft = answer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a draft action.");
+    const request = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: answer.query });
+    const beforeCrm = await crmRecordCounts(fx);
+
+    await expect(crm.rejectAssistantActionRequest(fx.actorB, request.id)).rejects.toThrow(/not found|no longer pending/i);
+    const rejected = await crm.rejectAssistantActionRequest(fx.actorA, request.id);
+    const pendingAfterReject = await crm.listPendingAssistantActionRequests(fx.actorA);
+    const stored = await fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: request.id } });
+    const audit = await fx.prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: "assistant_action_request.rejected",
+        entityId: request.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(rejected.status).toBe("REJECTED");
+    expect(stored.status).toBe("REJECTED");
+    expect(stored.rejectedAt).toBeTruthy();
+    expect(stored.appliedAt).toBeNull();
+    expect(pendingAfterReject).toEqual([]);
+    expect(audit.metadata).toMatchObject({ actionType: "ai_preference_update", status: "REJECTED" });
+    await expect(crmRecordCounts(fx)).resolves.toEqual(beforeCrm);
+  });
+
+  it("applies only clear pending activity requests through the activity service", async () => {
+    const fx = currentFixture();
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} tomorrow.`
+    );
+    const draft = answer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a draft action.");
+    const request = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: answer.query });
+    const beforeActivityCount = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    const applied = await crm.applyAssistantActionRequest(fx.actorA, request.id);
+    const stored = await fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: request.id } });
+    const createdActivities = await fx.prisma.activity.findMany({
+      where: {
+        personId: fx.recordsA.person.id,
+        title: "Follow up with Alpha Contact",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const pendingAfterApply = await crm.listPendingAssistantActionRequests(fx.actorA);
+    const allRequestsAfterApply = await crm.listAssistantActionRequests(fx.actorA);
+    const assistantAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: "assistant_action_request.applied",
+        entityId: request.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const activityAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: "activity.created",
+        entityId: applied.activityId,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(applied.request).toMatchObject({ canApply: false, status: "APPLIED" });
+    expect(stored.status).toBe("APPLIED");
+    expect(stored.appliedAt).toBeTruthy();
+    expect(createdActivities).toHaveLength(1);
+    expect(createdActivities[0]).toMatchObject({
+      id: applied.activityId,
+      personId: fx.recordsA.person.id,
+      type: "TASK"
+    });
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeActivityCount + 1);
+    expect(pendingAfterApply).toEqual([]);
+    expect(allRequestsAfterApply.map((item) => item.status)).toEqual(["APPLIED"]);
+    expect(assistantAudit.metadata).toMatchObject({ actionType: "activity", activityId: applied.activityId, status: "APPLIED" });
+    expect(activityAudit.metadata).toMatchObject({ title: "Follow up with Alpha Contact" });
+  });
+
+  it("drafts and applies only clear pending note requests through the note service", async () => {
+    const fx = currentFixture();
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Add a note for ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}: Prefers Monday morning check-ins.`
+    );
+    const draft = answer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a note draft.");
+    expect(answer.command).toBe("draft_note");
+    expect(draft).toMatchObject({
+      kind: "note",
+      targetHref: `/contacts/${fx.recordsA.person.id}`,
+      targetLabel: `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`
+    });
+    const request = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: answer.query });
+    const beforeNoteCount = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    const applied = await crm.applyAssistantActionRequest(fx.actorA, request.id);
+    const stored = await fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: request.id } });
+    const createdNotes = await fx.prisma.note.findMany({
+      where: {
+        body: "Prefers Monday morning check-ins",
+        personId: fx.recordsA.person.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const assistantAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: "assistant_action_request.applied",
+        entityId: request.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const noteAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: "note.created",
+        entityId: applied.noteId,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(applied.request).toMatchObject({ canApply: false, status: "APPLIED" });
+    expect(stored.status).toBe("APPLIED");
+    expect(stored.appliedAt).toBeTruthy();
+    expect(createdNotes).toHaveLength(1);
+    expect(createdNotes[0]).toMatchObject({
+      authorId: fx.userA.id,
+      id: applied.noteId,
+      personId: fx.recordsA.person.id
+    });
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeNoteCount + 1);
+    expect(assistantAudit.metadata).toMatchObject({ actionType: "note", noteId: applied.noteId, status: "APPLIED" });
+    expect(noteAudit.entityType).toBe("Note");
+  });
+
+  it("does not apply an already applied or rejected Assistant request twice", async () => {
+    const fx = currentFixture();
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} tomorrow.`
+    );
+    const draft = answer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a draft action.");
+    const appliedRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: answer.query });
+    await crm.applyAssistantActionRequest(fx.actorA, appliedRequest.id);
+    const afterFirstApply = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    await expect(crm.applyAssistantActionRequest(fx.actorA, appliedRequest.id)).rejects.toThrow(/not found|no longer pending/i);
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstApply);
+
+    const rejectedRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: answer.query });
+    await crm.rejectAssistantActionRequest(fx.actorA, rejectedRequest.id);
+    await expect(crm.applyAssistantActionRequest(fx.actorA, rejectedRequest.id)).rejects.toThrow(/not found|no longer pending/i);
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstApply);
+
+    const noteAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Add a note for ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}: Likes concise renewal summaries.`
+    );
+    const noteDraft = noteAnswer.draftActions?.[0];
+    if (!noteDraft) throw new Error("Expected a note draft.");
+    const appliedNoteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: noteAnswer.query });
+    await crm.applyAssistantActionRequest(fx.actorA, appliedNoteRequest.id);
+    const afterFirstNoteApply = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    await expect(crm.applyAssistantActionRequest(fx.actorA, appliedNoteRequest.id)).rejects.toThrow(/not found|no longer pending/i);
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstNoteApply);
+
+    const rejectedNoteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: noteAnswer.query });
+    await crm.rejectAssistantActionRequest(fx.actorA, rejectedNoteRequest.id);
+    await expect(crm.applyAssistantActionRequest(fx.actorA, rejectedNoteRequest.id)).rejects.toThrow(/not found|no longer pending/i);
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(afterFirstNoteApply);
+  });
+
+  it("rejects unsupported, ambiguous, and cross-workspace applies without CRM mutations", async () => {
+    const fx = currentFixture();
+    const preferences = await crm.answerAssistantCommand(fx.actorA, "Make email replies more casual and concise.");
+    const unsupportedDraft = preferences.draftActions?.[0];
+    if (!unsupportedDraft) throw new Error("Expected an unsupported apply draft.");
+    const unsupportedRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: unsupportedDraft,
+      sourceCommand: preferences.query
+    });
+    const activityAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} tomorrow.`
+    );
+    const activityDraft = activityAnswer.draftActions?.[0];
+    if (!activityDraft) throw new Error("Expected an activity draft.");
+    const crossWorkspaceRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: activityDraft,
+      sourceCommand: activityAnswer.query
+    });
+    const noteAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Add a note for ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}: Confirmed budget owner.`
+    );
+    const noteDraft = noteAnswer.draftActions?.[0];
+    if (!noteDraft) throw new Error("Expected a note draft.");
+    const crossWorkspaceNoteRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: noteDraft,
+      sourceCommand: noteAnswer.query
+    });
+    await fx.prisma.person.createMany({
+      data: [
+        {
+          email: "ambiguous-one@example.test",
+          firstName: "Jordan",
+          lastName: "River",
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          email: "ambiguous-two@example.test",
+          firstName: "Jordan",
+          lastName: "River",
+          workspaceId: fx.workspaceA.id
+        }
+      ]
+    });
+    const ambiguousAnswer = await crm.answerAssistantCommand(fx.actorA, "Remind me to follow up with Jordan River tomorrow.");
+    const ambiguousDraft = ambiguousAnswer.draftActions?.[0];
+    if (!ambiguousDraft) throw new Error("Expected an ambiguous activity draft.");
+    const ambiguousRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: ambiguousDraft,
+      sourceCommand: ambiguousAnswer.query
+    });
+    const ambiguousNoteAnswer = await crm.answerAssistantCommand(fx.actorA, "Add a note for Jordan River: Needs procurement follow-up.");
+    const ambiguousNoteDraft = ambiguousNoteAnswer.draftActions?.[0];
+    if (!ambiguousNoteDraft) throw new Error("Expected an ambiguous note draft.");
+    const ambiguousNoteRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: ambiguousNoteDraft,
+      sourceCommand: ambiguousNoteAnswer.query
+    });
+    const missingTargetNoteAnswer = await crm.answerAssistantCommand(fx.actorA, "Add note: Needs review before next call.");
+    const missingTargetNoteDraft = missingTargetNoteAnswer.draftActions?.[0];
+    if (!missingTargetNoteDraft) throw new Error("Expected a missing-target note draft.");
+    const missingTargetNoteRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: missingTargetNoteDraft,
+      sourceCommand: missingTargetNoteAnswer.query
+    });
+    const beforeCrm = await crmRecordCounts(fx);
+
+    await expect(crm.applyAssistantActionRequest(fx.actorA, unsupportedRequest.id)).rejects.toThrow(/only available/i);
+    await expect(crm.applyAssistantActionRequest(fx.actorB, crossWorkspaceRequest.id)).rejects.toThrow(/not found|no longer pending/i);
+    await expect(crm.applyAssistantActionRequest(fx.actorB, crossWorkspaceNoteRequest.id)).rejects.toThrow(/not found|no longer pending/i);
+    await expect(crm.applyAssistantActionRequest(fx.actorA, ambiguousRequest.id)).rejects.toThrow(/only available/i);
+    await expect(crm.applyAssistantActionRequest(fx.actorA, ambiguousNoteRequest.id)).rejects.toThrow(/only available/i);
+    await expect(crm.applyAssistantActionRequest(fx.actorA, missingTargetNoteRequest.id)).rejects.toThrow(/only available/i);
+
+    const [unsupportedStored, ambiguousStored, ambiguousNoteStored, missingTargetNoteStored] = await Promise.all([
+      fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: unsupportedRequest.id } }),
+      fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: ambiguousRequest.id } }),
+      fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: ambiguousNoteRequest.id } }),
+      fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: missingTargetNoteRequest.id } })
+    ]);
+    expect(unsupportedStored.status).toBe("PENDING");
+    expect(ambiguousStored.status).toBe("PENDING");
+    expect(ambiguousStored.appliedAt).toBeNull();
+    expect(ambiguousNoteStored.status).toBe("PENDING");
+    expect(missingTargetNoteStored.status).toBe("PENDING");
+    expect(ambiguousNoteStored.appliedAt).toBeNull();
+    expect(missingTargetNoteStored.appliedAt).toBeNull();
+    await expect(crmRecordCounts(fx)).resolves.toEqual(beforeCrm);
+  });
 });
 
 async function readOnlyCounts(fx: Fixture) {
@@ -162,19 +591,39 @@ async function readOnlyCounts(fx: Fixture) {
     auditLogs,
     deals,
     emailLogs,
+    organizations,
     jobs,
     notes,
-    people
+    people,
+    aiPreferences,
+    assistantActionRequests
   ] = await Promise.all([
     fx.prisma.activity.count({ where }),
     fx.prisma.auditLog.count({ where }),
     fx.prisma.deal.count({ where }),
     fx.prisma.emailLog.count({ where }),
+    fx.prisma.organization.count({ where }),
     fx.prisma.job.count({ where }),
     fx.prisma.note.count({ where }),
-    fx.prisma.person.count({ where })
+    fx.prisma.person.count({ where }),
+    fx.prisma.aiPreference.count({ where }),
+    fx.prisma.assistantActionRequest.count({ where })
   ]);
-  return { activities, auditLogs, deals, emailLogs, jobs, notes, people };
+  return { activities, aiPreferences, assistantActionRequests, auditLogs, deals, emailLogs, jobs, notes, organizations, people };
+}
+
+async function crmRecordCounts(fx: Fixture) {
+  const counts = await readOnlyCounts(fx);
+  return {
+    activities: counts.activities,
+    aiPreferences: counts.aiPreferences,
+    deals: counts.deals,
+    emailLogs: counts.emailLogs,
+    jobs: counts.jobs,
+    notes: counts.notes,
+    organizations: counts.organizations,
+    people: counts.people
+  };
 }
 
 function currentFixture() {

@@ -473,13 +473,13 @@ describe("email sync server actions", () => {
       category: "PROSPECT",
       cautions: ["Suggested label only."],
       confidence: 0.64,
-      evidence: ["Local labels: Needs reply, Pricing, No CRM link."],
+      evidence: ["Local labels: Needs reply, Pricing / quote, No CRM link."],
       generatedAt,
       providerId: "local_rules",
       providerName: "Local rules",
       signalEvidence: [],
       signals: ["NEEDS_REPLY", "PRICING_QUOTE", "POTENTIAL_LEAD"],
-      summary: "Local rules suggest Needs reply, Pricing, No CRM link."
+      summary: "Local rules suggest Needs reply, Pricing / quote, No CRM link."
     });
     const formData = new FormData();
     formData.set("emailLogId", "email_log_2");

@@ -5,7 +5,6 @@ import type { EmailInboxThreadSummary } from "./email-connection-service";
 import type { EmailPriorityFollowUpDetail } from "./email-priority-queue-service";
 import {
   buildLocalEmailLabelSuggestions,
-  readEmailSmartClassification,
 } from "./email-classification-service";
 import {
   summarizeStoredEmailForAi,
@@ -225,7 +224,6 @@ function buildWorkInboxItem({
       .reverse()
       .find((message) => message.direction === "INBOUND") ??
     thread.latestMessage;
-  const smartClassification = readEmailSmartClassification(primaryMessage);
   const text = searchableEmailText(primaryMessage);
   const lower = text.toLowerCase();
   const providerLabels = normalizedProviderLabels(
@@ -418,16 +416,18 @@ function buildWorkInboxItem({
   if (customerSignal)
     tags.add(customerSignal && linkedRecordLabel ? "Customer" : "Prospect");
   if (opportunitySignal) tags.add(opportunityTag(lower));
-  if (meetingSignal) tags.add("Meeting");
-  if (riskSignal) tags.add("Risk");
-  if (isAutomated) tags.add("Automated");
+  if (meetingSignal) tags.add("Meeting / scheduling");
+  if (riskSignal) tags.add("Relationship risk");
+  if (isAutomated) {
+    tags.add("Newsletter / promotion");
+    tags.add("Automated / no-reply");
+  }
   if (isPersonal) tags.add("Personal");
   if (isUnimportant) tags.add("Unimportant");
   if (linkedRecordLabel) tags.delete("No CRM link");
   else tags.delete("CRM linked");
   tags.add(linkedRecordLabel ? "CRM linked" : "No CRM link");
   tags.add(summary.status === "ready" ? "AI summary" : "Summary unavailable");
-  if (smartClassification) tags.add("Smart Label");
   const displayTags = prioritizeWorkInboxTags(tags, linkedRecordLabel);
 
   const priorityLevel: WorkInboxPriorityLevel =
@@ -643,8 +643,9 @@ function extractQuestionSentences(value: string) {
 }
 
 function opportunityTag(value: string) {
-  if (hasAny(value, ["contract", "msa", "sow", "legal"])) return "Contract";
-  if (hasAny(value, ["pricing", "price", "quote"])) return "Pricing";
+  if (hasAny(value, ["contract", "msa", "sow", "legal"]))
+    return "Contract / legal";
+  if (hasAny(value, ["pricing", "price", "quote"])) return "Pricing / quote";
   return "Lead";
 }
 

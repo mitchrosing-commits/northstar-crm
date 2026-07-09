@@ -219,16 +219,20 @@ export function buildLocalEmailLabelSuggestions(email: EmailLocalClassificationI
 
   if (String(email.direction ?? "").toUpperCase() === "INBOUND" && (localEmailHasQuestion(text) || hasAny(lower, ["can you", "could you", "please", "let me know", "thoughts?", "available?"]))) labels.add("Needs reply");
   if (hasAny(lower, ["follow up", "follow-up", "next step", "circle back", "check in"])) labels.add("Follow-up");
-  if (hasAny(lower, ["pricing", "price", "quote", "proposal"])) labels.add("Pricing");
-  if (hasAny(lower, ["contract", "msa", "sow", "legal", "terms"])) labels.add("Contract");
-  if (hasAny(lower, ["meeting", "calendar", "demo", "call", "zoom", "agenda"])) labels.add("Meeting");
-  if (hasAny(lower, ["risk", "concern", "blocked", "unhappy", "delay", "issue", "cancel", "churn", "escalat"])) labels.add("Risk");
+  if (hasAny(lower, ["pricing", "price", "quote", "proposal"])) labels.add("Pricing / quote");
+  if (hasAny(lower, ["contract", "msa", "sow", "legal", "terms"])) labels.add("Contract / legal");
+  if (hasAny(lower, ["meeting", "calendar", "demo", "call", "zoom", "agenda"])) labels.add("Meeting / scheduling");
+  if (hasAny(lower, ["risk", "concern", "blocked", "unhappy", "delay", "issue", "cancel", "churn", "escalat"])) labels.add("Relationship risk");
   if (hasAny(lower, ["demo", "trial", "interested", "buying", "proposal", "intro"])) labels.add(linkedToCrm ? "Opportunity" : "Lead");
   if (linkedToCrm) labels.add("CRM linked");
   if (!linkedToCrm) labels.add("No CRM link");
   if (linkedToCrm) labels.add("Customer");
   if (!linkedToCrm && labels.has("Lead")) labels.add("Prospect");
-  if (automated) labels.add("Automated");
+  if (automated) {
+    labels.add("Newsletter / promotion");
+    labels.add("Automated / no-reply");
+    labels.add("Unimportant");
+  }
   if (personal) labels.add("Personal / Low Priority");
   if (!automated && !personal && (linkedToCrm || labels.size > 1)) labels.add("Work");
 

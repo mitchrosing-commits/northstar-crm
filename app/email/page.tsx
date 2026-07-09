@@ -149,7 +149,11 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     { preferences: aiPreferences },
   );
   const defaultAiReplyTone = aiReplyToneFromPreferences(aiPreferences);
-  const oldestInboxMessageAt = oldestInboxMessageDate(inboxThreads);
+  const oldestInboxCoverage = oldestInboxMessageCoverage({
+    accounts: gmailAccounts,
+    selectedAccount: selectedInboxAccount,
+    threads: inboxThreads,
+  });
   const inboxFollowUpDetails = await listEmailPriorityFollowUpDetails(
     actor,
     inboxThreads.flatMap((thread) => thread.messages),
@@ -234,6 +238,16 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     page: activeWorkInboxPage,
     pageSize: activeWorkInboxPageSize,
   });
+  const currentInboxReturnHref = inboxAccountHref(selectedInboxAccount, {
+    activeTab: activeWorkInboxTab,
+    crmFilter: activeWorkInboxCrm,
+    importanceFilter: activeWorkInboxImportance,
+    page: paginatedWorkInbox.page,
+    pageSize: activeWorkInboxPageSize,
+    priorityFilter: activeWorkInboxPriority,
+    query: activeWorkInboxSearch,
+    sort: activeWorkInboxSort,
+  });
   const selectedWorkInboxItem = resolvedSearchParams?.thread
     ? (workInbox.visibleItems.find(
         (item) => item.thread.id === resolvedSearchParams.thread,
@@ -304,7 +318,11 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             aiReplyReadiness={aiReplyReadiness}
             defaultAiReplyTone={defaultAiReplyTone}
             draftTemplates={draftTemplates}
-            backHref={inboxAccountHref(selectedInboxAccount, {
+            backHref={currentInboxReturnHref}
+            followUpDetails={selectedInboxFollowUpDetails}
+            insight={selectedWorkInboxItem}
+            returnTo={emailInboxThreadHref(selectedInboxThread.id, {
+              account: selectedInboxAccount,
               activeTab: activeWorkInboxTab,
               crmFilter: activeWorkInboxCrm,
               importanceFilter: activeWorkInboxImportance,
@@ -314,8 +332,6 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               query: activeWorkInboxSearch,
               sort: activeWorkInboxSort,
             })}
-            followUpDetails={selectedInboxFollowUpDetails}
-            insight={selectedWorkInboxItem}
             smartLabelReadiness={smartLabelReadiness}
             thread={selectedInboxThread}
             workspaceId={workspace.id}
@@ -327,6 +343,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               provider={gmailProvider}
               selectedAccount={selectedInboxAccount}
               syncProgress={gmailSyncProgress}
+              returnTo={currentInboxReturnHref}
               threadCount={workInbox.items.length}
             />
             <WorkInboxToolbar
@@ -335,11 +352,13 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               crmFilter={activeWorkInboxCrm}
               importanceFilter={activeWorkInboxImportance}
               provider={gmailProvider}
+              pageSize={activeWorkInboxPageSize}
               priorityFilter={activeWorkInboxPriority}
               query={activeWorkInboxSearch}
               selectedAccount={selectedInboxAccount}
               sort={activeWorkInboxSort}
               syncProgress={gmailSyncProgress}
+              returnTo={currentInboxReturnHref}
               tabs={workInbox.tabs}
             />
             {workInbox.visibleItems.length > 0 ? (
@@ -362,34 +381,13 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                     sort={activeWorkInboxSort}
                     tab={activeWorkInboxTab}
                   />
-                  {gmailProvider?.syncAvailable && oldestInboxMessageAt ? (
-                    <form
-                      action={loadOlderGmailInboxFromEmailPageAction}
-                      className="email-inbox-load-more"
-                    >
-                      <input
-                        name="account"
-                        type="hidden"
-                        value={selectedInboxAccount}
-                      />
-                      <input
-                        name="before"
-                        type="hidden"
-                        value={oldestInboxMessageAt.toISOString()}
-                      />
-                      <button
-                        aria-label="Load older Gmail inbox messages"
-                        className="button-secondary button-compact"
-                        title="Load older Gmail inbox messages"
-                        type="submit"
-                      >
-                        Load older messages
-                      </button>
-                      <span className="form-hint">
-                        Before {formatDate(oldestInboxMessageAt)}
-                      </span>
-                    </form>
-                  ) : null}
+                  <MailboxCoverageStrip
+                    coverage={oldestInboxCoverage}
+                    provider={gmailProvider}
+                    returnTo={currentInboxReturnHref}
+                    selectedAccount={selectedInboxAccount}
+                    threadCount={workInbox.items.length}
+                  />
                   <WorkInboxPagination
                     activeTab={activeWorkInboxTab}
                     crmFilter={activeWorkInboxCrm}
@@ -411,7 +409,10 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                 importanceFilter={activeWorkInboxImportance}
                 priorityFilter={activeWorkInboxPriority}
                 provider={gmailProvider}
+                coverage={oldestInboxCoverage}
+                pageSize={activeWorkInboxPageSize}
                 query={activeWorkInboxSearch}
+                returnTo={currentInboxReturnHref}
                 selectedAccount={selectedInboxAccount}
                 sort={activeWorkInboxSort}
               />
@@ -423,6 +424,8 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                 )}
                 emptyState={fullInboxEmptyState}
                 provider={gmailProvider}
+                returnTo={currentInboxReturnHref}
+                selectedAccount={selectedInboxAccount}
               />
             )}
           </>
@@ -958,12 +961,14 @@ function EmailScopeCallout({
 function EmailClientHeader({
   accounts,
   provider,
+  returnTo,
   selectedAccount,
   syncProgress,
   threadCount,
 }: {
   accounts: GmailInboxAccountSummary[];
   provider: ProviderCard | undefined;
+  returnTo: Route;
   selectedAccount: string;
   syncProgress: GmailSyncProgress;
   threadCount: number;
@@ -999,12 +1004,16 @@ function EmailClientHeader({
         <Badge>{syncProgress.statusLabel}</Badge>
         <FullInboxPrimaryAction
           provider={provider}
+          returnTo={returnTo}
           selectedAccount={selectedAccount}
         />
         <Link
           aria-label="Connect another Gmail or Google Workspace inbox"
           className="button-secondary button-compact"
-          href="/api/email-connections/google/connect"
+          href={emailConnectHrefWithReturnTo(
+            "/api/email-connections/google/connect",
+            returnTo,
+          )}
           title="Connect another Gmail or Google Workspace inbox"
         >
           Add inbox
@@ -1096,9 +1105,11 @@ function WorkInboxToolbar({
   accounts,
   crmFilter,
   importanceFilter,
+  pageSize,
   provider,
   priorityFilter,
   query,
+  returnTo,
   selectedAccount,
   sort,
   syncProgress,
@@ -1108,9 +1119,11 @@ function WorkInboxToolbar({
   accounts: GmailInboxAccountSummary[];
   crmFilter: WorkInboxCrmFilter;
   importanceFilter: WorkInboxImportanceFilter;
+  pageSize: number;
   provider: ProviderCard | undefined;
   priorityFilter: WorkInboxPriorityFilter;
   query: string;
+  returnTo: Route;
   selectedAccount: string;
   sort: WorkInboxSort;
   syncProgress: GmailSyncProgress;
@@ -1142,6 +1155,7 @@ function WorkInboxToolbar({
                 activeTab,
                 crmFilter,
                 importanceFilter,
+                pageSize,
                 priorityFilter,
                 query,
                 sort,
@@ -1163,6 +1177,7 @@ function WorkInboxToolbar({
                   activeTab,
                   crmFilter,
                   importanceFilter,
+                  pageSize,
                   priorityFilter,
                   query,
                   sort,
@@ -1191,7 +1206,10 @@ function WorkInboxToolbar({
                 ? "button-primary button-compact"
                 : "button-secondary button-compact"
             }
-            href={appendInboxAccountParam(tab.href, selectedAccount)}
+            href={appendInboxToolbarParams(tab.href, {
+              account: selectedAccount,
+              pageSize,
+            })}
             key={tab.id}
             title={`Show ${tab.label} emails`}
           >
@@ -1202,6 +1220,7 @@ function WorkInboxToolbar({
       <form action="/email" className="work-inbox-filter-form">
         <input name="account" type="hidden" value={selectedAccount} />
         <input name="inbox" type="hidden" value={activeTab} />
+        <input name="pageSize" type="hidden" value={pageSize} />
         <label>
           <span>Search</span>
           <input
@@ -1271,7 +1290,7 @@ function WorkInboxToolbar({
         sort !== "newest" ? (
           <Link
             className="button-secondary button-compact"
-            href={inboxAccountHref(selectedAccount, { activeTab })}
+            href={inboxAccountHref(selectedAccount, { activeTab, pageSize })}
           >
             Clear
           </Link>
@@ -1286,10 +1305,112 @@ function WorkInboxToolbar({
         </span>
         <FullInboxPrimaryAction
           provider={provider}
+          returnTo={returnTo}
           selectedAccount={selectedAccount}
         />
       </div>
     </div>
+  );
+}
+
+function MailboxCoverageStrip({
+  coverage,
+  provider,
+  returnTo,
+  selectedAccount,
+  threadCount,
+}: {
+  coverage: InboxCoverage;
+  provider: ProviderCard | undefined;
+  returnTo: Route;
+  selectedAccount: string;
+  threadCount: number;
+}) {
+  const selectedLabel =
+    selectedAccount === "all" ? "Unified Inbox" : coverage.loadOlderAccountLabel;
+  return (
+    <div className="mailbox-coverage-strip" aria-label="Mailbox coverage">
+      <div>
+        <strong>Synced history</strong>
+        <span>
+          {selectedLabel} ·{" "}
+          {threadCount === 1
+            ? "1 stored thread"
+            : `${threadCount} stored threads`}{" "}
+          ·{" "}
+          {coverage.viewLastSyncAt
+            ? `Last sync ${formatDate(coverage.viewLastSyncAt)}`
+            : "Not synced yet"}
+          {coverage.oldestStoredAt
+            ? ` · Oldest stored ${formatDate(coverage.oldestStoredAt)}`
+            : ""}
+        </span>
+      </div>
+      <LoadOlderGmailHistoryAction
+        coverage={coverage}
+        provider={provider}
+        returnTo={returnTo}
+        selectedAccount={selectedAccount}
+      />
+    </div>
+  );
+}
+
+function LoadOlderGmailHistoryAction({
+  coverage,
+  provider,
+  returnTo,
+  selectedAccount,
+}: {
+  coverage: InboxCoverage;
+  provider: ProviderCard | undefined;
+  returnTo: Route;
+  selectedAccount: string;
+}) {
+  const accountLabel = coverage.loadOlderAccountLabel;
+  if (
+    !provider?.syncAvailable ||
+    !coverage.oldestStoredAt ||
+    !coverage.loadOlderAccountId
+  ) {
+    return (
+      <span className="form-hint">
+        Sync Gmail to store mailbox history, then load older messages in bounded
+        batches.
+      </span>
+    );
+  }
+
+  return (
+    <form
+      action={loadOlderGmailInboxFromEmailPageAction}
+      className="email-inbox-load-more"
+    >
+      <input
+        name="account"
+        type="hidden"
+        value={coverage.loadOlderAccountId}
+      />
+      <input
+        name="before"
+        type="hidden"
+        value={coverage.oldestStoredAt.toISOString()}
+      />
+      <input name="returnTo" type="hidden" value={returnTo} />
+      <button
+        aria-label={`Load older Gmail inbox messages for ${accountLabel}`}
+        className="button-secondary button-compact"
+        title={`Load older Gmail inbox messages for ${accountLabel}`}
+        type="submit"
+      >
+        Load older messages
+      </button>
+      <span className="form-hint">
+        {selectedAccount === "all"
+          ? `Unified Inbox will load older history for ${accountLabel}, the account with the oldest stored message.`
+          : `Loads ${accountLabel} messages before ${formatDate(coverage.oldestStoredAt)}.`}
+      </span>
+    </form>
   );
 }
 
@@ -1564,23 +1685,43 @@ function formatInboxThreadDate(value: Date) {
 
 function WorkInboxFilteredEmptyState({
   activeTab,
+  coverage,
   crmFilter,
   importanceFilter,
+  pageSize,
   priorityFilter,
   provider,
   query,
+  returnTo,
   selectedAccount,
   sort,
 }: {
   activeTab: string;
+  coverage: InboxCoverage;
   crmFilter: WorkInboxCrmFilter;
   importanceFilter: WorkInboxImportanceFilter;
+  pageSize: number;
   priorityFilter: WorkInboxPriorityFilter;
   provider: ProviderCard | undefined;
   query: string;
+  returnTo: Route;
   selectedAccount: string;
   sort: WorkInboxSort;
 }) {
+  const filterLabels = activeInboxFilterLabels({
+    activeTab,
+    crmFilter,
+    importanceFilter,
+    priorityFilter,
+    query,
+    sort,
+  });
+  const emptyDescription =
+    importanceFilter === "hide-unimportant"
+      ? "Hide unimportant is on, so locally classified low-value messages are hidden before the list is shown. Show all, clear filters, or load older stored history for this inbox."
+      : query
+        ? "No stored synced Gmail rows match this search and filter set. Clear the search, change filters, or load older stored history for this inbox."
+        : "Stored synced Gmail exists for this inbox, but the current tab or filters hide every row. Clear filters, switch tabs, or load older stored history.";
   return (
     <section
       className="email-inbox-empty-state email-inbox-empty-detail"
@@ -1594,25 +1735,43 @@ function WorkInboxFilteredEmptyState({
           >
             <Link
               className="button-primary button-compact"
-              href={inboxAccountHref(selectedAccount, { activeTab })}
+              href={inboxAccountHref(selectedAccount, { activeTab, pageSize })}
             >
               Clear filters
             </Link>
+            <LoadOlderGmailHistoryAction
+              coverage={coverage}
+              provider={provider}
+              returnTo={returnTo}
+              selectedAccount={selectedAccount}
+            />
             <FullInboxPrimaryAction
               provider={provider}
+              returnTo={returnTo}
               selectedAccount={selectedAccount}
             />
           </ActionGroup>
         }
         actionsLabel="Filtered inbox empty actions"
-        description={
-          importanceFilter === "hide-unimportant"
-            ? "No synced Gmail rows match these filters after hiding locally classified unimportant emails. Show all, clear filters, or sync Gmail again."
-            : "No synced Gmail rows match the current search and filters. Clear filters, switch tabs, or sync Gmail again."
-        }
+        description={emptyDescription}
         title="No matching inbox messages"
         titleLevel="h3"
-      />
+      >
+        {filterLabels.length > 0 ? (
+          <ActionGroup
+            className="filter-actions inbox-empty-filter-chips"
+            label="Active inbox filters"
+          >
+            {filterLabels.map((label) => (
+              <Badge key={label}>{label}</Badge>
+            ))}
+          </ActionGroup>
+        ) : null}
+        <p className="form-hint">
+          Older Gmail history is loaded only when you choose it; viewing this
+          empty state does not send email, mutate Gmail, or change CRM records.
+        </p>
+      </EmptyState>
     </section>
   );
 }
@@ -2597,9 +2756,11 @@ type DraftTemplate = {
 
 function FullInboxPrimaryAction({
   provider,
+  returnTo,
   selectedAccount = "all",
 }: {
   provider: ProviderCard | undefined;
+  returnTo?: Route;
   selectedAccount?: string;
 }) {
   if (provider?.syncAvailable) {
@@ -2608,6 +2769,9 @@ function FullInboxPrimaryAction({
     return (
       <form action={syncGmailInboxFromEmailPageAction}>
         <input name="account" type="hidden" value={selectedAccount} />
+        {returnTo ? (
+          <input name="returnTo" type="hidden" value={returnTo} />
+        ) : null}
         <button
           aria-label={label}
           className="button-primary button-compact"
@@ -2629,7 +2793,7 @@ function FullInboxPrimaryAction({
       <Link
         aria-label={`${label} for Full Inbox`}
         className="button-primary button-compact"
-        href={provider.href as Route}
+        href={emailConnectHrefWithReturnTo(provider.href, returnTo)}
         title={`${label} for Full Inbox`}
       >
         {label}
@@ -2653,10 +2817,14 @@ function EmailInboxEmptyShell({
   accountLabel,
   emptyState,
   provider,
+  returnTo,
+  selectedAccount,
 }: {
   accountLabel: string;
   emptyState: { description: string; title: string };
   provider: ProviderCard | undefined;
+  returnTo: Route;
+  selectedAccount: string;
 }) {
   return (
     <section
@@ -2669,17 +2837,21 @@ function EmailInboxEmptyShell({
             className="filter-actions"
             label="No synced email actions"
           >
-            <FullInboxPrimaryAction provider={provider} />
+            <FullInboxPrimaryAction
+              provider={provider}
+              returnTo={returnTo}
+              selectedAccount={selectedAccount}
+            />
             <Link
               className="button-secondary button-compact"
-              href="/email?syncStatus=1"
+              href={appendEmailStatusParams(returnTo, { syncStatus: "1" })}
             >
               Refresh
             </Link>
           </ActionGroup>
         }
         actionsLabel="No synced email actions"
-        description="Sync your inbox to bring Gmail messages into Northstar."
+        description="No stored synced Gmail threads are available for this view yet. Sync this inbox to store recent mail first; older history becomes available through bounded Load older batches after messages exist."
         title="No synced emails yet"
         titleLevel="h2"
       >
@@ -2699,6 +2871,7 @@ function EmailInboxThreadDetail({
   draftTemplates,
   followUpDetails,
   insight,
+  returnTo,
   smartLabelReadiness,
   thread,
   workspaceId,
@@ -2709,6 +2882,7 @@ function EmailInboxThreadDetail({
   draftTemplates: DraftTemplate[];
   followUpDetails: Map<string, EmailPriorityFollowUpDetail>;
   insight: WorkInboxItem;
+  returnTo: Route;
   smartLabelReadiness: EmailClassificationReadiness;
   thread: EmailInboxThreadSummary;
   workspaceId: string;
@@ -2769,6 +2943,7 @@ function EmailInboxThreadDetail({
                     value={thread.emailConnectionId ?? "all"}
                   />
                   <input name="threadId" type="hidden" value={thread.id} />
+                  <input name="returnTo" type="hidden" value={returnTo} />
                   <button
                     aria-label={`Refresh Gmail thread ${thread.subject}`}
                     className="button-secondary button-compact"
@@ -2839,6 +3014,7 @@ function EmailInboxThreadDetail({
             {replyTarget ? (
               <GmailReplyComposer
                 replyTarget={replyTarget}
+                returnTo={returnTo}
                 threadId={thread.id}
               />
             ) : null}
@@ -2919,9 +3095,11 @@ function EmailReaderMessage({
 
 function GmailReplyComposer({
   replyTarget,
+  returnTo,
   threadId,
 }: {
   replyTarget: EmailInboxThreadSummary["messages"][number];
+  returnTo: Route;
   threadId: string;
 }) {
   const sourceAccount =
@@ -2939,6 +3117,7 @@ function GmailReplyComposer({
       >
         <input name="emailLogId" type="hidden" value={replyTarget.id} />
         <input name="threadId" type="hidden" value={threadId} />
+        <input name="returnTo" type="hidden" value={returnTo} />
         <label className="form-field form-field-wide">
           <span className="form-label">Reply body</span>
           <textarea name="body" required rows={7} />
@@ -3006,6 +3185,30 @@ function selectedInboxAccountLabel(
   );
 }
 
+function emailConnectHrefWithReturnTo(
+  href: string | undefined,
+  returnTo: Route | undefined,
+) {
+  if (!href) return "/api/email-connections/google/connect" as Route;
+  if (!returnTo || !href.startsWith("/")) return href as Route;
+  const [path, query = ""] = href.split("?");
+  const params = new URLSearchParams(query);
+  params.set("returnTo", returnTo);
+  return `${path}?${params.toString()}` as Route;
+}
+
+function appendEmailStatusParams(
+  href: Route,
+  values: Record<string, string>,
+) {
+  const [path, query = ""] = String(href).split("?");
+  const params = new URLSearchParams(query);
+  for (const [key, value] of Object.entries(values)) {
+    params.set(key, value);
+  }
+  return `${path}?${params.toString()}` as Route;
+}
+
 function inboxAccountHref(
   account: string,
   options: {
@@ -3036,11 +3239,73 @@ function inboxAccountHref(
   return `/email?${params.toString()}` as Route;
 }
 
-function appendInboxAccountParam(href: Route, account: string) {
+function appendInboxToolbarParams(
+  href: Route,
+  { account, pageSize }: { account: string; pageSize: number },
+) {
   const [path, query = ""] = String(href).split("?");
   const params = new URLSearchParams(query);
   params.set("account", account);
+  if (pageSize !== 50) params.set("pageSize", String(pageSize));
   return `${path}?${params.toString()}` as Route;
+}
+
+function activeInboxFilterLabels({
+  activeTab,
+  crmFilter,
+  importanceFilter,
+  priorityFilter,
+  query,
+  sort,
+}: {
+  activeTab: string;
+  crmFilter: WorkInboxCrmFilter;
+  importanceFilter: WorkInboxImportanceFilter;
+  priorityFilter: WorkInboxPriorityFilter;
+  query: string;
+  sort: WorkInboxSort;
+}) {
+  const labels: string[] = [];
+  if (activeTab !== "all") labels.push(`Tab: ${workInboxTabLabel(activeTab)}`);
+  if (query) labels.push(`Search: ${query}`);
+  if (priorityFilter !== "all")
+    labels.push(`Priority: ${priorityFilterLabel(priorityFilter)}`);
+  if (crmFilter === "linked") labels.push("CRM: linked");
+  if (crmFilter === "unlinked") labels.push("CRM: unlinked");
+  if (importanceFilter === "hide-unimportant")
+    labels.push("Hiding unimportant");
+  if (sort !== "newest") labels.push(`Sort: ${workInboxSortLabel(sort)}`);
+  return labels;
+}
+
+function workInboxTabLabel(tab: string) {
+  const labels: Record<string, string> = {
+    all: "All",
+    "automated-marketing": "Automated / Marketing",
+    "crm-linked": "CRM Linked",
+    customers: "Customers",
+    "follow-ups": "Follow-ups",
+    "leads-opportunities": "Leads / Opportunities",
+    "needs-reply": "Needs Reply",
+    "personal-low-priority": "Personal / Low Priority",
+    priority: "Priority",
+    work: "Work",
+  };
+  return labels[tab] ?? tab;
+}
+
+function priorityFilterLabel(priority: WorkInboxPriorityFilter) {
+  if (priority === "high") return "High";
+  if (priority === "medium") return "Medium";
+  if (priority === "low") return "Low";
+  return "Any";
+}
+
+function workInboxSortLabel(sort: WorkInboxSort) {
+  if (sort === "oldest") return "Oldest first";
+  if (sort === "priority") return "Priority";
+  if (sort === "unread") return "Unread first";
+  return "Newest first";
 }
 
 function normalizeInboxPage(value: unknown) {
@@ -3070,12 +3335,61 @@ function paginateInboxItems(
   };
 }
 
-function oldestInboxMessageDate(threads: EmailInboxThreadSummary[]) {
-  const timestamps = threads.flatMap((thread) =>
-    thread.messages.map((message) => message.occurredAt.getTime()),
+type InboxCoverage = {
+  loadOlderAccountId: string | null;
+  loadOlderAccountLabel: string;
+  oldestStoredAt: Date | null;
+  viewLastSyncAt: Date | null;
+};
+
+function oldestInboxMessageCoverage({
+  accounts,
+  selectedAccount,
+  threads,
+}: {
+  accounts: GmailInboxAccountSummary[];
+  selectedAccount: string;
+  threads: EmailInboxThreadSummary[];
+}): InboxCoverage {
+  let oldest:
+    | { connectionId: string | null; occurredAt: Date }
+    | null = null;
+  for (const thread of threads) {
+    for (const message of thread.messages) {
+      if (!oldest || message.occurredAt.getTime() < oldest.occurredAt.getTime()) {
+        oldest = {
+          connectionId: message.emailConnectionId,
+          occurredAt: message.occurredAt,
+        };
+      }
+    }
+  }
+  const loadOlderAccountId =
+    selectedAccount === "all"
+      ? (oldest?.connectionId ?? null)
+      : selectedAccount;
+  const selectedAccountSummary = accounts.find(
+    (account) => account.connectionId === selectedAccount,
   );
+  return {
+    loadOlderAccountId,
+    loadOlderAccountLabel: loadOlderAccountId
+      ? selectedInboxAccountLabel(loadOlderAccountId, accounts)
+      : selectedInboxAccountLabel(selectedAccount, accounts),
+    oldestStoredAt: oldest?.occurredAt ?? null,
+    viewLastSyncAt:
+      selectedAccount === "all"
+        ? newestAccountSyncAt(accounts)
+        : (selectedAccountSummary?.lastSyncAt ?? null),
+  };
+}
+
+function newestAccountSyncAt(accounts: GmailInboxAccountSummary[]) {
+  const timestamps = accounts
+    .map((account) => account.lastSyncAt?.getTime() ?? Number.NaN)
+    .filter(Number.isFinite);
   if (timestamps.length === 0) return null;
-  return new Date(Math.min(...timestamps));
+  return new Date(Math.max(...timestamps));
 }
 
 function EmailLogCard({

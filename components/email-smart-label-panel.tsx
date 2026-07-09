@@ -5,7 +5,6 @@ import { useActionState } from "react";
 import { classifyEmailLogAction, type ClassifyEmailLogActionState } from "@/app/email/actions";
 import { ActionGroup } from "@/components/action-group";
 import { Badge } from "@/components/badge";
-import { FormErrorMessage } from "@/components/form-error-message";
 import { FormSuccessMessage } from "@/components/form-success-message";
 import type {
   EmailClassificationReadiness,
@@ -40,10 +39,12 @@ export function EmailSmartLabelPanel({
   const [state, formAction, isPending] = useActionState(classifyEmailLogAction, initialState);
   const classification = state.emailLogId === emailLogId && state.classification ? state.classification : initialClassification ?? localClassification;
   const isLocalClassification = classification?.providerId === "local_rules";
+  const actionFailed = state.emailLogId === emailLogId && Boolean(state.error);
   const labels = classification ? smartClassificationLabels(classification, isLocalClassification ? localLabels : undefined) : localLabelDescriptors(localLabels);
   const labelGroup = `${subject} Smart Email Labels`;
   const classifyLabel = classification ? `Refine smart labels for ${subject} with AI` : `Classify email ${subject} with AI`;
   const hasLabels = labels.length > 0;
+  const showDegradedDiagnostics = actionFailed || isLocalClassification || !readiness.configured;
 
   return (
     <section aria-label={labelGroup} className="email-smart-label-panel">
@@ -83,18 +84,23 @@ export function EmailSmartLabelPanel({
         ) : (
           <p className="form-hint">Review suggested relationship-inbox labels for this stored email. Labels do not create tasks or change CRM records.</p>
         )}
-        {!readiness.configured ? (
-          <p className="form-hint">Local labels suggested. AI refinement is unavailable until Smart Email Labels are configured.</p>
-        ) : (
+        {showDegradedDiagnostics ? (
+          <details className="email-smart-label-diagnostics">
+            <summary>AI labeling unavailable; using local labels.</summary>
+            <p className="form-hint">
+              Northstar is showing deterministic local Smart Labels for this stored email. Provider errors are sanitized and labels do not mutate Gmail or CRM records.
+            </p>
+          </details>
+        ) : null}
+        {readiness.configured ? (
           <form action={formAction}>
             <input name="emailLogId" type="hidden" value={emailLogId} />
             <button aria-label={classifyLabel} className="button-secondary button-compact" disabled={isPending} title={classifyLabel} type="submit">
               {isPending ? "Refining..." : "Refine with AI"}
             </button>
           </form>
-        )}
-        {state.emailLogId === emailLogId && state.error ? <FormErrorMessage compact>{state.error}</FormErrorMessage> : null}
-        {state.emailLogId === emailLogId && state.message ? <FormSuccessMessage compact>{state.message}</FormSuccessMessage> : null}
+        ) : null}
+        {state.emailLogId === emailLogId && state.message && !isLocalClassification ? <FormSuccessMessage compact>{state.message}</FormSuccessMessage> : null}
       </div>
     </section>
   );
@@ -115,15 +121,15 @@ function localLabelDescriptors(labels: string[]): SmartLabelDescriptor[] {
 }
 
 function localLabelKind(label: string): EmailSmartCategory | EmailSmartSignal {
-  if (label === "Risk") return "RELATIONSHIP_RISK";
+  if (label === "Relationship risk" || label === "Risk") return "RELATIONSHIP_RISK";
   if (label === "Needs reply") return "NEEDS_REPLY";
-  if (label === "Pricing") return "PRICING_QUOTE";
-  if (label === "Contract") return "CONTRACT_LEGAL";
+  if (label === "Pricing / quote" || label === "Pricing") return "PRICING_QUOTE";
+  if (label === "Contract / legal" || label === "Contract") return "CONTRACT_LEGAL";
   if (label === "Follow-up") return "FOLLOW_UP_NEEDED";
   if (label === "Customer" || label === "CRM linked") return "CUSTOMER";
   if (label === "Lead" || label === "Prospect" || label === "Opportunity") return "PROSPECT";
   if (label === "Personal / Low Priority") return "PERSONAL";
-  if (label === "Automated") return "NOT_CRM_RELEVANT";
+  if (label === "Automated / no-reply" || label === "Newsletter / promotion" || label === "Unimportant" || label === "Automated") return "NOT_CRM_RELEVANT";
   return "UNKNOWN";
 }
 

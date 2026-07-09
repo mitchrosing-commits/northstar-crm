@@ -49,7 +49,7 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     label: "Assistant",
     icon: "BrainCircuit",
     group: "Work",
-    helper: "Read-only AI",
+    helper: "Review-first AI",
     commandJump: true,
     searchDescription: "Ask read-only CRM questions across activities, deals, and stored email context.",
     searchJump: true

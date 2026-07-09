@@ -174,6 +174,8 @@ export function buildSemanticRelationshipBriefPrompt(input: SemanticRelationship
     "You are Northstar CRM's semantic Relationship Brief extractor.",
     "Extract only relationship-profile facts explicitly supported by the provided meeting context.",
     "Target only the listed contact ids. Do not invent contacts, facts, or protected traits.",
+    "Do not return company facts, deal facts, stakeholder-role notes, or follow-up actions as Relationship Brief facts.",
+    "If a fact is about an organization, opportunity, budget, SOW, legal/procurement, implementation plan, or action item, omit it unless it is clearly phrased as that contact's own concern or communication preference.",
     "Do not infer religion, politics, health, disability, race, ethnicity, pregnancy, sexual orientation, gender identity, or other protected traits.",
     "Prefer concise durable profile facts over raw transcript snippets.",
     "Relationship Brief is curated memory, not raw history. Everything you return will still be reviewed by a human before saving.",
@@ -335,6 +337,7 @@ function normalizeSemanticFacts(value: unknown, warnings: string[]): ProposedRel
       return [];
     }
     return [{
+      category: "personFact",
       evidence: readStringArray(input.evidence),
       field,
       id: readNonEmpty(input.id) ?? `semantic-relationship-fact-${field}-${index + 1}`,
@@ -361,6 +364,7 @@ function relationshipFactsFromFields(
 ): ProposedRelationshipBriefFact[] {
   return relationshipBriefFieldKeys.flatMap((field) =>
     splitRelationshipFacts(fields[field]).map((text, index) => ({
+      category: "personFact" as const,
       evidence: proposal.evidence,
       field,
       id: `${proposal.id}-${field}-${index + 1}`,

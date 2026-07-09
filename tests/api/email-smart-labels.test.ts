@@ -241,7 +241,14 @@ describe("Smart Email Labels", () => {
       body: "Newsletter digest. Unsubscribe or view in browser.",
       providerLabels: ["CATEGORY_PROMOTIONS"],
       subject: "Vendor newsletter"
-    })).toEqual(expect.arrayContaining(["Automated", "No CRM link"]));
+    })).toEqual(
+      expect.arrayContaining([
+        "Automated / no-reply",
+        "Newsletter / promotion",
+        "Unimportant",
+        "No CRM link"
+      ])
+    );
     expect(classification).toMatchObject({
       category: "CUSTOMER",
       providerId: "local_rules",
@@ -260,9 +267,11 @@ describe("Smart Email Labels", () => {
     expect(emailPage).toContain("readEmailSmartClassification(emailLog)");
     expect(emailPage).toContain("buildLocalEmailSmartClassification(emailLog)");
     expect(emailPage).toContain("buildLocalEmailLabelSuggestions(emailLog)");
-    expect(emailSmartLabelPanel).toContain("Local labels suggested");
     expect(emailSmartLabelPanel).toContain("Refine with AI");
-    expect(emailSmartLabelPanel).toContain("AI refinement is unavailable");
+    expect(emailSmartLabelPanel).toContain("AI labeling unavailable; using local labels.");
+    expect(emailSmartLabelPanel).toContain("email-smart-label-diagnostics");
+    expect(emailSmartLabelPanel).not.toContain("FormErrorMessage");
+    expect(emailSmartLabelPanel).not.toContain("provider request failed");
     expect(emailSmartLabelPanel).toContain("Why this was labeled");
     expect(emailSmartLabelPanel).toContain("Labels do not create tasks or change CRM records");
     expect(emailActions).toContain("classifyEmailLogAction");

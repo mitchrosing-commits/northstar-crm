@@ -55,6 +55,7 @@ export type GenerateEmailReplyDraftActionState = {
 export async function syncGmailInboxFromEmailPageAction(formData?: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
   const selectedAccount = normalizeInboxAccountSelection(formData?.get("account"));
+  const returnTo = normalizeEmailPageReturnTo(formData?.get("returnTo"));
   let result: Awaited<ReturnType<typeof runGmailInboxSyncNow>>;
 
   try {
@@ -71,7 +72,7 @@ export async function syncGmailInboxFromEmailPageAction(formData?: FormData) {
       syncStatus: "1"
     });
     addSelectedInboxAccountParam(params, selectedAccount);
-    redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
+    redirect(emailActionRedirectHref(params, returnTo, "gmail-sync-progress"));
   }
 
   const params = new URLSearchParams({
@@ -85,7 +86,7 @@ export async function syncGmailInboxFromEmailPageAction(formData?: FormData) {
   });
   if (result.syncWarning) params.set("syncWarning", result.syncWarning);
   addSelectedInboxAccountParam(params, selectedAccount);
-  redirect(`/email?${params.toString()}#gmail-sync-progress` as Route);
+  redirect(emailActionRedirectHref(params, returnTo, "gmail-sync-progress"));
 }
 
 function safeGmailSyncActionError(error: unknown) {
@@ -121,6 +122,7 @@ export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData)
   const before = String(formData.get("before") ?? "").trim();
   const threadId = String(formData.get("threadId") ?? "").trim();
   const selectedAccount = normalizeInboxAccountSelection(formData.get("account"));
+  const returnTo = normalizeEmailPageReturnTo(formData.get("returnTo"));
   const { actor } = await getCurrentWorkspaceContext();
   let result: Awaited<ReturnType<typeof syncOlderGmailInboxMessages>>;
 
@@ -133,7 +135,7 @@ export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData)
     const params = new URLSearchParams({ emailConnection: "gmail-load-more-error" });
     if (threadId) params.set("thread", threadId);
     addSelectedInboxAccountParam(params, selectedAccount);
-    redirect(`/email?${params.toString()}` as Route);
+    redirect(emailActionRedirectHref(params, returnTo));
   }
 
   const params = new URLSearchParams({
@@ -145,12 +147,13 @@ export async function loadOlderGmailInboxFromEmailPageAction(formData: FormData)
   });
   if (threadId) params.set("thread", threadId);
   addSelectedInboxAccountParam(params, selectedAccount);
-  redirect(`/email?${params.toString()}` as Route);
+  redirect(emailActionRedirectHref(params, returnTo));
 }
 
 export async function refreshGmailThreadFromEmailPageAction(formData: FormData) {
   const threadId = String(formData.get("threadId") ?? "").trim();
   const selectedAccount = normalizeInboxAccountSelection(formData.get("account"));
+  const returnTo = normalizeEmailPageReturnTo(formData.get("returnTo"));
   const { actor } = await getCurrentWorkspaceContext();
   let result: Awaited<ReturnType<typeof refreshGmailInboxThread>>;
 
@@ -160,7 +163,7 @@ export async function refreshGmailThreadFromEmailPageAction(formData: FormData) 
     const params = new URLSearchParams({ emailConnection: "gmail-thread-refresh-error" });
     if (threadId) params.set("thread", threadId);
     addSelectedInboxAccountParam(params, selectedAccount);
-    redirect(`/email?${params.toString()}` as Route);
+    redirect(emailActionRedirectHref(params, returnTo));
   }
 
   const params = new URLSearchParams({
@@ -172,7 +175,7 @@ export async function refreshGmailThreadFromEmailPageAction(formData: FormData) 
     total: String(result.totalFetched)
   });
   addSelectedInboxAccountParam(params, selectedAccount);
-  redirect(`/email?${params.toString()}` as Route);
+  redirect(emailActionRedirectHref(params, returnTo));
 }
 
 export async function syncRecentGmailFromEmailPageAction() {
@@ -224,6 +227,7 @@ export async function syncRecentMicrosoftFromEmailPageAction() {
 export async function sendGmailReplyFromEmailPageAction(formData: FormData) {
   const emailLogId = String(formData.get("emailLogId") ?? "").trim();
   const threadId = String(formData.get("threadId") ?? "").trim();
+  const returnTo = normalizeEmailPageReturnTo(formData.get("returnTo"));
 
   try {
     const { actor } = await getCurrentWorkspaceContext();
@@ -235,12 +239,12 @@ export async function sendGmailReplyFromEmailPageAction(formData: FormData) {
   } catch {
     const params = new URLSearchParams({ emailConnection: "gmail-reply-error" });
     if (threadId) params.set("thread", threadId);
-    redirect(`/email?${params.toString()}` as Route);
+    redirect(emailActionRedirectHref(params, returnTo));
   }
 
   const params = new URLSearchParams({ emailConnection: "gmail-reply-sent" });
   if (threadId) params.set("thread", threadId);
-  redirect(`/email?${params.toString()}` as Route);
+  redirect(emailActionRedirectHref(params, returnTo));
 }
 
 export async function disconnectEmailProviderFromEmailPageAction(formData: FormData) {
@@ -270,6 +274,35 @@ function normalizeInboxAccountSelection(value: unknown) {
 
 function addSelectedInboxAccountParam(params: URLSearchParams, selectedAccount: string | null) {
   if (selectedAccount) params.set("account", selectedAccount);
+}
+
+function normalizeEmailPageReturnTo(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 1200 || !trimmed.startsWith("/email")) {
+    return null;
+  }
+  try {
+    const url = new URL(trimmed, "https://northstar.local");
+    return url.pathname === "/email"
+      ? (`${url.pathname}${url.search}${url.hash}` as Route)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function emailActionRedirectHref(
+  params: URLSearchParams,
+  returnTo: Route | null,
+  fallbackHash?: string,
+) {
+  const url = new URL(returnTo ?? "/email", "https://northstar.local");
+  for (const [key, value] of params.entries()) {
+    url.searchParams.set(key, value);
+  }
+  if (!url.hash && fallbackHash) url.hash = fallbackHash;
+  return `${url.pathname}${url.search}${url.hash}` as Route;
 }
 
 export async function generateEmailReplyDraftAction(

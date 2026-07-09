@@ -769,6 +769,78 @@ describe("meeting intelligence markdown and proposals", () => {
     ]);
   });
 
+  it("separates relationship-intelligence proposal categories and summarizes raw transcript lines", () => {
+    const draft = analyzeMeetingIntelligence({
+      markdown: [
+        "# Meeting Intake",
+        "Jane Contact: I will be traveling to France with family in about three weeks.",
+        "Jane Contact prefers concise morning emails.",
+        "Jane Contact is the economic buyer for the rollout.",
+        "Alpha Orbit Organization is replacing its WMS and has inventory pain across 4 DCs.",
+        "Alpha Needle Deal has approved budget, legal review risk, and a SOW timeline concern.",
+        "Action: send recap and pricing by 2030-04-05."
+      ].join("\n"),
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jane Contact",
+          evidenceExcerpt: "Jane Contact",
+          id: "person-1",
+          matchedReason: "Exact name match",
+          objectType: "person"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Orbit Organization",
+          evidenceExcerpt: "Alpha Orbit Organization",
+          id: "org-1",
+          matchedReason: "Exact organization match",
+          objectType: "organization"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Needle Deal",
+          evidenceExcerpt: "Alpha Needle Deal",
+          id: "deal-1",
+          matchedReason: "Deal title match",
+          objectType: "deal",
+          status: "OPEN"
+        }
+      ],
+      unmatchedEntities: [{ entityType: "unknown", evidenceExcerpt: "France", name: "France", reason: "Not a CRM record." }]
+    });
+    const relationshipText = JSON.stringify(draft.relationshipBriefUpdates?.[0]?.proposed ?? {});
+    const personalFacts = draft.relationshipBriefUpdates?.[0]?.facts ?? [];
+    const organizationNote = draft.notes.find((note) => note.category === "organizationFact");
+    const dealNote = draft.notes.find((note) => note.category === "dealFact");
+    const stakeholderNote = draft.notes.find((note) => note.category === "stakeholderNote");
+
+    expect(draft.relationshipBriefUpdates?.[0]).toMatchObject({
+      target: { id: "person-1", type: "person" }
+    });
+    expect(draft.relationshipBriefUpdates?.[0]?.proposed.relationshipPersonalContext).toContain(
+      "Jane Contact mentioned they will be traveling to France with family in about three weeks."
+    );
+    expect(relationshipText).not.toContain("Jane Contact:");
+    expect(relationshipText).not.toContain("WMS");
+    expect(relationshipText).not.toContain("SOW");
+    expect(relationshipText).not.toContain("economic buyer");
+    expect(personalFacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "personFact", field: "relationshipPersonalContext" }),
+        expect.objectContaining({ category: "personFact", field: "relationshipCommunicationStyle" })
+      ])
+    );
+    expect(organizationNote).toMatchObject({ kind: "company_fact", target: { id: "org-1", type: "organization" } });
+    expect(dealNote).toMatchObject({ kind: "deal_fact", target: { id: "deal-1", type: "deal" } });
+    expect(stakeholderNote).toMatchObject({ kind: "stakeholder_note", target: { id: "person-1", type: "person" } });
+    expect(draft.nextStepActivities[0]).toMatchObject({
+      category: "followUpAction",
+      target: { id: "deal-1", type: "deal" }
+    });
+    expect(draft.warnings).toContain("Some mentioned entities were not matched to CRM records.");
+  });
+
   it("excludes protected-trait lines from curated Relationship Brief and fact-note suggestions", () => {
     const draft = analyzeMeetingIntelligence({
       markdown: [

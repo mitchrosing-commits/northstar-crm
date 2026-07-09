@@ -119,6 +119,14 @@ export type CrmTarget = {
   type: CrmObjectType;
 };
 
+export type MeetingProposalFactCategory =
+  | "ambiguousNeedsReview"
+  | "dealFact"
+  | "followUpAction"
+  | "organizationFact"
+  | "personFact"
+  | "stakeholderNote";
+
 export type ProposedMeetingActivity = {
   associatedTargets?: CrmTarget[];
   confidence?: MatchConfidence;
@@ -134,17 +142,19 @@ export type ProposedMeetingActivity = {
 
 export type ProposedNote = {
   body: string;
+  category?: MeetingProposalFactCategory;
   confidence?: MatchConfidence;
   evidence: string[];
   id: string;
   include: boolean;
-  kind: "meeting_summary" | "personal_fact" | "company_fact" | "deal_fact" | "lead_fact";
+  kind: "meeting_summary" | "personal_fact" | "company_fact" | "deal_fact" | "lead_fact" | "stakeholder_note";
   matchedReason?: string;
   target: CrmTarget | null;
   targetWarning?: string;
 };
 
 export type ProposedNextStepActivity = {
+  category?: MeetingProposalFactCategory;
   confidence?: MatchConfidence;
   description?: string;
   dueAt?: string;
@@ -181,6 +191,7 @@ export type RelationshipBriefSensitivityGuidance = {
 };
 
 export type ProposedRelationshipBriefFact = {
+  category?: MeetingProposalFactCategory;
   duplicateOfExisting?: boolean;
   evidence?: string[];
   field: keyof RelationshipBriefFields;

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { handleApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
@@ -7,13 +7,14 @@ import { assertGoogleOAuthReady, buildGoogleAuthorizationUrl } from "@/lib/servi
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const { actor } = await getCurrentWorkspaceContext();
     const config = assertGoogleOAuthReady();
     const state = createEmailOAuthState({
       actorUserId: actor.actorUserId,
       provider: "GOOGLE_WORKSPACE",
+      returnTo: safeEmailOAuthReturnTo(request.nextUrl.searchParams.get("returnTo")),
       workspaceId: actor.workspaceId
     });
 
@@ -21,6 +22,18 @@ export async function GET() {
   } catch (error) {
     if (isNextRedirect(error)) throw error;
     return handleApiError(error);
+  }
+}
+
+function safeEmailOAuthReturnTo(value: string | null) {
+  if (!value || value.length > 1200 || !value.startsWith("/email")) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value, "https://northstar.local");
+    return url.pathname === "/email" ? `${url.pathname}${url.search}${url.hash}` : undefined;
+  } catch {
+    return undefined;
   }
 }
 

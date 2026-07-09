@@ -20,6 +20,7 @@ import type {
   CrmTarget,
   MatchedCrmObject,
   MeetingIntelligenceDraft,
+  MeetingProposalFactCategory,
   MeetingSourceMetadata,
   ProposedNextStepActivity,
   ProposedNote,
@@ -260,6 +261,7 @@ export function MeetingIntelligenceReview({
         selectedUpdateCount={selectedUpdateCount}
         warningCount={warningCount}
       />
+      <ProposalCategoryOverview draft={draft} />
 
       <section className="panel meeting-review-section" aria-labelledby="meeting-proposal-heading">
         <PanelTitleRow
@@ -424,7 +426,10 @@ export function MeetingIntelligenceReview({
                           <input defaultChecked={note.include} name={`note.${index}.include`} type="checkbox" />
                           <span>Apply note</span>
                         </label>
-                        <Badge>{noteKindLabel(note.kind)}</Badge>
+                        <span className="meeting-review-badges">
+                          <Badge>{noteKindLabel(note.kind)}</Badge>
+                          {note.category ? <Badge>{proposalCategoryLabel(note.category)}</Badge> : null}
+                        </span>
                       </div>
                       <div className="form-grid">
                         <label className="form-field">
@@ -558,6 +563,7 @@ export function MeetingIntelligenceReview({
                                           <span>Include fact</span>
                                         </label>
                                         <Badge>{fact.include ? "Will update memory" : "Excluded"}</Badge>
+                                        {fact.category ? <Badge>{proposalCategoryLabel(fact.category)}</Badge> : null}
                                       </div>
                                       <label className="form-field form-field-wide">
                                         <FormFieldLabel>Fact</FormFieldLabel>
@@ -786,6 +792,66 @@ function ReviewOrientationSummary({
   );
 }
 
+function ProposalCategoryOverview({ draft }: { draft: MeetingIntelligenceDraft }) {
+  const relationshipFacts = (draft.relationshipBriefUpdates ?? []).flatMap((update) => relationshipFactsForReview(update));
+  const categories = [
+    {
+      count: relationshipFacts.filter((fact) => fact.category === "personFact" || !fact.category).length,
+      description: "Contact-specific Relationship Memory facts only.",
+      label: "People / contact facts"
+    },
+    {
+      count: draft.notes.filter((note) => note.category === "organizationFact" || note.kind === "company_fact").length,
+      description: "Company or account facts stay on organization notes.",
+      label: "Organizations / company facts"
+    },
+    {
+      count: draft.notes.filter((note) => note.category === "dealFact" || note.kind === "deal_fact" || note.kind === "lead_fact").length,
+      description: "Opportunity, lead, budget, timeline, legal, and scope facts stay off personal memory.",
+      label: "Deals / opportunity facts"
+    },
+    {
+      count: draft.notes.filter((note) => note.category === "stakeholderNote" || note.kind === "stakeholder_note").length,
+      description: "Buyer-role and stakeholder details are flagged separately for review.",
+      label: "Stakeholders"
+    },
+    {
+      count: draft.nextStepActivities.filter((activity) => activity.category === "followUpAction" || activity.include).length,
+      description: "Actions are proposed as activities, not stored as personal memory.",
+      label: "Follow-up actions"
+    },
+    {
+      count:
+        draft.unmatchedEntities.length +
+        draft.matchedObjects.filter((match) => match.confidence === "ambiguous").length +
+        draft.notes.filter((note) => note.category === "ambiguousNeedsReview").length,
+      description: "Ambiguous matches or facts need a reviewer to choose the right target.",
+      label: "Needs review / ambiguous"
+    }
+  ];
+
+  return (
+    <section className="panel meeting-review-section" aria-labelledby="meeting-proposal-categories-heading">
+      <PanelTitleRow
+        actions={<CountBadge className="badge">{categories.reduce((sum, item) => sum + item.count, 0)} signals</CountBadge>}
+        description="Review proposals by destination before applying any CRM changes."
+        title="Proposal Categories"
+        titleId="meeting-proposal-categories-heading"
+      />
+      <div className="relationship-memory-review-summary" aria-label="Meeting proposal categories">
+        {categories.map((category) => (
+          <div key={category.label}>
+            <strong>{category.label}</strong>
+            <span>
+              {category.count} proposed. {category.description}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets: CrmTarget[]; summary: string }) {
   return (
     <CompactList className="meeting-proposal-evidence">
@@ -955,14 +1021,29 @@ function noteGroups(notes: ProposedNote[]) {
 
 function noteKindLabel(kind: ProposedNote["kind"]) {
   if (kind === "personal_fact") return "Personal facts";
+  if (kind === "stakeholder_note") return "Stakeholder notes";
   if (kind === "company_fact") return "Company facts";
   if (kind === "deal_fact") return "Deal facts";
   if (kind === "lead_fact") return "Lead facts";
   return "Meeting summary";
 }
 
+function proposalCategoryLabel(category: MeetingProposalFactCategory) {
+  if (category === "personFact") return "Person fact";
+  if (category === "organizationFact") return "Organization fact";
+  if (category === "dealFact") return "Deal fact";
+  if (category === "stakeholderNote") return "Stakeholder";
+  if (category === "followUpAction") return "Follow-up action";
+  return "Needs review";
+}
+
 function activityBadges(activity: ProposedNextStepActivity) {
-  return [activity.type, activity.dueAt ? `Due ${isoToDateValue(activity.dueAt)}` : "No due date", targetDisplayLabel(activity.target)];
+  return [
+    activity.type,
+    proposalCategoryLabel(activity.category ?? "followUpAction"),
+    activity.dueAt ? `Due ${isoToDateValue(activity.dueAt)}` : "No due date",
+    targetDisplayLabel(activity.target)
+  ];
 }
 
 const relationshipBriefSections = relationshipBriefUsageItems();
@@ -1078,6 +1159,7 @@ function relationshipFactsFromFields(
 ): RelationshipFactDraft[] {
   return relationshipBriefSections.flatMap((section) =>
     splitRelationshipFacts(fields[section.key]).map((text, index) => ({
+      category: "personFact" as const,
       evidence: update.evidence,
       field: section.key,
       id: `${update.id}-${section.key}-${index + 1}`,
