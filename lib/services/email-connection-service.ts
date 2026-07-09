@@ -23,6 +23,8 @@ export type GmailAccountDomainType = "consumer_gmail" | "google_workspace_or_cus
 
 const defaultRecentEmailSyncMaxResults = 10;
 const maxRecentEmailSyncMaxResults = 25;
+const defaultGmailInboxSyncMaxResults = 75;
+const maxGmailInboxSyncMaxResults = 100;
 const emailAddressPattern = /[A-Z0-9._%+-]+@(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?/gi;
 
 export type EmailProviderCard = {
@@ -1336,7 +1338,7 @@ export async function syncGmailInboxMessages({
   connectionId,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = defaultRecentEmailSyncMaxResults,
+  maxResults = defaultGmailInboxSyncMaxResults,
   preferHistory = true
 }: {
   actor: WorkspaceActor;
@@ -1421,7 +1423,7 @@ export async function syncOlderGmailInboxMessages({
   connectionId,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = maxRecentEmailSyncMaxResults
+  maxResults = maxGmailInboxSyncMaxResults
 }: {
   actor: WorkspaceActor;
   before: unknown;
@@ -1683,7 +1685,7 @@ export async function processGmailInboxSyncJob(
     connectionId: connection.id,
     env: options.env,
     fetchImpl: options.fetchImpl,
-    maxResults: maxRecentEmailSyncMaxResults
+    maxResults: maxGmailInboxSyncMaxResults
   });
 }
 
@@ -2281,7 +2283,7 @@ async function listOlderGmailInboxMessages({
 }) {
   const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
   url.searchParams.set("labelIds", "INBOX");
-  url.searchParams.set("maxResults", String(normalizeRecentEmailSyncMaxResults(maxResults)));
+  url.searchParams.set("maxResults", String(normalizeGmailInboxSyncMaxResults(maxResults)));
   url.searchParams.set("q", `before:${formatGmailSearchDate(before)}`);
   const response = await fetchImpl(url, {
     headers: { authorization: `Bearer ${accessToken}` }
@@ -3436,7 +3438,7 @@ async function listRecentGmailInboxMessages({
 }) {
   const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
   url.searchParams.set("labelIds", "INBOX");
-  url.searchParams.set("maxResults", String(normalizeRecentEmailSyncMaxResults(maxResults)));
+  url.searchParams.set("maxResults", String(normalizeGmailInboxSyncMaxResults(maxResults)));
   const response = await fetchImpl(url, {
     headers: { authorization: `Bearer ${accessToken}` }
   });
@@ -4528,11 +4530,19 @@ function normalizeRecentEmailSyncMaxResults(value: number) {
   return normalized;
 }
 
-function normalizeEmailInboxListLimit(value: number) {
-  if (!Number.isFinite(value)) return 100;
+function normalizeGmailInboxSyncMaxResults(value: number) {
+  if (!Number.isFinite(value)) return defaultGmailInboxSyncMaxResults;
   const normalized = Math.trunc(value);
   if (normalized < 1) return 1;
-  if (normalized > 100) return 100;
+  if (normalized > maxGmailInboxSyncMaxResults) return maxGmailInboxSyncMaxResults;
+  return normalized;
+}
+
+function normalizeEmailInboxListLimit(value: number) {
+  if (!Number.isFinite(value)) return 150;
+  const normalized = Math.trunc(value);
+  if (normalized < 1) return 1;
+  if (normalized > 200) return 200;
   return normalized;
 }
 

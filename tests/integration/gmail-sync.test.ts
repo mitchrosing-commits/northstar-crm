@@ -1435,6 +1435,7 @@ describe("Gmail metadata sync", () => {
       });
       const salesFetch = gmailFetchMock({
         accessToken: "sales-access-token",
+        expectedMaxResults: "75",
         messages: [
           {
             bodyText: "Sales inbox copy of the shared provider id.",
@@ -1459,6 +1460,7 @@ describe("Gmail metadata sync", () => {
       });
       const supportFetch = gmailFetchMock({
         accessToken: "support-access-token",
+        expectedMaxResults: "75",
         messages: [
           {
             bodyText: "Support inbox copy of the same provider id.",
@@ -1552,6 +1554,7 @@ describe("Gmail metadata sync", () => {
       });
       const initialFetch = gmailFetchMock({
         accessToken: "access-token",
+        expectedMaxResults: "75",
         messages: [
           {
             bodyText: "Current inbox body.",
@@ -1575,7 +1578,7 @@ describe("Gmail metadata sync", () => {
       const olderFetch = gmailFetchMock({
         accessToken: "access-token",
         expectedGmailQuery: "before:2026/06/26",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         messages: [
           {
             bodyText: "Current inbox body refreshed.",
@@ -1652,7 +1655,7 @@ describe("Gmail metadata sync", () => {
 
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         messages: [
           {
             bodyText: "Background sync body for CRM review.",
@@ -1717,7 +1720,7 @@ describe("Gmail metadata sync", () => {
       const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         messages: [
           {
             bodyText: "Immediate sync body for CRM review.",
@@ -1793,7 +1796,7 @@ describe("Gmail metadata sync", () => {
       const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         failedMessageIds: { "gmail-skipped-load-1": 404 },
         messages: [
           {
@@ -1889,7 +1892,7 @@ describe("Gmail metadata sync", () => {
       const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         failedMessageIds: { "gmail-all-failed-1": 404, "gmail-all-failed-2": 404 },
         messages: [
           {
@@ -1987,7 +1990,7 @@ describe("Gmail metadata sync", () => {
       const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         failedMessageIds: { "gmail-full-auth-rejected-1": 403 },
         messages: [
           {
@@ -2765,6 +2768,7 @@ describe("Gmail metadata sync", () => {
       });
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
+        expectedMaxResults: "75",
         nonJsonMessageIds: ["gmail-malformed-json-1"],
         messages: [
           {
@@ -2838,7 +2842,7 @@ describe("Gmail metadata sync", () => {
 
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         messages: [
           {
             bodyText: "Stale pending sync body.",
@@ -2894,7 +2898,7 @@ describe("Gmail metadata sync", () => {
       });
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
-        expectedMaxResults: "25",
+        expectedMaxResults: "100",
         messages: [
           {
             bodyText: "Recovered running sync body.",
@@ -2986,6 +2990,7 @@ describe("Gmail metadata sync", () => {
       });
       const initialFetch = gmailFetchMock({
         accessToken: "access-token",
+        expectedMaxResults: "75",
         messages: [
           {
             bodyText: "Initial full inbox body.",
@@ -3038,6 +3043,7 @@ describe("Gmail metadata sync", () => {
       const fallbackFetch = gmailFetchMock({
         accessToken: "access-token",
         expectedHistoryStartId: "2005",
+        expectedMaxResults: "75",
         historyStatus: 404,
         messages: [
           {
@@ -3080,6 +3086,7 @@ describe("Gmail metadata sync", () => {
       });
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
+        expectedMaxResults: "75",
         messages: [
           {
             bodyText: "Can you send next steps?",
@@ -3137,6 +3144,7 @@ describe("Gmail metadata sync", () => {
       });
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
+        expectedMaxResults: "75",
         messages: [
           {
             bodyText: "Can you send next steps?",
@@ -3450,7 +3458,7 @@ async function createCrossWorkspaceAttachmentTrap(fixture: Awaited<ReturnType<ty
 function gmailFetchMock({
   accessToken,
   expectedGmailQuery,
-  expectedMaxResults = "10",
+  expectedMaxResults,
   failedMessageIds,
   expectedHistoryStartId,
   historyId,
@@ -3510,7 +3518,10 @@ function gmailFetchMock({
 
     if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) {
       const requestUrl = new URL(url);
-      expect(requestUrl.searchParams.get("maxResults")).toBe(expectedMaxResults);
+      const inferredMaxResults =
+        expectedMaxResults ??
+        (messages.some((message) => message.bodyText !== undefined || message.labelIds?.includes("INBOX")) ? "75" : "10");
+      expect(requestUrl.searchParams.get("maxResults")).toBe(inferredMaxResults);
       if (expectedGmailQuery) {
         expect(requestUrl.searchParams.get("q")).toBe(expectedGmailQuery);
       } else {

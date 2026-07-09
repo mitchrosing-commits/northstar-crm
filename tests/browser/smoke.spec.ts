@@ -198,12 +198,14 @@ test.describe("Northstar CRM browser smoke", () => {
       }
       if (path === "/email") {
         await expect(page.getByRole("link", { name: "Current section: Inbox" })).toBeVisible();
-        await expect(page.getByRole("heading", { exact: true, name: "Inbox" })).toBeVisible();
-        await expect(page.getByText(/Connect Gmail(?: or Google Workspace)? to sync work emails|work-prioritized view of synced Gmail messages/)).toBeVisible();
+        await expect(page.getByRole("heading", { name: /Inbox|Connect Gmail or Google Workspace/ })).toBeVisible();
+        await expect(page.getByText(/Bring your work inbox into Northstar|Showing latest .* synced threads/)).toBeVisible();
         const advancedDiagnostics = page.locator("details.email-advanced-diagnostics").first();
-        await expect(advancedDiagnostics).toBeVisible();
-        await advancedDiagnostics.locator("summary").click();
-        await expect(page.getByLabel("Gmail inbox sync progress")).toBeVisible();
+        if ((await advancedDiagnostics.count()) > 0) {
+          await expect(advancedDiagnostics).toBeVisible();
+          await advancedDiagnostics.locator("summary").click();
+          await expect(page.getByLabel("Gmail inbox sync progress")).toBeVisible();
+        }
         const overflowingProviderCards = await page.locator(".provider-card").evaluateAll((cards) =>
           cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length
         );

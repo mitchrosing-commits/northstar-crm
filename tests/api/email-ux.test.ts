@@ -154,9 +154,9 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain('formatPersonName(emailLog.person) ?? "Unnamed contact"');
     expect(emailPage).not.toContain("[emailLog.person.firstName, emailLog.person.lastName].filter(Boolean).join(\" \")");
     expect(personName).toContain("export function formatPersonName");
-    expect(emailPage).toContain(
-      "Work synced mailbox threads, relationship-priority messages, Smart Labels, AI reply drafts, and review-first follow-ups from one place.",
-    );
+    expect(emailPage).toContain('className="email-client-shell"');
+    expect(emailPage).toContain("EmailClientHeader");
+    expect(emailPage).toContain("Showing latest ${threadCount} synced threads");
     expect(emailPage).toContain('className="panel inbox-workflow-map"');
     expect(emailPage).toContain('aria-label="Inbox workflow map"');
     expect(emailPage).toContain('title="Inbox Workflows"');
@@ -178,9 +178,8 @@ describe("Email UX v1 discoverability", () => {
     expect(globalCss).toContain(".inbox-workflow-map");
     expect(globalCss).toContain(".inbox-workflow-grid");
     expect(globalCss).toContain(".inbox-workflow-item");
-    expect(emailPage).toContain('const emailSettingsLabel = "Open email connection settings"');
-    expect(emailPage).toContain("aria-label={emailSettingsLabel}");
-    expect(emailPage).toContain("title={emailSettingsLabel}");
+    expect(emailPage).toContain("You can connect your login email or choose a different Google account.");
+    expect(emailPage).toContain("Northstar asks for read access to sync messages and send access only when you explicitly send a reply.");
     expect(emailPage).toContain("Email Providers");
     expect(emailPage).toContain("PanelTitleRow");
     expect(emailPage).toContain("CompactTitleRow");
@@ -216,7 +215,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain(
       '<div className="empty-state email-provider-empty">',
     );
-    expect(emailPage).toContain('className="data-card section-separated"');
+    expect(emailPage).not.toContain('className="data-card section-separated" id="full-inbox"');
     expect(emailPage).toContain("Gmail Full Inbox sync stores recent inbox messages and full readable bodies");
     expect(emailPage).toContain("Replies");
     expect(emailPage).toContain("are sent only from an explicit user action");
@@ -381,6 +380,8 @@ describe("Email UX v1 discoverability", () => {
       "normalizeRecentEmailSyncMaxResults(maxResults)",
     );
     expect(emailConnectionService).toContain("Number.isFinite(value)");
+    expect(emailConnectionService).toContain("const defaultGmailInboxSyncMaxResults = 75");
+    expect(emailConnectionService).toContain("const maxGmailInboxSyncMaxResults = 100");
     expect(emailPage).toContain("Latest Sync Result");
     expect(emailPage).toContain("Fetched");
     expect(emailPage).toContain("Logged");
@@ -444,16 +445,16 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("email-disconnect-error");
     expect(emailPage).toContain("fullInboxEmptyStateCopy(gmailProvider, inboxThreads.length)");
     expect(emailPage).toContain("EmailInboxEmptyShell");
-    expect(emailPage).toContain("FullInboxHeaderActions");
+    expect(emailPage).toContain("EmailClientHeader");
     expect(emailPage).toContain("FullInboxPrimaryAction");
     expect(emailPage).toContain("Gmail is connected, but no inbox messages have synced yet");
     expect(emailPage).toContain("Gmail sync is queued");
     expect(emailPage).toContain("Gmail sync is running");
     expect(emailPage).toContain("Gmail sync needs attention");
     expect(emailPage).toContain("Sync Gmail inbox");
-    expect(emailPage).toContain("Full Inbox mailbox reader");
-    expect(emailPage).toContain("No synced threads");
-    expect(emailPage).toContain("The mailbox reader stays here while sync catches up.");
+    expect(emailPage).toContain("No synced emails yet");
+    expect(emailPage).toContain("Sync your inbox to bring Gmail messages into Northstar.");
+    expect(emailPage).toContain("EmailInboxEmptyShell");
   });
 
   it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
@@ -757,15 +758,23 @@ describe("Email UX v1 discoverability", () => {
   });
 
   it("renders Full Inbox threads as dense inbox rows instead of email cards", () => {
-    const rowCss = globalCss.match(/\.inbox-thread-row \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const rowCssStart = globalCss.indexOf(".inbox-thread-row {\n  display: grid;");
+    const rowCss = rowCssStart >= 0 ? globalCss.slice(rowCssStart).match(/\.inbox-thread-row \{[\s\S]*?\n\}/)?.[0] ?? "" : "";
 
     expect(emailPage).toContain('className="inbox-thread-list"');
     expect(emailPage).toContain('"inbox-thread-row inbox-thread-row-selected"');
     expect(emailPage).not.toContain("email-inbox-thread-row active");
     expect(emailPage).toContain('className="inbox-thread-subject-line"');
     expect(emailPage).toContain('className="inbox-thread-preview"');
-    expect(emailPage).toContain('className="email-inbox-thread-detail inbox-reader-pane"');
-    expect(emailPage).toContain("Suggested inbox:");
+    expect(emailPage).toContain("inbox-reader-pane");
+    expect(emailPage).toContain("inbox-back-link");
+    expect(emailPage).toContain("EmailReaderMessage");
+    expect(emailPage).toContain("emailInboxThreadHref(thread.id, {");
+    expect(emailPage).toContain("activeTab: tab");
+    expect(emailPage).toContain("crmFilter");
+    expect(emailPage).toContain("priorityFilter");
+    expect(emailPage).toContain("sort");
+    expect(emailPage).toContain("Suggested:");
     expect(emailPage).toContain("Unified inbox");
     expect(emailPage).toContain("Connected Gmail and Google Workspace inboxes");
     expect(emailPage).toContain("Sync all inboxes");
@@ -773,16 +782,21 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("item.tags.slice(0, 2)");
     expect(emailPage).toContain("hiddenTagCount > 0");
     expect(globalCss).toContain(".inbox-thread-row");
-    expect(globalCss).toContain("min-height: 46px");
-    expect(globalCss).toContain("max-height: 56px");
+    expect(rowCss).toContain("height: 36px");
+    expect(rowCss).toContain("min-height: 36px");
+    expect(rowCss).toContain("max-height: 40px");
     expect(globalCss).toContain("border-bottom: 1px solid var(--line)");
     expect(globalCss).toContain(".inbox-thread-preview::before");
     expect(rowCss).not.toContain("border-radius");
     expect(rowCss).not.toContain("border: 1px solid");
     expect(rowCss).not.toContain("background: var(--surface)");
+    expect(rowCss).not.toContain("box-shadow");
+    expect(rowCss).not.toContain("margin-bottom");
     expect(globalCss).not.toContain(".email-inbox-thread-row");
     expect(globalCss).toContain(".inbox-thread-tag");
     expect(globalCss).toContain("white-space: nowrap");
+    expect(globalCss).toContain(".inbox-thread-open .inbox-back-link");
+    expect(globalCss).toContain(".inbox-no-explicit-thread .inbox-reader-pane");
   });
 
   it("keeps provider cards resilient to long provider/account/status text", () => {

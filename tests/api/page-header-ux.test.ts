@@ -153,7 +153,6 @@ describe("shared page header UX", () => {
       dealDetailPage,
       dealsPage,
       developerApiPage,
-      emailPage,
       importExportPage,
       leadDetailPage,
       leadsPage,
@@ -169,6 +168,9 @@ describe("shared page header UX", () => {
       expect(page).toContain("PageHeader");
       expect(page).not.toContain('<header className="page-header">');
     }
+    expect(emailPage).toContain("EmailClientHeader");
+    expect(emailPage).toContain('className="email-client-shell"');
+    expect(emailPage).not.toContain('<header className="page-header">');
   });
 
   it("preserves existing product, pipeline, and search header copy and actions", () => {
@@ -318,12 +320,11 @@ describe("shared page header UX", () => {
     );
     expect(reportsPage).toContain("href={dealsHref}");
 
-    expect(emailPage).toContain('eyebrow="Communication"');
-    expect(emailPage).toContain('title="Inbox"');
-    expect(emailPage).toContain(
-      "Work synced mailbox threads, relationship-priority messages, Smart Labels, AI reply drafts, and review-first follow-ups from one place.",
-    );
-    expect(emailPage).toContain('href="/settings#email-connections"');
+    expect(emailPage).toContain("function EmailClientHeader");
+    expect(emailPage).toContain("<h1>Inbox</h1>");
+    expect(emailPage).toContain("Communication");
+    expect(emailPage).toContain("Showing latest");
+    expect(emailPage).toContain('href="/api/email-connections/google/connect"');
 
     expect(settingsPage).toContain('eyebrow="Workspace"');
     expect(settingsPage).toContain('title="Settings"');
