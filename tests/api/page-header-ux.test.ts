@@ -111,11 +111,15 @@ const settingsPage = readFileSync(
 describe("shared page header UX", () => {
   it("centralizes repeated page header structure for low-risk list and command surfaces", () => {
     expect(pageHeader).toContain("export function PageHeader");
-    expect(pageHeader).toContain("import { useId, type ReactNode } from \"react\"");
+    expect(pageHeader).toContain(
+      'import { useId, type ReactNode } from "react"',
+    );
     expect(pageHeader).toContain('className="page-header"');
     expect(pageHeader).toContain("titleId?: string");
     expect(pageHeader).toContain("const generatedTitleId = useId()");
-    expect(pageHeader).toContain("const resolvedTitleId = titleId ?? `${generatedTitleId}-page-header-title`");
+    expect(pageHeader).toContain(
+      "const resolvedTitleId = titleId ?? `${generatedTitleId}-page-header-title`",
+    );
     expect(pageHeader).toContain(
       "const subtitleId = subtitle ? `${resolvedTitleId}-subtitle` : undefined",
     );
@@ -134,7 +138,9 @@ describe("shared page header UX", () => {
     expect(pageHeader).toContain(
       'actionsLabel === "Page actions" && typeof title === "string" ? `${title} actions` : actionsLabel',
     );
-    expect(pageHeader).toContain('<ActionGroup className="header-actions" label={resolvedActionsLabel}>');
+    expect(pageHeader).toContain(
+      '<ActionGroup className="header-actions" label={resolvedActionsLabel}>',
+    );
     expect(actionGroup).toContain("export function ActionGroup");
     expect(actionGroup).toContain("aria-label={label}");
     expect(actionGroup).toContain('role="group"');
@@ -169,7 +175,11 @@ describe("shared page header UX", () => {
       expect(page).not.toContain('<header className="page-header">');
     }
     expect(emailPage).toContain("EmailClientHeader");
-    expect(emailPage).toContain('className="email-client-shell"');
+    expect(emailPage).toContain("className={");
+    expect(emailPage).toContain("selectedThreadWasRequested");
+    expect(emailPage).toContain(
+      '"email-client-shell email-client-detail-shell"',
+    );
     expect(emailPage).not.toContain('<header className="page-header">');
   });
 
@@ -208,7 +218,9 @@ describe("shared page header UX", () => {
       "const listActionsLabel = `${listResourceSingularLabel(resource)} list actions`",
     );
     expect(listPageHeaderActions).toContain("import { ActionGroup }");
-    expect(listPageHeaderActions).toContain('<ActionGroup className="list-page-header-actions" label={listActionsLabel}>');
+    expect(listPageHeaderActions).toContain(
+      '<ActionGroup className="list-page-header-actions" label={listActionsLabel}>',
+    );
     expect(listPageHeaderActions).toContain("listResourceSingularLabel");
     expect(listPageHeaderActions).toContain(
       "const createActionLabel = listResourceCreateActionLabel(resource, createLabel)",
@@ -220,15 +232,19 @@ describe("shared page header UX", () => {
     expect(listPageHeaderActions).toContain('importLabel = "Import CSV"');
     expect(listPageHeaderActions).toContain("aria-label={importActionLabel}");
     expect(listPageHeaderActions).toContain("title={importActionLabel}");
-    expect(listPageHeaderActions.indexOf("aria-label={createActionLabel}")).toBeLessThan(
+    expect(
+      listPageHeaderActions.indexOf("aria-label={createActionLabel}"),
+    ).toBeLessThan(
       listPageHeaderActions.indexOf("aria-label={importActionLabel}"),
     );
-    expect(listPageHeaderActions.indexOf("aria-label={importActionLabel}")).toBeLessThan(
-      listPageHeaderActions.indexOf("<ListExportLink"),
-    );
+    expect(
+      listPageHeaderActions.indexOf("aria-label={importActionLabel}"),
+    ).toBeLessThan(listPageHeaderActions.indexOf("<ListExportLink"));
     expect(listResourceLabels).toContain('createNoun: "an organization"');
     expect(listResourceLabels).toContain('createNoun: "an activity"');
-    expect(listResourceLabels).toContain("`${createLabel}: create ${createNoun}`");
+    expect(listResourceLabels).toContain(
+      "`${createLabel}: create ${createNoun}`",
+    );
     expect(listPageHeaderActions).toContain("<ListExportLink");
     expect(listPageHeaderActions).toContain('className="button-primary"');
     expect(listPageHeaderActions).toContain('className="button-secondary"');
@@ -270,7 +286,9 @@ describe("shared page header UX", () => {
       "Accounts that group people, deals, activities, notes, and history.",
     );
     expect(organizationsPage).toContain("ListViewStatusForState");
-    expect(organizationsPage).toContain('label="Filtered organizations view active"');
+    expect(organizationsPage).toContain(
+      'label="Filtered organizations view active"',
+    );
     expect(organizationsPage).toContain('resetHref="/organizations"');
     expect(organizationsPage).toContain(
       "matchingCount={organizationPage.total}",
@@ -295,7 +313,9 @@ describe("shared page header UX", () => {
     expect(activitiesPage).toContain(
       "Calls, emails, meetings, and tasks that keep CRM records moving.",
     );
-    expect(activitiesPage).toContain("ListViewStatus active={hasActiveFilters}");
+    expect(activitiesPage).toContain(
+      "ListViewStatus active={hasActiveFilters}",
+    );
     expect(activitiesPage).toContain('label="Filtered activities view active"');
     expect(activitiesPage).toContain('resetHref="/activities"');
     expect(activitiesPage).toContain('legend="Activity filters"');
@@ -399,16 +419,14 @@ describe("shared page header UX", () => {
       "const editLockedActionLabel = lockedRecordActionLabel(editLabel, lockedLabel, recordTitle)",
     );
     expect(recordHeaderActions).toContain(
-      "const actionsLabel = recordTitle?.trim() ? `${recordTitle.trim()} workspace actions` : \"Record workspace actions\"",
+      'const actionsLabel = recordTitle?.trim() ? `${recordTitle.trim()} workspace actions` : "Record workspace actions"',
     );
     expect(recordHeaderActions).toContain("import { ActionGroup }");
-    expect(recordHeaderActions).toContain('<ActionGroup className="record-header-actions" label={actionsLabel}>');
     expect(recordHeaderActions).toContain(
-      "aria-label={addLockedActionLabel}",
+      '<ActionGroup className="record-header-actions" label={actionsLabel}>',
     );
-    expect(recordHeaderActions).toContain(
-      "aria-label={noteLockedActionLabel}",
-    );
+    expect(recordHeaderActions).toContain("aria-label={addLockedActionLabel}");
+    expect(recordHeaderActions).toContain("aria-label={noteLockedActionLabel}");
     expect(recordHeaderActions).toContain("aria-label={addActionLabel}");
     expect(recordHeaderActions).toContain("aria-label={noteActionLabel}");
     expect(recordHeaderActions).toContain(
@@ -433,11 +451,19 @@ describe("shared page header UX", () => {
     expect(globalStyles).toContain(".record-header-actions");
     expect(globalStyles).toContain("justify-content: flex-end;");
     expect(recordHeaderActions).toContain("function recordActionLabel");
-    expect(recordHeaderActions).toContain("const trimmedTitle = recordTitle?.trim()");
-    expect(recordHeaderActions).toContain("return trimmedTitle ? `${label}: ${trimmedTitle}` : `Record action: ${label}`");
+    expect(recordHeaderActions).toContain(
+      "const trimmedTitle = recordTitle?.trim()",
+    );
+    expect(recordHeaderActions).toContain(
+      "return trimmedTitle ? `${label}: ${trimmedTitle}` : `Record action: ${label}`",
+    );
     expect(recordHeaderActions).toContain("function lockedRecordActionLabel");
-    expect(recordHeaderActions).toContain("const actionLabel = recordActionLabel(label, recordTitle)");
-    expect(recordHeaderActions).toContain("return `${actionLabel}: ${lockedLabel}`");
+    expect(recordHeaderActions).toContain(
+      "const actionLabel = recordActionLabel(label, recordTitle)",
+    );
+    expect(recordHeaderActions).toContain(
+      "return `${actionLabel}: ${lockedLabel}`",
+    );
     expect(recordHeaderActions).toContain("function recordBackActionLabel");
     expect(recordHeaderActions).toContain("const trimmedLabel = label.trim()");
     expect(recordHeaderActions).toContain(
