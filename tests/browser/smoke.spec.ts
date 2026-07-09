@@ -78,6 +78,7 @@ test.describe("Northstar CRM browser smoke", () => {
     for (const path of [
       "/",
       "/dashboard",
+      "/assistant",
       "/pipeline",
       "/deals",
       "/deals/new",
@@ -140,6 +141,15 @@ test.describe("Northstar CRM browser smoke", () => {
         expect(await settingsShortcut.count(), "Expected one persistent Settings shortcut in the app shell").toBe(1);
         await expect(settingsShortcut, "Expected Settings shortcut to be visible in the app shell").toBeVisible();
         await expectSettingsShortcutNavigation(page, settingsShortcut);
+      }
+      if (path === "/assistant") {
+        await expect(page.getByRole("link", { name: "Current section: Assistant" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Assistant" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Ask Northstar" })).toBeVisible();
+        await expect(page.getByLabel("Suggested Assistant prompts")).toBeVisible();
+        await expect(page.getByLabel("Command")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
+        await expect(page.getByText("This first Assistant slice only reads workspace context")).toBeVisible();
       }
       if (path === "/pipeline") {
         const contractSummaries = page.locator(".contract-status-summary");
@@ -698,6 +708,7 @@ test.describe("Northstar CRM browser smoke", () => {
 
     for (const path of [
       "/dashboard",
+      "/assistant",
       "/pipeline",
       "/deals",
       dealHref,
@@ -922,7 +933,12 @@ async function firstHref(page: Page, hrefPrefix: string) {
       .map((link) => link.getAttribute("href"))
       .filter((href): href is string => Boolean(href))
       .filter((href) => href.startsWith(String(prefix)))
-      .filter((href) => !href.endsWith("/new") && !href.endsWith("/edit") && !href.includes("/edit?"));
+      .filter((href) => !href.endsWith("/new") && !href.endsWith("/edit") && !href.includes("/edit?"))
+      .filter((href) => {
+        const path = href.split(/[?#]/)[0];
+        const rest = path.slice(String(prefix).length);
+        return rest.length > 0 && !rest.includes("/");
+      });
 
     return values[0] ?? null;
   }, hrefPrefix);
@@ -974,6 +990,7 @@ async function expectPageReady(page: Page, path: string, options: { requireAppSh
       errors.length = 0;
       serverErrors.length = 0;
       response = await gotoWithConnectionRetry(page, path);
+      await page.waitForTimeout(250);
       bodyText = await page.locator("body").innerText({ timeout: 5_000 });
       if (!bodyText.includes("Application error") || !shouldRetryApplicationError(errors) || attempt === 2) break;
       await page.goto("about:blank");

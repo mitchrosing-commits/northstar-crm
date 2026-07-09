@@ -43,6 +43,7 @@ import {
   isGmailPartialSyncWarning,
   listGmailInboxAccounts,
   normalizeWorkInboxCrmFilter,
+  normalizeWorkInboxImportanceFilter,
   normalizeWorkInboxPriorityFilter,
   normalizeWorkInboxSearch,
   normalizeWorkInboxSort,
@@ -62,6 +63,7 @@ import type {
 import type { EmailReplyAssistantReadiness } from "@/lib/services/email-reply-assistant-service";
 import type {
   WorkInboxCrmFilter,
+  WorkInboxImportanceFilter,
   WorkInboxItem,
   WorkInboxPriorityFilter,
   WorkInboxSort,
@@ -92,6 +94,7 @@ type EmailPageProps = {
     duplicates?: string;
     emailConnection?: string;
     account?: string;
+    importance?: string;
     inbox?: string;
     messageSkips?: string;
     page?: string;
@@ -139,7 +142,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
     selectedInboxAccount === "all" ? null : selectedInboxAccount;
   const inboxThreads = await listEmailInboxThreads(actor, {
     connectionId: selectedInboxConnectionId,
-    limit: 200,
+    limit: null,
   });
   const northstarInsight = await buildNorthstarAssistantInsight(
     northstarContext,
@@ -206,6 +209,9 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const activeWorkInboxCrm = normalizeWorkInboxCrmFilter(
     resolvedSearchParams?.crm,
   );
+  const activeWorkInboxImportance = normalizeWorkInboxImportanceFilter(
+    resolvedSearchParams?.importance,
+  );
   const activeWorkInboxSort = normalizeWorkInboxSort(
     resolvedSearchParams?.sort,
   );
@@ -216,6 +222,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const workInbox = buildWorkInbox({
     crmFilter: activeWorkInboxCrm,
     followUpDetails: inboxFollowUpDetails,
+    importanceFilter: activeWorkInboxImportance,
     priorityFilter: activeWorkInboxPriority,
     preferences: aiPreferences,
     query: activeWorkInboxSearch,
@@ -300,6 +307,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             backHref={inboxAccountHref(selectedInboxAccount, {
               activeTab: activeWorkInboxTab,
               crmFilter: activeWorkInboxCrm,
+              importanceFilter: activeWorkInboxImportance,
               page: paginatedWorkInbox.page,
               pageSize: activeWorkInboxPageSize,
               priorityFilter: activeWorkInboxPriority,
@@ -325,6 +333,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               activeTab={activeWorkInboxTab}
               accounts={gmailAccounts}
               crmFilter={activeWorkInboxCrm}
+              importanceFilter={activeWorkInboxImportance}
               provider={gmailProvider}
               priorityFilter={activeWorkInboxPriority}
               query={activeWorkInboxSearch}
@@ -343,6 +352,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                   />
                   <WorkInboxThreadList
                     crmFilter={activeWorkInboxCrm}
+                    importanceFilter={activeWorkInboxImportance}
                     items={paginatedWorkInbox.items}
                     page={paginatedWorkInbox.page}
                     pageSize={activeWorkInboxPageSize}
@@ -383,6 +393,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                   <WorkInboxPagination
                     activeTab={activeWorkInboxTab}
                     crmFilter={activeWorkInboxCrm}
+                    importanceFilter={activeWorkInboxImportance}
                     page={paginatedWorkInbox.page}
                     pageSize={activeWorkInboxPageSize}
                     priorityFilter={activeWorkInboxPriority}
@@ -397,6 +408,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               <WorkInboxFilteredEmptyState
                 activeTab={activeWorkInboxTab}
                 crmFilter={activeWorkInboxCrm}
+                importanceFilter={activeWorkInboxImportance}
                 priorityFilter={activeWorkInboxPriority}
                 provider={gmailProvider}
                 query={activeWorkInboxSearch}
@@ -975,7 +987,7 @@ function EmailClientHeader({
             : "Not synced yet"}{" "}
           · {accountCountLabel} ·{" "}
           {threadCount > 0
-            ? `Showing latest ${threadCount} synced threads`
+            ? `Showing ${threadCount} stored synced threads`
             : "No synced messages yet"}{" "}
           · {selectedAccountLabel}
         </p>
@@ -1083,6 +1095,7 @@ function WorkInboxToolbar({
   activeTab,
   accounts,
   crmFilter,
+  importanceFilter,
   provider,
   priorityFilter,
   query,
@@ -1094,6 +1107,7 @@ function WorkInboxToolbar({
   activeTab: string;
   accounts: GmailInboxAccountSummary[];
   crmFilter: WorkInboxCrmFilter;
+  importanceFilter: WorkInboxImportanceFilter;
   provider: ProviderCard | undefined;
   priorityFilter: WorkInboxPriorityFilter;
   query: string;
@@ -1127,6 +1141,7 @@ function WorkInboxToolbar({
               href={inboxAccountHref("all", {
                 activeTab,
                 crmFilter,
+                importanceFilter,
                 priorityFilter,
                 query,
                 sort,
@@ -1147,6 +1162,7 @@ function WorkInboxToolbar({
                 href={inboxAccountHref(account.connectionId, {
                   activeTab,
                   crmFilter,
+                  importanceFilter,
                   priorityFilter,
                   query,
                   sort,
@@ -1222,14 +1238,27 @@ function WorkInboxToolbar({
           </select>
         </label>
         <label>
+          <span>Importance</span>
+          <select
+            aria-label="Filter unimportant inbox messages"
+            defaultValue={importanceFilter}
+            name="importance"
+          >
+            <option value="all">Show all</option>
+            <option value="hide-unimportant">Hide unimportant</option>
+          </select>
+        </label>
+        <label>
           <span>Sort</span>
           <select
             aria-label="Sort synced inbox"
             defaultValue={sort}
             name="sort"
           >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="unread">Unread first</option>
             <option value="priority">Priority</option>
-            <option value="recent">Recent</option>
           </select>
         </label>
         <button className="button-secondary button-compact" type="submit">
@@ -1238,7 +1267,8 @@ function WorkInboxToolbar({
         {query ||
         priorityFilter !== "all" ||
         crmFilter !== "all" ||
-        sort !== "priority" ? (
+        importanceFilter !== "all" ||
+        sort !== "newest" ? (
           <Link
             className="button-secondary button-compact"
             href={inboxAccountHref(selectedAccount, { activeTab })}
@@ -1288,6 +1318,7 @@ function InboxPaginationSummary({
 function WorkInboxPagination({
   activeTab,
   crmFilter,
+  importanceFilter,
   page,
   pageSize,
   priorityFilter,
@@ -1298,6 +1329,7 @@ function WorkInboxPagination({
 }: {
   activeTab: string;
   crmFilter: WorkInboxCrmFilter;
+  importanceFilter: WorkInboxImportanceFilter;
   page: number;
   pageSize: number;
   priorityFilter: WorkInboxPriorityFilter;
@@ -1325,6 +1357,7 @@ function WorkInboxPagination({
           href={inboxAccountHref(selectedAccount, {
             activeTab,
             crmFilter,
+            importanceFilter,
             page: previousPage,
             pageSize,
             priorityFilter,
@@ -1347,6 +1380,7 @@ function WorkInboxPagination({
           href={inboxAccountHref(selectedAccount, {
             activeTab,
             crmFilter,
+            importanceFilter,
             page: nextPage,
             pageSize,
             priorityFilter,
@@ -1369,6 +1403,7 @@ function WorkInboxPagination({
             href={inboxAccountHref(selectedAccount, {
               activeTab,
               crmFilter,
+              importanceFilter,
               page: 1,
               pageSize: option,
               priorityFilter,
@@ -1387,6 +1422,7 @@ function WorkInboxPagination({
 
 function WorkInboxThreadList({
   crmFilter,
+  importanceFilter,
   items,
   page,
   pageSize,
@@ -1397,6 +1433,7 @@ function WorkInboxThreadList({
   tab,
 }: {
   crmFilter: WorkInboxCrmFilter;
+  importanceFilter: WorkInboxImportanceFilter;
   items: WorkInboxItem[];
   page: number;
   pageSize: number;
@@ -1440,6 +1477,7 @@ function WorkInboxThreadList({
               account: selectedAccount,
               activeTab: tab,
               crmFilter,
+              importanceFilter,
               page,
               pageSize,
               priorityFilter,
@@ -1479,6 +1517,11 @@ function WorkInboxThreadList({
               </span>
             </span>
             <span className="inbox-thread-meta">
+              {item.isUnimportant ? (
+                <Badge className="badge inbox-thread-importance">
+                  Unimportant
+                </Badge>
+              ) : null}
               {thread.accountEmail ? (
                 <span className="inbox-thread-account">
                   {thread.accountEmail}
@@ -1522,6 +1565,7 @@ function formatInboxThreadDate(value: Date) {
 function WorkInboxFilteredEmptyState({
   activeTab,
   crmFilter,
+  importanceFilter,
   priorityFilter,
   provider,
   query,
@@ -1530,6 +1574,7 @@ function WorkInboxFilteredEmptyState({
 }: {
   activeTab: string;
   crmFilter: WorkInboxCrmFilter;
+  importanceFilter: WorkInboxImportanceFilter;
   priorityFilter: WorkInboxPriorityFilter;
   provider: ProviderCard | undefined;
   query: string;
@@ -1560,7 +1605,11 @@ function WorkInboxFilteredEmptyState({
           </ActionGroup>
         }
         actionsLabel="Filtered inbox empty actions"
-        description="No synced Gmail rows match the current search and filters. Clear filters, switch tabs, or sync Gmail again."
+        description={
+          importanceFilter === "hide-unimportant"
+            ? "No synced Gmail rows match these filters after hiding locally classified unimportant emails. Show all, clear filters, or sync Gmail again."
+            : "No synced Gmail rows match the current search and filters. Clear filters, switch tabs, or sync Gmail again."
+        }
         title="No matching inbox messages"
         titleLevel="h3"
       />
@@ -1607,6 +1656,22 @@ function WorkInboxInsightPanel({ item }: { item: WorkInboxItem }) {
             <Badge key={reason}>{reason}</Badge>
           ))}
         </ActionGroup>
+      ) : null}
+      {item.isUnimportant ? (
+        <div
+          className="work-inbox-low-importance"
+          aria-label="Why this email is marked unimportant"
+        >
+          <strong>Why marked unimportant</strong>
+          <ActionGroup
+            className="filter-actions"
+            label="Unimportant email reasons"
+          >
+            {item.unimportantReasons.map((reason) => (
+              <Badge key={reason}>{reason}</Badge>
+            ))}
+          </ActionGroup>
+        </div>
       ) : null}
       {item.unansweredQuestions.length > 0 ? (
         <div className="work-inbox-question-list">
@@ -2896,6 +2961,7 @@ function emailInboxThreadHref(
     account: string;
     activeTab: string;
     crmFilter: WorkInboxCrmFilter;
+    importanceFilter: WorkInboxImportanceFilter;
     page: number;
     pageSize: number;
     priorityFilter: WorkInboxPriorityFilter;
@@ -2909,10 +2975,12 @@ function emailInboxThreadHref(
   if (options.page > 1) params.set("page", String(options.page));
   if (options.pageSize !== 50) params.set("pageSize", String(options.pageSize));
   if (options.query) params.set("q", options.query);
+  if (options.importanceFilter !== "all")
+    params.set("importance", options.importanceFilter);
   if (options.priorityFilter !== "all")
     params.set("priority", options.priorityFilter);
   if (options.crmFilter !== "all") params.set("crm", options.crmFilter);
-  if (options.sort !== "priority") params.set("sort", options.sort);
+  if (options.sort !== "newest") params.set("sort", options.sort);
   return `/email?${params.toString()}` as Route;
 }
 
@@ -2943,6 +3011,7 @@ function inboxAccountHref(
   options: {
     activeTab: string;
     crmFilter?: WorkInboxCrmFilter;
+    importanceFilter?: WorkInboxImportanceFilter;
     page?: number;
     pageSize?: number;
     priorityFilter?: WorkInboxPriorityFilter;
@@ -2956,11 +3025,13 @@ function inboxAccountHref(
   if (options.pageSize && options.pageSize !== 50)
     params.set("pageSize", String(options.pageSize));
   if (options.query) params.set("q", options.query);
+  if (options.importanceFilter && options.importanceFilter !== "all")
+    params.set("importance", options.importanceFilter);
   if (options.priorityFilter && options.priorityFilter !== "all")
     params.set("priority", options.priorityFilter);
   if (options.crmFilter && options.crmFilter !== "all")
     params.set("crm", options.crmFilter);
-  if (options.sort && options.sort !== "priority")
+  if (options.sort && options.sort !== "newest")
     params.set("sort", options.sort);
   return `/email?${params.toString()}` as Route;
 }

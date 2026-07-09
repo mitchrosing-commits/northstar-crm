@@ -438,6 +438,7 @@ describe("global workspace search", () => {
     ]);
     expect(buildSearchJumpActions().map((action) => action.href)).toEqual([
       "/dashboard",
+      "/assistant",
       "/pipeline",
       "/quotes",
       "/activities",

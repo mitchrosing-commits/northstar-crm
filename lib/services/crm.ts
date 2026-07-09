@@ -1,4 +1,6 @@
 export * from "./activity-service";
+export * from "./assistant/assistant-command-service";
+export * from "./assistant/assistant-context-service";
 export * from "./ai-hygiene-service";
 export * from "./ai-email-summary-service";
 export * from "./ai-preferences-service";
@@ -8,6 +10,7 @@ export * from "./audit-service";
 export * from "./contact-service";
 export * from "./contact-import-service";
 export * from "./contract-workflow-service";
+export * from "./crm-ai-insight-service";
 export * from "./custom-field-service";
 export * from "./dashboard-service";
 export * from "./deal-import-service";

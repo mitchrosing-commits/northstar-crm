@@ -171,7 +171,7 @@ describe("Email UX v1 discoverability", () => {
       '"email-client-shell email-client-detail-shell"',
     );
     expect(emailPage).toContain("EmailClientHeader");
-    expect(emailPage).toContain("Showing latest ${threadCount} synced threads");
+    expect(emailPage).toContain("Showing ${threadCount} stored synced threads");
     expect(emailPage).toContain('className="panel inbox-workflow-map"');
     expect(emailPage).toContain('aria-label="Inbox workflow map"');
     expect(emailPage).toContain('title="Inbox Workflows"');
@@ -930,7 +930,11 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("email-inbox-list-home");
     expect(emailPage).toContain("InboxPaginationSummary");
     expect(emailPage).toContain("WorkInboxPagination");
+    expect(emailPage).toContain("normalizeWorkInboxImportanceFilter");
+    expect(emailPage).toContain("activeWorkInboxImportance");
     expect(emailPage).toContain("normalizeInboxPageSize");
+    expect(emailPage).toContain("listEmailInboxThreads(actor, {");
+    expect(emailPage).toContain("limit: null");
     expect(emailPage).toContain("pageSize: activeWorkInboxPageSize");
     expect(emailPage).toContain("page: paginatedWorkInbox.page");
     expect(emailPage).toContain("inbox-reader-pane");
@@ -943,6 +947,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("emailInboxThreadHref(thread.id, {");
     expect(emailPage).toContain("activeTab: tab");
     expect(emailPage).toContain("crmFilter");
+    expect(emailPage).toContain("importanceFilter");
     expect(emailPage).toContain("page,");
     expect(emailPage).toContain("pageSize,");
     expect(emailPage).toContain("priorityFilter");
@@ -952,6 +957,12 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Connected Gmail and Google Workspace inboxes");
     expect(emailPage).toContain("Sync all inboxes");
     expect(emailPage).toContain("Sync this inbox");
+    expect(emailPage).toContain("Hide unimportant");
+    expect(emailPage).toContain("Newest first");
+    expect(emailPage).toContain("Oldest first");
+    expect(emailPage).toContain("Unread first");
+    expect(emailPage).toContain("Why marked unimportant");
+    expect(emailPage).toContain("inbox-thread-importance");
     expect(emailPage).toContain("item.tags.slice(0, 3)");
     expect(emailPage).toContain("hiddenTagCount > 0");
     expect(emailPage).toContain(

@@ -11,6 +11,8 @@ export type RunJobsOnceOptions = {
   handlers?: JobHandlerRegistry;
   limit?: number;
   now?: Date;
+  types?: unknown;
+  workspaceId?: unknown;
   workerId?: string;
 };
 
@@ -28,6 +30,8 @@ export async function runJobsOnce(options: RunJobsOnceOptions = {}): Promise<Run
   const jobs = await claimJobs({
     limit: options.limit ?? 10,
     now,
+    types: options.types,
+    workspaceId: options.workspaceId,
     workerId
   });
   const result: RunJobsOnceResult = {

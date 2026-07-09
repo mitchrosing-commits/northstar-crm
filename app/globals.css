@@ -2956,10 +2956,9 @@ textarea {
 
 .work-inbox-filter-form {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(
-      3,
-      minmax(130px, auto)
-    ) auto auto;
+  grid-template-columns:
+    minmax(220px, 1fr) repeat(3, minmax(130px, auto))
+    auto auto;
   gap: 8px;
   align-items: end;
   min-width: 0;
@@ -3044,10 +3043,9 @@ textarea {
   }
 
   .inbox-thread-row {
-    grid-template-columns: 14px minmax(104px, 0.24fr) minmax(64px, auto) minmax(
-        0,
-        1fr
-      ) minmax(78px, auto);
+    grid-template-columns:
+      14px minmax(104px, 0.24fr) minmax(64px, auto) minmax(0, 1fr)
+      minmax(78px, auto);
   }
 }
 
@@ -3300,10 +3298,9 @@ textarea {
 
 .inbox-thread-row {
   display: grid;
-  grid-template-columns: 14px minmax(150px, 190px) minmax(92px, 150px) minmax(
-      0,
-      1fr
-    ) minmax(96px, auto);
+  grid-template-columns:
+    14px minmax(150px, 190px) minmax(92px, 150px) minmax(0, 1fr)
+    minmax(96px, auto);
   column-gap: 8px;
   align-items: center;
   height: 36px;
@@ -3374,6 +3371,13 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.inbox-thread-importance {
+  max-width: 88px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .inbox-thread-subject-line {
@@ -3647,10 +3651,9 @@ textarea {
   }
 
   .inbox-thread-row {
-    grid-template-columns: 12px minmax(116px, 150px) minmax(58px, 96px) minmax(
-        0,
-        1fr
-      ) minmax(72px, auto);
+    grid-template-columns:
+      12px minmax(116px, 150px) minmax(58px, 96px) minmax(0, 1fr)
+      minmax(72px, auto);
   }
 }
 
@@ -3675,6 +3678,7 @@ textarea {
 }
 
 .work-inbox-insight-grid > div,
+.work-inbox-low-importance,
 .work-inbox-question-list {
   display: grid;
   gap: 4px;
@@ -3685,6 +3689,7 @@ textarea {
 }
 
 .work-inbox-insight-grid strong,
+.work-inbox-low-importance strong,
 .work-inbox-question-list strong {
   color: var(--ink);
   font-size: 12px;
@@ -6724,6 +6729,226 @@ textarea {
   padding-top: 10px;
 }
 
+.crm-ai-insight-card {
+  display: grid;
+  gap: 12px;
+}
+
+.crm-ai-insight-summary {
+  margin: 0;
+  color: var(--muted-strong);
+}
+
+.crm-ai-insight-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crm-ai-insight-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.crm-ai-insight-marker {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.crm-ai-insight-marker-attention {
+  background: var(--red);
+}
+
+.crm-ai-insight-marker-warning {
+  background: #d97706;
+}
+
+.crm-ai-insight-marker-success {
+  background: var(--green);
+}
+
+.crm-ai-insight-marker-info {
+  background: var(--blue);
+}
+
+.crm-ai-insight-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted-strong);
+}
+
+.crm-ai-insight-copy strong,
+.crm-ai-insight-copy a {
+  width: fit-content;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.crm-ai-insight-copy span {
+  overflow-wrap: anywhere;
+}
+
+.crm-ai-insight-footer {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--muted-strong);
+}
+
+.crm-ai-insight-footer strong {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.crm-ai-insight-footer span {
+  overflow-wrap: anywhere;
+}
+
+.assistant-console {
+  display: grid;
+  gap: 16px;
+}
+
+.assistant-command-panel,
+.assistant-answer-card {
+  display: grid;
+  gap: 14px;
+}
+
+.assistant-suggestion-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assistant-suggestion {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.assistant-suggestion:hover,
+.assistant-suggestion:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface-strong);
+}
+
+.assistant-command-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.assistant-command-input {
+  min-width: 0;
+}
+
+.assistant-answer-summary {
+  margin: 0;
+  color: var(--muted-strong);
+}
+
+.assistant-answer-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistant-answer-item {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.assistant-answer-label {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--surface-strong);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.assistant-answer-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted-strong);
+}
+
+.assistant-answer-copy strong,
+.assistant-answer-copy a {
+  width: fit-content;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.assistant-answer-copy span {
+  overflow-wrap: anywhere;
+}
+
+.assistant-source-notes {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.assistant-source-notes > strong {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.assistant-source-notes ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistant-source-notes li {
+  display: grid;
+  gap: 2px;
+}
+
+.assistant-source-notes span {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.assistant-source-notes small {
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+
 .northstar-assistant-summary {
   display: grid;
   gap: 7px;
@@ -6868,6 +7093,9 @@ textarea {
 
 @media (max-width: 920px) {
   .ai-record-brief-grid,
+  .assistant-command-form,
+  .assistant-suggestion-grid,
+  .crm-ai-insight-list,
   .northstar-assistant-grid,
   .northstar-assistant-reviewed,
   .northstar-assistant-footer {

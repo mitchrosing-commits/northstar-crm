@@ -4,6 +4,7 @@ import { ActivityList } from "@/components/activity-list";
 import { AppShell } from "@/components/app-shell";
 import { CompactTitleRow } from "@/components/compact-title-row";
 import { CountBadge } from "@/components/count-badge";
+import { CrmAiInsightCard } from "@/components/crm-ai-insight-card";
 import { EmptyState } from "@/components/empty-state";
 import { FilterPanel } from "@/components/filter-panel";
 import { FormFieldLabel } from "@/components/form-field-label";
@@ -24,7 +25,7 @@ import { enumSearchParam, getSearchParam, hasActiveListFilters, parsePagination,
 import { listResourceSearchPlaceholder } from "@/lib/list-resource-labels";
 import { formatPersonName } from "@/lib/person-name";
 import { prefillCreateHref } from "@/lib/search-create-actions";
-import { getActivityWorkQueueSummary, getWorkspace, listActivities, listActivitiesPage } from "@/lib/services/crm";
+import { buildActivityQueueAiInsight, getActivityWorkQueueSummary, getWorkspace, listActivities, listActivitiesPage } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +76,12 @@ export default async function ActivitiesPage({ searchParams }: PageProps) {
   const selectedStatus = selectedActivityStatus(params);
   const activityQuery = getSearchParam(params, "q");
   const createFromQueryHref = activityQuery ? prefillCreateHref("/activities/new", "title", activityQuery) : undefined;
+  const activityAiInsight = buildActivityQueueAiInsight({
+    hasActiveFilters,
+    query: activityQuery || undefined,
+    summary: workQueueSummary,
+    visibleActivities: activities
+  });
 
   return (
     <AppShell globalSearchDefaultValue={activityQuery || undefined} workspace={workspace}>
@@ -110,6 +117,8 @@ export default async function ActivitiesPage({ searchParams }: PageProps) {
       </section>
 
       <ActivityQuickLinks links={quickLinks} searchParams={params} />
+
+      <CrmAiInsightCard insight={activityAiInsight} />
 
       <ActivityAgendaPanel agenda={agenda} workspaceId={workspace.id} />
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkInbox,
   normalizeWorkInboxCrmFilter,
+  normalizeWorkInboxImportanceFilter,
   normalizeWorkInboxPriorityFilter,
   normalizeWorkInboxSearch,
   normalizeWorkInboxSort,
@@ -64,7 +65,11 @@ describe("work inbox intelligence", () => {
       categories: expect.arrayContaining(["automated-marketing"]),
       detectedIntent: "Automated update or marketing message",
       priorityLevel: "low",
-      tags: expect.arrayContaining(["Automated", "No CRM link"]),
+      isUnimportant: true,
+      tags: expect.arrayContaining(["Automated", "No CRM link", "Unimportant"]),
+      unimportantReasons: expect.arrayContaining([
+        "Newsletter, promotion, digest, or provider category signals.",
+      ]),
     });
     expect(inbox.items[0].categories).not.toContain("priority");
   });
@@ -143,7 +148,80 @@ describe("work inbox intelligence", () => {
     expect(inbox.items[0].categories).not.toContain("work");
   });
 
-  it("filters visible work inbox items by search, priority, CRM link, and sort", () => {
+  it("defaults to newest-first ordering instead of AI priority ordering", () => {
+    const olderPriority = thread({
+      body: "Urgent pricing question. Can you send a quote today?",
+      fromText: "buyer@acme.example",
+      linkedRecordLabel: "Deal: Acme",
+      occurredAt: new Date("2030-01-01T12:00:00.000Z"),
+      subject: "Urgent quote",
+    });
+    const newerLowValue = thread({
+      body: "Weekly newsletter. Unsubscribe or view in browser.",
+      fromText: "newsletter@vendor.example",
+      id: "gmail_thread_2",
+      occurredAt: new Date("2030-01-02T12:00:00.000Z"),
+      providerLabels: ["CATEGORY_PROMOTIONS"],
+      subject: "Vendor digest",
+    });
+
+    const inbox = buildWorkInbox({ threads: [olderPriority, newerLowValue] });
+
+    expect(inbox.visibleItems.map((item) => item.thread.subject)).toEqual([
+      "Vendor digest",
+      "Urgent quote",
+    ]);
+  });
+
+  it("supports explicit oldest, unread, and priority sorts", () => {
+    const readNewest = thread({
+      body: "Newsletter and webinar invitation. Unsubscribe anytime.",
+      fromText: "marketing@vendor.example",
+      id: "gmail_thread_2",
+      isUnread: false,
+      occurredAt: new Date("2030-01-03T12:00:00.000Z"),
+      providerLabels: ["CATEGORY_PROMOTIONS"],
+      subject: "Newest low priority",
+    });
+    const unreadMiddle = thread({
+      body: "Status update with no action needed.",
+      fromText: "notifications@vendor.example",
+      id: "gmail_thread_3",
+      isUnread: true,
+      occurredAt: new Date("2030-01-02T12:00:00.000Z"),
+      subject: "Unread middle",
+    });
+    const olderPriority = thread({
+      body: "Urgent pricing question. Can you send a quote today?",
+      fromText: "buyer@acme.example",
+      linkedRecordLabel: "Deal: Acme",
+      id: "gmail_thread_1",
+      isUnread: false,
+      occurredAt: new Date("2030-01-01T12:00:00.000Z"),
+      subject: "Older priority",
+    });
+
+    expect(
+      buildWorkInbox({
+        sort: "oldest",
+        threads: [readNewest, unreadMiddle, olderPriority],
+      }).visibleItems.map((item) => item.thread.subject),
+    ).toEqual(["Older priority", "Unread middle", "Newest low priority"]);
+    expect(
+      buildWorkInbox({
+        sort: "unread",
+        threads: [readNewest, unreadMiddle, olderPriority],
+      }).visibleItems.map((item) => item.thread.subject),
+    ).toEqual(["Unread middle", "Newest low priority", "Older priority"]);
+    expect(
+      buildWorkInbox({
+        sort: "priority",
+        threads: [readNewest, unreadMiddle, olderPriority],
+      }).visibleItems.map((item) => item.thread.subject)[0],
+    ).toBe("Older priority");
+  });
+
+  it("filters visible work inbox items by search, priority, CRM link, importance, and sort", () => {
     const linkedPriority = thread({
       body: "Can you send the contract today?",
       fromText: "buyer@acme.example",
@@ -161,9 +239,10 @@ describe("work inbox intelligence", () => {
 
     const filtered = buildWorkInbox({
       crmFilter: "linked",
+      importanceFilter: "hide-unimportant",
       priorityFilter: "high",
       query: "contract",
-      sort: "recent",
+      sort: "priority",
       threads: [unlinkedMarketing, linkedPriority],
     });
 
@@ -172,9 +251,12 @@ describe("work inbox intelligence", () => {
     expect(filtered.visibleItems[0].href).toContain("inbox=all");
     expect(filtered.visibleItems[0].href).toContain("thread=gmail_thread_1");
     expect(filtered.visibleItems[0].href).toContain("q=contract");
+    expect(filtered.visibleItems[0].href).toContain(
+      "importance=hide-unimportant",
+    );
     expect(filtered.visibleItems[0].href).toContain("priority=high");
     expect(filtered.visibleItems[0].href).toContain("crm=linked");
-    expect(filtered.visibleItems[0].href).toContain("sort=recent");
+    expect(filtered.visibleItems[0].href).toContain("sort=priority");
     expect(filtered.tabs.find((tab) => tab.id === "all")?.href).toContain(
       "q=contract",
     );
@@ -185,8 +267,39 @@ describe("work inbox intelligence", () => {
       "crm=linked",
     );
     expect(filtered.tabs.find((tab) => tab.id === "all")?.href).toContain(
-      "sort=recent",
+      "importance=hide-unimportant",
     );
+    expect(filtered.tabs.find((tab) => tab.id === "all")?.href).toContain(
+      "sort=priority",
+    );
+  });
+
+  it("hides locally classified unimportant emails only when explicitly requested", () => {
+    const unimportant = thread({
+      body: "Weekly newsletter. Unsubscribe or view in browser.",
+      fromText: "newsletter@vendor.example",
+      providerLabels: ["CATEGORY_PROMOTIONS"],
+      subject: "Vendor digest",
+    });
+    const important = thread({
+      body: "Can you send updated pricing today?",
+      fromText: "buyer@acme.example",
+      id: "gmail_thread_2",
+      linkedRecordLabel: "Deal: Acme",
+      subject: "Pricing question",
+    });
+
+    expect(
+      buildWorkInbox({ threads: [unimportant, important] }).visibleItems.map(
+        (item) => item.thread.subject,
+      ),
+    ).toEqual(["Vendor digest", "Pricing question"]);
+    expect(
+      buildWorkInbox({
+        importanceFilter: "hide-unimportant",
+        threads: [unimportant, important],
+      }).visibleItems.map((item) => item.thread.subject),
+    ).toEqual(["Pricing question"]);
   });
 
   it("honors AI preference summary length and detail level", () => {
@@ -233,8 +346,15 @@ describe("work inbox intelligence", () => {
     expect(normalizeWorkInboxPriorityFilter("urgent")).toBe("all");
     expect(normalizeWorkInboxCrmFilter("unlinked")).toBe("unlinked");
     expect(normalizeWorkInboxCrmFilter("secret")).toBe("all");
-    expect(normalizeWorkInboxSort("recent")).toBe("recent");
-    expect(normalizeWorkInboxSort("oldest")).toBe("priority");
+    expect(normalizeWorkInboxImportanceFilter("hide-unimportant")).toBe(
+      "hide-unimportant",
+    );
+    expect(normalizeWorkInboxImportanceFilter("hide-important")).toBe("all");
+    expect(normalizeWorkInboxSort(undefined)).toBe("newest");
+    expect(normalizeWorkInboxSort("recent")).toBe("newest");
+    expect(normalizeWorkInboxSort("oldest")).toBe("oldest");
+    expect(normalizeWorkInboxSort("priority")).toBe("priority");
+    expect(normalizeWorkInboxSort("unread")).toBe("unread");
     expect(normalizeWorkInboxSearch("  hello  ")).toBe("hello");
     expect(normalizeWorkInboxSearch(42)).toBe("");
   });
@@ -244,6 +364,7 @@ function thread({
   body,
   fromText = "sender@example.test",
   id = "gmail_thread_1",
+  isUnread = true,
   linkedRecordLabel = null,
   occurredAt = new Date("2030-01-01T12:00:00.000Z"),
   providerLabels = [],
@@ -252,6 +373,7 @@ function thread({
   body: string;
   fromText?: string;
   id?: string;
+  isUnread?: boolean;
   linkedRecordLabel?: string | null;
   occurredAt?: Date;
   providerLabels?: string[];
@@ -302,7 +424,7 @@ function thread({
     emailConnectionId: "email_connection_1",
     emailConnectionRef: "nection_1",
     id,
-    isUnread: true,
+    isUnread,
     latestAt: message.occurredAt,
     latestMessage: message,
     linkedRecordLabel,

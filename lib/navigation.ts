@@ -45,6 +45,16 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     searchJump: true
   },
   {
+    href: "/assistant" as Route,
+    label: "Assistant",
+    icon: "BrainCircuit",
+    group: "Work",
+    helper: "Read-only AI",
+    commandJump: true,
+    searchDescription: "Ask read-only CRM questions across activities, deals, and stored email context.",
+    searchJump: true
+  },
+  {
     href: "/pipeline",
     label: "Pipeline",
     icon: "PanelsTopLeft",

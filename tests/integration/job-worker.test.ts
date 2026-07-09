@@ -1149,21 +1149,7 @@ function currentFixture() {
 }
 
 async function deleteJobWorkerTestRows(prisma: Fixture["prisma"]) {
-  await prisma.job.deleteMany({
-    where: {
-      type: {
-        in: [
-          passwordResetEmailJobType,
-          "internal.continuous_unknown",
-          "internal.inspect_worker",
-          "internal.reset_url_failure",
-          "internal.retry_failure",
-          "internal.test_failure",
-          "internal.unknown_for_batch"
-        ]
-      }
-    }
-  });
+  await prisma.job.deleteMany({});
 }
 
 async function createPasswordResetToken(userId: string, resetToken: string, expiresAt: Date, consumedAt: Date | null = null) {

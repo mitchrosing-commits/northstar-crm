@@ -11,6 +11,10 @@ const actionGroup = readFileSync(
   join(process.cwd(), "components/action-group.tsx"),
   "utf8",
 );
+const assistantPage = readFileSync(
+  join(process.cwd(), "app/assistant/page.tsx"),
+  "utf8",
+);
 const globalStyles = readFileSync(
   join(process.cwd(), "app/globals.css"),
   "utf8",
@@ -152,6 +156,7 @@ describe("shared page header UX", () => {
 
     for (const page of [
       activitiesPage,
+      assistantPage,
       contactsPage,
       contactDetailPage,
       customFieldsPage,
@@ -343,7 +348,7 @@ describe("shared page header UX", () => {
     expect(emailPage).toContain("function EmailClientHeader");
     expect(emailPage).toContain("<h1>Inbox</h1>");
     expect(emailPage).toContain("Communication");
-    expect(emailPage).toContain("Showing latest");
+    expect(emailPage).toContain("stored synced threads");
     expect(emailPage).toContain('href="/api/email-connections/google/connect"');
 
     expect(settingsPage).toContain('eyebrow="Workspace"');

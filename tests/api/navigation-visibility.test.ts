@@ -139,6 +139,10 @@ describe("main navigation visibility", () => {
     expect(sidebarCommand).toContain("id={headingId}");
     expect(sidebarCommand).toContain("sidebar-quick-action-icon");
     expect(createRecordActions).toContain('sidebarHelper: "Opportunity"');
+    expect(navigation).toContain("href: \"/assistant\" as Route");
+    expect(navigation).toContain("label: \"Assistant\"");
+    expect(navigation).toContain("helper: \"Read-only AI\"");
+    expect(navigation).toContain("Ask read-only CRM questions across activities, deals, and stored email context.");
     expect(navigation).toContain("href: \"/email\"");
     expect(navigation).toContain("label: \"Inbox\"");
     expect(navigation).toContain("helper: \"Mailbox + priority\"");
@@ -178,6 +182,7 @@ describe("main navigation visibility", () => {
     expect(createRecordActions).toContain('sidebarLabel: "New lead"');
     expect(createRecordActions).toContain('sidebarLabel: "New activity"');
     expect(navigation).toContain("href: \"/dashboard\"");
+    expect(navigation).toContain("href: \"/assistant\" as Route");
     expect(navigation).toContain("href: \"/pipeline\"");
     expect(navigation).toContain("href: \"/deals\"");
     expect(navigation).toContain("href: \"/quotes\" as Route");

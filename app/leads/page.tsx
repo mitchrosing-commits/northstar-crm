@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/app-shell";
+import { CrmAiInsightCard } from "@/components/crm-ai-insight-card";
 import { CustomFieldFilterControls, CustomFieldSummaryCell } from "@/components/custom-field-list-summary";
 import { LeadSavedViewsPanel } from "@/components/saved-views-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -28,7 +29,7 @@ import { enumListViewFilter, hasActiveListViewFilters, listPageHref, parseListVi
 import { listResourceSearchPlaceholder } from "@/lib/list-resource-labels";
 import { formatPersonName } from "@/lib/person-name";
 import { prefillCreateHref } from "@/lib/search-create-actions";
-import { getWorkspace, listCustomFields, listCustomFieldSummaries, listLeadSavedViews, listLeads, listLeadsPage } from "@/lib/services/crm";
+import { buildLeadQualificationAiInsight, getWorkspace, listCustomFields, listCustomFieldSummaries, listLeadSavedViews, listLeads, listLeadsPage } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
   const sourceOptions = Array.from(new Set(allLeads.map((lead) => lead.source).filter((source): source is string => Boolean(source)))).sort();
   const hasActiveFilters = hasActiveListViewFilters(listState);
   const createFromQueryHref = listState.q ? prefillCreateHref("/leads/new", "title", listState.q) : undefined;
+  const leadAiInsight = buildLeadQualificationAiInsight(allLeads);
 
   return (
     <AppShell globalSearchDefaultValue={listState.q} workspace={workspace}>
@@ -100,6 +102,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
       </PageHeader>
       <LeadSavedViewsPanel listState={listState} savedViews={savedViews} />
       <LeadQuickFilters searchParams={params} />
+      <CrmAiInsightCard insight={leadAiInsight} />
 
       <FilterPanel action="/leads" legend="Lead filters" pageSize={listState.pagination.pageSize} resetHref="/leads">
           <label className="form-field">

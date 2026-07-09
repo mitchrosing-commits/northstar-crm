@@ -1,13 +1,32 @@
 import { createHash } from "node:crypto";
 
-import { EmailConnectionProvider, EmailConnectionStatus, JobStatus, Prisma, type EmailDirection } from "@prisma/client";
+import {
+  EmailConnectionProvider,
+  EmailConnectionStatus,
+  JobStatus,
+  Prisma,
+  type EmailDirection,
+} from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
-import { canUseEmailTokenEncryptionKey, decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
+import {
+  canUseEmailTokenEncryptionKey,
+  decryptEmailToken,
+  encryptEmailToken,
+} from "@/lib/email/token-encryption";
 import { redactSensitiveText } from "@/lib/security/redaction";
-import { defaultStaleJobAfterMs, enqueueJob, markJobFailedForRetry, markJobSucceeded } from "./job-service";
-import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
+import {
+  defaultStaleJobAfterMs,
+  enqueueJob,
+  markJobFailedForRetry,
+  markJobSucceeded,
+} from "./job-service";
+import {
+  ensureWorkspaceAccess,
+  type WorkspaceActor,
+  writeAuditLog,
+} from "./workspace-access";
 import { userDisplaySelect } from "./user-select";
 
 type ProviderConfig = {
@@ -19,13 +38,15 @@ type ProviderConfig = {
 type EmailConnectionEnv = Record<string, string | undefined>;
 type GmailFetch = typeof fetch;
 type MicrosoftFetch = typeof fetch;
-export type GmailAccountDomainType = "consumer_gmail" | "google_workspace_or_custom_domain" | "unknown";
+export type GmailAccountDomainType =
+  "consumer_gmail" | "google_workspace_or_custom_domain" | "unknown";
 
 const defaultRecentEmailSyncMaxResults = 10;
 const maxRecentEmailSyncMaxResults = 25;
 const defaultGmailInboxSyncMaxResults = 75;
 const maxGmailInboxSyncMaxResults = 100;
-const emailAddressPattern = /[A-Z0-9._%+-]+@(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?/gi;
+const emailAddressPattern =
+  /[A-Z0-9._%+-]+@(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?/gi;
 
 export type EmailProviderCard = {
   accountEmail?: string | null;
@@ -82,7 +103,11 @@ type GoogleTokenInfoResponse = {
 export type GoogleOAuthScopeResolution = {
   missingRequiredScopes: string[];
   scopes: string[];
-  source: "token_response" | "tokeninfo" | "token_response_and_tokeninfo" | "unverified";
+  source:
+    | "token_response"
+    | "tokeninfo"
+    | "token_response_and_tokeninfo"
+    | "unverified";
   tokenResponseScopes: string[];
   tokenInfoScopes?: string[];
 };
@@ -185,7 +210,7 @@ const emailInboxLogInclude = {
   emailConnection: true,
   lead: true,
   person: true,
-  organization: true
+  organization: true,
 } satisfies Prisma.EmailLogInclude;
 
 export type GmailSyncResult = {
@@ -220,7 +245,10 @@ type GmailSkippedMessageSummary = {
 
 type GmailFullMessageLoadResult = {
   attemptedMessageCount: number;
-  fullMessages: Array<{ listedThreadId?: string; message: GmailMessageResponse }>;
+  fullMessages: Array<{
+    listedThreadId?: string;
+    message: GmailMessageResponse;
+  }>;
   skippedMessages: GmailSkippedMessageSummary[];
 };
 
@@ -242,7 +270,8 @@ type GmailFatalMessageLoadReason =
   | "message_load_auth_or_scope_failed"
   | "message_load_invalid_token";
 
-type GmailMessageLoadFailureReason = GmailFatalMessageLoadReason | GmailSkippedMessageReason;
+type GmailMessageLoadFailureReason =
+  GmailFatalMessageLoadReason | GmailSkippedMessageReason;
 
 type GmailProviderErrorCategory =
   | "account_mismatch"
@@ -364,7 +393,11 @@ export type GmailConnectionDiagnosticResult = {
     staleRelativeToTokeninfo: boolean | null;
   };
   tokenRefresh: {
-    category: GmailProviderErrorCategory | "missing_refresh_token" | "not_attempted" | "success";
+    category:
+      | GmailProviderErrorCategory
+      | "missing_refresh_token"
+      | "not_attempted"
+      | "success";
     providerReason: string | null;
     providerStatus: number | null;
     success: boolean | null;
@@ -393,7 +426,9 @@ export type GmailConnectionDiagnosticResult = {
   };
 };
 
-export type EmailInboxMessageSummary = Prisma.EmailLogGetPayload<{ include: typeof emailInboxLogInclude }>;
+export type EmailInboxMessageSummary = Prisma.EmailLogGetPayload<{
+  include: typeof emailInboxLogInclude;
+}>;
 
 export type EmailInboxThreadSummary = {
   accountEmail: string | null;
@@ -425,9 +460,16 @@ export const gmailOAuthScopes = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.send"
+  "https://www.googleapis.com/auth/gmail.send",
 ] as const;
-export const microsoftOAuthScopes = ["openid", "email", "profile", "offline_access", "User.Read", "Mail.Read"] as const;
+export const microsoftOAuthScopes = [
+  "openid",
+  "email",
+  "profile",
+  "offline_access",
+  "User.Read",
+  "Mail.Read",
+] as const;
 
 export const gmailInboxSyncJobType = "email.gmail_sync";
 const gmailHistoryCursorPrefix = "historyId:";
@@ -435,24 +477,27 @@ const gmailHistoryCursorPrefix = "historyId:";
 const providerLabels: Record<EmailConnectionProvider, string> = {
   GOOGLE_WORKSPACE: "Gmail / Google Workspace",
   MICROSOFT_365: "Microsoft 365 / Outlook",
-  IMAP_SMTP: "IMAP / SMTP"
+  IMAP_SMTP: "IMAP / SMTP",
 };
 
 export async function listEmailConnectionProviderCards(
   actor: WorkspaceActor,
-  env: EmailConnectionEnv = process.env
+  env: EmailConnectionEnv = process.env,
 ): Promise<EmailProviderCard[]> {
   await ensureWorkspaceAccess(actor);
   const connections = await prisma.emailConnection.findMany({
     where: {
       workspaceId: actor.workspaceId,
       deletedAt: null,
-      OR: emailConnectionOwnerWhere(actor.actorUserId)
+      OR: emailConnectionOwnerWhere(actor.actorUserId),
     },
     include: { secret: { select: { scopes: true } } },
-    orderBy: [{ provider: "asc" }, { updatedAt: "desc" }]
+    orderBy: [{ provider: "asc" }, { updatedAt: "desc" }],
   });
-  const latestConnectionByProvider = new Map<(typeof connections)[number]["provider"], (typeof connections)[number]>();
+  const latestConnectionByProvider = new Map<
+    (typeof connections)[number]["provider"],
+    (typeof connections)[number]
+  >();
   for (const sourceConnection of connections) {
     let connection = sourceConnection;
     if (
@@ -461,18 +506,24 @@ export async function listEmailConnectionProviderCards(
       hasProviderScopes(connection.secret?.scopes, gmailOAuthScopes) &&
       !hasProviderScopes(connection.scopes, gmailOAuthScopes)
     ) {
-      const scopes = mergeProviderScopes(connection.secret?.scopes, gmailOAuthScopes);
+      const scopes = mergeProviderScopes(
+        connection.secret?.scopes,
+        gmailOAuthScopes,
+      );
       await prisma.emailConnection.update({
         where: { id: connection.id },
-        data: { lastError: null, scopes }
+        data: { lastError: null, scopes },
       });
       connection = { ...connection, lastError: null, scopes };
     }
 
-    const existingConnection = latestConnectionByProvider.get(connection.provider);
+    const existingConnection = latestConnectionByProvider.get(
+      connection.provider,
+    );
     if (
       !existingConnection ||
-      providerConnectionCardPriority(connection) > providerConnectionCardPriority(existingConnection)
+      providerConnectionCardPriority(connection) >
+        providerConnectionCardPriority(existingConnection)
     ) {
       latestConnectionByProvider.set(connection.provider, connection);
     }
@@ -485,9 +536,9 @@ export async function listEmailConnectionProviderCards(
         where: {
           dedupeKey: gmailInboxSyncJobDedupeKey(gmailConnection.id),
           type: gmailInboxSyncJobType,
-          workspaceId: actor.workspaceId
+          workspaceId: actor.workspaceId,
         },
-        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       })
     : null;
 
@@ -497,13 +548,13 @@ export async function listEmailConnectionProviderCards(
       config: resolveGoogleOAuthConfig(env),
       provider: "GOOGLE_WORKSPACE",
       syncJob: gmailSyncJob,
-      tokenEncryptionReady
+      tokenEncryptionReady,
     }),
     microsoftProviderCard({
       connection: latestConnectionByProvider.get("MICROSOFT_365"),
       connectionStatus: latestConnectionByProvider.get("MICROSOFT_365")?.status,
       config: resolveMicrosoftOAuthConfig(env),
-      tokenEncryptionReady
+      tokenEncryptionReady,
     }),
     {
       actionLabel: "Planned",
@@ -513,39 +564,51 @@ export async function listEmailConnectionProviderCards(
       name: providerLabels.IMAP_SMTP,
       provider: "IMAP_SMTP",
       scopes: [],
-      status: latestConnectionByProvider.get("IMAP_SMTP")?.status ?? "Planned"
-    }
+      status: latestConnectionByProvider.get("IMAP_SMTP")?.status ?? "Planned",
+    },
   ];
 }
 
-export async function listGmailInboxAccounts(actor: WorkspaceActor, env: EmailConnectionEnv = process.env): Promise<GmailInboxAccountSummary[]> {
+export async function listGmailInboxAccounts(
+  actor: WorkspaceActor,
+  env: EmailConnectionEnv = process.env,
+): Promise<GmailInboxAccountSummary[]> {
   await ensureWorkspaceAccess(actor);
   const connections = await prisma.emailConnection.findMany({
     where: {
       workspaceId: actor.workspaceId,
       provider: "GOOGLE_WORKSPACE",
       deletedAt: null,
-      OR: emailConnectionOwnerWhere(actor.actorUserId)
+      OR: emailConnectionOwnerWhere(actor.actorUserId),
     },
     include: { secret: { select: { scopes: true } } },
-    orderBy: [{ status: "asc" }, { updatedAt: "desc" }]
+    orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
   });
   const syncJobs = await prisma.job.findMany({
     where: {
-      dedupeKey: { in: connections.map((connection) => gmailInboxSyncJobDedupeKey(connection.id)) },
+      dedupeKey: {
+        in: connections.map((connection) =>
+          gmailInboxSyncJobDedupeKey(connection.id),
+        ),
+      },
       type: gmailInboxSyncJobType,
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     },
-    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
   const latestJobByDedupeKey = new Map<string, (typeof syncJobs)[number]>();
   for (const job of syncJobs) {
-    if (job.dedupeKey && !latestJobByDedupeKey.has(job.dedupeKey)) latestJobByDedupeKey.set(job.dedupeKey, job);
+    if (job.dedupeKey && !latestJobByDedupeKey.has(job.dedupeKey))
+      latestJobByDedupeKey.set(job.dedupeKey, job);
   }
 
   return connections.map((connection) => {
-    const syncJob = latestJobByDedupeKey.get(gmailInboxSyncJobDedupeKey(connection.id)) ?? null;
-    const fullInboxScopesReady = hasProviderScopes(connection.scopes, gmailOAuthScopes) || hasProviderScopes(connection.secret?.scopes, gmailOAuthScopes);
+    const syncJob =
+      latestJobByDedupeKey.get(gmailInboxSyncJobDedupeKey(connection.id)) ??
+      null;
+    const fullInboxScopesReady =
+      hasProviderScopes(connection.scopes, gmailOAuthScopes) ||
+      hasProviderScopes(connection.secret?.scopes, gmailOAuthScopes);
     const syncStatus = gmailSyncJobStatus(syncJob, connection.id);
     return {
       accountDomainType: gmailAccountDomainType(connection.accountEmail),
@@ -558,56 +621,92 @@ export async function listGmailInboxAccounts(actor: WorkspaceActor, env: EmailCo
       status: emailProviderConnectionStatus(connection, fullInboxScopesReady),
       syncAvailable: connection.status === "CONNECTED" && fullInboxScopesReady,
       syncStatusDetail: syncStatus.detail,
-      syncStatusLabel: syncStatus.label
+      syncStatusLabel: syncStatus.label,
     };
   });
 }
 
-export function isTokenEncryptionConfigured(env: EmailConnectionEnv = process.env) {
+export function isTokenEncryptionConfigured(
+  env: EmailConnectionEnv = process.env,
+) {
   return canUseEmailTokenEncryptionKey(env);
 }
 
-export function resolveGoogleOAuthConfig(env: EmailConnectionEnv = process.env): ProviderConfig {
+export function resolveGoogleOAuthConfig(
+  env: EmailConnectionEnv = process.env,
+): ProviderConfig {
   return {
-    clientId: readNonEmpty(env.GOOGLE_OAUTH_CLIENT_ID) ?? readNonEmpty(env.GOOGLE_CLIENT_ID),
-    clientSecret: readNonEmpty(env.GOOGLE_OAUTH_CLIENT_SECRET) ?? readNonEmpty(env.GOOGLE_CLIENT_SECRET),
-    redirectUri: readNonEmpty(env.GOOGLE_OAUTH_REDIRECT_URI) ?? readNonEmpty(env.GOOGLE_REDIRECT_URI)
+    clientId:
+      readNonEmpty(env.GOOGLE_OAUTH_CLIENT_ID) ??
+      readNonEmpty(env.GOOGLE_CLIENT_ID),
+    clientSecret:
+      readNonEmpty(env.GOOGLE_OAUTH_CLIENT_SECRET) ??
+      readNonEmpty(env.GOOGLE_CLIENT_SECRET),
+    redirectUri:
+      readNonEmpty(env.GOOGLE_OAUTH_REDIRECT_URI) ??
+      readNonEmpty(env.GOOGLE_REDIRECT_URI),
   };
 }
 
-export function resolveMicrosoftOAuthConfig(env: EmailConnectionEnv = process.env): ProviderConfig {
+export function resolveMicrosoftOAuthConfig(
+  env: EmailConnectionEnv = process.env,
+): ProviderConfig {
   return {
-    clientId: readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_ID) ?? readNonEmpty(env.MICROSOFT_CLIENT_ID),
-    clientSecret: readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_SECRET) ?? readNonEmpty(env.MICROSOFT_CLIENT_SECRET),
-    redirectUri: readNonEmpty(env.MICROSOFT_OAUTH_REDIRECT_URI) ?? readNonEmpty(env.MICROSOFT_REDIRECT_URI)
+    clientId:
+      readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_ID) ??
+      readNonEmpty(env.MICROSOFT_CLIENT_ID),
+    clientSecret:
+      readNonEmpty(env.MICROSOFT_OAUTH_CLIENT_SECRET) ??
+      readNonEmpty(env.MICROSOFT_CLIENT_SECRET),
+    redirectUri:
+      readNonEmpty(env.MICROSOFT_OAUTH_REDIRECT_URI) ??
+      readNonEmpty(env.MICROSOFT_REDIRECT_URI),
   };
 }
 
 export function assertGoogleOAuthReady(env: EmailConnectionEnv = process.env) {
   const config = resolveGoogleOAuthConfig(env);
   if (!isProviderConfigured(config)) {
-    throw new ApiError("EMAIL_PROVIDER_NOT_CONFIGURED", "Gmail OAuth is not configured.", 400);
+    throw new ApiError(
+      "EMAIL_PROVIDER_NOT_CONFIGURED",
+      "Gmail OAuth is not configured.",
+      400,
+    );
   }
   if (!isTokenEncryptionConfigured(env)) {
-    throw new ApiError("EMAIL_TOKEN_ENCRYPTION_NOT_CONFIGURED", "Email token encryption is not configured.", 400);
+    throw new ApiError(
+      "EMAIL_TOKEN_ENCRYPTION_NOT_CONFIGURED",
+      "Email token encryption is not configured.",
+      400,
+    );
   }
   return config as Required<ProviderConfig>;
 }
 
-export function assertMicrosoftOAuthReady(env: EmailConnectionEnv = process.env) {
+export function assertMicrosoftOAuthReady(
+  env: EmailConnectionEnv = process.env,
+) {
   const config = resolveMicrosoftOAuthConfig(env);
   if (!isProviderConfigured(config)) {
-    throw new ApiError("EMAIL_PROVIDER_NOT_CONFIGURED", "Microsoft OAuth is not configured.", 400);
+    throw new ApiError(
+      "EMAIL_PROVIDER_NOT_CONFIGURED",
+      "Microsoft OAuth is not configured.",
+      400,
+    );
   }
   if (!isTokenEncryptionConfigured(env)) {
-    throw new ApiError("EMAIL_TOKEN_ENCRYPTION_NOT_CONFIGURED", "Email token encryption is not configured.", 400);
+    throw new ApiError(
+      "EMAIL_TOKEN_ENCRYPTION_NOT_CONFIGURED",
+      "Email token encryption is not configured.",
+      400,
+    );
   }
   return config as Required<ProviderConfig>;
 }
 
 export function buildGoogleAuthorizationUrl({
   config,
-  state
+  state,
 }: {
   config: Required<ProviderConfig>;
   state: string;
@@ -627,13 +726,15 @@ export function buildGoogleAuthorizationUrl({
 export function buildMicrosoftAuthorizationUrl({
   config,
   env = process.env,
-  state
+  state,
 }: {
   config: Required<ProviderConfig>;
   env?: EmailConnectionEnv;
   state: string;
 }) {
-  const url = new URL(`https://login.microsoftonline.com/${resolveMicrosoftTenant(env)}/oauth2/v2.0/authorize`);
+  const url = new URL(
+    `https://login.microsoftonline.com/${resolveMicrosoftTenant(env)}/oauth2/v2.0/authorize`,
+  );
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("prompt", "consent");
   url.searchParams.set("redirect_uri", config.redirectUri);
@@ -646,7 +747,7 @@ export function buildMicrosoftAuthorizationUrl({
 export async function exchangeGoogleAuthorizationCode({
   code,
   config,
-  fetchImpl = fetch
+  fetchImpl = fetch,
 }: {
   code: string;
   config: Required<ProviderConfig>;
@@ -660,20 +761,31 @@ export async function exchangeGoogleAuthorizationCode({
       client_secret: config.clientSecret,
       code,
       grant_type: "authorization_code",
-      redirect_uri: config.redirectUri
-    })
+      redirect_uri: config.redirectUri,
+    }),
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED", "Gmail authorization could not be completed.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
+      "Gmail authorization could not be completed.",
+      400,
+    );
   }
 
-  const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(response, {
-    code: "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
-    message: "Gmail authorization could not be completed."
-  });
+  const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(
+    response,
+    {
+      code: "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
+      message: "Gmail authorization could not be completed.",
+    },
+  );
   if (!tokenResponse.access_token) {
-    throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_TOKEN_MISSING",
+      "Gmail did not return an access token.",
+      400,
+    );
   }
 
   return tokenResponse;
@@ -683,35 +795,49 @@ export async function exchangeMicrosoftAuthorizationCode({
   code,
   config,
   env = process.env,
-  fetchImpl = fetch
+  fetchImpl = fetch,
 }: {
   code: string;
   config: Required<ProviderConfig>;
   env?: EmailConnectionEnv;
   fetchImpl?: MicrosoftFetch;
 }): Promise<MicrosoftTokenResponse> {
-  const response = await fetchImpl(`https://login.microsoftonline.com/${resolveMicrosoftTenant(env)}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: config.redirectUri
-    })
-  });
+  const response = await fetchImpl(
+    `https://login.microsoftonline.com/${resolveMicrosoftTenant(env)}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: config.redirectUri,
+      }),
+    },
+  );
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED", "Microsoft authorization could not be completed.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
+      "Microsoft authorization could not be completed.",
+      400,
+    );
   }
 
-  const tokenResponse = await readEmailProviderJson<MicrosoftTokenResponse>(response, {
-    code: "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
-    message: "Microsoft authorization could not be completed."
-  });
+  const tokenResponse = await readEmailProviderJson<MicrosoftTokenResponse>(
+    response,
+    {
+      code: "EMAIL_OAUTH_TOKEN_EXCHANGE_FAILED",
+      message: "Microsoft authorization could not be completed.",
+    },
+  );
   if (!tokenResponse.access_token) {
-    throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Microsoft did not return an access token.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_TOKEN_MISSING",
+      "Microsoft did not return an access token.",
+      400,
+    );
   }
 
   return tokenResponse;
@@ -719,22 +845,29 @@ export async function exchangeMicrosoftAuthorizationCode({
 
 export async function fetchGoogleUserProfile({
   accessToken,
-  fetchImpl = fetch
+  fetchImpl = fetch,
 }: {
   accessToken: string;
   fetchImpl?: typeof fetch;
 }): Promise<GoogleUserProfile> {
-  const response = await fetchImpl("https://openidconnect.googleapis.com/v1/userinfo", {
-    headers: { authorization: `Bearer ${accessToken}` }
-  });
+  const response = await fetchImpl(
+    "https://openidconnect.googleapis.com/v1/userinfo",
+    {
+      headers: { authorization: `Bearer ${accessToken}` },
+    },
+  );
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_OAUTH_PROFILE_FAILED", "Gmail account profile could not be loaded.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_PROFILE_FAILED",
+      "Gmail account profile could not be loaded.",
+      400,
+    );
   }
 
   const profile = await readEmailProviderJson<GoogleUserProfile>(response, {
     code: "EMAIL_OAUTH_PROFILE_FAILED",
-    message: "Gmail account profile could not be loaded."
+    message: "Gmail account profile could not be loaded.",
   });
   const accountEmail = normalizeProviderAccountEmail(profile.email, "Gmail");
 
@@ -744,7 +877,7 @@ export async function fetchGoogleUserProfile({
 export async function resolveGoogleOAuthGrantedScopes({
   accessToken,
   fetchImpl = fetch,
-  tokenResponse
+  tokenResponse,
 }: {
   accessToken: string;
   fetchImpl?: typeof fetch;
@@ -755,30 +888,36 @@ export async function resolveGoogleOAuthGrantedScopes({
     return googleOAuthScopeResolution({
       scopes: tokenResponseScopes,
       source: "token_response",
-      tokenResponseScopes
+      tokenResponseScopes,
     });
   }
 
   try {
-    const tokenInfoScopes = await fetchGoogleAccessTokenInfoScopes({ accessToken, fetchImpl });
+    const tokenInfoScopes = await fetchGoogleAccessTokenInfoScopes({
+      accessToken,
+      fetchImpl,
+    });
     return googleOAuthScopeResolution({
       scopes: mergeScopeLists(tokenResponseScopes, tokenInfoScopes),
-      source: tokenResponseScopes.length > 0 ? "token_response_and_tokeninfo" : "tokeninfo",
+      source:
+        tokenResponseScopes.length > 0
+          ? "token_response_and_tokeninfo"
+          : "tokeninfo",
       tokenInfoScopes,
-      tokenResponseScopes
+      tokenResponseScopes,
     });
   } catch {
     return googleOAuthScopeResolution({
       scopes: tokenResponseScopes,
       source: "unverified",
-      tokenResponseScopes
+      tokenResponseScopes,
     });
   }
 }
 
 async function fetchGoogleAccessTokenInfoScopes({
   accessToken,
-  fetchImpl
+  fetchImpl,
 }: {
   accessToken: string;
   fetchImpl: typeof fetch;
@@ -788,7 +927,7 @@ async function fetchGoogleAccessTokenInfoScopes({
 
 async function fetchGoogleAccessTokenInfo({
   accessToken,
-  fetchImpl
+  fetchImpl,
 }: {
   accessToken: string;
   fetchImpl: typeof fetch;
@@ -799,49 +938,69 @@ async function fetchGoogleAccessTokenInfo({
 
   if (!response.ok) {
     const info = await readGmailProviderErrorInfo(response);
-    throw new ApiError("EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED", "Gmail granted scopes could not be verified.", 400, {
-      providerErrorCategory: info.category,
-      providerReason: info.providerReason,
-      providerStatus: info.providerStatus,
-      providerStatusText: info.providerStatusText,
-      phase: "tokeninfo"
-    });
+    throw new ApiError(
+      "EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED",
+      "Gmail granted scopes could not be verified.",
+      400,
+      {
+        providerErrorCategory: info.category,
+        providerReason: info.providerReason,
+        providerStatus: info.providerStatus,
+        providerStatusText: info.providerStatusText,
+        phase: "tokeninfo",
+      },
+    );
   }
 
-  const tokenInfo = await readEmailProviderJson<GoogleTokenInfoResponse>(response, {
-    code: "EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED",
-    message: "Gmail granted scopes could not be verified."
-  });
+  const tokenInfo = await readEmailProviderJson<GoogleTokenInfoResponse>(
+    response,
+    {
+      code: "EMAIL_OAUTH_SCOPE_VERIFICATION_FAILED",
+      message: "Gmail granted scopes could not be verified.",
+    },
+  );
 
   return {
     accountEmail: normalizeEmailAddress(tokenInfo.email),
     audience: readNonEmptyValue(tokenInfo.aud),
-    scopes: normalizeGoogleOAuthScopes(tokenInfo.scope)
+    scopes: normalizeGoogleOAuthScopes(tokenInfo.scope),
   };
 }
 
 export async function fetchMicrosoftUserProfile({
   accessToken,
-  fetchImpl = fetch
+  fetchImpl = fetch,
 }: {
   accessToken: string;
   fetchImpl?: MicrosoftFetch;
 }): Promise<MicrosoftUserProfile> {
-  const response = await fetchImpl("https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName", {
-    headers: { authorization: `Bearer ${accessToken}` }
-  });
+  const response = await fetchImpl(
+    "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName",
+    {
+      headers: { authorization: `Bearer ${accessToken}` },
+    },
+  );
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_OAUTH_PROFILE_FAILED", "Microsoft account profile could not be loaded.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_PROFILE_FAILED",
+      "Microsoft account profile could not be loaded.",
+      400,
+    );
   }
 
   const profile = await readEmailProviderJson<MicrosoftUserProfile>(response, {
     code: "EMAIL_OAUTH_PROFILE_FAILED",
-    message: "Microsoft account profile could not be loaded."
+    message: "Microsoft account profile could not be loaded.",
   });
-  const accountEmail = normalizeProviderAccountEmail(profile.mail ?? profile.userPrincipalName, "Microsoft");
+  const accountEmail = normalizeProviderAccountEmail(
+    profile.mail ?? profile.userPrincipalName,
+    "Microsoft",
+  );
 
-  return profile.mail ? { ...profile, mail: accountEmail } : { ...profile, userPrincipalName: accountEmail };
+  return profile.mail
+    ? { ...profile, mail: accountEmail }
+    : { ...profile, userPrincipalName: accountEmail };
 }
 
 export async function storeGoogleOAuthConnection({
@@ -850,7 +1009,7 @@ export async function storeGoogleOAuthConnection({
   profile,
   scopeResolution,
   tokenResponse,
-  env = process.env
+  env = process.env,
 }: {
   actor: WorkspaceActor;
   grantedScopes?: readonly string[];
@@ -861,19 +1020,27 @@ export async function storeGoogleOAuthConnection({
 }) {
   await ensureWorkspaceAccess(actor);
   if (!tokenResponse.access_token) {
-    throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Gmail did not return an access token.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_TOKEN_MISSING",
+      "Gmail did not return an access token.",
+      400,
+    );
   }
 
   const tokenResponseScopes = normalizeGoogleOAuthScopes(tokenResponse.scope);
-  const scopes = grantedScopes ? normalizeScopeList(grantedScopes) : tokenResponseScopes;
+  const scopes = grantedScopes
+    ? normalizeScopeList(grantedScopes)
+    : tokenResponseScopes;
   const resolvedScopeDiagnostic =
     scopeResolution ??
     googleOAuthScopeResolution({
       scopes,
       source: tokenResponseScopes.length > 0 ? "token_response" : "unverified",
-      tokenResponseScopes
+      tokenResponseScopes,
     });
-  const scopeError = hasProviderScopes(scopes, gmailOAuthScopes) ? null : formatGoogleOAuthMissingScopeError(resolvedScopeDiagnostic);
+  const scopeError = hasProviderScopes(scopes, gmailOAuthScopes)
+    ? null
+    : formatGoogleOAuthMissingScopeError(resolvedScopeDiagnostic);
   const accountEmail = normalizeProviderAccountEmail(profile.email, "Gmail");
   const connection = await prisma.emailConnection.upsert({
     where: {
@@ -881,8 +1048,8 @@ export async function storeGoogleOAuthConnection({
         accountEmail,
         createdById: actor.actorUserId,
         provider: "GOOGLE_WORKSPACE",
-        workspaceId: actor.workspaceId
-      }
+        workspaceId: actor.workspaceId,
+      },
     },
     create: {
       accountEmail,
@@ -892,7 +1059,7 @@ export async function storeGoogleOAuthConnection({
       provider: "GOOGLE_WORKSPACE",
       scopes,
       status: "CONNECTED",
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     },
     update: {
       createdById: actor.actorUserId,
@@ -900,18 +1067,20 @@ export async function storeGoogleOAuthConnection({
       displayName: profile.name,
       lastError: scopeError,
       scopes,
-      status: "CONNECTED"
-    }
+      status: "CONNECTED",
+    },
   });
 
   const existingSecret = await prisma.emailConnectionSecret.findUnique({
     where: { connectionId: connection.id },
-    select: { encryptedRefreshToken: true }
+    select: { encryptedRefreshToken: true },
   });
   const encryptedRefreshToken = tokenResponse.refresh_token
     ? encryptEmailToken(tokenResponse.refresh_token, env)
     : existingSecret?.encryptedRefreshToken;
-  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(tokenResponse.expires_in);
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(
+    tokenResponse.expires_in,
+  );
 
   await prisma.emailConnectionSecret.upsert({
     where: { connectionId: connection.id },
@@ -924,7 +1093,7 @@ export async function storeGoogleOAuthConnection({
       provider: "GOOGLE_WORKSPACE",
       scopes,
       userId: actor.actorUserId,
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     },
     update: {
       accessTokenExpiresAt,
@@ -932,17 +1101,25 @@ export async function storeGoogleOAuthConnection({
       encryptedAccessToken: encryptEmailToken(tokenResponse.access_token, env),
       encryptedRefreshToken,
       scopes,
-      userId: actor.actorUserId
-    }
+      userId: actor.actorUserId,
+    },
   });
 
-  await writeAuditLog(actor, "email_connection.connected", "EmailConnection", connection.id, {
-    accountEmail,
-    provider: "GOOGLE_WORKSPACE",
-    scopeResolutionSource: resolvedScopeDiagnostic.source,
-    missingScopeCategories: resolvedScopeDiagnostic.missingRequiredScopes.map(googleScopeCategoryLabel),
-    scopes
-  });
+  await writeAuditLog(
+    actor,
+    "email_connection.connected",
+    "EmailConnection",
+    connection.id,
+    {
+      accountEmail,
+      provider: "GOOGLE_WORKSPACE",
+      scopeResolutionSource: resolvedScopeDiagnostic.source,
+      missingScopeCategories: resolvedScopeDiagnostic.missingRequiredScopes.map(
+        googleScopeCategoryLabel,
+      ),
+      scopes,
+    },
+  );
   if (hasProviderScopes(scopes, gmailOAuthScopes)) {
     await enqueueGmailInboxSyncJobForConnection(actor, connection.id);
   }
@@ -954,20 +1131,28 @@ export async function storeMicrosoftOAuthConnection({
   actor,
   profile,
   tokenResponse,
-  env = process.env
+  env = process.env,
 }: {
   actor: WorkspaceActor;
-  profile: Required<Pick<MicrosoftUserProfile, "mail" | "userPrincipalName">> & MicrosoftUserProfile;
+  profile: Required<Pick<MicrosoftUserProfile, "mail" | "userPrincipalName">> &
+    MicrosoftUserProfile;
   tokenResponse: MicrosoftTokenResponse;
   env?: EmailConnectionEnv;
 }) {
   await ensureWorkspaceAccess(actor);
   if (!tokenResponse.access_token) {
-    throw new ApiError("EMAIL_OAUTH_TOKEN_MISSING", "Microsoft did not return an access token.", 400);
+    throw new ApiError(
+      "EMAIL_OAUTH_TOKEN_MISSING",
+      "Microsoft did not return an access token.",
+      400,
+    );
   }
 
   const scopes = normalizeScopes(tokenResponse.scope, microsoftOAuthScopes);
-  const accountEmail = normalizeProviderAccountEmail(profile.mail ?? profile.userPrincipalName, "Microsoft");
+  const accountEmail = normalizeProviderAccountEmail(
+    profile.mail ?? profile.userPrincipalName,
+    "Microsoft",
+  );
   const connection = await prisma.emailConnection.upsert({
     where: {
       workspaceId_provider_accountEmail_createdById: {
@@ -975,7 +1160,7 @@ export async function storeMicrosoftOAuthConnection({
         createdById: actor.actorUserId,
         provider: "MICROSOFT_365",
         workspaceId: actor.workspaceId,
-      }
+      },
     },
     create: {
       accountEmail,
@@ -984,7 +1169,7 @@ export async function storeMicrosoftOAuthConnection({
       provider: "MICROSOFT_365",
       scopes,
       status: "CONNECTED",
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     },
     update: {
       createdById: actor.actorUserId,
@@ -992,18 +1177,20 @@ export async function storeMicrosoftOAuthConnection({
       displayName: profile.displayName,
       lastError: null,
       scopes,
-      status: "CONNECTED"
-    }
+      status: "CONNECTED",
+    },
   });
 
   const existingSecret = await prisma.emailConnectionSecret.findUnique({
     where: { connectionId: connection.id },
-    select: { encryptedRefreshToken: true }
+    select: { encryptedRefreshToken: true },
   });
   const encryptedRefreshToken = tokenResponse.refresh_token
     ? encryptEmailToken(tokenResponse.refresh_token, env)
     : existingSecret?.encryptedRefreshToken;
-  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(tokenResponse.expires_in);
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(
+    tokenResponse.expires_in,
+  );
 
   await prisma.emailConnectionSecret.upsert({
     where: { connectionId: connection.id },
@@ -1016,7 +1203,7 @@ export async function storeMicrosoftOAuthConnection({
       provider: "MICROSOFT_365",
       scopes,
       userId: actor.actorUserId,
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     },
     update: {
       accessTokenExpiresAt,
@@ -1024,15 +1211,21 @@ export async function storeMicrosoftOAuthConnection({
       encryptedAccessToken: encryptEmailToken(tokenResponse.access_token, env),
       encryptedRefreshToken,
       scopes,
-      userId: actor.actorUserId
-    }
+      userId: actor.actorUserId,
+    },
   });
 
-  await writeAuditLog(actor, "email_connection.connected", "EmailConnection", connection.id, {
-    accountEmail,
-    provider: "MICROSOFT_365",
-    scopes
-  });
+  await writeAuditLog(
+    actor,
+    "email_connection.connected",
+    "EmailConnection",
+    connection.id,
+    {
+      accountEmail,
+      provider: "MICROSOFT_365",
+      scopes,
+    },
+  );
 
   return connection;
 }
@@ -1040,8 +1233,11 @@ export async function storeMicrosoftOAuthConnection({
 export async function disconnectEmailConnection(
   actor: WorkspaceActor,
   providerInput: unknown,
-  connectionIdInput?: unknown
-): Promise<{ accountEmail: string | null; provider: "GOOGLE_WORKSPACE" | "MICROSOFT_365" }> {
+  connectionIdInput?: unknown,
+): Promise<{
+  accountEmail: string | null;
+  provider: "GOOGLE_WORKSPACE" | "MICROSOFT_365";
+}> {
   await ensureWorkspaceAccess(actor);
   const provider = normalizeDisconnectProvider(providerInput);
   const providerLabel = provider === "GOOGLE_WORKSPACE" ? "Gmail" : "Microsoft";
@@ -1053,34 +1249,44 @@ export async function disconnectEmailConnection(
       provider,
       status: "CONNECTED",
       deletedAt: null,
-      OR: emailConnectionOwnerWhere(actor.actorUserId)
+      OR: emailConnectionOwnerWhere(actor.actorUserId),
     },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
 
   if (!connection) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", `No connected ${providerLabel} account was found to disconnect.`, 404);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      `No connected ${providerLabel} account was found to disconnect.`,
+      404,
+    );
   }
 
   await prisma.emailConnectionSecret.deleteMany({
     where: {
       connectionId: connection.id,
       provider,
-      workspaceId: actor.workspaceId
-    }
+      workspaceId: actor.workspaceId,
+    },
   });
   await prisma.emailConnection.update({
     where: { id: connection.id },
     data: {
       deletedAt: new Date(),
       lastError: null,
-      status: "DISCONNECTED"
-    }
+      status: "DISCONNECTED",
+    },
   });
-  await writeAuditLog(actor, "email_connection.disconnected", "EmailConnection", connection.id, {
-    accountEmail: connection.accountEmail,
-    provider
-  });
+  await writeAuditLog(
+    actor,
+    "email_connection.disconnected",
+    "EmailConnection",
+    connection.id,
+    {
+      accountEmail: connection.accountEmail,
+      provider,
+    },
+  );
 
   return { accountEmail: connection.accountEmail, provider };
 }
@@ -1089,7 +1295,7 @@ export async function syncRecentGmailMessages({
   actor,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = defaultRecentEmailSyncMaxResults
+  maxResults = defaultRecentEmailSyncMaxResults,
 }: {
   actor: WorkspaceActor;
   env?: EmailConnectionEnv;
@@ -1104,35 +1310,52 @@ export async function syncRecentGmailMessages({
       provider: "GOOGLE_WORKSPACE",
       status: "CONNECTED",
       deletedAt: null,
-      OR: emailConnectionOwnerWhere(actor.actorUserId)
+      OR: emailConnectionOwnerWhere(actor.actorUserId),
     },
     include: { secret: true },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
 
   if (!connection?.secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before syncing recent messages.",
+      400,
+    );
   }
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
+    const accessToken = await resolveUsableGoogleAccessToken({
+      config,
+      connection,
+      env,
+      fetchImpl,
+    });
     const matchIndex = await buildWorkspaceEmailMatchIndex(actor.workspaceId);
 
-    const messages = await listRecentGmailMessages({ accessToken, fetchImpl, maxResults });
-    const ids = messages.map((message) => message.id).filter((id): id is string => Boolean(id));
+    const messages = await listRecentGmailMessages({
+      accessToken,
+      fetchImpl,
+      maxResults,
+    });
+    const ids = messages
+      .map((message) => message.id)
+      .filter((id): id is string => Boolean(id));
     const existingLogs = ids.length
       ? await prisma.emailLog.findMany({
           where: {
             workspaceId: actor.workspaceId,
             emailConnectionId: connection.id,
             provider: "GOOGLE_WORKSPACE",
-            providerMessageId: { in: ids }
+            providerMessageId: { in: ids },
           },
-          select: { providerMessageId: true }
+          select: { providerMessageId: true },
         })
       : [];
-    const existingIds = new Set(existingLogs.map((log) => log.providerMessageId).filter(Boolean));
+    const existingIds = new Set(
+      existingLogs.map((log) => log.providerMessageId).filter(Boolean),
+    );
     let created = 0;
     let skippedDuplicates = 0;
     let skippedUnmatched = 0;
@@ -1145,24 +1368,41 @@ export async function syncRecentGmailMessages({
         continue;
       }
 
-      const metadata = await getGmailMessageMetadata({ accessToken, fetchImpl, messageId: message.id });
-      const normalized = normalizeGmailMessage(metadata, connection.accountEmail ?? connection.secret.accountEmail);
+      const metadata = await getGmailMessageMetadata({
+        accessToken,
+        fetchImpl,
+        messageId: message.id,
+      });
+      const normalized = normalizeGmailMessage(
+        metadata,
+        connection.accountEmail ?? connection.secret.accountEmail,
+      );
       const match = matchEmailMessageToKnownRecord(normalized, matchIndex);
       if (!match) {
         skippedUnmatched += 1;
-        addUnmatchedPreview(unmatchedPreviews, "GOOGLE_WORKSPACE", message.id, normalized);
+        addUnmatchedPreview(
+          unmatchedPreviews,
+          "GOOGLE_WORKSPACE",
+          message.id,
+          normalized,
+        );
         continue;
       }
 
       try {
         await prisma.emailLog.create({
           data: {
-            body: normalized.snippet ? `Gmail snippet: ${normalized.snippet}` : "Gmail metadata imported without message body.",
+            body: normalized.snippet
+              ? `Gmail snippet: ${normalized.snippet}`
+              : "Gmail metadata imported without message body.",
             dealId: match.deals[0]?.id ?? null,
             direction: normalized.direction as EmailDirection,
             emailConnectionId: connection.id,
             fromText: normalized.fromText,
-            organizationId: workspaceScopedOrganizationId(match, actor.workspaceId),
+            organizationId: workspaceScopedOrganizationId(
+              match,
+              actor.workspaceId,
+            ),
             occurredAt: normalized.occurredAt,
             personId: match.id,
             provider: "GOOGLE_WORKSPACE",
@@ -1173,8 +1413,8 @@ export async function syncRecentGmailMessages({
             subject: normalized.subject,
             toText: normalized.toText,
             workspaceId: actor.workspaceId,
-            createdById: actor.actorUserId
-          }
+            createdById: actor.actorUserId,
+          },
         });
         existingIds.add(message.id);
         created += 1;
@@ -1192,18 +1432,30 @@ export async function syncRecentGmailMessages({
       data: {
         lastError: null,
         lastSyncAt: new Date(),
-        lastSyncCursor: messages[0]?.id ?? connection.lastSyncCursor
-      }
+        lastSyncCursor: messages[0]?.id ?? connection.lastSyncCursor,
+      },
     });
-    await writeAuditLog(actor, "email_connection.synced", "EmailConnection", connection.id, {
+    await writeAuditLog(
+      actor,
+      "email_connection.synced",
+      "EmailConnection",
+      connection.id,
+      {
+        created,
+        provider: "GOOGLE_WORKSPACE",
+        skippedDuplicates,
+        skippedUnmatched,
+        totalFetched: messages.length,
+      },
+    );
+
+    return {
       created,
-      provider: "GOOGLE_WORKSPACE",
       skippedDuplicates,
       skippedUnmatched,
-      totalFetched: messages.length
-    });
-
-    return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
+      totalFetched: messages.length,
+      unmatchedPreviews,
+    };
   } catch (error) {
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
     throw error;
@@ -1214,7 +1466,7 @@ export async function syncRecentMicrosoftMessages({
   actor,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = defaultRecentEmailSyncMaxResults
+  maxResults = defaultRecentEmailSyncMaxResults,
 }: {
   actor: WorkspaceActor;
   env?: EmailConnectionEnv;
@@ -1229,35 +1481,52 @@ export async function syncRecentMicrosoftMessages({
       provider: "MICROSOFT_365",
       status: "CONNECTED",
       deletedAt: null,
-      OR: emailConnectionOwnerWhere(actor.actorUserId)
+      OR: emailConnectionOwnerWhere(actor.actorUserId),
     },
     include: { secret: true },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
 
   if (!connection?.secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Microsoft 365 or Outlook before syncing recent messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Microsoft 365 or Outlook before syncing recent messages.",
+      400,
+    );
   }
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Microsoft");
-    const accessToken = await resolveUsableMicrosoftAccessToken({ config, connection, env, fetchImpl });
+    const accessToken = await resolveUsableMicrosoftAccessToken({
+      config,
+      connection,
+      env,
+      fetchImpl,
+    });
     const matchIndex = await buildWorkspaceEmailMatchIndex(actor.workspaceId);
 
-    const messages = await listRecentMicrosoftMessages({ accessToken, fetchImpl, maxResults });
-    const ids = messages.map((message) => message.id).filter((id): id is string => Boolean(id));
+    const messages = await listRecentMicrosoftMessages({
+      accessToken,
+      fetchImpl,
+      maxResults,
+    });
+    const ids = messages
+      .map((message) => message.id)
+      .filter((id): id is string => Boolean(id));
     const existingLogs = ids.length
       ? await prisma.emailLog.findMany({
           where: {
             workspaceId: actor.workspaceId,
             emailConnectionId: connection.id,
             provider: "MICROSOFT_365",
-            providerMessageId: { in: ids }
+            providerMessageId: { in: ids },
           },
-          select: { providerMessageId: true }
+          select: { providerMessageId: true },
         })
       : [];
-    const existingIds = new Set(existingLogs.map((log) => log.providerMessageId).filter(Boolean));
+    const existingIds = new Set(
+      existingLogs.map((log) => log.providerMessageId).filter(Boolean),
+    );
     let created = 0;
     let skippedDuplicates = 0;
     let skippedUnmatched = 0;
@@ -1270,23 +1539,36 @@ export async function syncRecentMicrosoftMessages({
         continue;
       }
 
-      const normalized = normalizeMicrosoftMessage(message, connection.accountEmail ?? connection.secret.accountEmail);
+      const normalized = normalizeMicrosoftMessage(
+        message,
+        connection.accountEmail ?? connection.secret.accountEmail,
+      );
       const match = matchEmailMessageToKnownRecord(normalized, matchIndex);
       if (!match) {
         skippedUnmatched += 1;
-        addUnmatchedPreview(unmatchedPreviews, "MICROSOFT_365", message.id, normalized);
+        addUnmatchedPreview(
+          unmatchedPreviews,
+          "MICROSOFT_365",
+          message.id,
+          normalized,
+        );
         continue;
       }
 
       try {
         await prisma.emailLog.create({
           data: {
-            body: normalized.snippet ? `Microsoft snippet: ${normalized.snippet}` : "Microsoft metadata imported without message body.",
+            body: normalized.snippet
+              ? `Microsoft snippet: ${normalized.snippet}`
+              : "Microsoft metadata imported without message body.",
             dealId: match.deals[0]?.id ?? null,
             direction: normalized.direction as EmailDirection,
             emailConnectionId: connection.id,
             fromText: normalized.fromText,
-            organizationId: workspaceScopedOrganizationId(match, actor.workspaceId),
+            organizationId: workspaceScopedOrganizationId(
+              match,
+              actor.workspaceId,
+            ),
             occurredAt: normalized.occurredAt,
             personId: match.id,
             provider: "MICROSOFT_365",
@@ -1296,8 +1578,8 @@ export async function syncRecentMicrosoftMessages({
             subject: normalized.subject,
             toText: normalized.toText,
             workspaceId: actor.workspaceId,
-            createdById: actor.actorUserId
-          }
+            createdById: actor.actorUserId,
+          },
         });
         existingIds.add(message.id);
         created += 1;
@@ -1315,18 +1597,30 @@ export async function syncRecentMicrosoftMessages({
       data: {
         lastError: null,
         lastSyncAt: new Date(),
-        lastSyncCursor: messages[0]?.id ?? connection.lastSyncCursor
-      }
+        lastSyncCursor: messages[0]?.id ?? connection.lastSyncCursor,
+      },
     });
-    await writeAuditLog(actor, "email_connection.synced", "EmailConnection", connection.id, {
+    await writeAuditLog(
+      actor,
+      "email_connection.synced",
+      "EmailConnection",
+      connection.id,
+      {
+        created,
+        provider: "MICROSOFT_365",
+        skippedDuplicates,
+        skippedUnmatched,
+        totalFetched: messages.length,
+      },
+    );
+
+    return {
       created,
-      provider: "MICROSOFT_365",
       skippedDuplicates,
       skippedUnmatched,
-      totalFetched: messages.length
-    });
-
-    return { created, skippedDuplicates, skippedUnmatched, totalFetched: messages.length, unmatchedPreviews };
+      totalFetched: messages.length,
+      unmatchedPreviews,
+    };
   } catch (error) {
     await recordEmailConnectionSyncFailure(connection.id, "Microsoft", error);
     throw error;
@@ -1339,7 +1633,7 @@ export async function syncGmailInboxMessages({
   env = process.env,
   fetchImpl = fetch,
   maxResults = defaultGmailInboxSyncMaxResults,
-  preferHistory = true
+  preferHistory = true,
 }: {
   actor: WorkspaceActor;
   connectionId?: string;
@@ -1350,16 +1644,34 @@ export async function syncGmailInboxMessages({
 }): Promise<GmailSyncResult> {
   await ensureWorkspaceAccess(actor);
   const config = assertGoogleOAuthReady(env);
-  const connection = await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE", connectionId, actor.actorUserId);
+  const connection = await findConnectedEmailConnection(
+    actor.workspaceId,
+    "GOOGLE_WORKSPACE",
+    connectionId,
+    actor.actorUserId,
+  );
 
   if (!connection?.secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing inbox messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before syncing inbox messages.",
+      400,
+    );
   }
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
-    const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
+    assertConnectionProviderScopes(
+      connection,
+      gmailOAuthScopes,
+      "Reconnect Gmail to enable Full Inbox sync and replies.",
+    );
+    const accessToken = await resolveUsableGoogleAccessToken({
+      config,
+      connection,
+      env,
+      fetchImpl,
+    });
     const matchIndex = await buildWorkspaceEmailMatchIndex(actor.workspaceId);
     const cursor = parseGmailHistoryCursor(connection.lastSyncCursor);
     const syncResult =
@@ -1371,7 +1683,7 @@ export async function syncGmailInboxMessages({
             matchIndex,
             cursor,
             fetchImpl,
-            maxResults
+            maxResults,
           })
         : await syncRecentGmailInboxMessagesForConnection({
             accessToken,
@@ -1379,7 +1691,7 @@ export async function syncGmailInboxMessages({
             connection,
             matchIndex,
             fetchImpl,
-            maxResults
+            maxResults,
           });
 
     await prisma.emailConnection.update({
@@ -1387,19 +1699,29 @@ export async function syncGmailInboxMessages({
       data: {
         lastError: syncResult.syncWarning ?? null,
         lastSyncAt: new Date(),
-        lastSyncCursor: syncResult.historyId ? formatGmailHistoryCursor(syncResult.historyId) : connection.lastSyncCursor
-      }
+        lastSyncCursor: syncResult.historyId
+          ? formatGmailHistoryCursor(syncResult.historyId)
+          : connection.lastSyncCursor,
+      },
     });
-    await writeAuditLog(actor, "email_connection.inbox_synced", "EmailConnection", connection.id, {
-      created: syncResult.created,
-      provider: "GOOGLE_WORKSPACE",
-      skippedDuplicates: syncResult.skippedDuplicates,
-      skippedMessageFailureReasons: summarizeGmailSkippedMessages(syncResult.skippedMessages),
-      skippedMessageFailures: syncResult.skippedMessages.length,
-      syncMode: syncResult.syncMode,
-      syncWarning: syncResult.syncWarning,
-      totalFetched: syncResult.totalFetched
-    });
+    await writeAuditLog(
+      actor,
+      "email_connection.inbox_synced",
+      "EmailConnection",
+      connection.id,
+      {
+        created: syncResult.created,
+        provider: "GOOGLE_WORKSPACE",
+        skippedDuplicates: syncResult.skippedDuplicates,
+        skippedMessageFailureReasons: summarizeGmailSkippedMessages(
+          syncResult.skippedMessages,
+        ),
+        skippedMessageFailures: syncResult.skippedMessages.length,
+        syncMode: syncResult.syncMode,
+        syncWarning: syncResult.syncWarning,
+        totalFetched: syncResult.totalFetched,
+      },
+    );
 
     return {
       created: syncResult.created,
@@ -1409,7 +1731,7 @@ export async function syncGmailInboxMessages({
       syncMode: syncResult.syncMode,
       syncWarning: syncResult.syncWarning,
       totalFetched: syncResult.totalFetched,
-      unmatchedPreviews: []
+      unmatchedPreviews: [],
     };
   } catch (error) {
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
@@ -1423,7 +1745,7 @@ export async function syncOlderGmailInboxMessages({
   connectionId,
   env = process.env,
   fetchImpl = fetch,
-  maxResults = maxGmailInboxSyncMaxResults
+  maxResults = maxGmailInboxSyncMaxResults,
 }: {
   actor: WorkspaceActor;
   before: unknown;
@@ -1434,46 +1756,83 @@ export async function syncOlderGmailInboxMessages({
 }): Promise<GmailSyncResult> {
   await ensureWorkspaceAccess(actor);
   const config = assertGoogleOAuthReady(env);
-  const connection = await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE", connectionId, actor.actorUserId);
+  const connection = await findConnectedEmailConnection(
+    actor.workspaceId,
+    "GOOGLE_WORKSPACE",
+    connectionId,
+    actor.actorUserId,
+  );
 
   if (!connection?.secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before loading older inbox messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before loading older inbox messages.",
+      400,
+    );
   }
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+    assertConnectionProviderScopes(
+      connection,
+      gmailOAuthScopes,
+      "Reconnect Gmail to enable Full Inbox sync and replies.",
+    );
     const beforeDate = normalizeGmailBeforeDate(before);
-    const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
+    const accessToken = await resolveUsableGoogleAccessToken({
+      config,
+      connection,
+      env,
+      fetchImpl,
+    });
     const matchIndex = await buildWorkspaceEmailMatchIndex(actor.workspaceId);
     const messages = await listOlderGmailInboxMessages({
       accessToken,
       before: beforeDate,
       fetchImpl,
-      maxResults
+      maxResults,
     });
-    const loadResult = await getGmailFullMessages({ accessToken, fetchImpl, messages });
+    const loadResult = await getGmailFullMessages({
+      accessToken,
+      fetchImpl,
+      messages,
+    });
     assertGmailMessageLoadSucceeded(loadResult);
-    const persisted = await persistGmailInboxMessages({ actor, connection, matchIndex, fullMessages: loadResult.fullMessages });
-    const syncWarning = buildGmailPartialSyncWarning(loadResult.skippedMessages.length);
+    const persisted = await persistGmailInboxMessages({
+      actor,
+      connection,
+      matchIndex,
+      fullMessages: loadResult.fullMessages,
+    });
+    const syncWarning = buildGmailPartialSyncWarning(
+      loadResult.skippedMessages.length,
+    );
 
     await prisma.emailConnection.update({
       where: { id: connection.id },
       data: {
         lastError: syncWarning,
-        lastSyncAt: new Date()
-      }
+        lastSyncAt: new Date(),
+      },
     });
-    await writeAuditLog(actor, "email_connection.inbox_older_loaded", "EmailConnection", connection.id, {
-      before: beforeDate.toISOString(),
-      created: persisted.created,
-      provider: "GOOGLE_WORKSPACE",
-      skippedDuplicates: persisted.skippedDuplicates,
-      skippedMessageFailureReasons: summarizeGmailSkippedMessages(loadResult.skippedMessages),
-      skippedMessageFailures: loadResult.skippedMessages.length,
-      syncWarning,
-      totalFetched: messages.length
-    });
+    await writeAuditLog(
+      actor,
+      "email_connection.inbox_older_loaded",
+      "EmailConnection",
+      connection.id,
+      {
+        before: beforeDate.toISOString(),
+        created: persisted.created,
+        provider: "GOOGLE_WORKSPACE",
+        skippedDuplicates: persisted.skippedDuplicates,
+        skippedMessageFailureReasons: summarizeGmailSkippedMessages(
+          loadResult.skippedMessages,
+        ),
+        skippedMessageFailures: loadResult.skippedMessages.length,
+        syncWarning,
+        totalFetched: messages.length,
+      },
+    );
 
     return {
       created: persisted.created,
@@ -1483,7 +1842,7 @@ export async function syncOlderGmailInboxMessages({
       syncMode: "older",
       syncWarning,
       totalFetched: messages.length,
-      unmatchedPreviews: []
+      unmatchedPreviews: [],
     };
   } catch (error) {
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
@@ -1495,7 +1854,7 @@ export async function refreshGmailInboxThread({
   actor,
   env = process.env,
   fetchImpl = fetch,
-  threadId
+  threadId,
 }: {
   actor: WorkspaceActor;
   env?: EmailConnectionEnv;
@@ -1514,52 +1873,91 @@ export async function refreshGmailInboxThread({
       provider: "GOOGLE_WORKSPACE",
       ...(parsedConnection ? { emailConnectionId: parsedConnection.id } : {}),
       AND: [
-        { OR: [{ providerThreadId: parsedThread.providerThreadId }, { providerMessageId: parsedThread.providerThreadId }] },
-        emailInboxOwnerLogWhere(actor)
-      ]
+        {
+          OR: [
+            { providerThreadId: parsedThread.providerThreadId },
+            { providerMessageId: parsedThread.providerThreadId },
+          ],
+        },
+        emailInboxOwnerLogWhere(actor),
+      ],
     },
-    select: { emailConnectionId: true, id: true }
+    select: { emailConnectionId: true, id: true },
   });
   if (!existingThreadMessage) {
-    throw new ApiError("EMAIL_THREAD_NOT_FOUND", "Choose a synced Gmail thread before refreshing it.", 404);
+    throw new ApiError(
+      "EMAIL_THREAD_NOT_FOUND",
+      "Choose a synced Gmail thread before refreshing it.",
+      404,
+    );
   }
   const connection = await findConnectedEmailConnection(
     actor.workspaceId,
     "GOOGLE_WORKSPACE",
-    existingThreadMessage.emailConnectionId ?? parsedConnection?.id ?? undefined,
-    actor.actorUserId
+    existingThreadMessage.emailConnectionId ??
+      parsedConnection?.id ??
+      undefined,
+    actor.actorUserId,
   );
 
   if (!connection?.secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before refreshing this thread.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before refreshing this thread.",
+      400,
+    );
   }
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
-    const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
+    assertConnectionProviderScopes(
+      connection,
+      gmailOAuthScopes,
+      "Reconnect Gmail to enable Full Inbox sync and replies.",
+    );
+    const accessToken = await resolveUsableGoogleAccessToken({
+      config,
+      connection,
+      env,
+      fetchImpl,
+    });
     const matchIndex = await buildWorkspaceEmailMatchIndex(actor.workspaceId);
-    const thread = await getGmailThreadFull({ accessToken, fetchImpl, threadId: parsedThread.providerThreadId });
+    const thread = await getGmailThreadFull({
+      accessToken,
+      fetchImpl,
+      threadId: parsedThread.providerThreadId,
+    });
     const fullMessages = (thread.messages ?? []).map((message) => ({
       listedThreadId: thread.id ?? parsedThread.providerThreadId,
-      message
+      message,
     }));
-    const persisted = await persistGmailInboxMessages({ actor, connection, matchIndex, fullMessages });
+    const persisted = await persistGmailInboxMessages({
+      actor,
+      connection,
+      matchIndex,
+      fullMessages,
+    });
 
     await prisma.emailConnection.update({
       where: { id: connection.id },
       data: {
         lastError: null,
-        lastSyncAt: new Date()
-      }
+        lastSyncAt: new Date(),
+      },
     });
-    await writeAuditLog(actor, "email_connection.thread_refreshed", "EmailConnection", connection.id, {
-      created: persisted.created,
-      provider: "GOOGLE_WORKSPACE",
-      providerThreadId: parsedThread.providerThreadId,
-      skippedDuplicates: persisted.skippedDuplicates,
-      totalFetched: fullMessages.length
-    });
+    await writeAuditLog(
+      actor,
+      "email_connection.thread_refreshed",
+      "EmailConnection",
+      connection.id,
+      {
+        created: persisted.created,
+        provider: "GOOGLE_WORKSPACE",
+        providerThreadId: parsedThread.providerThreadId,
+        skippedDuplicates: persisted.skippedDuplicates,
+        totalFetched: fullMessages.length,
+      },
+    );
 
     return {
       created: persisted.created,
@@ -1568,7 +1966,7 @@ export async function refreshGmailInboxThread({
       syncMode: "thread",
       threadId: parsedThread.providerThreadId,
       totalFetched: fullMessages.length,
-      unmatchedPreviews: []
+      unmatchedPreviews: [],
     };
   } catch (error) {
     await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
@@ -1578,46 +1976,78 @@ export async function refreshGmailInboxThread({
 
 export async function enqueueGmailInboxSyncJob(actor: WorkspaceActor) {
   await ensureWorkspaceAccess(actor);
-  const connection = await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE", undefined, actor.actorUserId);
+  const connection = await findConnectedEmailConnection(
+    actor.workspaceId,
+    "GOOGLE_WORKSPACE",
+    undefined,
+    actor.actorUserId,
+  );
   if (!connection) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing inbox messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before syncing inbox messages.",
+      400,
+    );
   }
-  assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+  assertConnectionProviderScopes(
+    connection,
+    gmailOAuthScopes,
+    "Reconnect Gmail to enable Full Inbox sync and replies.",
+  );
   return enqueueGmailInboxSyncJobForConnection(actor, connection.id);
 }
 
 export async function runGmailInboxSyncNow(
   actor: WorkspaceActor,
-  options: { connectionId?: string; env?: EmailConnectionEnv; fetchImpl?: GmailFetch; now?: Date; workerId?: string } = {}
+  options: {
+    connectionId?: string;
+    env?: EmailConnectionEnv;
+    fetchImpl?: GmailFetch;
+    now?: Date;
+    workerId?: string;
+  } = {},
 ): Promise<GmailSyncResult> {
   await ensureWorkspaceAccess(actor);
   const now = options.now ?? new Date();
-  const connection = await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE", options.connectionId, actor.actorUserId);
+  const connection = await findConnectedEmailConnection(
+    actor.workspaceId,
+    "GOOGLE_WORKSPACE",
+    options.connectionId,
+    actor.actorUserId,
+  );
   if (!connection) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing inbox messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before syncing inbox messages.",
+      400,
+    );
   }
-  assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable Full Inbox sync and replies.");
+  assertConnectionProviderScopes(
+    connection,
+    gmailOAuthScopes,
+    "Reconnect Gmail to enable Full Inbox sync and replies.",
+  );
 
   const job = await enqueueGmailInboxSyncJobForConnection(actor, connection.id);
   const claimedJob = await claimGmailInboxSyncJobForImmediateRun({
     jobId: job.id,
     now,
     workerId: options.workerId ?? "email-page-gmail-sync",
-    workspaceId: actor.workspaceId
+    workspaceId: actor.workspaceId,
   });
 
   if (!claimedJob) {
     throw await gmailInboxSyncClaimFailureError({
       connectionId: connection.id,
       jobId: job.id,
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     });
   }
 
   try {
     const result = await processGmailInboxSyncJob(claimedJob.payload, {
       env: options.env,
-      fetchImpl: options.fetchImpl
+      fetchImpl: options.fetchImpl,
     });
     await markJobSucceeded(claimedJob.id, new Date());
     return result;
@@ -1629,12 +2059,23 @@ export async function runGmailInboxSyncNow(
 
 export async function runAllGmailInboxSyncNow(
   actor: WorkspaceActor,
-  options: { env?: EmailConnectionEnv; fetchImpl?: GmailFetch; now?: Date; workerId?: string } = {}
+  options: {
+    env?: EmailConnectionEnv;
+    fetchImpl?: GmailFetch;
+    now?: Date;
+    workerId?: string;
+  } = {},
 ): Promise<GmailSyncResult> {
   await ensureWorkspaceAccess(actor);
-  const accounts = (await listGmailInboxAccounts(actor, options.env)).filter((account) => account.syncAvailable);
+  const accounts = (await listGmailInboxAccounts(actor, options.env)).filter(
+    (account) => account.syncAvailable,
+  );
   if (accounts.length === 0) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail or Google Workspace before syncing all inboxes.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail or Google Workspace before syncing all inboxes.",
+      400,
+    );
   }
 
   const results: GmailSyncResult[] = [];
@@ -1643,27 +2084,41 @@ export async function runAllGmailInboxSyncNow(
       await runGmailInboxSyncNow(actor, {
         ...options,
         connectionId: account.connectionId,
-        workerId: `${options.workerId ?? "email-page-gmail-sync"}-${account.connectionRef}`
-      })
+        workerId: `${options.workerId ?? "email-page-gmail-sync"}-${account.connectionRef}`,
+      }),
     );
   }
 
   const warningCount = results.filter((result) => result.syncWarning).length;
   return {
     created: results.reduce((sum, result) => sum + result.created, 0),
-    skippedDuplicates: results.reduce((sum, result) => sum + result.skippedDuplicates, 0),
-    skippedMessageFailures: results.reduce((sum, result) => sum + (result.skippedMessageFailures ?? 0), 0),
-    skippedUnmatched: results.reduce((sum, result) => sum + result.skippedUnmatched, 0),
+    skippedDuplicates: results.reduce(
+      (sum, result) => sum + result.skippedDuplicates,
+      0,
+    ),
+    skippedMessageFailures: results.reduce(
+      (sum, result) => sum + (result.skippedMessageFailures ?? 0),
+      0,
+    ),
+    skippedUnmatched: results.reduce(
+      (sum, result) => sum + result.skippedUnmatched,
+      0,
+    ),
     syncMode: "recent",
-    syncWarning: warningCount > 0 ? `Gmail sync completed with warnings for ${warningCount} connected inboxes.` : null,
+    syncWarning:
+      warningCount > 0
+        ? `Gmail sync completed with warnings for ${warningCount} connected inboxes.`
+        : null,
     totalFetched: results.reduce((sum, result) => sum + result.totalFetched, 0),
-    unmatchedPreviews: results.flatMap((result) => result.unmatchedPreviews).slice(0, 5)
+    unmatchedPreviews: results
+      .flatMap((result) => result.unmatchedPreviews)
+      .slice(0, 5),
   };
 }
 
 export async function processGmailInboxSyncJob(
   payload: unknown,
-  options: { env?: EmailConnectionEnv; fetchImpl?: GmailFetch } = {}
+  options: { env?: EmailConnectionEnv; fetchImpl?: GmailFetch } = {},
 ): Promise<GmailSyncResult> {
   const input = parseGmailInboxSyncJobPayload(payload);
   const connection = await prisma.emailConnection.findFirst({
@@ -1671,9 +2126,9 @@ export async function processGmailInboxSyncJob(
       id: input.connectionId,
       workspaceId: input.workspaceId,
       provider: "GOOGLE_WORKSPACE",
-      deletedAt: null
+      deletedAt: null,
     },
-    include: { secret: true }
+    include: { secret: true },
   });
   if (!connection?.secret) {
     throw new Error("Gmail sync job connection is no longer available.");
@@ -1685,11 +2140,13 @@ export async function processGmailInboxSyncJob(
     connectionId: connection.id,
     env: options.env,
     fetchImpl: options.fetchImpl,
-    maxResults: maxGmailInboxSyncMaxResults
+    maxResults: maxGmailInboxSyncMaxResults,
   });
 }
 
-export function parseGmailInboxSyncJobPayload(payload: unknown): GmailInboxSyncJobPayload {
+export function parseGmailInboxSyncJobPayload(
+  payload: unknown,
+): GmailInboxSyncJobPayload {
   if (!isRecord(payload)) {
     throw new Error("Invalid Gmail sync job payload.");
   }
@@ -1703,22 +2160,40 @@ export function parseGmailInboxSyncJobPayload(payload: unknown): GmailInboxSyncJ
 
 export async function diagnoseGmailConnection(
   actor: WorkspaceActor,
-  options: { connectionRef?: string; env?: EmailConnectionEnv; fetchImpl?: GmailFetch; jobRef?: string; maxResults?: number } = {}
+  options: {
+    connectionRef?: string;
+    env?: EmailConnectionEnv;
+    fetchImpl?: GmailFetch;
+    jobRef?: string;
+    maxResults?: number;
+  } = {},
 ): Promise<GmailConnectionDiagnosticResult> {
   await ensureWorkspaceAccess(actor);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const config = assertGoogleOAuthReady(env);
-  const connection = await findGmailConnectionForDiagnostic(actor.workspaceId, options.connectionRef);
+  const connection = await findGmailConnectionForDiagnostic(
+    actor.workspaceId,
+    options.connectionRef,
+  );
   if (!connection) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Selected Gmail connection could not be found in this workspace.", 404);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Selected Gmail connection could not be found in this workspace.",
+      404,
+    );
   }
 
-  const storedScopes = mergeScopeLists(normalizeStoredScopes(connection.scopes), normalizeStoredScopes(connection.secret?.scopes));
-  const missingRequiredScopes = missingGoogleFullInboxScopeCategories(storedScopes);
+  const storedScopes = mergeScopeLists(
+    normalizeStoredScopes(connection.scopes),
+    normalizeStoredScopes(connection.secret?.scopes),
+  );
+  const missingRequiredScopes =
+    missingGoogleFullInboxScopeCategories(storedScopes);
   const connectionRef = shortJobRef(connection.id);
   const secretAccountMatchesConnection = connection.secret
-    ? normalizeEmailAddress(connection.accountEmail) === normalizeEmailAddress(connection.secret.accountEmail)
+    ? normalizeEmailAddress(connection.accountEmail) ===
+      normalizeEmailAddress(connection.secret.accountEmail)
     : null;
   const diagnostic: GmailConnectionDiagnosticResult = {
     accountEmail: connection.accountEmail,
@@ -1733,7 +2208,7 @@ export async function diagnoseGmailConnection(
       providerReason: null,
       providerStatus: null,
       success: false,
-      tokenRef: null
+      tokenRef: null,
     },
     hasEncryptedSecret: Boolean(connection.secret),
     list: {
@@ -1743,12 +2218,12 @@ export async function diagnoseGmailConnection(
       providerReason: null,
       providerStatus: null,
       success: false,
-      tokenRef: null
+      tokenRef: null,
     },
     job: await diagnoseGmailSyncJob({
       connectionId: connection.id,
       jobRef: options.jobRef,
-      workspaceId: actor.workspaceId
+      workspaceId: actor.workspaceId,
     }),
     missingRequiredScopeCategories: scopeCategoryLabels(missingRequiredScopes),
     oauth: diagnoseGoogleOAuthAuthorizationRequest(config),
@@ -1766,26 +2241,26 @@ export async function diagnoseGmailConnection(
         providerReason: null,
         providerStatus: null,
         success: false,
-        tokenRef: null
+        tokenRef: null,
       },
       recommendedAction: null,
       requestedOAuthIncludesMetadataScope: false,
       tokeninfoIncludesMetadataScope: false,
       tokeninfoIncludesReadOnlyScope: false,
-      tokenRefsMatch: null
+      tokenRefsMatch: null,
     },
     selectedConnectionId: connection.id,
     secretAccountMatchesConnection,
     storedScopeCategories: scopeCategoryLabels(storedScopes),
     storedMetadataRepair: {
       repaired: false,
-      staleRelativeToTokeninfo: null
+      staleRelativeToTokeninfo: null,
     },
     tokenRefresh: {
       category: "not_attempted",
       providerReason: null,
       providerStatus: null,
-      success: null
+      success: null,
     },
     tokeninfo: {
       accountEmail: null,
@@ -1801,30 +2276,45 @@ export async function diagnoseGmailConnection(
       scopeCategories: [],
       scopeUrls: [],
       success: false,
-      tokenRef: null
+      tokenRef: null,
     },
     tokenResolution: {
       category: "success",
       providerReason: null,
       providerStatus: null,
-      success: true
-    }
+      success: true,
+    },
   };
 
   if (!connection.secret) return diagnostic;
 
   const tokenRefreshRequired = Boolean(
-    connection.secret.accessTokenExpiresAt && connection.secret.accessTokenExpiresAt.getTime() <= Date.now() + 60_000
+    connection.secret.accessTokenExpiresAt &&
+    connection.secret.accessTokenExpiresAt.getTime() <= Date.now() + 60_000,
   );
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
-    const tokenResolution = await resolveUsableGoogleAccessTokenForDiagnostic({ config, connection, env, fetchImpl });
+    const tokenResolution = await resolveUsableGoogleAccessTokenForDiagnostic({
+      config,
+      connection,
+      env,
+      fetchImpl,
+    });
     const accessToken = tokenResolution.accessToken;
     diagnostic.tokenRefresh = tokenResolution.tokenRefresh;
-    diagnostic.tokeninfo = await diagnoseGoogleTokenInfo({ accessToken, connection, fetchImpl });
+    diagnostic.tokeninfo = await diagnoseGoogleTokenInfo({
+      accessToken,
+      connection,
+      fetchImpl,
+    });
 
-    const listResult = await diagnoseGmailInboxList({ accessToken, connectionId: connection.id, fetchImpl, maxResults: options.maxResults ?? 2 });
+    const listResult = await diagnoseGmailInboxList({
+      accessToken,
+      connectionId: connection.id,
+      fetchImpl,
+      maxResults: options.maxResults ?? 2,
+    });
     diagnostic.list = listResult.summary;
     diagnostic.permissionProbes = await diagnoseGmailPermissionProbes({
       accessToken,
@@ -1832,15 +2322,18 @@ export async function diagnoseGmailConnection(
       fetchImpl,
       listSummary: diagnostic.list,
       messageIds: listResult.messageIds,
-      tokenInfoScopes: diagnostic.tokeninfo.scopeUrls
+      tokenInfoScopes: diagnostic.tokeninfo.scopeUrls,
     });
-    diagnostic.fullMessageGet = diagnostic.permissionProbes.messages[0]?.probes.full ?? diagnostic.fullMessageGet;
+    diagnostic.fullMessageGet =
+      diagnostic.permissionProbes.messages[0]?.probes.full ??
+      diagnostic.fullMessageGet;
     if (diagnostic.tokeninfo.success) {
-      diagnostic.storedMetadataRepair = await repairGmailStoredScopesFromTokenInfo({
-        connection,
-        fullMessageGet: diagnostic.fullMessageGet,
-        tokenInfoScopes: diagnostic.tokeninfo.scopeUrls
-      });
+      diagnostic.storedMetadataRepair =
+        await repairGmailStoredScopesFromTokenInfo({
+          connection,
+          fullMessageGet: diagnostic.fullMessageGet,
+          tokenInfoScopes: diagnostic.tokeninfo.scopeUrls,
+        });
     }
   } catch (error) {
     const summary = gmailProviderErrorSummaryFromError(error, "invalid_token");
@@ -1848,17 +2341,25 @@ export async function diagnoseGmailConnection(
       category: summary.category,
       providerReason: summary.providerReason,
       providerStatus: summary.providerStatus,
-      success: false
+      success: false,
     };
-    if (tokenRefreshRequired && diagnostic.tokenRefresh.category === "not_attempted") {
+    if (
+      tokenRefreshRequired &&
+      diagnostic.tokenRefresh.category === "not_attempted"
+    ) {
       diagnostic.tokenRefresh = connection.secret.encryptedRefreshToken
         ? {
             category: summary.category,
             providerReason: summary.providerReason,
             providerStatus: summary.providerStatus,
-            success: false
+            success: false,
           }
-        : { category: "missing_refresh_token", providerReason: null, providerStatus: null, success: false };
+        : {
+            category: "missing_refresh_token",
+            providerReason: null,
+            providerStatus: null,
+            success: false,
+          };
     }
   }
 
@@ -1868,7 +2369,7 @@ export async function diagnoseGmailConnection(
 async function diagnoseGmailSyncJob({
   connectionId,
   jobRef,
-  workspaceId
+  workspaceId,
 }: {
   connectionId: string;
   jobRef?: string;
@@ -1884,7 +2385,7 @@ async function diagnoseGmailSyncJob({
       payloadWorkspaceMatches: null,
       requestedJobRef: null,
       status: null,
-      typeMatches: null
+      typeMatches: null,
     };
   }
 
@@ -1898,20 +2399,24 @@ async function diagnoseGmailSyncJob({
       payloadWorkspaceMatches: null,
       requestedJobRef,
       status: null,
-      typeMatches: null
+      typeMatches: null,
     };
   }
 
   const payload = safeParseGmailInboxSyncJobPayload(job.payload);
   return {
-    connectionMatchesSelected: payload ? payload.connectionId === connectionId : false,
+    connectionMatchesSelected: payload
+      ? payload.connectionId === connectionId
+      : false,
     found: true,
     jobRef: shortJobRef(job.id),
     payloadConnectionRef: payload ? shortJobRef(payload.connectionId) : null,
-    payloadWorkspaceMatches: payload ? payload.workspaceId === workspaceId : false,
+    payloadWorkspaceMatches: payload
+      ? payload.workspaceId === workspaceId
+      : false,
     requestedJobRef,
     status: job.status,
-    typeMatches: job.type === gmailInboxSyncJobType
+    typeMatches: job.type === gmailInboxSyncJobType,
   };
 }
 
@@ -1919,105 +2424,168 @@ async function resolveUsableGoogleAccessTokenForDiagnostic({
   config,
   connection,
   env,
-  fetchImpl
+  fetchImpl,
 }: {
   config: Required<ProviderConfig>;
-  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  connection: NonNullable<
+    Awaited<
+      ReturnType<
+        typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>
+      >
+    >
+  >;
   env: EmailConnectionEnv;
   fetchImpl: GmailFetch;
-}): Promise<{ accessToken: string; tokenRefresh: GmailConnectionDiagnosticResult["tokenRefresh"] }> {
+}): Promise<{
+  accessToken: string;
+  tokenRefresh: GmailConnectionDiagnosticResult["tokenRefresh"];
+}> {
   const secret = connection.secret;
   if (!secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before syncing recent messages.",
+      400,
+    );
   }
 
-  if (!secret.accessTokenExpiresAt || secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000) {
+  if (
+    !secret.accessTokenExpiresAt ||
+    secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000
+  ) {
     return {
       accessToken: decryptEmailToken(secret.encryptedAccessToken, env),
-      tokenRefresh: { category: "not_attempted", providerReason: null, providerStatus: null, success: null }
+      tokenRefresh: {
+        category: "not_attempted",
+        providerReason: null,
+        providerStatus: null,
+        success: null,
+      },
     };
   }
 
   if (!secret.encryptedRefreshToken) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING", "Reconnect Gmail before syncing; the access token expired.", 400);
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_MISSING",
+      "Reconnect Gmail before syncing; the access token expired.",
+      400,
+    );
   }
 
   const refreshed = await refreshGoogleAccessToken({
     config,
     fetchImpl,
-    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
+    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env),
   });
-  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(refreshed.expires_in);
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(
+    refreshed.expires_in,
+  );
 
   await prisma.emailConnectionSecret.update({
     where: { connectionId: connection.id },
     data: {
       accessTokenExpiresAt,
-      encryptedAccessToken: encryptEmailToken(refreshed.access_token as string, env)
-    }
+      encryptedAccessToken: encryptEmailToken(
+        refreshed.access_token as string,
+        env,
+      ),
+    },
   });
 
   return {
     accessToken: refreshed.access_token as string,
-    tokenRefresh: { category: "success", providerReason: null, providerStatus: null, success: true }
+    tokenRefresh: {
+      category: "success",
+      providerReason: null,
+      providerStatus: null,
+      success: true,
+    },
   };
 }
 
-function diagnoseGoogleOAuthAuthorizationRequest(config: Required<ProviderConfig>): GmailConnectionDiagnosticResult["oauth"] {
-  const url = buildGoogleAuthorizationUrl({ config, state: "gmail-diagnostic-state" });
-  const requestedScopes = normalizeGoogleOAuthScopes(url.searchParams.get("scope"));
+function diagnoseGoogleOAuthAuthorizationRequest(
+  config: Required<ProviderConfig>,
+): GmailConnectionDiagnosticResult["oauth"] {
+  const url = buildGoogleAuthorizationUrl({
+    config,
+    state: "gmail-diagnostic-state",
+  });
+  const requestedScopes = normalizeGoogleOAuthScopes(
+    url.searchParams.get("scope"),
+  );
   return {
-    includeGrantedScopes: url.searchParams.get("include_granted_scopes") === "true",
+    includeGrantedScopes:
+      url.searchParams.get("include_granted_scopes") === "true",
     promptConsent: url.searchParams.get("prompt") === "consent",
-    redirectUriConfigured: Boolean(readNonEmptyValue(url.searchParams.get("redirect_uri"))),
-    requestedOAuthIncludesMetadataScope: requestedScopes.includes("https://www.googleapis.com/auth/gmail.metadata"),
+    redirectUriConfigured: Boolean(
+      readNonEmptyValue(url.searchParams.get("redirect_uri")),
+    ),
+    requestedOAuthIncludesMetadataScope: requestedScopes.includes(
+      "https://www.googleapis.com/auth/gmail.metadata",
+    ),
     requestedScopeCategories: scopeCategoryLabels(requestedScopes),
     responseTypeCode: url.searchParams.get("response_type") === "code",
-    usesOfflineAccess: url.searchParams.get("access_type") === "offline"
+    usesOfflineAccess: url.searchParams.get("access_type") === "offline",
   };
 }
 
 async function repairGmailStoredScopesFromTokenInfo({
   connection,
   fullMessageGet,
-  tokenInfoScopes
+  tokenInfoScopes,
 }: {
-  connection: NonNullable<Awaited<ReturnType<typeof findGmailConnectionForDiagnostic>>>;
+  connection: NonNullable<
+    Awaited<ReturnType<typeof findGmailConnectionForDiagnostic>>
+  >;
   fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"];
   tokenInfoScopes: string[];
 }): Promise<GmailConnectionDiagnosticResult["storedMetadataRepair"]> {
   const normalizedTokenInfoScopes = normalizeScopeList(tokenInfoScopes);
-  const storedScopes = mergeScopeLists(normalizeStoredScopes(connection.scopes), normalizeStoredScopes(connection.secret?.scopes));
-  const staleRelativeToTokeninfo = !sameScopeSet(storedScopes, normalizedTokenInfoScopes);
-  if (!staleRelativeToTokeninfo && !fullMessageGetRequiresLastError(fullMessageGet)) {
+  const storedScopes = mergeScopeLists(
+    normalizeStoredScopes(connection.scopes),
+    normalizeStoredScopes(connection.secret?.scopes),
+  );
+  const staleRelativeToTokeninfo = !sameScopeSet(
+    storedScopes,
+    normalizedTokenInfoScopes,
+  );
+  if (
+    !staleRelativeToTokeninfo &&
+    !fullMessageGetRequiresLastError(fullMessageGet)
+  ) {
     return { repaired: false, staleRelativeToTokeninfo };
   }
 
   const lastError = fullMessageGetRequiresLastError(fullMessageGet)
-    ? formatGmailFullMessagePermissionLastError(fullMessageGet, normalizedTokenInfoScopes)
+    ? formatGmailFullMessagePermissionLastError(
+        fullMessageGet,
+        normalizedTokenInfoScopes,
+      )
     : null;
   await prisma.$transaction([
     prisma.emailConnection.update({
       where: { id: connection.id },
       data: {
         lastError,
-        scopes: normalizedTokenInfoScopes
-      }
+        scopes: normalizedTokenInfoScopes,
+      },
     }),
     ...(connection.secret
       ? [
           prisma.emailConnectionSecret.update({
             where: { connectionId: connection.id },
-            data: { scopes: normalizedTokenInfoScopes }
-          })
+            data: { scopes: normalizedTokenInfoScopes },
+          }),
         ]
-      : [])
+      : []),
   ]);
 
   return { repaired: true, staleRelativeToTokeninfo };
 }
 
-function fullMessageGetRequiresLastError(fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"]) {
+function fullMessageGetRequiresLastError(
+  fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"],
+) {
   return (
     fullMessageGet.category === "account_mismatch" ||
     fullMessageGet.category === "api_disabled" ||
@@ -2028,26 +2596,34 @@ function fullMessageGetRequiresLastError(fullMessageGet: GmailConnectionDiagnost
 
 function formatGmailFullMessagePermissionLastError(
   fullMessageGet: GmailConnectionDiagnosticResult["fullMessageGet"],
-  tokenInfoScopes: readonly string[]
+  tokenInfoScopes: readonly string[],
 ) {
   if (
-    tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.metadata") &&
-    tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.readonly") &&
+    tokenInfoScopes.includes(
+      "https://www.googleapis.com/auth/gmail.metadata",
+    ) &&
+    tokenInfoScopes.includes(
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ) &&
     isGmailMetadataScopeProviderError(fullMessageGet.providerError)
   ) {
     return `EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED: ${gmailMetadataScopeConflictMessage()}`;
   }
   const detail = [
-    fullMessageGet.providerStatus ? `Google status ${fullMessageGet.providerStatus}` : null,
-    fullMessageGet.providerReason ? `reason ${fullMessageGet.providerReason}` : null,
-    `category ${fullMessageGet.category}`
+    fullMessageGet.providerStatus
+      ? `Google status ${fullMessageGet.providerStatus}`
+      : null,
+    fullMessageGet.providerReason
+      ? `reason ${fullMessageGet.providerReason}`
+      : null,
+    `category ${fullMessageGet.category}`,
   ]
     .filter(Boolean)
     .join("; ");
   return [
     "EMAIL_GMAIL_FULL_MESSAGE_PERMISSION_REJECTED:",
     `Google granted Gmail read/send in tokeninfo, but Gmail rejected messages.get(format=full) (${detail}).`,
-    "Check Gmail API/consent/app verification or reconnect with Gmail read permission."
+    "Check Gmail API/consent/app verification or reconnect with Gmail read permission.",
   ].join(" ");
 }
 
@@ -2059,15 +2635,18 @@ function safeParseGmailInboxSyncJobPayload(payload: unknown) {
   }
 }
 
-async function enqueueGmailInboxSyncJobForConnection(actor: WorkspaceActor, connectionId: string) {
+async function enqueueGmailInboxSyncJobForConnection(
+  actor: WorkspaceActor,
+  connectionId: string,
+) {
   return enqueueJob({
     type: gmailInboxSyncJobType,
     workspaceId: actor.workspaceId,
     dedupeKey: gmailInboxSyncJobDedupeKey(connectionId),
     payload: {
       connectionId,
-      workspaceId: actor.workspaceId
-    }
+      workspaceId: actor.workspaceId,
+    },
   });
 }
 
@@ -2075,7 +2654,7 @@ async function claimGmailInboxSyncJobForImmediateRun({
   jobId,
   now,
   workerId,
-  workspaceId
+  workspaceId,
 }: {
   jobId: string;
   now: Date;
@@ -2089,20 +2668,27 @@ async function claimGmailInboxSyncJobForImmediateRun({
       lockedAt: { lt: staleCutoff },
       status: JobStatus.RUNNING,
       type: gmailInboxSyncJobType,
-      workspaceId
+      workspaceId,
     },
     select: {
       attempts: true,
-      maxAttempts: true
-    }
+      maxAttempts: true,
+    },
   });
 
-  if (staleRunningJob && staleRunningJob.attempts >= staleRunningJob.maxAttempts) {
-    await markJobFailedForRetry(jobId, new Error("Gmail sync job was stale before the explicit sync retry."), { now });
+  if (
+    staleRunningJob &&
+    staleRunningJob.attempts >= staleRunningJob.maxAttempts
+  ) {
+    await markJobFailedForRetry(
+      jobId,
+      new Error("Gmail sync job was stale before the explicit sync retry."),
+      { now },
+    );
     throw new ApiError(
       "EMAIL_SYNC_STALE_RETRY_LIMIT",
       "The previous Gmail sync was stale and has reached the retry limit. Refresh status, then start a new sync.",
-      409
+      409,
     );
   }
 
@@ -2113,14 +2699,14 @@ async function claimGmailInboxSyncJobForImmediateRun({
         lockedAt: { lt: staleCutoff },
         status: JobStatus.RUNNING,
         type: gmailInboxSyncJobType,
-        workspaceId
+        workspaceId,
       },
       data: {
         lockedAt: null,
         lockedBy: null,
         runAt: now,
-        status: JobStatus.PENDING
-      }
+        status: JobStatus.PENDING,
+      },
     });
   }
 
@@ -2129,7 +2715,7 @@ async function claimGmailInboxSyncJobForImmediateRun({
       id: jobId,
       status: { in: [JobStatus.PENDING, JobStatus.FAILED] },
       type: gmailInboxSyncJobType,
-      workspaceId
+      workspaceId,
     },
     data: {
       attempts: { increment: 1 },
@@ -2137,8 +2723,8 @@ async function claimGmailInboxSyncJobForImmediateRun({
       lockedAt: now,
       lockedBy: workerId,
       runAt: now,
-      status: JobStatus.RUNNING
-    }
+      status: JobStatus.RUNNING,
+    },
   });
 
   if (updated.count !== 1) return null;
@@ -2148,7 +2734,7 @@ async function claimGmailInboxSyncJobForImmediateRun({
 async function gmailInboxSyncClaimFailureError({
   connectionId,
   jobId,
-  workspaceId
+  workspaceId,
 }: {
   connectionId: string;
   jobId: string;
@@ -2158,7 +2744,7 @@ async function gmailInboxSyncClaimFailureError({
     where: {
       id: jobId,
       type: gmailInboxSyncJobType,
-      workspaceId
+      workspaceId,
     },
     select: {
       attempts: true,
@@ -2166,14 +2752,14 @@ async function gmailInboxSyncClaimFailureError({
       lastError: true,
       lockedAt: true,
       runAt: true,
-      status: true
-    }
+      status: true,
+    },
   });
   if (!job) {
     return new ApiError(
       "EMAIL_SYNC_JOB_NOT_FOUND",
       `Gmail sync job ${shortJobRef(jobId)} for connection ${shortJobRef(connectionId)} could not be found after enqueue.`,
-      409
+      409,
     );
   }
 
@@ -2181,7 +2767,7 @@ async function gmailInboxSyncClaimFailureError({
     return new ApiError(
       "EMAIL_SYNC_ALREADY_RUNNING",
       `Gmail sync is already running for connection ${shortJobRef(connectionId)}; job ${shortJobRef(job.id)}${job.lockedAt ? ` claimed ${job.lockedAt.toISOString()}` : ""}. Refresh status in a moment.`,
-      409
+      409,
     );
   }
 
@@ -2190,9 +2776,11 @@ async function gmailInboxSyncClaimFailureError({
     [
       `Gmail sync job ${shortJobRef(job.id)} for connection ${shortJobRef(connectionId)} could not be claimed for an explicit run.`,
       `Status ${job.status}; run after ${job.runAt.toISOString()}; attempts ${job.attempts}.`,
-      safeProviderLastError(job.lastError) ? `Last issue: ${safeProviderLastError(job.lastError)}.` : "Retry Sync Gmail inbox or start the worker."
+      safeProviderLastError(job.lastError)
+        ? `Last issue: ${safeProviderLastError(job.lastError)}.`
+        : "Retry Sync Gmail inbox or start the worker.",
     ].join(" "),
-    409
+    409,
   );
 }
 
@@ -2203,31 +2791,52 @@ async function syncGmailInboxHistoryOrFallback({
   matchIndex,
   cursor,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   actor: WorkspaceActor;
-  connection: NonNullable<Awaited<ReturnType<typeof findConnectedEmailConnection>>>;
+  connection: NonNullable<
+    Awaited<ReturnType<typeof findConnectedEmailConnection>>
+  >;
   matchIndex: EmailSyncMatchIndex;
   cursor: string;
   fetchImpl: GmailFetch;
   maxResults: number;
 }) {
   try {
-    const history = await listGmailInboxHistoryMessages({ accessToken, fetchImpl, startHistoryId: cursor });
-    const loadResult = await getGmailFullMessages({ accessToken, fetchImpl, messages: history.messages });
+    const history = await listGmailInboxHistoryMessages({
+      accessToken,
+      fetchImpl,
+      startHistoryId: cursor,
+    });
+    const loadResult = await getGmailFullMessages({
+      accessToken,
+      fetchImpl,
+      messages: history.messages,
+    });
     assertGmailMessageLoadSucceeded(loadResult);
-    const persisted = await persistGmailInboxMessages({ actor, connection, matchIndex, fullMessages: loadResult.fullMessages });
+    const persisted = await persistGmailInboxMessages({
+      actor,
+      connection,
+      matchIndex,
+      fullMessages: loadResult.fullMessages,
+    });
     return {
       ...persisted,
-      historyId: history.historyId ?? newestGmailHistoryId(loadResult.fullMessages),
+      historyId:
+        history.historyId ?? newestGmailHistoryId(loadResult.fullMessages),
       skippedMessages: loadResult.skippedMessages,
       syncMode: "history" as const,
-      syncWarning: buildGmailPartialSyncWarning(loadResult.skippedMessages.length),
-      totalFetched: history.messages.length
+      syncWarning: buildGmailPartialSyncWarning(
+        loadResult.skippedMessages.length,
+      ),
+      totalFetched: history.messages.length,
     };
   } catch (error) {
-    if (!(error instanceof ApiError) || error.code !== "EMAIL_GMAIL_HISTORY_EXPIRED") {
+    if (
+      !(error instanceof ApiError) ||
+      error.code !== "EMAIL_GMAIL_HISTORY_EXPIRED"
+    ) {
       throw error;
     }
     return syncRecentGmailInboxMessagesForConnection({
@@ -2236,7 +2845,7 @@ async function syncGmailInboxHistoryOrFallback({
       connection,
       matchIndex,
       fetchImpl,
-      maxResults
+      maxResults,
     });
   }
 }
@@ -2247,26 +2856,43 @@ async function syncRecentGmailInboxMessagesForConnection({
   connection,
   matchIndex,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   actor: WorkspaceActor;
-  connection: NonNullable<Awaited<ReturnType<typeof findConnectedEmailConnection>>>;
+  connection: NonNullable<
+    Awaited<ReturnType<typeof findConnectedEmailConnection>>
+  >;
   matchIndex: EmailSyncMatchIndex;
   fetchImpl: GmailFetch;
   maxResults: number;
 }) {
-  const messages = await listRecentGmailInboxMessages({ accessToken, fetchImpl, maxResults });
-  const loadResult = await getGmailFullMessages({ accessToken, fetchImpl, messages });
+  const messages = await listRecentGmailInboxMessages({
+    accessToken,
+    fetchImpl,
+    maxResults,
+  });
+  const loadResult = await getGmailFullMessages({
+    accessToken,
+    fetchImpl,
+    messages,
+  });
   assertGmailMessageLoadSucceeded(loadResult);
-  const persisted = await persistGmailInboxMessages({ actor, connection, matchIndex, fullMessages: loadResult.fullMessages });
+  const persisted = await persistGmailInboxMessages({
+    actor,
+    connection,
+    matchIndex,
+    fullMessages: loadResult.fullMessages,
+  });
   return {
     ...persisted,
     historyId: newestGmailHistoryId(loadResult.fullMessages),
     skippedMessages: loadResult.skippedMessages,
     syncMode: "recent" as const,
-    syncWarning: buildGmailPartialSyncWarning(loadResult.skippedMessages.length),
-    totalFetched: messages.length
+    syncWarning: buildGmailPartialSyncWarning(
+      loadResult.skippedMessages.length,
+    ),
+    totalFetched: messages.length,
   };
 }
 
@@ -2274,28 +2900,37 @@ async function listOlderGmailInboxMessages({
   accessToken,
   before,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   before: Date;
   fetchImpl: GmailFetch;
   maxResults: number;
 }) {
-  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  const url = new URL(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+  );
   url.searchParams.set("labelIds", "INBOX");
-  url.searchParams.set("maxResults", String(normalizeGmailInboxSyncMaxResults(maxResults)));
+  url.searchParams.set(
+    "maxResults",
+    String(normalizeGmailInboxSyncMaxResults(maxResults)),
+  );
   url.searchParams.set("q", `before:${formatGmailSearchDate(before)}`);
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_LIST_FAILED", "Older Gmail inbox messages could not be listed.", 400);
+    throw new ApiError(
+      "EMAIL_GMAIL_LIST_FAILED",
+      "Older Gmail inbox messages could not be listed.",
+      400,
+    );
   }
 
   const body = await readEmailProviderJson<GmailListResponse>(response, {
     code: "EMAIL_GMAIL_LIST_FAILED",
-    message: "Older Gmail inbox messages could not be listed."
+    message: "Older Gmail inbox messages could not be listed.",
   });
   return body.messages?.filter((message) => message.id) ?? [];
 }
@@ -2303,23 +2938,33 @@ async function listOlderGmailInboxMessages({
 async function getGmailFullMessages({
   accessToken,
   fetchImpl,
-  messages
+  messages,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
   messages: { id?: string; threadId?: string }[];
 }): Promise<GmailFullMessageLoadResult> {
-  const fullMessages: Array<{ listedThreadId?: string; message: GmailMessageResponse }> = [];
+  const fullMessages: Array<{
+    listedThreadId?: string;
+    message: GmailMessageResponse;
+  }> = [];
   const skippedMessages: GmailSkippedMessageSummary[] = [];
   for (const listedMessage of messages) {
     if (!listedMessage.id) {
-      skippedMessages.push({ providerMessageRef: "missing-id", reason: "message_missing_id" });
+      skippedMessages.push({
+        providerMessageRef: "missing-id",
+        reason: "message_missing_id",
+      });
       continue;
     }
     try {
       fullMessages.push({
         listedThreadId: listedMessage.threadId,
-        message: await getGmailMessageFull({ accessToken, fetchImpl, messageId: listedMessage.id })
+        message: await getGmailMessageFull({
+          accessToken,
+          fetchImpl,
+          messageId: listedMessage.id,
+        }),
       });
     } catch (error) {
       const reason = gmailMessageLoadFailureReason(error);
@@ -2329,35 +2974,43 @@ async function getGmailFullMessages({
           "EMAIL_GMAIL_MESSAGE_AUTH_FAILED",
           gmailMessageAuthFailureMessage(diagnostic),
           400,
-          diagnostic
+          diagnostic,
         );
       }
       if (!reason) throw error;
       skippedMessages.push({
         providerMessageRef: safeGmailMessageRef(listedMessage.id),
-        reason
+        reason,
       });
     }
   }
-  return { attemptedMessageCount: messages.length, fullMessages, skippedMessages };
+  return {
+    attemptedMessageCount: messages.length,
+    fullMessages,
+    skippedMessages,
+  };
 }
 
-function assertGmailMessageLoadSucceeded(loadResult: GmailFullMessageLoadResult) {
+function assertGmailMessageLoadSucceeded(
+  loadResult: GmailFullMessageLoadResult,
+) {
   if (
     loadResult.attemptedMessageCount > 0 &&
     loadResult.fullMessages.length === 0 &&
     loadResult.skippedMessages.length > 0
   ) {
-    const reasonSummary = formatGmailSkippedMessageReasonSummary(loadResult.skippedMessages);
+    const reasonSummary = formatGmailSkippedMessageReasonSummary(
+      loadResult.skippedMessages,
+    );
     throw new ApiError(
       "EMAIL_GMAIL_MESSAGES_ALL_FAILED",
       `Gmail listed ${loadResult.attemptedMessageCount} inbox ${pluralize(
         "message",
-        loadResult.attemptedMessageCount
+        loadResult.attemptedMessageCount,
       )}, but none could be loaded. Attempted ${loadResult.attemptedMessageCount}; skipped ${
         loadResult.skippedMessages.length
       }. Reason categories: ${reasonSummary}. Gmail listing succeeded; Full Inbox storage did not run. Retry sync, and reconnect Gmail if this persists.`,
-      400
+      400,
     );
   }
 }
@@ -2373,14 +3026,22 @@ export function isGmailPartialSyncWarning(value: string | null | undefined) {
   return Boolean(value?.startsWith("Gmail sync completed with warnings:"));
 }
 
-function summarizeGmailSkippedMessages(skippedMessages: GmailSkippedMessageSummary[]) {
-  return skippedMessages.reduce<Record<string, number>>((summary, skippedMessage) => {
-    summary[skippedMessage.reason] = (summary[skippedMessage.reason] ?? 0) + 1;
-    return summary;
-  }, {});
+function summarizeGmailSkippedMessages(
+  skippedMessages: GmailSkippedMessageSummary[],
+) {
+  return skippedMessages.reduce<Record<string, number>>(
+    (summary, skippedMessage) => {
+      summary[skippedMessage.reason] =
+        (summary[skippedMessage.reason] ?? 0) + 1;
+      return summary;
+    },
+    {},
+  );
 }
 
-function formatGmailSkippedMessageReasonSummary(skippedMessages: GmailSkippedMessageSummary[]) {
+function formatGmailSkippedMessageReasonSummary(
+  skippedMessages: GmailSkippedMessageSummary[],
+) {
   const summary = summarizeGmailSkippedMessages(skippedMessages);
   return Object.entries(summary)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -2388,15 +3049,25 @@ function formatGmailSkippedMessageReasonSummary(skippedMessages: GmailSkippedMes
     .join(", ");
 }
 
-function gmailMessageLoadFailureReason(error: unknown): GmailMessageLoadFailureReason | null {
+function gmailMessageLoadFailureReason(
+  error: unknown,
+): GmailMessageLoadFailureReason | null {
   if (error instanceof TypeError) return "message_fetch_failed";
-  if (!(error instanceof ApiError) || error.code !== "EMAIL_GMAIL_MESSAGE_FAILED") return null;
+  if (
+    !(error instanceof ApiError) ||
+    error.code !== "EMAIL_GMAIL_MESSAGE_FAILED"
+  )
+    return null;
   const details = isRecord(error.details) ? error.details : null;
   const reason = details?.gmailMessageLoadReason;
-  return isGmailMessageLoadFailureReason(reason) ? reason : "message_load_http_failed";
+  return isGmailMessageLoadFailureReason(reason)
+    ? reason
+    : "message_load_http_failed";
 }
 
-function isGmailMessageLoadFailureReason(value: unknown): value is GmailMessageLoadFailureReason {
+function isGmailMessageLoadFailureReason(
+  value: unknown,
+): value is GmailMessageLoadFailureReason {
   return (
     value === "message_load_account_mismatch" ||
     value === "message_load_api_disabled" ||
@@ -2412,7 +3083,9 @@ function isGmailMessageLoadFailureReason(value: unknown): value is GmailMessageL
   );
 }
 
-function isFatalGmailMessageLoadFailureReason(value: GmailMessageLoadFailureReason | null): value is GmailFatalMessageLoadReason {
+function isFatalGmailMessageLoadFailureReason(
+  value: GmailMessageLoadFailureReason | null,
+): value is GmailFatalMessageLoadReason {
   return (
     value === "message_load_account_mismatch" ||
     value === "message_load_api_disabled" ||
@@ -2423,23 +3096,34 @@ function isFatalGmailMessageLoadFailureReason(value: GmailMessageLoadFailureReas
 
 function gmailMessageLoadErrorInfo(error: unknown): GmailProviderErrorInfo {
   if (!(error instanceof ApiError) || !isRecord(error.details)) {
-    return { category: "http_error", providerError: null, providerReason: null, providerStatus: null, providerStatusText: null };
+    return {
+      category: "http_error",
+      providerError: null,
+      providerReason: null,
+      providerStatus: null,
+      providerStatusText: null,
+    };
   }
   return providerErrorInfoFromDetails(error.details);
 }
 
-function providerErrorInfoFromDetails(details: Record<string, unknown>): GmailProviderErrorInfo {
-  const providerStatus = typeof details.providerStatus === "number" ? details.providerStatus : null;
+function providerErrorInfoFromDetails(
+  details: Record<string, unknown>,
+): GmailProviderErrorInfo {
+  const providerStatus =
+    typeof details.providerStatus === "number" ? details.providerStatus : null;
   const providerReason = readNonEmptyValue(details.providerReason);
   const providerStatusText = readNonEmptyValue(details.providerStatusText);
   const category = readNonEmptyValue(details.providerErrorCategory);
   const providerError = readSafeGmailProviderError(details.providerError);
   return {
-    category: isGmailProviderErrorCategory(category) ? category : gmailProviderErrorCategory(providerStatus, providerReason),
+    category: isGmailProviderErrorCategory(category)
+      ? category
+      : gmailProviderErrorCategory(providerStatus, providerReason),
     providerError,
     providerReason,
     providerStatus,
-    providerStatusText
+    providerStatusText,
   };
 }
 
@@ -2451,7 +3135,7 @@ function gmailMessageAuthFailureMessage(info: GmailProviderErrorInfo) {
   const reasonDetail = [
     info.providerStatus ? `Google status ${info.providerStatus}` : null,
     info.providerReason ? `reason ${info.providerReason}` : null,
-    `category ${info.category}`
+    `category ${info.category}`,
   ]
     .filter(Boolean)
     .join("; ");
@@ -2479,41 +3163,64 @@ function pluralize(label: string, count: number) {
 function safeGmailMessageRef(messageId: string) {
   const trimmed = messageId.trim();
   if (!trimmed) return "missing-id";
-  return trimmed.length <= 8 ? `message:${trimmed}` : `message:...${trimmed.slice(-8)}`;
+  return trimmed.length <= 8
+    ? `message:${trimmed}`
+    : `message:...${trimmed.slice(-8)}`;
 }
 
 async function persistGmailInboxMessages({
   actor,
   connection,
   matchIndex,
-  fullMessages
+  fullMessages,
 }: {
   actor: WorkspaceActor;
-  connection: NonNullable<Awaited<ReturnType<typeof findConnectedEmailConnection>>>;
+  connection: NonNullable<
+    Awaited<ReturnType<typeof findConnectedEmailConnection>>
+  >;
   matchIndex: EmailSyncMatchIndex;
-  fullMessages: Array<{ listedThreadId?: string; message: GmailMessageResponse }>;
+  fullMessages: Array<{
+    listedThreadId?: string;
+    message: GmailMessageResponse;
+  }>;
 }) {
-  const ids = fullMessages.map((item) => item.message.id).filter((id): id is string => Boolean(id));
+  const ids = fullMessages
+    .map((item) => item.message.id)
+    .filter((id): id is string => Boolean(id));
   const existingLogs = ids.length
     ? await prisma.emailLog.findMany({
         where: {
           emailConnectionId: connection.id,
           workspaceId: actor.workspaceId,
           provider: "GOOGLE_WORKSPACE",
-          providerMessageId: { in: ids }
+          providerMessageId: { in: ids },
         },
-        select: { body: true, id: true, providerLabels: true, providerMessageId: true, providerSnippet: true }
+        select: {
+          body: true,
+          id: true,
+          providerLabels: true,
+          providerMessageId: true,
+          providerSnippet: true,
+        },
       })
     : [];
-  const existingByProviderId = new Map(existingLogs.map((log) => [log.providerMessageId, log]));
+  const existingByProviderId = new Map(
+    existingLogs.map((log) => [log.providerMessageId, log]),
+  );
   let created = 0;
   let skippedDuplicates = 0;
 
   for (const { listedThreadId, message } of fullMessages) {
     if (!message.id) continue;
-    const normalized = normalizeGmailMessage(message, connection.accountEmail ?? connection.secret?.accountEmail ?? "");
+    const normalized = normalizeGmailMessage(
+      message,
+      connection.accountEmail ?? connection.secret?.accountEmail ?? "",
+    );
     const match = matchEmailMessageToKnownRecord(normalized, matchIndex);
-    const body = normalizeGmailMessageBody(message) ?? normalized.snippet ?? "Gmail message imported without readable body.";
+    const body =
+      normalizeGmailMessageBody(message) ??
+      normalized.snippet ??
+      "Gmail message imported without readable body.";
     const providerLabels = message.labelIds ?? [];
     const existing = existingByProviderId.get(message.id);
 
@@ -2525,8 +3232,8 @@ async function persistGmailInboxMessages({
           ...(shouldRefreshExistingGmailInboxLog(existing) ? { body } : {}),
           providerLabels,
           providerSnippet: normalized.snippet,
-          providerThreadId: message.threadId ?? listedThreadId ?? null
-        }
+          providerThreadId: message.threadId ?? listedThreadId ?? null,
+        },
       });
       continue;
     }
@@ -2539,7 +3246,9 @@ async function persistGmailInboxMessages({
           direction: normalized.direction as EmailDirection,
           emailConnectionId: connection.id,
           fromText: normalized.fromText,
-          organizationId: match ? workspaceScopedOrganizationId(match, actor.workspaceId) : null,
+          organizationId: match
+            ? workspaceScopedOrganizationId(match, actor.workspaceId)
+            : null,
           occurredAt: normalized.occurredAt,
           personId: match?.id ?? null,
           provider: "GOOGLE_WORKSPACE",
@@ -2550,8 +3259,8 @@ async function persistGmailInboxMessages({
           subject: normalized.subject,
           toText: normalized.toText,
           workspaceId: actor.workspaceId,
-          createdById: actor.actorUserId
-        }
+          createdById: actor.actorUserId,
+        },
       });
       created += 1;
     } catch (error) {
@@ -2566,64 +3275,85 @@ async function persistGmailInboxMessages({
   return { created, skippedDuplicates };
 }
 
-async function buildWorkspaceEmailMatchIndex(workspaceId: string): Promise<EmailSyncMatchIndex> {
+async function buildWorkspaceEmailMatchIndex(
+  workspaceId: string,
+): Promise<EmailSyncMatchIndex> {
   const [contacts, organizations] = await Promise.all([
     prisma.person.findMany({
       where: {
         workspaceId,
         deletedAt: null,
-        email: { not: null }
+        email: { not: null },
       },
       select: {
         deals: {
           where: { deletedAt: null, status: "OPEN", workspaceId },
           orderBy: { updatedAt: "desc" },
           select: { id: true },
-          take: 1
+          take: 1,
         },
         email: true,
         id: true,
-        organization: { select: { deletedAt: true, id: true, workspaceId: true } }
-      }
+        organization: {
+          select: { deletedAt: true, id: true, workspaceId: true },
+        },
+      },
     }),
     prisma.organization.findMany({
       where: {
         deletedAt: null,
         domain: { not: null },
-        workspaceId
+        workspaceId,
       },
       select: {
         deletedAt: true,
         domain: true,
         id: true,
-        workspaceId: true
-      }
-    })
+        workspaceId: true,
+      },
+    }),
   ]);
   return {
     contactByEmail: buildContactEmailMap(contacts),
-    organizationByDomain: buildOrganizationDomainMap(organizations)
+    organizationByDomain: buildOrganizationDomainMap(organizations),
   };
 }
 
-export async function listEmailInboxThreads(actor: WorkspaceActor, options: { connectionId?: string | null; limit?: number } = {}) {
+export async function listEmailInboxThreads(
+  actor: WorkspaceActor,
+  options: { connectionId?: string | null; limit?: number | null } = {},
+) {
   await ensureWorkspaceAccess(actor);
-  const take = normalizeEmailInboxListLimit(options.limit ?? 100);
+  const take =
+    options.limit === null
+      ? undefined
+      : normalizeEmailInboxListLimit(options.limit ?? 100);
   const selectedConnection = options.connectionId
-    ? await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE", options.connectionId, actor.actorUserId)
+    ? await findConnectedEmailConnection(
+        actor.workspaceId,
+        "GOOGLE_WORKSPACE",
+        options.connectionId,
+        actor.actorUserId,
+      )
     : null;
   if (options.connectionId && !selectedConnection) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Choose a connected Gmail inbox before filtering messages.", 404);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Choose a connected Gmail inbox before filtering messages.",
+      404,
+    );
   }
   const emailLogs = await prisma.emailLog.findMany({
     where: {
       workspaceId: actor.workspaceId,
       provider: { not: null },
-      ...(selectedConnection ? { emailConnectionId: selectedConnection.id } : emailInboxOwnerLogWhere(actor))
+      ...(selectedConnection
+        ? { emailConnectionId: selectedConnection.id }
+        : emailInboxOwnerLogWhere(actor)),
     },
     include: emailInboxLogInclude,
     orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
-    take
+    ...(take ? { take } : {}),
   });
   const threadMap = new Map<string, EmailInboxMessageSummary[]>();
 
@@ -2642,7 +3372,7 @@ export async function sendGmailReplyFromEmailLog({
   body,
   emailLogId,
   env = process.env,
-  fetchImpl = fetch
+  fetchImpl = fetch,
 }: {
   actor: WorkspaceActor;
   body: unknown;
@@ -2659,19 +3389,30 @@ export async function sendGmailReplyFromEmailLog({
       workspaceId: actor.workspaceId,
       provider: "GOOGLE_WORKSPACE",
       providerMessageId: { not: null },
-      ...emailInboxOwnerLogWhere(actor)
+      ...emailInboxOwnerLogWhere(actor),
     },
-    include: emailInboxLogInclude
+    include: emailInboxLogInclude,
   });
 
   if (!sourceEmail) {
-    throw new ApiError("EMAIL_LOG_NOT_FOUND", "Choose a synced Gmail message before sending a reply.", 404);
+    throw new ApiError(
+      "EMAIL_LOG_NOT_FOUND",
+      "Choose a synced Gmail message before sending a reply.",
+      404,
+    );
   }
 
-  const recipient = sourceEmail.direction === "INBOUND" ? sourceEmail.fromText : sourceEmail.toText;
+  const recipient =
+    sourceEmail.direction === "INBOUND"
+      ? sourceEmail.fromText
+      : sourceEmail.toText;
   const recipientEmail = extractEmailAddresses(recipient).find(Boolean);
   if (!recipientEmail) {
-    throw new ApiError("EMAIL_REPLY_RECIPIENT_MISSING", "This email does not have a reply recipient.", 422);
+    throw new ApiError(
+      "EMAIL_REPLY_RECIPIENT_MISSING",
+      "This email does not have a reply recipient.",
+      422,
+    );
   }
 
   const config = assertGoogleOAuthReady(env);
@@ -2679,15 +3420,28 @@ export async function sendGmailReplyFromEmailLog({
     actor.workspaceId,
     "GOOGLE_WORKSPACE",
     sourceEmail.emailConnectionId ?? undefined,
-    actor.actorUserId
+    actor.actorUserId,
   );
   if (!connection?.secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before sending replies.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before sending replies.",
+      400,
+    );
   }
 
   assertEmailConnectionSecretIntegrity(connection, "Gmail");
-  assertConnectionProviderScopes(connection, gmailOAuthScopes, "Reconnect Gmail to enable explicit replies.");
-  const accessToken = await resolveUsableGoogleAccessToken({ config, connection, env, fetchImpl });
+  assertConnectionProviderScopes(
+    connection,
+    gmailOAuthScopes,
+    "Reconnect Gmail to enable explicit replies.",
+  );
+  const accessToken = await resolveUsableGoogleAccessToken({
+    config,
+    connection,
+    env,
+    fetchImpl,
+  });
   const subject = replySubject(sourceEmail.subject);
   const sentMessage = await sendGmailRawMessage({
     accessToken,
@@ -2696,29 +3450,36 @@ export async function sendGmailReplyFromEmailLog({
     from: connection.accountEmail ?? connection.secret.accountEmail,
     subject,
     threadId: sourceEmail.providerThreadId,
-    to: recipientEmail
+    to: recipientEmail,
   });
 
   const sentLog = await createOrFindSentGmailReplyLog({
     actor,
     connectionId: connection.id,
-    connectionAccountEmail: connection.accountEmail ?? connection.secret.accountEmail,
+    connectionAccountEmail:
+      connection.accountEmail ?? connection.secret.accountEmail,
     recipientEmail,
     replyBody,
     sentMessage,
     sourceEmail,
-    subject
+    subject,
   });
 
-  await writeAuditLog(actor, "email_connection.reply_sent", "EmailLog", sentLog.id, {
-    provider: "GOOGLE_WORKSPACE",
-    sourceEmailLogId: sourceEmail.id
-  });
+  await writeAuditLog(
+    actor,
+    "email_connection.reply_sent",
+    "EmailLog",
+    sentLog.id,
+    {
+      provider: "GOOGLE_WORKSPACE",
+      sourceEmailLogId: sourceEmail.id,
+    },
+  );
 
   return {
     emailLogId: sentLog.id,
     providerMessageId: sentLog.providerMessageId,
-    providerThreadId: sentLog.providerThreadId
+    providerThreadId: sentLog.providerThreadId,
   };
 }
 
@@ -2730,7 +3491,7 @@ async function createOrFindSentGmailReplyLog({
   replyBody,
   sentMessage,
   sourceEmail,
-  subject
+  subject,
 }: {
   actor: WorkspaceActor;
   connectionId: string;
@@ -2748,8 +3509,8 @@ async function createOrFindSentGmailReplyLog({
           emailConnectionId: connectionId,
           provider: "GOOGLE_WORKSPACE",
           providerMessageId,
-          workspaceId: actor.workspaceId
-        }
+          workspaceId: actor.workspaceId,
+        },
       })
     : null;
   if (existingSentLog) return existingSentLog;
@@ -2775,8 +3536,8 @@ async function createOrFindSentGmailReplyLog({
         subject,
         toText: recipientEmail,
         workspaceId: actor.workspaceId,
-        createdById: actor.actorUserId
-      }
+        createdById: actor.actorUserId,
+      },
     });
   } catch (error) {
     if (providerMessageId && isUniqueConstraintError(error)) {
@@ -2785,8 +3546,8 @@ async function createOrFindSentGmailReplyLog({
           emailConnectionId: connectionId,
           provider: "GOOGLE_WORKSPACE",
           providerMessageId,
-          workspaceId: actor.workspaceId
-        }
+          workspaceId: actor.workspaceId,
+        },
       });
       if (reloadedSentLog) return reloadedSentLog;
     }
@@ -2794,11 +3555,15 @@ async function createOrFindSentGmailReplyLog({
   }
 }
 
-async function recordEmailConnectionSyncFailure(connectionId: string, providerLabel: "Gmail" | "Microsoft", error: unknown) {
+async function recordEmailConnectionSyncFailure(
+  connectionId: string,
+  providerLabel: "Gmail" | "Microsoft",
+  error: unknown,
+) {
   try {
     await prisma.emailConnection.update({
       where: { id: connectionId },
-      data: { lastError: formatEmailConnectionSyncError(providerLabel, error) }
+      data: { lastError: formatEmailConnectionSyncError(providerLabel, error) },
     });
   } catch {
     // Preserve the original sync failure if recording the diagnostic fails.
@@ -2816,11 +3581,15 @@ function assertEmailConnectionSecretIntegrity(
     } | null;
     workspaceId: string;
   },
-  providerLabel: "Gmail" | "Microsoft"
+  providerLabel: "Gmail" | "Microsoft",
 ) {
   const secret = connection.secret;
   if (!secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", `Connect ${providerLabel} before syncing recent messages.`, 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      `Connect ${providerLabel} before syncing recent messages.`,
+      400,
+    );
   }
 
   const connectionEmail = normalizeEmailAddress(connection.accountEmail);
@@ -2833,14 +3602,22 @@ function assertEmailConnectionSecretIntegrity(
     throw new ApiError(
       "EMAIL_CONNECTION_SECRET_MISMATCH",
       `Reconnect ${providerLabel} before syncing; stored credentials do not match this workspace.`,
-      400
+      400,
     );
   }
 }
 
-function formatEmailConnectionSyncError(providerLabel: "Gmail" | "Microsoft", error: unknown) {
+function formatEmailConnectionSyncError(
+  providerLabel: "Gmail" | "Microsoft",
+  error: unknown,
+) {
   if (error instanceof ApiError) {
-    return truncateEmailPreviewText(redactSensitiveText(`${error.code}: ${error.message}`), 500) ?? `${providerLabel} sync failed.`;
+    return (
+      truncateEmailPreviewText(
+        redactSensitiveText(`${error.code}: ${error.message}`),
+        500,
+      ) ?? `${providerLabel} sync failed.`
+    );
   }
 
   return `${providerLabel} sync failed. Try again or reconnect the account.`;
@@ -2848,12 +3625,17 @@ function formatEmailConnectionSyncError(providerLabel: "Gmail" | "Microsoft", er
 
 async function readEmailProviderJson<T>(
   response: Response,
-  error: { code: string; details?: unknown; message: string; status?: number }
+  error: { code: string; details?: unknown; message: string; status?: number },
 ) {
   try {
     return (await response.json()) as T;
   } catch {
-    throw new ApiError(error.code, error.message, error.status ?? 400, error.details);
+    throw new ApiError(
+      error.code,
+      error.message,
+      error.status ?? 400,
+      error.details,
+    );
   }
 }
 
@@ -2861,39 +3643,61 @@ async function resolveUsableGoogleAccessToken({
   config,
   connection,
   env,
-  fetchImpl
+  fetchImpl,
 }: {
   config: Required<ProviderConfig>;
-  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  connection: NonNullable<
+    Awaited<
+      ReturnType<
+        typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>
+      >
+    >
+  >;
   env: EmailConnectionEnv;
   fetchImpl: GmailFetch;
 }) {
   const secret = connection.secret;
   if (!secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Gmail before syncing recent messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail before syncing recent messages.",
+      400,
+    );
   }
 
-  if (!secret.accessTokenExpiresAt || secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000) {
+  if (
+    !secret.accessTokenExpiresAt ||
+    secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000
+  ) {
     return decryptEmailToken(secret.encryptedAccessToken, env);
   }
 
   if (!secret.encryptedRefreshToken) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING", "Reconnect Gmail before syncing; the access token expired.", 400);
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_MISSING",
+      "Reconnect Gmail before syncing; the access token expired.",
+      400,
+    );
   }
 
   const refreshed = await refreshGoogleAccessToken({
     config,
     fetchImpl,
-    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
+    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env),
   });
-  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(refreshed.expires_in);
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(
+    refreshed.expires_in,
+  );
 
   await prisma.emailConnectionSecret.update({
     where: { connectionId: connection.id },
     data: {
       accessTokenExpiresAt,
-      encryptedAccessToken: encryptEmailToken(refreshed.access_token as string, env)
-    }
+      encryptedAccessToken: encryptEmailToken(
+        refreshed.access_token as string,
+        env,
+      ),
+    },
   });
 
   return refreshed.access_token as string;
@@ -2902,24 +3706,35 @@ async function resolveUsableGoogleAccessToken({
 async function diagnoseGoogleTokenInfo({
   accessToken,
   connection,
-  fetchImpl
+  fetchImpl,
 }: {
   accessToken: string;
-  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  connection: NonNullable<
+    Awaited<
+      ReturnType<
+        typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>
+      >
+    >
+  >;
   fetchImpl: GmailFetch;
 }): Promise<GmailConnectionDiagnosticResult["tokeninfo"]> {
   try {
-    const tokenInfo = await fetchGoogleAccessTokenInfo({ accessToken, fetchImpl });
+    const tokenInfo = await fetchGoogleAccessTokenInfo({
+      accessToken,
+      fetchImpl,
+    });
     const scopeAccess = googleScopeAccessSummary(tokenInfo.scopes);
     const missing = missingGoogleFullInboxScopeCategories(tokenInfo.scopes);
     const accountMatchesConnection = tokenInfo.accountEmail
-      ? tokenInfo.accountEmail === normalizeEmailAddress(connection.accountEmail)
+      ? tokenInfo.accountEmail ===
+        normalizeEmailAddress(connection.accountEmail)
       : null;
     return {
       accountEmail: tokenInfo.accountEmail,
       accountDomainType: gmailAccountDomainType(tokenInfo.accountEmail),
       accountMatchesConnection,
-      category: accountMatchesConnection === false ? "account_mismatch" : "success",
+      category:
+        accountMatchesConnection === false ? "account_mismatch" : "success",
       connectionRef: shortJobRef(connection.id),
       gmailReadSatisfiedBy: scopeAccess.gmailReadSatisfiedBy,
       gmailSendSatisfiedBy: scopeAccess.gmailSendSatisfiedBy,
@@ -2929,7 +3744,7 @@ async function diagnoseGoogleTokenInfo({
       scopeCategories: scopeCategoryLabels(tokenInfo.scopes),
       scopeUrls: tokenInfo.scopes,
       success: true,
-      tokenRef: gmailAccessTokenRef(accessToken)
+      tokenRef: gmailAccessTokenRef(accessToken),
     };
   } catch (error) {
     return {
@@ -2944,7 +3759,7 @@ async function diagnoseGoogleTokenInfo({
       scopeCategories: [],
       scopeUrls: [],
       success: false,
-      tokenRef: gmailAccessTokenRef(accessToken)
+      tokenRef: gmailAccessTokenRef(accessToken),
     };
   }
 }
@@ -2953,18 +3768,27 @@ async function diagnoseGmailInboxList({
   accessToken,
   connectionId,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   connectionId: string;
   fetchImpl: GmailFetch;
   maxResults: number;
-}): Promise<{ messageId: string | null; messageIds: string[]; summary: GmailConnectionDiagnosticResult["list"] }> {
-  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+}): Promise<{
+  messageId: string | null;
+  messageIds: string[];
+  summary: GmailConnectionDiagnosticResult["list"];
+}> {
+  const url = new URL(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+  );
   url.searchParams.set("labelIds", "INBOX");
-  url.searchParams.set("maxResults", String(normalizeRecentEmailSyncMaxResults(maxResults)));
+  url.searchParams.set(
+    "maxResults",
+    String(normalizeRecentEmailSyncMaxResults(maxResults)),
+  );
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
@@ -2979,18 +3803,20 @@ async function diagnoseGmailInboxList({
         providerReason: info.providerReason,
         providerStatus: info.providerStatus,
         success: false,
-        tokenRef: gmailAccessTokenRef(accessToken)
-      }
+        tokenRef: gmailAccessTokenRef(accessToken),
+      },
     };
   }
 
   try {
     const body = await readEmailProviderJson<GmailListResponse>(response, {
       code: "EMAIL_GMAIL_LIST_FAILED",
-      message: "Gmail inbox messages could not be listed."
+      message: "Gmail inbox messages could not be listed.",
     });
     const messages = body.messages?.filter((message) => message.id) ?? [];
-    const messageIds = messages.map((message) => message.id).filter((messageId): messageId is string => Boolean(messageId));
+    const messageIds = messages
+      .map((message) => message.id)
+      .filter((messageId): messageId is string => Boolean(messageId));
     return {
       messageId: messageIds[0] ?? null,
       messageIds,
@@ -3001,8 +3827,8 @@ async function diagnoseGmailInboxList({
         providerReason: null,
         providerStatus: response.status,
         success: true,
-        tokenRef: gmailAccessTokenRef(accessToken)
-      }
+        tokenRef: gmailAccessTokenRef(accessToken),
+      },
     };
   } catch {
     return {
@@ -3015,8 +3841,8 @@ async function diagnoseGmailInboxList({
         providerReason: null,
         providerStatus: response.status,
         success: false,
-        tokenRef: gmailAccessTokenRef(accessToken)
-      }
+        tokenRef: gmailAccessTokenRef(accessToken),
+      },
     };
   }
 }
@@ -3025,7 +3851,7 @@ async function diagnoseGmailFullMessageGet({
   accessToken,
   connectionId,
   fetchImpl,
-  messageId
+  messageId,
 }: {
   accessToken: string;
   connectionId: string;
@@ -3044,7 +3870,7 @@ async function diagnoseGmailFullMessageGet({
       providerReason: null,
       providerStatus: 200,
       success: true,
-      tokenRef: gmailAccessTokenRef(accessToken)
+      tokenRef: gmailAccessTokenRef(accessToken),
     };
   } catch (error) {
     const summary = gmailProviderErrorSummaryFromError(error, "http_error");
@@ -3057,7 +3883,7 @@ async function diagnoseGmailFullMessageGet({
       providerReason: summary.providerReason,
       providerStatus: summary.providerStatus,
       success: false,
-      tokenRef: gmailAccessTokenRef(accessToken)
+      tokenRef: gmailAccessTokenRef(accessToken),
     };
   }
 }
@@ -3068,7 +3894,7 @@ async function diagnoseGmailPermissionProbes({
   fetchImpl,
   listSummary,
   messageIds,
-  tokenInfoScopes
+  tokenInfoScopes,
 }: {
   accessToken: string;
   connectionId: string;
@@ -3077,17 +3903,51 @@ async function diagnoseGmailPermissionProbes({
   messageIds: string[];
   tokenInfoScopes: string[];
 }): Promise<GmailConnectionDiagnosticResult["permissionProbes"]> {
-  const tokeninfoIncludesMetadataScope = tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.metadata");
-  const tokeninfoIncludesReadOnlyScope = tokenInfoScopes.includes("https://www.googleapis.com/auth/gmail.readonly");
-  const requestedOAuthIncludesMetadataScope = normalizeScopeList(gmailOAuthScopes).includes("https://www.googleapis.com/auth/gmail.metadata");
-  const profile = await diagnoseGmailProfileProbe({ accessToken, connectionId, fetchImpl });
+  const tokeninfoIncludesMetadataScope = tokenInfoScopes.includes(
+    "https://www.googleapis.com/auth/gmail.metadata",
+  );
+  const tokeninfoIncludesReadOnlyScope = tokenInfoScopes.includes(
+    "https://www.googleapis.com/auth/gmail.readonly",
+  );
+  const requestedOAuthIncludesMetadataScope = normalizeScopeList(
+    gmailOAuthScopes,
+  ).includes("https://www.googleapis.com/auth/gmail.metadata");
+  const profile = await diagnoseGmailProfileProbe({
+    accessToken,
+    connectionId,
+    fetchImpl,
+  });
   const messages = [];
   for (const messageId of messageIds.slice(0, 2)) {
     const probes = {
-      minimal: await diagnoseGmailMessageFormatProbe({ accessToken, connectionId, fetchImpl, format: "minimal", messageId }),
-      metadata: await diagnoseGmailMessageFormatProbe({ accessToken, connectionId, fetchImpl, format: "metadata", messageId }),
-      full: await diagnoseGmailMessageFormatProbe({ accessToken, connectionId, fetchImpl, format: "full", messageId }),
-      raw: await diagnoseGmailMessageFormatProbe({ accessToken, connectionId, fetchImpl, format: "raw", messageId })
+      minimal: await diagnoseGmailMessageFormatProbe({
+        accessToken,
+        connectionId,
+        fetchImpl,
+        format: "minimal",
+        messageId,
+      }),
+      metadata: await diagnoseGmailMessageFormatProbe({
+        accessToken,
+        connectionId,
+        fetchImpl,
+        format: "metadata",
+        messageId,
+      }),
+      full: await diagnoseGmailMessageFormatProbe({
+        accessToken,
+        connectionId,
+        fetchImpl,
+        format: "full",
+        messageId,
+      }),
+      raw: await diagnoseGmailMessageFormatProbe({
+        accessToken,
+        connectionId,
+        fetchImpl,
+        format: "raw",
+        messageId,
+      }),
     };
     messages.push({ messageRef: safeGmailMessageRef(messageId), probes });
   }
@@ -3095,7 +3955,9 @@ async function diagnoseGmailPermissionProbes({
   const tokenRefs = [
     listSummary.tokenRef,
     profile.tokenRef,
-    ...messages.flatMap((message) => Object.values(message.probes).map((probe) => probe.tokenRef))
+    ...messages.flatMap((message) =>
+      Object.values(message.probes).map((probe) => probe.tokenRef),
+    ),
   ].filter((tokenRef): tokenRef is string => Boolean(tokenRef));
   const uniqueTokenRefs = new Set(tokenRefs);
   const classification = classifyGmailPermissionProbes({
@@ -3103,7 +3965,7 @@ async function diagnoseGmailPermissionProbes({
     messages,
     profile,
     tokeninfoIncludesMetadataScope,
-    tokeninfoIncludesReadOnlyScope
+    tokeninfoIncludesReadOnlyScope,
   });
   return {
     classification,
@@ -3111,32 +3973,38 @@ async function diagnoseGmailPermissionProbes({
     messageCount: messages.length,
     messages,
     profile,
-    recommendedAction: classification === "metadata_scope_conflict" ? "reconnect_after_metadata_scope_removed" : null,
+    recommendedAction:
+      classification === "metadata_scope_conflict"
+        ? "reconnect_after_metadata_scope_removed"
+        : null,
     requestedOAuthIncludesMetadataScope,
     tokeninfoIncludesMetadataScope,
     tokeninfoIncludesReadOnlyScope,
-    tokenRefsMatch: tokenRefs.length > 0 ? uniqueTokenRefs.size === 1 : null
+    tokenRefsMatch: tokenRefs.length > 0 ? uniqueTokenRefs.size === 1 : null,
   };
 }
 
 async function diagnoseGmailProfileProbe({
   accessToken,
   connectionId,
-  fetchImpl
+  fetchImpl,
 }: {
   accessToken: string;
   connectionId: string;
   fetchImpl: GmailFetch;
 }): Promise<GmailDiagnosticProbeResult> {
   const endpoint = gmailProfileEndpointDiagnostic();
-  const response = await fetchImpl("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
-    headers: { authorization: `Bearer ${accessToken}` }
-  });
+  const response = await fetchImpl(
+    "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    {
+      headers: { authorization: `Bearer ${accessToken}` },
+    },
+  );
   return gmailDiagnosticProbeResultFromResponse({
     connectionId,
     endpoint,
     response,
-    token: accessToken
+    token: accessToken,
   });
 }
 
@@ -3145,7 +4013,7 @@ async function diagnoseGmailMessageFormatProbe({
   connectionId,
   fetchImpl,
   format,
-  messageId
+  messageId,
 }: {
   accessToken: string;
   connectionId: string;
@@ -3154,16 +4022,18 @@ async function diagnoseGmailMessageFormatProbe({
   messageId: string;
 }): Promise<GmailDiagnosticProbeResult> {
   const endpoint = gmailMessageEndpointDiagnostic(messageId, format);
-  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
+  const url = new URL(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`,
+  );
   url.searchParams.set("format", format);
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
   return gmailDiagnosticProbeResultFromResponse({
     connectionId,
     endpoint,
     response,
-    token: accessToken
+    token: accessToken,
   });
 }
 
@@ -3171,7 +4041,7 @@ async function gmailDiagnosticProbeResultFromResponse({
   connectionId,
   endpoint,
   response,
-  token
+  token,
 }: {
   connectionId: string;
   endpoint: GmailDiagnosticEndpoint;
@@ -3188,7 +4058,7 @@ async function gmailDiagnosticProbeResultFromResponse({
       providerReason: null,
       providerStatus: response.status,
       success: true,
-      tokenRef: gmailAccessTokenRef(token)
+      tokenRef: gmailAccessTokenRef(token),
     };
   }
   const info = await readGmailProviderErrorInfo(response);
@@ -3201,7 +4071,7 @@ async function gmailDiagnosticProbeResultFromResponse({
     providerReason: info.providerReason,
     providerStatus: info.providerStatus,
     success: false,
-    tokenRef: gmailAccessTokenRef(token)
+    tokenRef: gmailAccessTokenRef(token),
   };
 }
 
@@ -3210,7 +4080,7 @@ function classifyGmailPermissionProbes({
   messages,
   profile,
   tokeninfoIncludesMetadataScope,
-  tokeninfoIncludesReadOnlyScope
+  tokeninfoIncludesReadOnlyScope,
 }: {
   listSummary: GmailConnectionDiagnosticResult["list"];
   messages: GmailConnectionDiagnosticResult["permissionProbes"]["messages"];
@@ -3218,10 +4088,15 @@ function classifyGmailPermissionProbes({
   tokeninfoIncludesMetadataScope: boolean;
   tokeninfoIncludesReadOnlyScope: boolean;
 }): GmailPermissionProbeClassification {
-  if (!profile.success || !listSummary.success) return "gmail_api_or_token_rejected";
+  if (!profile.success || !listSummary.success)
+    return "gmail_api_or_token_rejected";
   if (messages.length === 0) return "no_probe_message_available";
-  const messageProbeGroups = messages.map((message) => Object.values(message.probes));
-  const allMessageGetsFail = messageProbeGroups.every((probes) => probes.every((probe) => !probe.success));
+  const messageProbeGroups = messages.map((message) =>
+    Object.values(message.probes),
+  );
+  const allMessageGetsFail = messageProbeGroups.every((probes) =>
+    probes.every((probe) => !probe.success),
+  );
   if (allMessageGetsFail) return "message_get_permission_rejected";
   if (
     tokeninfoIncludesMetadataScope &&
@@ -3231,7 +4106,7 @@ function classifyGmailPermissionProbes({
         message.probes.minimal.success &&
         message.probes.metadata.success &&
         isGmailMetadataScopeFormatRejection(message.probes.full, "full") &&
-        isGmailMetadataScopeFormatRejection(message.probes.raw, "raw")
+        isGmailMetadataScopeFormatRejection(message.probes.raw, "raw"),
     )
   ) {
     return "metadata_scope_conflict";
@@ -3241,30 +4116,52 @@ function classifyGmailPermissionProbes({
       message.probes.minimal.success &&
       message.probes.metadata.success &&
       !message.probes.full.success &&
-      !message.probes.raw.success
+      !message.probes.raw.success,
   );
   if (fullBodyOnlyRejected) return "full_body_permission_rejected";
-  const messagesWithFailures = messageProbeGroups.filter((probes) => probes.some((probe) => !probe.success)).length;
-  if (messages.length > 1 && messagesWithFailures > 0 && messagesWithFailures < messages.length) return "message_specific_rejection";
+  const messagesWithFailures = messageProbeGroups.filter((probes) =>
+    probes.some((probe) => !probe.success),
+  ).length;
+  if (
+    messages.length > 1 &&
+    messagesWithFailures > 0 &&
+    messagesWithFailures < messages.length
+  )
+    return "message_specific_rejection";
   return messagesWithFailures > 0 ? "message_specific_rejection" : "success";
 }
 
-function isGmailMetadataScopeFormatRejection(probe: GmailDiagnosticProbeResult, format: GmailMessageGetProbeFormat) {
+function isGmailMetadataScopeFormatRejection(
+  probe: GmailDiagnosticProbeResult,
+  format: GmailMessageGetProbeFormat,
+) {
   if (probe.success || probe.providerStatus !== 403) return false;
   const expected = `metadata scope doesn't allow format ${format}`;
-  return gmailProviderErrorMessages(probe.providerError).some((message) => message.toLowerCase().includes(expected));
+  return gmailProviderErrorMessages(probe.providerError).some((message) =>
+    message.toLowerCase().includes(expected),
+  );
 }
 
-function isGmailMetadataScopeProviderError(providerError: GmailSafeProviderError | null) {
-  return gmailProviderErrorMessages(providerError).some((message) => message.toLowerCase().includes("metadata scope doesn't allow format"));
+function isGmailMetadataScopeProviderError(
+  providerError: GmailSafeProviderError | null,
+) {
+  return gmailProviderErrorMessages(providerError).some((message) =>
+    message.toLowerCase().includes("metadata scope doesn't allow format"),
+  );
 }
 
-function gmailProviderErrorMessages(providerError: GmailSafeProviderError | null) {
+function gmailProviderErrorMessages(
+  providerError: GmailSafeProviderError | null,
+) {
   if (!providerError) return [];
   return [
     providerError.message,
     providerError.status,
-    ...providerError.errors.flatMap((error) => [error.domain, error.message, error.reason])
+    ...providerError.errors.flatMap((error) => [
+      error.domain,
+      error.message,
+      error.reason,
+    ]),
   ].filter((message): message is string => Boolean(message));
 }
 
@@ -3283,40 +4180,62 @@ async function resolveUsableMicrosoftAccessToken({
   config,
   connection,
   env,
-  fetchImpl
+  fetchImpl,
 }: {
   config: Required<ProviderConfig>;
-  connection: NonNullable<Awaited<ReturnType<typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>>>>;
+  connection: NonNullable<
+    Awaited<
+      ReturnType<
+        typeof prisma.emailConnection.findFirst<{ include: { secret: true } }>
+      >
+    >
+  >;
   env: EmailConnectionEnv;
   fetchImpl: MicrosoftFetch;
 }) {
   const secret = connection.secret;
   if (!secret) {
-    throw new ApiError("EMAIL_CONNECTION_NOT_FOUND", "Connect Microsoft 365 or Outlook before syncing recent messages.", 400);
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Microsoft 365 or Outlook before syncing recent messages.",
+      400,
+    );
   }
 
-  if (!secret.accessTokenExpiresAt || secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000) {
+  if (
+    !secret.accessTokenExpiresAt ||
+    secret.accessTokenExpiresAt.getTime() > Date.now() + 60_000
+  ) {
     return decryptEmailToken(secret.encryptedAccessToken, env);
   }
 
   if (!secret.encryptedRefreshToken) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING", "Reconnect Microsoft before syncing; the access token expired.", 400);
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_MISSING",
+      "Reconnect Microsoft before syncing; the access token expired.",
+      400,
+    );
   }
 
   const refreshed = await refreshMicrosoftAccessToken({
     config,
     env,
     fetchImpl,
-    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env)
+    refreshToken: decryptEmailToken(secret.encryptedRefreshToken, env),
   });
-  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(refreshed.expires_in);
+  const accessTokenExpiresAt = normalizeAccessTokenExpiresAt(
+    refreshed.expires_in,
+  );
 
   await prisma.emailConnectionSecret.update({
     where: { connectionId: connection.id },
     data: {
       accessTokenExpiresAt,
-      encryptedAccessToken: encryptEmailToken(refreshed.access_token as string, env)
-    }
+      encryptedAccessToken: encryptEmailToken(
+        refreshed.access_token as string,
+        env,
+      ),
+    },
   });
 
   return refreshed.access_token as string;
@@ -3325,7 +4244,7 @@ async function resolveUsableMicrosoftAccessToken({
 async function refreshGoogleAccessToken({
   config,
   fetchImpl,
-  refreshToken
+  refreshToken,
 }: {
   config: Required<ProviderConfig>;
   fetchImpl: GmailFetch;
@@ -3338,27 +4257,39 @@ async function refreshGoogleAccessToken({
       client_id: config.clientId,
       client_secret: config.clientSecret,
       grant_type: "refresh_token",
-      refresh_token: refreshToken
-    })
+      refresh_token: refreshToken,
+    }),
   });
 
   if (!response.ok) {
     const info = await readGmailProviderErrorInfo(response);
-    throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Gmail access token could not be refreshed.", 400, {
-      providerErrorCategory: info.category,
-      providerReason: info.providerReason,
-      providerStatus: info.providerStatus,
-      providerStatusText: info.providerStatusText,
-      phase: "token_refresh"
-    });
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_FAILED",
+      "Gmail access token could not be refreshed.",
+      400,
+      {
+        providerErrorCategory: info.category,
+        providerReason: info.providerReason,
+        providerStatus: info.providerStatus,
+        providerStatusText: info.providerStatusText,
+        phase: "token_refresh",
+      },
+    );
   }
 
-  const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(response, {
-    code: "EMAIL_REFRESH_TOKEN_FAILED",
-    message: "Gmail access token could not be refreshed."
-  });
+  const tokenResponse = await readEmailProviderJson<GoogleTokenResponse>(
+    response,
+    {
+      code: "EMAIL_REFRESH_TOKEN_FAILED",
+      message: "Gmail access token could not be refreshed.",
+    },
+  );
   if (!tokenResponse.access_token) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING_ACCESS", "Gmail did not return a refreshed access token.", 400);
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_MISSING_ACCESS",
+      "Gmail did not return a refreshed access token.",
+      400,
+    );
   }
 
   return tokenResponse;
@@ -3368,34 +4299,48 @@ async function refreshMicrosoftAccessToken({
   config,
   env,
   fetchImpl,
-  refreshToken
+  refreshToken,
 }: {
   config: Required<ProviderConfig>;
   env: EmailConnectionEnv;
   fetchImpl: MicrosoftFetch;
   refreshToken: string;
 }) {
-  const response = await fetchImpl(`https://login.microsoftonline.com/${resolveMicrosoftTenant(env)}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      grant_type: "refresh_token",
-      refresh_token: refreshToken
-    })
-  });
+  const response = await fetchImpl(
+    `https://login.microsoftonline.com/${resolveMicrosoftTenant(env)}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    },
+  );
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_FAILED", "Microsoft access token could not be refreshed.", 400);
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_FAILED",
+      "Microsoft access token could not be refreshed.",
+      400,
+    );
   }
 
-  const tokenResponse = await readEmailProviderJson<MicrosoftTokenResponse>(response, {
-    code: "EMAIL_REFRESH_TOKEN_FAILED",
-    message: "Microsoft access token could not be refreshed."
-  });
+  const tokenResponse = await readEmailProviderJson<MicrosoftTokenResponse>(
+    response,
+    {
+      code: "EMAIL_REFRESH_TOKEN_FAILED",
+      message: "Microsoft access token could not be refreshed.",
+    },
+  );
   if (!tokenResponse.access_token) {
-    throw new ApiError("EMAIL_REFRESH_TOKEN_MISSING_ACCESS", "Microsoft did not return a refreshed access token.", 400);
+    throw new ApiError(
+      "EMAIL_REFRESH_TOKEN_MISSING_ACCESS",
+      "Microsoft did not return a refreshed access token.",
+      400,
+    );
   }
 
   return tokenResponse;
@@ -3404,25 +4349,34 @@ async function refreshMicrosoftAccessToken({
 async function listRecentGmailMessages({
   accessToken,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
   maxResults: number;
 }) {
-  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  url.searchParams.set("maxResults", String(normalizeRecentEmailSyncMaxResults(maxResults)));
+  const url = new URL(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+  );
+  url.searchParams.set(
+    "maxResults",
+    String(normalizeRecentEmailSyncMaxResults(maxResults)),
+  );
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_LIST_FAILED", "Recent Gmail messages could not be listed.", 400);
+    throw new ApiError(
+      "EMAIL_GMAIL_LIST_FAILED",
+      "Recent Gmail messages could not be listed.",
+      400,
+    );
   }
 
   const body = await readEmailProviderJson<GmailListResponse>(response, {
     code: "EMAIL_GMAIL_LIST_FAILED",
-    message: "Recent Gmail messages could not be listed."
+    message: "Recent Gmail messages could not be listed.",
   });
   return body.messages?.filter((message) => message.id) ?? [];
 }
@@ -3430,26 +4384,35 @@ async function listRecentGmailMessages({
 async function listRecentGmailInboxMessages({
   accessToken,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
   maxResults: number;
 }) {
-  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  const url = new URL(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+  );
   url.searchParams.set("labelIds", "INBOX");
-  url.searchParams.set("maxResults", String(normalizeGmailInboxSyncMaxResults(maxResults)));
+  url.searchParams.set(
+    "maxResults",
+    String(normalizeGmailInboxSyncMaxResults(maxResults)),
+  );
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_LIST_FAILED", "Gmail inbox messages could not be listed.", 400);
+    throw new ApiError(
+      "EMAIL_GMAIL_LIST_FAILED",
+      "Gmail inbox messages could not be listed.",
+      400,
+    );
   }
 
   const body = await readEmailProviderJson<GmailListResponse>(response, {
     code: "EMAIL_GMAIL_LIST_FAILED",
-    message: "Gmail inbox messages could not be listed."
+    message: "Gmail inbox messages could not be listed.",
   });
   return body.messages?.filter((message) => message.id) ?? [];
 }
@@ -3457,7 +4420,7 @@ async function listRecentGmailInboxMessages({
 async function listGmailInboxHistoryMessages({
   accessToken,
   fetchImpl,
-  startHistoryId
+  startHistoryId,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
@@ -3469,34 +4432,55 @@ async function listGmailInboxHistoryMessages({
   let pageCount = 0;
 
   do {
-    const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/history");
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/history",
+    );
     url.searchParams.set("historyTypes", "messageAdded");
     url.searchParams.set("labelId", "INBOX");
     url.searchParams.set("startHistoryId", startHistoryId);
     if (pageToken) url.searchParams.set("pageToken", pageToken);
     const response = await fetchImpl(url, {
-      headers: { authorization: `Bearer ${accessToken}` }
+      headers: { authorization: `Bearer ${accessToken}` },
     });
 
     if (response.status === 404) {
-      throw new ApiError("EMAIL_GMAIL_HISTORY_EXPIRED", "Gmail sync history expired; recent inbox sync is required.", 400);
+      throw new ApiError(
+        "EMAIL_GMAIL_HISTORY_EXPIRED",
+        "Gmail sync history expired; recent inbox sync is required.",
+        400,
+      );
     }
     if (!response.ok) {
-      throw new ApiError("EMAIL_GMAIL_HISTORY_FAILED", "Gmail sync history could not be listed.", 400);
+      throw new ApiError(
+        "EMAIL_GMAIL_HISTORY_FAILED",
+        "Gmail sync history could not be listed.",
+        400,
+      );
     }
 
-    const body = await readEmailProviderJson<GmailHistoryListResponse>(response, {
-      code: "EMAIL_GMAIL_HISTORY_FAILED",
-      message: "Gmail sync history could not be listed."
-    });
+    const body = await readEmailProviderJson<GmailHistoryListResponse>(
+      response,
+      {
+        code: "EMAIL_GMAIL_HISTORY_FAILED",
+        message: "Gmail sync history could not be listed.",
+      },
+    );
     historyId = body.historyId ?? historyId;
     for (const item of body.history ?? []) {
       for (const added of item.messagesAdded ?? []) {
         const message = added.message;
-        if (message?.id) messages.set(message.id, { id: message.id, threadId: message.threadId });
+        if (message?.id)
+          messages.set(message.id, {
+            id: message.id,
+            threadId: message.threadId,
+          });
       }
       for (const message of item.messages ?? []) {
-        if (message.id) messages.set(message.id, { id: message.id, threadId: message.threadId });
+        if (message.id)
+          messages.set(message.id, {
+            id: message.id,
+            threadId: message.threadId,
+          });
       }
     }
     pageToken = body.nextPageToken;
@@ -3505,56 +4489,67 @@ async function listGmailInboxHistoryMessages({
 
   return {
     historyId,
-    messages: [...messages.values()]
+    messages: [...messages.values()],
   };
 }
 
 async function getGmailMessageMetadata({
   accessToken,
   fetchImpl,
-  messageId
+  messageId,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
   messageId: string;
 }) {
-  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
+  const url = new URL(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`,
+  );
   url.searchParams.set("format", "metadata");
   for (const header of ["Subject", "From", "To", "Cc", "Date"]) {
     url.searchParams.append("metadataHeaders", header);
   }
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_MESSAGE_FAILED", "Gmail message metadata could not be loaded.", 400);
+    throw new ApiError(
+      "EMAIL_GMAIL_MESSAGE_FAILED",
+      "Gmail message metadata could not be loaded.",
+      400,
+    );
   }
 
   return readEmailProviderJson<GmailMessageResponse>(response, {
     code: "EMAIL_GMAIL_MESSAGE_FAILED",
-    message: "Gmail message metadata could not be loaded."
+    message: "Gmail message metadata could not be loaded.",
   });
 }
 
 async function getGmailMessageFull({
   accessToken,
   fetchImpl,
-  messageId
+  messageId,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
   messageId: string;
 }) {
-  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
+  const url = new URL(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`,
+  );
   url.searchParams.set("format", "full");
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
     const info = await readGmailProviderErrorInfo(response);
-    const reason = gmailMessageHttpFailureReason(info.providerStatus ?? response.status, info.providerReason);
+    const reason = gmailMessageHttpFailureReason(
+      info.providerStatus ?? response.status,
+      info.providerReason,
+    );
     const message = isGmailMetadataScopeProviderError(info.providerError)
       ? gmailMetadataScopeConflictMessage()
       : gmailMessageHttpFailureMessage(reason);
@@ -3565,26 +4560,35 @@ async function getGmailMessageFull({
       providerReason: info.providerReason,
       providerStatus: info.providerStatus ?? response.status,
       providerStatusText: info.providerStatusText,
-      phase: "message_fetch"
+      phase: "message_fetch",
     });
   }
 
   return readEmailProviderJson<GmailMessageResponse>(response, {
     code: "EMAIL_GMAIL_MESSAGE_FAILED",
-    details: { gmailMessageLoadReason: "message_parse_failed", phase: "message_parse" },
-    message: "Gmail message could not be parsed."
+    details: {
+      gmailMessageLoadReason: "message_parse_failed",
+      phase: "message_parse",
+    },
+    message: "Gmail message could not be parsed.",
   });
 }
 
-function gmailMessageHttpFailureReason(status: number, providerReason?: string | null): GmailMessageLoadFailureReason {
+function gmailMessageHttpFailureReason(
+  status: number,
+  providerReason?: string | null,
+): GmailMessageLoadFailureReason {
   const category = gmailProviderErrorCategory(status, providerReason);
   if (category === "api_disabled") return "message_load_api_disabled";
   if (category === "invalid_token") return "message_load_invalid_token";
-  if (category === "insufficient_permissions") return "message_load_auth_or_scope_failed";
+  if (category === "insufficient_permissions")
+    return "message_load_auth_or_scope_failed";
   if (category === "rate_limited") return "message_load_rate_limited";
-  if (category === "provider_unavailable") return "message_load_provider_unavailable";
+  if (category === "provider_unavailable")
+    return "message_load_provider_unavailable";
   if (category === "deleted_message") return "message_load_not_found";
-  if (status === 401 || status === 403) return "message_load_auth_or_scope_failed";
+  if (status === 401 || status === 403)
+    return "message_load_auth_or_scope_failed";
   if (status === 404 || status === 410) return "message_load_not_found";
   if (status === 429) return "message_load_rate_limited";
   if (status >= 500) return "message_load_provider_unavailable";
@@ -3616,7 +4620,9 @@ function gmailMessageHttpFailureMessage(reason: GmailMessageLoadFailureReason) {
   return "Gmail message could not be loaded.";
 }
 
-async function readGmailProviderErrorInfo(response: Response): Promise<GmailProviderErrorInfo> {
+async function readGmailProviderErrorInfo(
+  response: Response,
+): Promise<GmailProviderErrorInfo> {
   const providerStatus = response.status;
   try {
     const body = (await response.json()) as unknown;
@@ -3628,13 +4634,14 @@ async function readGmailProviderErrorInfo(response: Response): Promise<GmailProv
       readSafeGmailProviderReason(firstNestedError?.reason) ??
       readSafeGmailProviderReason(error?.reason) ??
       readSafeGmailProviderReason(errorValue);
-    const providerStatusText = readNonEmptyValue(error?.status) ?? (response.statusText || null);
+    const providerStatusText =
+      readNonEmptyValue(error?.status) ?? (response.statusText || null);
     return {
       category: gmailProviderErrorCategory(providerStatus, providerReason),
       providerError: readSafeGmailProviderError(error),
       providerReason,
       providerStatus,
-      providerStatusText
+      providerStatusText,
     };
   } catch {
     return {
@@ -3642,24 +4649,34 @@ async function readGmailProviderErrorInfo(response: Response): Promise<GmailProv
       providerError: null,
       providerReason: null,
       providerStatus,
-      providerStatusText: response.statusText || null
+      providerStatusText: response.statusText || null,
     };
   }
 }
 
-function readSafeGmailProviderError(value: unknown): GmailSafeProviderError | null {
+function readSafeGmailProviderError(
+  value: unknown,
+): GmailSafeProviderError | null {
   if (!isRecord(value)) return null;
-  const nestedErrors = Array.isArray(value.errors) ? value.errors.filter(isRecord).slice(0, 5) : [];
+  const nestedErrors = Array.isArray(value.errors)
+    ? value.errors.filter(isRecord).slice(0, 5)
+    : [];
   const safeError: GmailSafeProviderError = {
     errors: nestedErrors.map((error) => ({
       domain: safeGmailProviderErrorText(error.domain),
       message: safeGmailProviderErrorText(error.message),
-      reason: readSafeGmailProviderReason(error.reason) ?? safeGmailProviderErrorText(error.reason)
+      reason:
+        readSafeGmailProviderReason(error.reason) ??
+        safeGmailProviderErrorText(error.reason),
     })),
     message: safeGmailProviderErrorText(value.message),
-    status: safeGmailProviderErrorText(value.status)
+    status: safeGmailProviderErrorText(value.status),
   };
-  return safeError.message || safeError.status || safeError.errors.some((error) => error.domain || error.message || error.reason)
+  return safeError.message ||
+    safeError.status ||
+    safeError.errors.some(
+      (error) => error.domain || error.message || error.reason,
+    )
     ? safeError
     : null;
 }
@@ -3668,7 +4685,10 @@ function safeGmailProviderErrorText(value: unknown) {
   const text = readNonEmptyValue(value);
   if (!text) return null;
   const redacted = redactSensitiveText(text)
-    .replace(/\b[^\s,;:()]*?(?:secret|token|password|authorization|cookie)[^\s,;:()]*/gi, "[redacted]")
+    .replace(
+      /\b[^\s,;:()]*?(?:secret|token|password|authorization|cookie)[^\s,;:()]*/gi,
+      "[redacted]",
+    )
     .replace(/\b[A-Fa-f0-9]{16,}\b/g, "[redacted-id]")
     .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted-id]");
   return truncateEmailPreviewText(redacted, 240);
@@ -3693,12 +4713,15 @@ function readSafeGmailProviderReason(value: unknown) {
     "notfound",
     "ratelimitexceeded",
     "servicedisabled",
-    "userratelimitexceeded"
+    "userratelimitexceeded",
   ]);
   return safeReasons.has(normalized) ? reason : null;
 }
 
-function gmailProviderErrorCategory(status: number | null, providerReason: string | null | undefined): GmailProviderErrorCategory {
+function gmailProviderErrorCategory(
+  status: number | null,
+  providerReason: string | null | undefined,
+): GmailProviderErrorCategory {
   const reason = providerReason?.toLowerCase();
   if (
     status === 401 ||
@@ -3732,12 +4755,20 @@ function gmailProviderErrorCategory(status: number | null, providerReason: strin
   ) {
     return "rate_limited";
   }
-  if (status === 404 || status === 410 || reason === "notfound" || reason === "deleted") return "deleted_message";
+  if (
+    status === 404 ||
+    status === 410 ||
+    reason === "notfound" ||
+    reason === "deleted"
+  )
+    return "deleted_message";
   if (status && status >= 500) return "provider_unavailable";
   return "http_error";
 }
 
-function isGmailProviderErrorCategory(value: unknown): value is GmailProviderErrorCategory {
+function isGmailProviderErrorCategory(
+  value: unknown,
+): value is GmailProviderErrorCategory {
   return (
     value === "account_mismatch" ||
     value === "api_disabled" ||
@@ -3754,25 +4785,31 @@ function isGmailProviderErrorCategory(value: unknown): value is GmailProviderErr
 async function getGmailThreadFull({
   accessToken,
   fetchImpl,
-  threadId
+  threadId,
 }: {
   accessToken: string;
   fetchImpl: GmailFetch;
   threadId: string;
 }) {
-  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`);
+  const url = new URL(
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`,
+  );
   url.searchParams.set("format", "full");
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_THREAD_FAILED", "Gmail thread could not be refreshed.", 400);
+    throw new ApiError(
+      "EMAIL_GMAIL_THREAD_FAILED",
+      "Gmail thread could not be refreshed.",
+      400,
+    );
   }
 
   return readEmailProviderJson<GmailThreadResponse>(response, {
     code: "EMAIL_GMAIL_THREAD_FAILED",
-    message: "Gmail thread could not be refreshed."
+    message: "Gmail thread could not be refreshed.",
   });
 }
 
@@ -3783,7 +4820,7 @@ async function sendGmailRawMessage({
   from,
   subject,
   threadId,
-  to
+  to,
 }: {
   accessToken: string;
   body: string;
@@ -3793,68 +4830,97 @@ async function sendGmailRawMessage({
   threadId: string | null;
   to: string;
 }) {
-  const response = await fetchImpl("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json"
+  const response = await fetchImpl(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        raw: encodeGmailRawMessage({ body, from, subject, to }),
+        ...(threadId ? { threadId } : {}),
+      }),
     },
-    body: JSON.stringify({
-      raw: encodeGmailRawMessage({ body, from, subject, to }),
-      ...(threadId ? { threadId } : {})
-    })
-  });
+  );
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_GMAIL_SEND_FAILED", "Gmail reply could not be sent.", 400);
+    throw new ApiError(
+      "EMAIL_GMAIL_SEND_FAILED",
+      "Gmail reply could not be sent.",
+      400,
+    );
   }
 
   return readEmailProviderJson<GmailSendResponse>(response, {
     code: "EMAIL_GMAIL_SEND_FAILED",
-    message: "Gmail reply could not be sent."
+    message: "Gmail reply could not be sent.",
   });
 }
 
 async function listRecentMicrosoftMessages({
   accessToken,
   fetchImpl,
-  maxResults
+  maxResults,
 }: {
   accessToken: string;
   fetchImpl: MicrosoftFetch;
   maxResults: number;
 }) {
   const url = new URL("https://graph.microsoft.com/v1.0/me/messages");
-  url.searchParams.set("$top", String(normalizeRecentEmailSyncMaxResults(maxResults)));
+  url.searchParams.set(
+    "$top",
+    String(normalizeRecentEmailSyncMaxResults(maxResults)),
+  );
   url.searchParams.set("$orderby", "receivedDateTime desc");
   url.searchParams.set(
     "$select",
-    "id,conversationId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview"
+    "id,conversationId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview",
   );
   const response = await fetchImpl(url, {
-    headers: { authorization: `Bearer ${accessToken}` }
+    headers: { authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    throw new ApiError("EMAIL_MICROSOFT_LIST_FAILED", "Recent Microsoft mail could not be listed.", 400);
+    throw new ApiError(
+      "EMAIL_MICROSOFT_LIST_FAILED",
+      "Recent Microsoft mail could not be listed.",
+      400,
+    );
   }
 
-  const body = await readEmailProviderJson<MicrosoftMessagesResponse>(response, {
-    code: "EMAIL_MICROSOFT_LIST_FAILED",
-    message: "Recent Microsoft mail could not be listed."
-  });
+  const body = await readEmailProviderJson<MicrosoftMessagesResponse>(
+    response,
+    {
+      code: "EMAIL_MICROSOFT_LIST_FAILED",
+      message: "Recent Microsoft mail could not be listed.",
+    },
+  );
   return body.value?.filter((message) => message.id) ?? [];
 }
 
-function normalizeGmailMessage(message: GmailMessageResponse, accountEmail: string) {
-  const headers = new Map((message.payload?.headers ?? []).map((header) => [header.name?.toLowerCase() ?? "", header.value ?? ""]));
+function normalizeGmailMessage(
+  message: GmailMessageResponse,
+  accountEmail: string,
+) {
+  const headers = new Map(
+    (message.payload?.headers ?? []).map((header) => [
+      header.name?.toLowerCase() ?? "",
+      header.value ?? "",
+    ]),
+  );
   const fromText = optionalText(headers.get("from"));
   const toText = optionalText(headers.get("to"));
   const ccText = optionalText(headers.get("cc"));
   const account = normalizeEmailAddress(accountEmail);
   const fromEmails = extractEmailAddresses(fromText);
-  const toEmails = [...extractEmailAddresses(toText), ...extractEmailAddresses(ccText)];
-  const direction = account && fromEmails.includes(account) ? "OUTBOUND" : "INBOUND";
+  const toEmails = [
+    ...extractEmailAddresses(toText),
+    ...extractEmailAddresses(ccText),
+  ];
+  const direction =
+    account && fromEmails.includes(account) ? "OUTBOUND" : "INBOUND";
   const occurredAt = parseGmailDate(headers.get("date"), message.internalDate);
 
   return {
@@ -3866,22 +4932,31 @@ function normalizeGmailMessage(message: GmailMessageResponse, accountEmail: stri
     snippet: optionalText(message.snippet),
     subject: optionalText(headers.get("subject")) ?? "(No subject)",
     toEmails,
-    toText
+    toText,
   };
 }
 
-function normalizeMicrosoftMessage(message: MicrosoftMessageResponse, accountEmail: string) {
+function normalizeMicrosoftMessage(
+  message: MicrosoftMessageResponse,
+  accountEmail: string,
+) {
   const fromText = formatMicrosoftRecipient(message.from);
   const toText = formatMicrosoftRecipients(message.toRecipients ?? []);
   const ccText = formatMicrosoftRecipients(message.ccRecipients ?? []);
   const account = normalizeEmailAddress(accountEmail);
-  const fromEmails = extractMicrosoftRecipientEmails(message.from ? [message.from] : []);
+  const fromEmails = extractMicrosoftRecipientEmails(
+    message.from ? [message.from] : [],
+  );
   const toEmails = [
     ...extractMicrosoftRecipientEmails(message.toRecipients ?? []),
-    ...extractMicrosoftRecipientEmails(message.ccRecipients ?? [])
+    ...extractMicrosoftRecipientEmails(message.ccRecipients ?? []),
   ];
-  const direction = account && fromEmails.includes(account) ? "OUTBOUND" : "INBOUND";
-  const occurredAt = parseMicrosoftDate(message.receivedDateTime, message.sentDateTime);
+  const direction =
+    account && fromEmails.includes(account) ? "OUTBOUND" : "INBOUND";
+  const occurredAt = parseMicrosoftDate(
+    message.receivedDateTime,
+    message.sentDateTime,
+  );
 
   return {
     ccText,
@@ -3892,7 +4967,7 @@ function normalizeMicrosoftMessage(message: MicrosoftMessageResponse, accountEma
     snippet: optionalText(message.bodyPreview),
     subject: optionalText(message.subject) ?? "(No subject)",
     toEmails,
-    toText
+    toText,
   };
 }
 
@@ -3900,7 +4975,11 @@ type EmailSyncContactMatch = {
   deals: { id: string }[];
   email: string | null;
   id: string;
-  organization?: { deletedAt: Date | null; id: string; workspaceId: string } | null;
+  organization?: {
+    deletedAt: Date | null;
+    id: string;
+    workspaceId: string;
+  } | null;
 };
 
 type EmailSyncOrganizationMatch = {
@@ -3910,7 +4989,8 @@ type EmailSyncOrganizationMatch = {
   organization: { deletedAt: Date | null; id: string; workspaceId: string };
 };
 
-type EmailSyncKnownRecordMatch = EmailSyncContactMatch | EmailSyncOrganizationMatch;
+type EmailSyncKnownRecordMatch =
+  EmailSyncContactMatch | EmailSyncOrganizationMatch;
 
 type EmailSyncMatchIndex = {
   contactByEmail: Map<string, EmailSyncContactMatch>;
@@ -3919,15 +4999,19 @@ type EmailSyncMatchIndex = {
 
 function matchEmailMessageToKnownRecord(
   message: { direction: string; fromEmails: string[]; toEmails: string[] },
-  matchIndex: EmailSyncMatchIndex
+  matchIndex: EmailSyncMatchIndex,
 ) {
-  const candidates = message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
+  const candidates =
+    message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
   for (const email of candidates) {
     const contact = matchIndex.contactByEmail.get(email);
     if (contact) return contact;
   }
   for (const email of candidates) {
-    const organization = matchOrganizationByEmailDomain(email, matchIndex.organizationByDomain);
+    const organization = matchOrganizationByEmailDomain(
+      email,
+      matchIndex.organizationByDomain,
+    );
     if (organization) return organization;
   }
   return null;
@@ -3935,26 +5019,36 @@ function matchEmailMessageToKnownRecord(
 
 function matchOrganizationByEmailDomain(
   email: string,
-  organizationByDomain: EmailSyncMatchIndex["organizationByDomain"]
+  organizationByDomain: EmailSyncMatchIndex["organizationByDomain"],
 ) {
   const emailDomain = extractEmailDomain(email);
   if (!emailDomain) return null;
   const matches = [...organizationByDomain.entries()]
-    .filter(([domain]) => emailDomain === domain || emailDomain.endsWith(`.${domain}`))
+    .filter(
+      ([domain]) =>
+        emailDomain === domain || emailDomain.endsWith(`.${domain}`),
+    )
     .sort((left, right) => right[0].length - left[0].length);
   return matches[0]?.[1] ?? null;
 }
 
-function workspaceScopedOrganizationId(match: EmailSyncKnownRecordMatch, workspaceId: string) {
+function workspaceScopedOrganizationId(
+  match: EmailSyncKnownRecordMatch,
+  workspaceId: string,
+) {
   const organization = match.organization;
-  return organization?.workspaceId === workspaceId && !organization.deletedAt ? organization.id : null;
+  return organization?.workspaceId === workspaceId && !organization.deletedAt
+    ? organization.id
+    : null;
 }
 
 function addUnmatchedPreview(
   previews: EmailSyncPreview[],
   provider: EmailSyncPreview["provider"],
   providerMessageId: string,
-  message: ReturnType<typeof normalizeGmailMessage> | ReturnType<typeof normalizeMicrosoftMessage>
+  message:
+    | ReturnType<typeof normalizeGmailMessage>
+    | ReturnType<typeof normalizeMicrosoftMessage>,
 ) {
   if (previews.length >= 5) return;
   previews.push({
@@ -3966,19 +5060,29 @@ function addUnmatchedPreview(
     providerMessageId,
     snippet: truncateEmailPreviewText(message.snippet, 240),
     subject: truncateEmailPreviewText(message.subject, 160) ?? "(No subject)",
-    toText: truncateEmailPreviewText(message.toText, 160)
+    toText: truncateEmailPreviewText(message.toText, 160),
   });
 }
 
-function primaryExternalEmail(message: { direction: string; fromEmails: string[]; toEmails: string[] }) {
-  const candidates = message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
+function primaryExternalEmail(message: {
+  direction: string;
+  fromEmails: string[];
+  toEmails: string[];
+}) {
+  const candidates =
+    message.direction === "OUTBOUND" ? message.toEmails : message.fromEmails;
   return candidates[0] ?? null;
 }
 
-function truncateEmailPreviewText(value: string | null | undefined, maxLength: number) {
+function truncateEmailPreviewText(
+  value: string | null | undefined,
+  maxLength: number,
+) {
   const trimmed = optionalText(value);
   if (!trimmed) return null;
-  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}...` : trimmed;
+  return trimmed.length > maxLength
+    ? `${trimmed.slice(0, maxLength - 1)}...`
+    : trimmed;
 }
 
 function safeProviderLastError(value: string | null | undefined) {
@@ -3990,7 +5094,7 @@ function googleProviderCard({
   connection,
   provider,
   syncJob,
-  tokenEncryptionReady
+  tokenEncryptionReady,
 }: {
   config: ProviderConfig;
   connection?: {
@@ -4019,41 +5123,48 @@ function googleProviderCard({
   tokenEncryptionReady: boolean;
 }): EmailProviderCard {
   const configured = isProviderConfigured(config);
-  const fullInboxScopesReady = connection?.status === "CONNECTED" && hasConnectionProviderScopes(connection, gmailOAuthScopes);
+  const fullInboxScopesReady =
+    connection?.status === "CONNECTED" &&
+    hasConnectionProviderScopes(connection, gmailOAuthScopes);
   const syncStatus = gmailSyncJobStatus(syncJob, connection?.id);
 
   if (!configured) {
     return {
       actionLabel: "Configure OAuth",
-      detail: "Add the Google OAuth client id, client secret, and redirect URI env vars before Gmail can connect.",
+      detail:
+        "Add the Google OAuth client id, client secret, and redirect URI env vars before Gmail can connect.",
       disabled: true,
       name: providerLabels[provider],
       provider,
       scopes: [...gmailOAuthScopes],
-      status: "Not configured"
+      status: "Not configured",
     };
   }
 
   if (!tokenEncryptionReady) {
     return {
       actionLabel: "Encryption required",
-      detail: "Google OAuth config is present, but token encryption is not configured. Northstar will not store OAuth tokens in plaintext.",
+      detail:
+        "Google OAuth config is present, but token encryption is not configured. Northstar will not store OAuth tokens in plaintext.",
       disabled: true,
       name: providerLabels[provider],
       provider,
       scopes: [...gmailOAuthScopes],
-      status: "Token encryption required"
+      status: "Token encryption required",
     };
   }
 
   return {
     accountEmail: connection?.accountEmail,
     accountDomainType: gmailAccountDomainType(connection?.accountEmail),
-    actionLabel: connection?.status === "CONNECTED" ? "Reconnect Gmail" : "Connect Gmail",
+    actionLabel:
+      connection?.status === "CONNECTED" ? "Reconnect Gmail" : "Connect Gmail",
     connectionId: connection?.id ?? null,
     connectionRef: connection ? shortJobRef(connection.id) : null,
     detail:
-      connection?.status === "CONNECTED" && connection.accountEmail && fullInboxScopesReady
+      connection?.status === "CONNECTED" &&
+      connection.accountEmail &&
+      fullInboxScopesReady
         ? `Connected to ${connection.accountEmail}. Sync Gmail or Google Workspace to store recent inbox messages, read threads, and send explicit replies from Northstar.`
         : connection?.status === "CONNECTED" && connection.accountEmail
           ? `Connected to ${connection.accountEmail}, but Full Inbox needs expanded Gmail read/send scopes. Reconnect Gmail or Google Workspace to enable inbox sync and explicit replies.`
@@ -4080,7 +5191,7 @@ function googleProviderCard({
               : "Sync issue"
             : "Connected"
           : "Reconnect required"
-        : "Ready to connect"
+        : "Ready to connect",
   };
 }
 
@@ -4088,9 +5199,14 @@ function microsoftProviderCard({
   connection,
   config,
   connectionStatus,
-  tokenEncryptionReady
+  tokenEncryptionReady,
 }: {
-  connection?: { accountEmail: string | null; lastError: string | null; lastSyncAt: Date | null; status: EmailConnectionStatus };
+  connection?: {
+    accountEmail: string | null;
+    lastError: string | null;
+    lastSyncAt: Date | null;
+    status: EmailConnectionStatus;
+  };
   config: ProviderConfig;
   connectionStatus?: EmailConnectionStatus;
   tokenEncryptionReady: boolean;
@@ -4107,25 +5223,29 @@ function microsoftProviderCard({
       name: providerLabels.MICROSOFT_365,
       provider: "MICROSOFT_365",
       scopes,
-      status: "Not configured"
+      status: "Not configured",
     };
   }
 
   if (!tokenEncryptionReady) {
     return {
       actionLabel: "Encryption required",
-      detail: "OAuth config is present, but token encryption is not configured. Northstar will not store OAuth tokens in plaintext.",
+      detail:
+        "OAuth config is present, but token encryption is not configured. Northstar will not store OAuth tokens in plaintext.",
       disabled: true,
       name: providerLabels.MICROSOFT_365,
       provider: "MICROSOFT_365",
       scopes,
-      status: "Token encryption required"
+      status: "Token encryption required",
     };
   }
 
   return {
     accountEmail: connection?.accountEmail,
-    actionLabel: connection?.status === "CONNECTED" ? "Reconnect Microsoft" : "Connect Microsoft",
+    actionLabel:
+      connection?.status === "CONNECTED"
+        ? "Reconnect Microsoft"
+        : "Connect Microsoft",
     disconnectAvailable: connection?.status === "CONNECTED",
     detail: connectionStatus
       ? `Connected to ${connection?.accountEmail ?? "Microsoft 365 / Outlook"}. Use manual sync to import recent matched metadata from known contacts.`
@@ -4139,16 +5259,34 @@ function microsoftProviderCard({
     scopes,
     syncAvailable: connection?.status === "CONNECTED",
     syncLabel: "Sync recent Microsoft mail",
-    status: connection?.status === "CONNECTED" ? (connection.lastError ? "Sync issue" : "Connected") : "Ready to connect"
+    status:
+      connection?.status === "CONNECTED"
+        ? connection.lastError
+          ? "Sync issue"
+          : "Connected"
+        : "Ready to connect",
   };
 }
 
 function isProviderConfigured(config: ProviderConfig) {
-  return Boolean(readNonEmpty(config.clientId) && readNonEmpty(config.clientSecret) && readNonEmpty(config.redirectUri));
+  return Boolean(
+    readNonEmpty(config.clientId) &&
+    readNonEmpty(config.clientSecret) &&
+    readNonEmpty(config.redirectUri),
+  );
 }
 
-function normalizeScopes(scope: unknown, fallback: readonly string[] = gmailOAuthScopes) {
-  const scopes = typeof scope === "string" ? scope.split(/\s+/).map((item) => item.trim()).filter(Boolean) : undefined;
+function normalizeScopes(
+  scope: unknown,
+  fallback: readonly string[] = gmailOAuthScopes,
+) {
+  const scopes =
+    typeof scope === "string"
+      ? scope
+          .split(/\s+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : undefined;
   return scopes && scopes.length > 0 ? scopes : [...fallback];
 }
 
@@ -4166,7 +5304,9 @@ function normalizeScopeList(scopes: readonly string[]) {
 }
 
 function normalizeStoredScopes(scopes: Prisma.JsonValue | null | undefined) {
-  return Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [];
+  return Array.isArray(scopes)
+    ? scopes.filter((scope): scope is string => typeof scope === "string")
+    : [];
 }
 
 function mergeScopeLists(...scopeSources: readonly string[][]) {
@@ -4182,7 +5322,9 @@ function mergeScopeLists(...scopeSources: readonly string[][]) {
 function mergeProviderScopes(...scopeSources: unknown[]) {
   const scopes = new Set<string>();
   for (const source of scopeSources) {
-    for (const scope of normalizeStoredScopes(source as Prisma.JsonValue | null | undefined)) {
+    for (const scope of normalizeStoredScopes(
+      source as Prisma.JsonValue | null | undefined,
+    )) {
       scopes.add(scope);
     }
   }
@@ -4193,7 +5335,7 @@ function googleOAuthScopeResolution({
   scopes,
   source,
   tokenInfoScopes,
-  tokenResponseScopes
+  tokenResponseScopes,
 }: {
   scopes: readonly string[];
   source: GoogleOAuthScopeResolution["source"];
@@ -4202,24 +5344,36 @@ function googleOAuthScopeResolution({
 }): GoogleOAuthScopeResolution {
   const normalizedScopes = normalizeScopeList(scopes);
   return {
-    missingRequiredScopes: missingProviderScopes(normalizedScopes, gmailOAuthScopes),
+    missingRequiredScopes: missingProviderScopes(
+      normalizedScopes,
+      gmailOAuthScopes,
+    ),
     scopes: normalizedScopes,
     source,
-    tokenInfoScopes: tokenInfoScopes ? normalizeScopeList(tokenInfoScopes) : undefined,
-    tokenResponseScopes: normalizeScopeList(tokenResponseScopes)
+    tokenInfoScopes: tokenInfoScopes
+      ? normalizeScopeList(tokenInfoScopes)
+      : undefined,
+    tokenResponseScopes: normalizeScopeList(tokenResponseScopes),
   };
 }
 
-function formatGoogleOAuthMissingScopeError(scopeResolution: GoogleOAuthScopeResolution) {
-  const missing = formatGoogleScopeCategories(scopeResolution.missingRequiredScopes);
+function formatGoogleOAuthMissingScopeError(
+  scopeResolution: GoogleOAuthScopeResolution,
+) {
+  const missing = formatGoogleScopeCategories(
+    scopeResolution.missingRequiredScopes,
+  );
   const granted = formatGoogleScopeCategories(scopeResolution.scopes);
 
-  if (scopeResolution.source === "unverified" && scopeResolution.tokenResponseScopes.length === 0) {
+  if (
+    scopeResolution.source === "unverified" &&
+    scopeResolution.tokenResponseScopes.length === 0
+  ) {
     return [
       "EMAIL_OAUTH_GMAIL_SCOPES_UNVERIFIED: Google did not return granted scopes, and Northstar could not verify Gmail permissions.",
       "Granted scope categories: none verified.",
       `Missing: ${missing}.`,
-      "Check the Google OAuth consent screen, Gmail API, test-user access, and redirect URI, then reconnect Gmail."
+      "Check the Google OAuth consent screen, Gmail API, test-user access, and redirect URI, then reconnect Gmail.",
     ].join(" ");
   }
 
@@ -4227,7 +5381,7 @@ function formatGoogleOAuthMissingScopeError(scopeResolution: GoogleOAuthScopeRes
     "EMAIL_OAUTH_GMAIL_SCOPES_MISSING: Google did not grant Gmail read/send permissions.",
     `Granted scope categories: ${granted}.`,
     `Missing: ${missing}.`,
-    "Check the Google OAuth consent screen/scopes and reconnect Gmail again."
+    "Check the Google OAuth consent screen/scopes and reconnect Gmail again.",
   ].join(" ");
 }
 
@@ -4237,41 +5391,58 @@ function formatGoogleScopeCategories(scopes: readonly string[]) {
 }
 
 function scopeCategoryLabels(scopes: readonly string[]) {
-  return [...new Set(scopes.map(googleScopeCategoryLabel))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(scopes.map(googleScopeCategoryLabel))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 const gmailReadScopePriority = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
-  "https://mail.google.com/"
+  "https://mail.google.com/",
 ] as const;
-const gmailSendScopePriority = ["https://www.googleapis.com/auth/gmail.send"] as const;
+const gmailSendScopePriority = [
+  "https://www.googleapis.com/auth/gmail.send",
+] as const;
 
 function googleScopeAccessSummary(scopes: readonly string[]) {
   const normalized = new Set(normalizeScopeList(scopes));
   return {
-    gmailReadSatisfiedBy: gmailReadScopePriority.find((scope) => normalized.has(scope)) ?? null,
-    gmailSendSatisfiedBy: gmailSendScopePriority.find((scope) => normalized.has(scope)) ?? null
+    gmailReadSatisfiedBy:
+      gmailReadScopePriority.find((scope) => normalized.has(scope)) ?? null,
+    gmailSendSatisfiedBy:
+      gmailSendScopePriority.find((scope) => normalized.has(scope)) ?? null,
   };
 }
 
 function missingGoogleFullInboxScopeCategories(scopes: readonly string[]) {
   const access = googleScopeAccessSummary(scopes);
-  return [access.gmailReadSatisfiedBy ? null : "https://www.googleapis.com/auth/gmail.readonly", access.gmailSendSatisfiedBy ? null : "https://www.googleapis.com/auth/gmail.send"].filter(
-    (scope): scope is string => Boolean(scope)
-  );
+  return [
+    access.gmailReadSatisfiedBy
+      ? null
+      : "https://www.googleapis.com/auth/gmail.readonly",
+    access.gmailSendSatisfiedBy
+      ? null
+      : "https://www.googleapis.com/auth/gmail.send",
+  ].filter((scope): scope is string => Boolean(scope));
 }
 
 function googleScopeCategoryLabel(scope: string) {
   if (scope === "openid") return "sign-in";
   if (scope === "email") return "email";
   if (scope === "profile") return "profile";
-  if (scope === "https://www.googleapis.com/auth/gmail.readonly") return "Gmail read";
-  if (scope === "https://www.googleapis.com/auth/gmail.modify") return "Gmail read/write";
-  if (scope === "https://www.googleapis.com/auth/gmail.send") return "Gmail send";
-  if (scope === "https://www.googleapis.com/auth/gmail.metadata") return "Gmail metadata";
+  if (scope === "https://www.googleapis.com/auth/gmail.readonly")
+    return "Gmail read";
+  if (scope === "https://www.googleapis.com/auth/gmail.modify")
+    return "Gmail read/write";
+  if (scope === "https://www.googleapis.com/auth/gmail.send")
+    return "Gmail send";
+  if (scope === "https://www.googleapis.com/auth/gmail.metadata")
+    return "Gmail metadata";
   if (scope === "https://mail.google.com/") return "Gmail full mailbox";
-  return scope.startsWith("https://www.googleapis.com/auth/gmail.") ? "other Gmail permission" : "other";
+  return scope.startsWith("https://www.googleapis.com/auth/gmail.")
+    ? "other Gmail permission"
+    : "other";
 }
 
 function gmailAccessTokenRef(accessToken: string) {
@@ -4284,17 +5455,20 @@ function gmailProfileEndpointDiagnostic(): GmailDiagnosticEndpoint {
     format: null,
     messageRef: null,
     path: "/gmail/v1/users/me/profile",
-    userId: "me"
+    userId: "me",
   };
 }
 
-function gmailMessageEndpointDiagnostic(messageId: string, format: GmailMessageGetProbeFormat): GmailDiagnosticEndpoint {
+function gmailMessageEndpointDiagnostic(
+  messageId: string,
+  format: GmailMessageGetProbeFormat,
+): GmailDiagnosticEndpoint {
   return {
     fieldsParamPresent: false,
     format,
     messageRef: safeGmailMessageRef(messageId),
     path: "/gmail/v1/users/me/messages/{messageId}",
-    userId: "me"
+    userId: "me",
   };
 }
 
@@ -4314,7 +5488,7 @@ function sameScopeSet(left: readonly string[], right: readonly string[]) {
 
 function gmailProviderErrorSummaryFromError(
   error: unknown,
-  fallbackCategory: GmailProviderErrorCategory
+  fallbackCategory: GmailProviderErrorCategory,
 ): {
   category: GmailProviderErrorCategory;
   providerError: GmailSafeProviderError | null;
@@ -4327,13 +5501,23 @@ function gmailProviderErrorSummaryFromError(
       category: info.category,
       providerError: info.providerError,
       providerReason: info.providerReason,
-      providerStatus: info.providerStatus
+      providerStatus: info.providerStatus,
     };
   }
   if (error instanceof TypeError) {
-    return { category: "provider_unavailable", providerError: null, providerReason: null, providerStatus: null };
+    return {
+      category: "provider_unavailable",
+      providerError: null,
+      providerReason: null,
+      providerStatus: null,
+    };
   }
-  return { category: fallbackCategory, providerError: null, providerReason: null, providerStatus: null };
+  return {
+    category: fallbackCategory,
+    providerError: null,
+    providerReason: null,
+    providerStatus: null,
+  };
 }
 
 function providerConnectionCardPriority(connection: {
@@ -4343,18 +5527,24 @@ function providerConnectionCardPriority(connection: {
   status: EmailConnectionStatus;
 }) {
   if (connection.status !== "CONNECTED") return 0;
-  if (connection.provider === "GOOGLE_WORKSPACE" && hasConnectionProviderScopes(connection, gmailOAuthScopes)) return 2;
+  if (
+    connection.provider === "GOOGLE_WORKSPACE" &&
+    hasConnectionProviderScopes(connection, gmailOAuthScopes)
+  )
+    return 2;
   return 1;
 }
 
 function emailProviderConnectionStatus(
   connection: { lastError: string | null; status: EmailConnectionStatus },
-  fullInboxScopesReady: boolean
+  fullInboxScopesReady: boolean,
 ) {
   if (connection.status !== "CONNECTED") return "Ready to connect";
   if (!fullInboxScopesReady) return "Reconnect required";
   if (!connection.lastError) return "Connected";
-  return isGmailPartialSyncWarning(connection.lastError) ? "Connected with warnings" : "Sync issue";
+  return isGmailPartialSyncWarning(connection.lastError)
+    ? "Connected with warnings"
+    : "Sync issue";
 }
 
 function gmailInboxSyncJobDedupeKey(connectionId: string) {
@@ -4378,11 +5568,13 @@ function gmailSyncJobStatus(
       }
     | null
     | undefined,
-  connectionId?: string | null
+  connectionId?: string | null,
 ) {
   if (!job) return { detail: null, jobRef: null, label: null, updatedAt: null };
   const jobRef = shortJobRef(job.id);
-  const connectionLabel = connectionId ? `; connection ${shortJobRef(connectionId)}` : "";
+  const connectionLabel = connectionId
+    ? `; connection ${shortJobRef(connectionId)}`
+    : "";
   const attemptLabel = job.attempts > 0 ? `; attempts ${job.attempts}` : "";
   if (job.status === JobStatus.PENDING) {
     if (job.attempts > 0 || job.lastError) {
@@ -4390,14 +5582,14 @@ function gmailSyncJobStatus(
         detail: `${safeProviderLastError(job.lastError) ?? "Previous Gmail inbox sync attempt failed."} Retry scheduled ${job.runAt.toISOString()}; job ${jobRef}${connectionLabel}${attemptLabel}.`,
         jobRef,
         label: "Sync retry scheduled",
-        updatedAt: job.updatedAt
+        updatedAt: job.updatedAt,
       };
     }
     return {
       detail: `Queued ${job.createdAt.toISOString()}; run after ${job.runAt.toISOString()}; job ${jobRef}${connectionLabel}${attemptLabel}`,
       jobRef,
       label: "Sync queued",
-      updatedAt: job.updatedAt
+      updatedAt: job.updatedAt,
     };
   }
   if (job.status === JobStatus.RUNNING) {
@@ -4405,7 +5597,7 @@ function gmailSyncJobStatus(
       detail: `Gmail inbox sync is currently running; job ${jobRef}${connectionLabel}${attemptLabel}${job.lockedAt ? `; claimed ${job.lockedAt.toISOString()}` : ""}.`,
       jobRef,
       label: "Sync running",
-      updatedAt: job.updatedAt
+      updatedAt: job.updatedAt,
     };
   }
   if (job.status === JobStatus.DEAD) {
@@ -4413,7 +5605,7 @@ function gmailSyncJobStatus(
       detail: `${safeProviderLastError(job.lastError) ?? "Gmail inbox sync failed."} Job ${jobRef}${connectionLabel}${attemptLabel}.`,
       jobRef,
       label: "Sync failed",
-      updatedAt: job.updatedAt
+      updatedAt: job.updatedAt,
     };
   }
   if (job.status === JobStatus.FAILED) {
@@ -4421,7 +5613,7 @@ function gmailSyncJobStatus(
       detail: `${safeProviderLastError(job.lastError) ?? `Retry scheduled ${job.runAt.toISOString()}`} Job ${jobRef}${connectionLabel}${attemptLabel}.`,
       jobRef,
       label: "Sync retry scheduled",
-      updatedAt: job.updatedAt
+      updatedAt: job.updatedAt,
     };
   }
   if (job.status === JobStatus.SUCCEEDED && job.processedAt) {
@@ -4429,7 +5621,7 @@ function gmailSyncJobStatus(
       detail: `Completed ${job.processedAt.toISOString()}; job ${jobRef}${connectionLabel}${attemptLabel}`,
       jobRef,
       label: "Sync complete",
-      updatedAt: job.updatedAt
+      updatedAt: job.updatedAt,
     };
   }
   return { detail: null, jobRef, label: null, updatedAt: job.updatedAt };
@@ -4441,14 +5633,18 @@ function shortJobRef(jobId: string) {
 
 function parseGmailHistoryCursor(value: string | null | undefined) {
   const trimmed = value?.trim();
-  return trimmed?.startsWith(gmailHistoryCursorPrefix) ? trimmed.slice(gmailHistoryCursorPrefix.length) || null : null;
+  return trimmed?.startsWith(gmailHistoryCursorPrefix)
+    ? trimmed.slice(gmailHistoryCursorPrefix.length) || null
+    : null;
 }
 
 function formatGmailHistoryCursor(historyId: string) {
   return `${gmailHistoryCursorPrefix}${historyId}`;
 }
 
-function newestGmailHistoryId(messages: Array<{ message: GmailMessageResponse }>) {
+function newestGmailHistoryId(
+  messages: Array<{ message: GmailMessageResponse }>,
+) {
   const historyIds = messages
     .map((item) => item.message.historyId)
     .filter((historyId): historyId is string => Boolean(historyId));
@@ -4456,7 +5652,8 @@ function newestGmailHistoryId(messages: Array<{ message: GmailMessageResponse }>
   return historyIds.sort((a, b) => {
     const aNumber = bigIntSafe(a);
     const bNumber = bigIntSafe(b);
-    if (aNumber !== null && bNumber !== null) return aNumber > bNumber ? -1 : aNumber < bNumber ? 1 : 0;
+    if (aNumber !== null && bNumber !== null)
+      return aNumber > bNumber ? -1 : aNumber < bNumber ? 1 : 0;
     return b.localeCompare(a);
   })[0];
 }
@@ -4477,33 +5674,58 @@ function readNonEmptyValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function normalizeDisconnectProvider(provider: unknown): "GOOGLE_WORKSPACE" | "MICROSOFT_365" {
-  if (provider === "GOOGLE_WORKSPACE" || provider === "MICROSOFT_365") return provider;
-  throw new ApiError("VALIDATION_ERROR", "Choose a connected email provider to disconnect.", 422);
+function normalizeDisconnectProvider(
+  provider: unknown,
+): "GOOGLE_WORKSPACE" | "MICROSOFT_365" {
+  if (provider === "GOOGLE_WORKSPACE" || provider === "MICROSOFT_365")
+    return provider;
+  throw new ApiError(
+    "VALIDATION_ERROR",
+    "Choose a connected email provider to disconnect.",
+    422,
+  );
 }
 
-function hasProviderScopes(scopes: Prisma.JsonValue | null | undefined, requiredScopes: readonly string[]) {
+function hasProviderScopes(
+  scopes: Prisma.JsonValue | null | undefined,
+  requiredScopes: readonly string[],
+) {
   const normalized = new Set(normalizeStoredScopes(scopes));
   return requiredScopes.every((scope) => normalized.has(scope));
 }
 
-function missingProviderScopes(scopes: readonly string[], requiredScopes: readonly string[]) {
+function missingProviderScopes(
+  scopes: readonly string[],
+  requiredScopes: readonly string[],
+) {
   const normalized = new Set(scopes);
   return requiredScopes.filter((scope) => !normalized.has(scope));
 }
 
 function hasConnectionProviderScopes(
-  connection: { scopes: Prisma.JsonValue | null | undefined; secret?: { scopes: Prisma.JsonValue | null | undefined } | null } | null | undefined,
-  requiredScopes: readonly string[]
+  connection:
+    | {
+        scopes: Prisma.JsonValue | null | undefined;
+        secret?: { scopes: Prisma.JsonValue | null | undefined } | null;
+      }
+    | null
+    | undefined,
+  requiredScopes: readonly string[],
 ) {
-  const normalized = new Set([...normalizeStoredScopes(connection?.scopes), ...normalizeStoredScopes(connection?.secret?.scopes)]);
+  const normalized = new Set([
+    ...normalizeStoredScopes(connection?.scopes),
+    ...normalizeStoredScopes(connection?.secret?.scopes),
+  ]);
   return requiredScopes.every((scope) => normalized.has(scope));
 }
 
 function assertConnectionProviderScopes(
-  connection: { scopes: Prisma.JsonValue | null | undefined; secret?: { scopes: Prisma.JsonValue | null | undefined } | null },
+  connection: {
+    scopes: Prisma.JsonValue | null | undefined;
+    secret?: { scopes: Prisma.JsonValue | null | undefined } | null;
+  },
   requiredScopes: readonly string[],
-  message: string
+  message: string,
 ) {
   if (!hasConnectionProviderScopes(connection, requiredScopes)) {
     throw new ApiError("EMAIL_PROVIDER_SCOPES_INSUFFICIENT", message, 400);
@@ -4512,7 +5734,11 @@ function assertConnectionProviderScopes(
 
 function normalizeAccessTokenExpiresAt(expiresIn: unknown) {
   const seconds =
-    typeof expiresIn === "number" ? expiresIn : typeof expiresIn === "string" ? Number.parseFloat(expiresIn) : NaN;
+    typeof expiresIn === "number"
+      ? expiresIn
+      : typeof expiresIn === "string"
+        ? Number.parseFloat(expiresIn)
+        : NaN;
   if (!Number.isFinite(seconds) || seconds <= 0) return null;
   return new Date(Date.now() + seconds * 1000);
 }
@@ -4526,7 +5752,8 @@ function normalizeRecentEmailSyncMaxResults(value: number) {
   if (!Number.isFinite(value)) return defaultRecentEmailSyncMaxResults;
   const normalized = Math.trunc(value);
   if (normalized < 1) return 1;
-  if (normalized > maxRecentEmailSyncMaxResults) return maxRecentEmailSyncMaxResults;
+  if (normalized > maxRecentEmailSyncMaxResults)
+    return maxRecentEmailSyncMaxResults;
   return normalized;
 }
 
@@ -4534,7 +5761,8 @@ function normalizeGmailInboxSyncMaxResults(value: number) {
   if (!Number.isFinite(value)) return defaultGmailInboxSyncMaxResults;
   const normalized = Math.trunc(value);
   if (normalized < 1) return 1;
-  if (normalized > maxGmailInboxSyncMaxResults) return maxGmailInboxSyncMaxResults;
+  if (normalized > maxGmailInboxSyncMaxResults)
+    return maxGmailInboxSyncMaxResults;
   return normalized;
 }
 
@@ -4550,7 +5778,11 @@ function normalizeGmailBeforeDate(value: unknown) {
   const raw = readNonEmptyValue(value);
   const date = raw ? new Date(raw) : null;
   if (!date || Number.isNaN(date.getTime())) {
-    throw new ApiError("VALIDATION_ERROR", "Choose a synced inbox date before loading older Gmail messages.", 422);
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "Choose a synced inbox date before loading older Gmail messages.",
+      422,
+    );
   }
   return date;
 }
@@ -4566,20 +5798,39 @@ function normalizeGmailInboxThreadId(value: unknown) {
   const threadId = readNonEmptyValue(value);
   const prefix = "GOOGLE_WORKSPACE:";
   if (!threadId?.startsWith(prefix)) {
-    throw new ApiError("VALIDATION_ERROR", "Choose a synced Gmail thread before refreshing it.", 422);
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "Choose a synced Gmail thread before refreshing it.",
+      422,
+    );
   }
   const remainder = threadId.slice(prefix.length).trim();
   const [possibleConnectionRef, ...providerThreadParts] = remainder.split(":");
-  const hasConnectionSegment = possibleConnectionRef === "legacy" || (providerThreadParts.length > 0 && /^[a-z0-9]{8}$/i.test(possibleConnectionRef));
-  const providerThreadId = hasConnectionSegment ? providerThreadParts.join(":").trim() : remainder;
-  const connectionRef = hasConnectionSegment && possibleConnectionRef !== "legacy" ? possibleConnectionRef : null;
+  const hasConnectionSegment =
+    possibleConnectionRef === "legacy" ||
+    (providerThreadParts.length > 0 &&
+      /^[a-z0-9]{8}$/i.test(possibleConnectionRef));
+  const providerThreadId = hasConnectionSegment
+    ? providerThreadParts.join(":").trim()
+    : remainder;
+  const connectionRef =
+    hasConnectionSegment && possibleConnectionRef !== "legacy"
+      ? possibleConnectionRef
+      : null;
   if (!providerThreadId) {
-    throw new ApiError("VALIDATION_ERROR", "Choose a synced Gmail thread before refreshing it.", 422);
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "Choose a synced Gmail thread before refreshing it.",
+      422,
+    );
   }
   return { connectionRef, providerThreadId };
 }
 
-function parseGmailDate(dateHeader: string | undefined, internalDate: string | undefined) {
+function parseGmailDate(
+  dateHeader: string | undefined,
+  internalDate: string | undefined,
+) {
   const headerDate = dateHeader ? new Date(dateHeader) : null;
   if (headerDate && !Number.isNaN(headerDate.getTime())) return headerDate;
   const internalTimestamp = internalDate ? Number(internalDate) : NaN;
@@ -4587,7 +5838,10 @@ function parseGmailDate(dateHeader: string | undefined, internalDate: string | u
   return new Date();
 }
 
-function parseMicrosoftDate(receivedDateTime: string | null | undefined, sentDateTime: string | null | undefined) {
+function parseMicrosoftDate(
+  receivedDateTime: string | null | undefined,
+  sentDateTime: string | null | undefined,
+) {
   const received = receivedDateTime ? new Date(receivedDateTime) : null;
   if (received && !Number.isNaN(received.getTime())) return received;
   const sent = sentDateTime ? new Date(sentDateTime) : null;
@@ -4597,7 +5851,9 @@ function parseMicrosoftDate(receivedDateTime: string | null | undefined, sentDat
 
 function extractEmailAddresses(value: string | null) {
   if (!value) return [];
-  return [...value.matchAll(emailAddressPattern)].map((match) => normalizeEmailAddress(match[0])).filter(Boolean);
+  return [...value.matchAll(emailAddressPattern)]
+    .map((match) => normalizeEmailAddress(match[0]))
+    .filter(Boolean);
 }
 
 function normalizeEmailAddress(value: string | null | undefined) {
@@ -4605,33 +5861,43 @@ function normalizeEmailAddress(value: string | null | undefined) {
 }
 
 export function extractEmailDomain(value: string | null | undefined) {
-  const email = extractEmailAddresses(value ?? null)[0] ?? normalizeEmailAddress(value);
+  const email =
+    extractEmailAddresses(value ?? null)[0] ?? normalizeEmailAddress(value);
   if (!isValidEmailAddress(email)) return null;
-  const domain = email.slice(email.lastIndexOf("@") + 1).trim().toLowerCase();
+  const domain = email
+    .slice(email.lastIndexOf("@") + 1)
+    .trim()
+    .toLowerCase();
   return domain && isValidEmailDomain(domain) ? domain : null;
 }
 
-export function gmailAccountDomainType(value: string | null | undefined): GmailAccountDomainType {
+export function gmailAccountDomainType(
+  value: string | null | undefined,
+): GmailAccountDomainType {
   const domain = extractEmailDomain(value);
   if (!domain) return "unknown";
-  if (domain === "gmail.com" || domain === "googlemail.com") return "consumer_gmail";
+  if (domain === "gmail.com" || domain === "googlemail.com")
+    return "consumer_gmail";
   return "google_workspace_or_custom_domain";
 }
 
-function normalizeProviderAccountEmail(value: unknown, providerLabel: "Gmail" | "Microsoft") {
+function normalizeProviderAccountEmail(
+  value: unknown,
+  providerLabel: "Gmail" | "Microsoft",
+) {
   const email = normalizeEmailAddress(optionalText(value));
   if (!email) {
     throw new ApiError(
       "EMAIL_OAUTH_PROFILE_MISSING_EMAIL",
       `${providerLabel} did not return an account email address.`,
-      400
+      400,
     );
   }
   if (!isValidEmailAddress(email)) {
     throw new ApiError(
       "EMAIL_OAUTH_PROFILE_INVALID_EMAIL",
       `${providerLabel} returned an invalid account email address.`,
-      400
+      400,
     );
   }
   return email;
@@ -4641,7 +5907,12 @@ function isValidEmailAddress(value: string | null | undefined) {
   const email = normalizeEmailAddress(value);
   if (!email || email.includes("..")) return false;
   const atIndex = email.lastIndexOf("@");
-  if (atIndex <= 0 || atIndex !== email.indexOf("@") || atIndex === email.length - 1) return false;
+  if (
+    atIndex <= 0 ||
+    atIndex !== email.indexOf("@") ||
+    atIndex === email.length - 1
+  )
+    return false;
   const local = email.slice(0, atIndex);
   const domain = email.slice(atIndex + 1);
   return Boolean(local && isValidEmailDomain(domain));
@@ -4652,51 +5923,69 @@ function isValidEmailDomain(value: string | null | undefined) {
   if (!domain || domain.length > 253 || domain.includes("..")) return false;
   const labels = domain.split(".");
   if (labels.length < 2) return false;
-  return labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+  return labels.every((label) =>
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label),
+  );
 }
 
-function buildContactEmailMap<T extends { email: string | null }>(contacts: T[]) {
+function buildContactEmailMap<T extends { email: string | null }>(
+  contacts: T[],
+) {
   const contactsByEmail = new Map<string, T[]>();
 
   for (const contact of contacts) {
     const email = normalizeEmailAddress(contact.email);
     if (!email) continue;
-    contactsByEmail.set(email, [...(contactsByEmail.get(email) ?? []), contact]);
+    contactsByEmail.set(email, [
+      ...(contactsByEmail.get(email) ?? []),
+      contact,
+    ]);
   }
 
   return new Map(
     [...contactsByEmail.entries()]
       .filter(([, matches]) => matches.length === 1)
-      .map(([email, matches]) => [email, matches[0]] as const)
+      .map(([email, matches]) => [email, matches[0]] as const),
   );
 }
 
-function buildOrganizationDomainMap<T extends { deletedAt: Date | null; domain: string | null; id: string; workspaceId: string }>(
-  organizations: T[]
-) {
+function buildOrganizationDomainMap<
+  T extends {
+    deletedAt: Date | null;
+    domain: string | null;
+    id: string;
+    workspaceId: string;
+  },
+>(organizations: T[]) {
   const organizationsByDomain = new Map<string, T[]>();
   for (const organization of organizations) {
     const domain = normalizeOrganizationDomain(organization.domain);
     if (!domain) continue;
-    organizationsByDomain.set(domain, [...(organizationsByDomain.get(domain) ?? []), organization]);
+    organizationsByDomain.set(domain, [
+      ...(organizationsByDomain.get(domain) ?? []),
+      organization,
+    ]);
   }
 
   return new Map(
     [...organizationsByDomain.entries()]
       .filter(([, matches]) => matches.length === 1)
-      .map(([domain, matches]) => [
-        domain,
-        {
-          deals: [],
-          email: null,
-          id: null,
-          organization: {
-            deletedAt: matches[0].deletedAt,
-            id: matches[0].id,
-            workspaceId: matches[0].workspaceId
-          }
-        } satisfies EmailSyncOrganizationMatch
-      ] as const)
+      .map(
+        ([domain, matches]) =>
+          [
+            domain,
+            {
+              deals: [],
+              email: null,
+              id: null,
+              organization: {
+                deletedAt: matches[0].deletedAt,
+                id: matches[0].id,
+                workspaceId: matches[0].workspaceId,
+              },
+            } satisfies EmailSyncOrganizationMatch,
+          ] as const,
+      ),
   );
 }
 
@@ -4704,11 +5993,16 @@ function normalizeOrganizationDomain(value: string | null | undefined) {
   const raw = value?.trim().toLowerCase();
   if (!raw) return null;
   const withoutProtocol = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
-  const withoutPath = withoutProtocol.split(/[/?#]/)[0]?.replace(/^@+/, "").replace(/^www\./, "");
+  const withoutPath = withoutProtocol
+    .split(/[/?#]/)[0]
+    ?.replace(/^@+/, "")
+    .replace(/^www\./, "");
   return isValidEmailDomain(withoutPath) ? withoutPath : null;
 }
 
-function formatMicrosoftRecipient(recipient: MicrosoftRecipient | null | undefined) {
+function formatMicrosoftRecipient(
+  recipient: MicrosoftRecipient | null | undefined,
+) {
   const email = recipient?.emailAddress?.address?.trim();
   const name = recipient?.emailAddress?.name?.trim();
   if (name && email) return `${name} <${email}>`;
@@ -4716,12 +6010,16 @@ function formatMicrosoftRecipient(recipient: MicrosoftRecipient | null | undefin
 }
 
 function formatMicrosoftRecipients(recipients: MicrosoftRecipient[]) {
-  const formatted = recipients.map(formatMicrosoftRecipient).filter((item): item is string => Boolean(item));
+  const formatted = recipients
+    .map(formatMicrosoftRecipient)
+    .filter((item): item is string => Boolean(item));
   return formatted.length > 0 ? formatted.join(", ") : null;
 }
 
 function extractMicrosoftRecipientEmails(recipients: MicrosoftRecipient[]) {
-  return recipients.map((recipient) => normalizeEmailAddress(recipient.emailAddress?.address)).filter(Boolean);
+  return recipients
+    .map((recipient) => normalizeEmailAddress(recipient.emailAddress?.address))
+    .filter(Boolean);
 }
 
 function resolveMicrosoftTenant(env: EmailConnectionEnv = process.env) {
@@ -4745,7 +6043,10 @@ function normalizeGmailMessageBody(message: GmailMessageResponse) {
   return null;
 }
 
-function findGmailPartBody(part: GmailMessagePart | GmailMessageResponse["payload"] | undefined, mimeType: string): string | null {
+function findGmailPartBody(
+  part: GmailMessagePart | GmailMessageResponse["payload"] | undefined,
+  mimeType: string,
+): string | null {
   if (!part) return null;
   if (part.mimeType === mimeType && part.body?.data) {
     return decodeGmailBase64Url(part.body.data);
@@ -4758,7 +6059,9 @@ function findGmailPartBody(part: GmailMessagePart | GmailMessageResponse["payloa
 }
 
 function decodeGmailBase64Url(value: string) {
-  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8").trim();
+  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64")
+    .toString("utf8")
+    .trim();
 }
 
 function stripHtmlForEmailBody(value: string) {
@@ -4782,7 +6085,11 @@ function shouldRefreshExistingGmailInboxLog(log: {
   providerLabels: Prisma.JsonValue | null;
   providerSnippet: string | null;
 }) {
-  return /^Gmail snippet:/i.test(log.body) || !log.providerLabels || !log.providerSnippet;
+  return (
+    /^Gmail snippet:/i.test(log.body) ||
+    !log.providerLabels ||
+    !log.providerSnippet
+  );
 }
 
 function emailInboxThreadId(emailLog: {
@@ -4793,52 +6100,81 @@ function emailInboxThreadId(emailLog: {
   providerThreadId: string | null;
 }) {
   const provider = emailLog.provider ?? "MANUAL";
-  const connectionSegment = emailLog.emailConnectionId ? shortJobRef(emailLog.emailConnectionId) : "legacy";
-  const providerThreadId = emailLog.providerThreadId ?? emailLog.providerMessageId ?? emailLog.id;
+  const connectionSegment = emailLog.emailConnectionId
+    ? shortJobRef(emailLog.emailConnectionId)
+    : "legacy";
+  const providerThreadId =
+    emailLog.providerThreadId ?? emailLog.providerMessageId ?? emailLog.id;
   return `${provider}:${connectionSegment}:${providerThreadId}`;
 }
 
-function buildEmailInboxThreadSummary(id: string, messages: EmailInboxMessageSummary[]): EmailInboxThreadSummary {
-  const sortedMessages = [...messages].sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
-  const latestMessage = sortedMessages[sortedMessages.length - 1] as EmailInboxMessageSummary;
+function buildEmailInboxThreadSummary(
+  id: string,
+  messages: EmailInboxMessageSummary[],
+): EmailInboxThreadSummary {
+  const sortedMessages = [...messages].sort(
+    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime(),
+  );
+  const latestMessage = sortedMessages[
+    sortedMessages.length - 1
+  ] as EmailInboxMessageSummary;
   return {
     accountEmail: latestMessage.emailConnection?.accountEmail ?? null,
     emailConnectionId: latestMessage.emailConnectionId,
-    emailConnectionRef: latestMessage.emailConnectionId ? shortJobRef(latestMessage.emailConnectionId) : null,
+    emailConnectionRef: latestMessage.emailConnectionId
+      ? shortJobRef(latestMessage.emailConnectionId)
+      : null,
     id,
-    isUnread: sortedMessages.some((message) => emailLogProviderLabels(message).includes("UNREAD")),
+    isUnread: sortedMessages.some((message) =>
+      emailLogProviderLabels(message).includes("UNREAD"),
+    ),
     latestAt: latestMessage.occurredAt,
     latestMessage,
     linkedRecordLabel: linkedRecordLabel(latestMessage),
     messageCount: sortedMessages.length,
     messages: sortedMessages,
     provider: latestMessage.provider,
-    subject: latestMessage.subject
+    subject: latestMessage.subject,
   };
 }
 
-function emailLogProviderLabels(emailLog: { providerLabels: Prisma.JsonValue | null }) {
+function emailLogProviderLabels(emailLog: {
+  providerLabels: Prisma.JsonValue | null;
+}) {
   return Array.isArray(emailLog.providerLabels)
-    ? emailLog.providerLabels.filter((label): label is string => typeof label === "string")
+    ? emailLog.providerLabels.filter(
+        (label): label is string => typeof label === "string",
+      )
     : [];
 }
 
 function linkedRecordLabel(emailLog: EmailInboxMessageSummary) {
   if (emailLog.deal) return `Deal: ${emailLog.deal.title}`;
   if (emailLog.lead) return `Lead: ${emailLog.lead.title}`;
-  if (emailLog.person) return `Contact: ${formatInboxPersonName(emailLog.person) ?? emailLog.person.email ?? "Unnamed contact"}`;
-  if (emailLog.organization) return `Organization: ${emailLog.organization.name}`;
+  if (emailLog.person)
+    return `Contact: ${formatInboxPersonName(emailLog.person) ?? emailLog.person.email ?? "Unnamed contact"}`;
+  if (emailLog.organization)
+    return `Organization: ${emailLog.organization.name}`;
   return null;
 }
 
-function formatInboxPersonName(person: { firstName: string; lastName: string | null }) {
-  return [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || null;
+function formatInboxPersonName(person: {
+  firstName: string;
+  lastName: string | null;
+}) {
+  return (
+    [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || null
+  );
 }
 
 function normalizeEmailReplyId(value: unknown) {
   const id = optionalText(value);
   if (!id) {
-    throw new ApiError("VALIDATION_ERROR", "Choose an email before sending a reply.", 422);
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "Choose an email before sending a reply.",
+      422,
+    );
   }
   return id;
 }
@@ -4849,16 +6185,32 @@ function normalizeEmailReplyBody(value: unknown) {
     throw new ApiError("VALIDATION_ERROR", "Reply body is required.", 422);
   }
   if (body.length > 20_000) {
-    throw new ApiError("VALIDATION_ERROR", "Reply body must be 20,000 characters or fewer.", 422);
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "Reply body must be 20,000 characters or fewer.",
+      422,
+    );
   }
   return body;
 }
 
 function replySubject(subject: string) {
-  return /^re:/i.test(subject.trim()) ? subject.trim() : `Re: ${subject.trim() || "(No subject)"}`;
+  return /^re:/i.test(subject.trim())
+    ? subject.trim()
+    : `Re: ${subject.trim() || "(No subject)"}`;
 }
 
-function encodeGmailRawMessage({ body, from, subject, to }: { body: string; from: string; subject: string; to: string }) {
+function encodeGmailRawMessage({
+  body,
+  from,
+  subject,
+  to,
+}: {
+  body: string;
+  from: string;
+  subject: string;
+  to: string;
+}) {
   const mime = [
     `From: ${sanitizeEmailHeader(from)}`,
     `To: ${sanitizeEmailHeader(to)}`,
@@ -4867,9 +6219,13 @@ function encodeGmailRawMessage({ body, from, subject, to }: { body: string; from
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
     "",
-    body
+    body,
   ].join("\r\n");
-  return Buffer.from(mime, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return Buffer.from(mime, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 function sanitizeEmailHeader(value: string) {
@@ -4880,7 +6236,7 @@ function findConnectedEmailConnection(
   workspaceId: string,
   provider: "GOOGLE_WORKSPACE" | "MICROSOFT_365",
   connectionId?: string,
-  actorUserId?: string
+  actorUserId?: string,
 ) {
   return prisma.emailConnection.findFirst({
     where: {
@@ -4889,15 +6245,18 @@ function findConnectedEmailConnection(
       provider,
       status: "CONNECTED",
       deletedAt: null,
-      ...(actorUserId ? { OR: emailConnectionOwnerWhere(actorUserId) } : {})
+      ...(actorUserId ? { OR: emailConnectionOwnerWhere(actorUserId) } : {}),
     },
     include: { secret: true },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
 }
 
 function emailConnectionOwnerWhere(actorUserId: string) {
-  return [{ createdById: actorUserId }, { secret: { is: { userId: actorUserId } } }];
+  return [
+    { createdById: actorUserId },
+    { secret: { is: { userId: actorUserId } } },
+  ];
 }
 
 function emailInboxOwnerLogWhere(actor: WorkspaceActor) {
@@ -4907,20 +6266,28 @@ function emailInboxOwnerLogWhere(actor: WorkspaceActor) {
         emailConnection: {
           is: {
             workspaceId: actor.workspaceId,
-            OR: emailConnectionOwnerWhere(actor.actorUserId)
-          }
-        }
+            OR: emailConnectionOwnerWhere(actor.actorUserId),
+          },
+        },
       },
       {
         createdById: actor.actorUserId,
-        emailConnectionId: null
-      }
-    ]
+        emailConnectionId: null,
+      },
+    ],
   };
 }
 
-async function findOwnedGmailConnectionByRef(actor: WorkspaceActor, connectionRef: string) {
-  const exact = await findConnectedEmailConnection(actor.workspaceId, "GOOGLE_WORKSPACE", connectionRef, actor.actorUserId);
+async function findOwnedGmailConnectionByRef(
+  actor: WorkspaceActor,
+  connectionRef: string,
+) {
+  const exact = await findConnectedEmailConnection(
+    actor.workspaceId,
+    "GOOGLE_WORKSPACE",
+    connectionRef,
+    actor.actorUserId,
+  );
   if (exact) return exact;
   const matches = await prisma.emailConnection.findMany({
     where: {
@@ -4928,24 +6295,38 @@ async function findOwnedGmailConnectionByRef(actor: WorkspaceActor, connectionRe
       provider: "GOOGLE_WORKSPACE",
       status: "CONNECTED",
       deletedAt: null,
-      OR: emailConnectionOwnerWhere(actor.actorUserId)
+      OR: emailConnectionOwnerWhere(actor.actorUserId),
     },
     include: { secret: true },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
-  const shortMatches = matches.filter((connection) => shortJobRef(connection.id) === connectionRef);
+  const shortMatches = matches.filter(
+    (connection) => shortJobRef(connection.id) === connectionRef,
+  );
   if (shortMatches.length === 1) return shortMatches[0];
   if (shortMatches.length > 1) {
-    throw new ApiError("EMAIL_CONNECTION_AMBIGUOUS", "Gmail connection short reference matched more than one inbox.", 409);
+    throw new ApiError(
+      "EMAIL_CONNECTION_AMBIGUOUS",
+      "Gmail connection short reference matched more than one inbox.",
+      409,
+    );
   }
   return null;
 }
 
-async function findGmailConnectionForDiagnostic(workspaceId: string, connectionRef: string | undefined) {
+async function findGmailConnectionForDiagnostic(
+  workspaceId: string,
+  connectionRef: string | undefined,
+) {
   const trimmedRef = readNonEmptyValue(connectionRef);
-  if (!trimmedRef) return findConnectedEmailConnection(workspaceId, "GOOGLE_WORKSPACE");
+  if (!trimmedRef)
+    return findConnectedEmailConnection(workspaceId, "GOOGLE_WORKSPACE");
 
-  const exact = await findConnectedEmailConnection(workspaceId, "GOOGLE_WORKSPACE", trimmedRef);
+  const exact = await findConnectedEmailConnection(
+    workspaceId,
+    "GOOGLE_WORKSPACE",
+    trimmedRef,
+  );
   if (exact) return exact;
 
   const matches = await prisma.emailConnection.findMany({
@@ -4953,45 +6334,61 @@ async function findGmailConnectionForDiagnostic(workspaceId: string, connectionR
       workspaceId,
       provider: "GOOGLE_WORKSPACE",
       status: "CONNECTED",
-      deletedAt: null
+      deletedAt: null,
     },
     include: { secret: true },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
-  const shortMatches = matches.filter((connection) => shortJobRef(connection.id) === trimmedRef);
+  const shortMatches = matches.filter(
+    (connection) => shortJobRef(connection.id) === trimmedRef,
+  );
   if (shortMatches.length === 1) return shortMatches[0];
   if (shortMatches.length > 1) {
-    throw new ApiError("EMAIL_CONNECTION_AMBIGUOUS", "Gmail connection short reference matched more than one row.", 409);
+    throw new ApiError(
+      "EMAIL_CONNECTION_AMBIGUOUS",
+      "Gmail connection short reference matched more than one row.",
+      409,
+    );
   }
   return null;
 }
 
-async function findGmailSyncJobForDiagnostic(workspaceId: string, jobRef: string) {
+async function findGmailSyncJobForDiagnostic(
+  workspaceId: string,
+  jobRef: string,
+) {
   const exact = await prisma.job.findFirst({
     where: {
       id: jobRef,
       type: gmailInboxSyncJobType,
-      workspaceId
+      workspaceId,
     },
-    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
   if (exact) return exact;
 
   const matches = await prisma.job.findMany({
     where: {
       type: gmailInboxSyncJobType,
-      workspaceId
+      workspaceId,
     },
-    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
   const shortMatches = matches.filter((job) => shortJobRef(job.id) === jobRef);
   if (shortMatches.length === 1) return shortMatches[0];
   if (shortMatches.length > 1) {
-    throw new ApiError("EMAIL_SYNC_JOB_AMBIGUOUS", "Gmail sync job short reference matched more than one row.", 409);
+    throw new ApiError(
+      "EMAIL_SYNC_JOB_AMBIGUOUS",
+      "Gmail sync job short reference matched more than one row.",
+      409,
+    );
   }
   return null;
 }
 
 function isUniqueConstraintError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
 }

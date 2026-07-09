@@ -292,7 +292,7 @@ describe("email sync provider foundation", () => {
       '"email-client-shell email-client-detail-shell"',
     );
     expect(emailPage).toContain("WorkInboxThreadList");
-    expect(emailPage).toContain("Showing latest ${threadCount} synced threads");
+    expect(emailPage).toContain("Showing ${threadCount} stored synced threads");
     expect(emailPage).toContain("GmailSyncProgressPanel");
     expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
     expect(emailPage).toContain("gmail-sync-queued");

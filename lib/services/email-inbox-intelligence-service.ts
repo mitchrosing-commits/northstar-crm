@@ -28,8 +28,9 @@ export const workInboxTabs = [
 export type WorkInboxTabId = (typeof workInboxTabs)[number]["id"];
 export type WorkInboxPriorityLevel = "high" | "low" | "medium";
 export type WorkInboxCrmFilter = "all" | "linked" | "unlinked";
+export type WorkInboxImportanceFilter = "all" | "hide-unimportant";
 export type WorkInboxPriorityFilter = WorkInboxPriorityLevel | "all";
-export type WorkInboxSort = "priority" | "recent";
+export type WorkInboxSort = "newest" | "oldest" | "priority" | "unread";
 
 export type WorkInboxItem = {
   categories: WorkInboxTabId[];
@@ -37,6 +38,7 @@ export type WorkInboxItem = {
   crmLinkLabel: string;
   detectedIntent: string;
   href: Route;
+  isUnimportant: boolean;
   missingCrmLinkSuggestion: string | null;
   priorityLevel: WorkInboxPriorityLevel;
   priorityScore: number;
@@ -47,6 +49,7 @@ export type WorkInboxItem = {
   suggestedNextAction: string;
   tags: string[];
   thread: EmailInboxThreadSummary;
+  unimportantReasons: string[];
   unansweredQuestions: string[];
   urgencyRisk: string | null;
   whyItMatters: string;
@@ -77,22 +80,32 @@ export function normalizeWorkInboxCrmFilter(
   return value === "linked" || value === "unlinked" ? value : "all";
 }
 
+export function normalizeWorkInboxImportanceFilter(
+  value: unknown,
+): WorkInboxImportanceFilter {
+  return value === "hide-unimportant" ? "hide-unimportant" : "all";
+}
+
 export function normalizeWorkInboxSort(value: unknown): WorkInboxSort {
-  return value === "recent" ? "recent" : "priority";
+  if (value === "oldest" || value === "priority" || value === "unread")
+    return value;
+  return "newest";
 }
 
 export function buildWorkInbox({
   crmFilter = "all",
   followUpDetails = new Map<string, EmailPriorityFollowUpDetail>(),
+  importanceFilter = "all",
   priorityFilter = "all",
   preferences,
   query = "",
   selectedTab = "all",
-  sort = "priority",
+  sort = "newest",
   threads,
 }: {
   crmFilter?: WorkInboxCrmFilter;
   followUpDetails?: Map<string, EmailPriorityFollowUpDetail>;
+  importanceFilter?: WorkInboxImportanceFilter;
   priorityFilter?: WorkInboxPriorityFilter;
   preferences?: AiPreferences;
   query?: string;
@@ -108,6 +121,7 @@ export function buildWorkInbox({
         ...item,
         href: workInboxThreadHref(thread.id, {
           crmFilter,
+          importanceFilter,
           priorityFilter,
           query,
           selectedTab,
@@ -115,19 +129,25 @@ export function buildWorkInbox({
         }),
       };
     })
-    .sort(compareWorkInboxItems);
+    .sort((left, right) => compareWorkInboxItems(left, right, sort));
   const tabs = workInboxTabs.map((tab) => ({
     ...tab,
     count:
       tab.id === "all"
         ? items.length
         : items.filter((item) => item.categories.includes(tab.id)).length,
-    href: workInboxTabHref(tab.id, { crmFilter, priorityFilter, query, sort }),
+    href: workInboxTabHref(tab.id, {
+      crmFilter,
+      importanceFilter,
+      priorityFilter,
+      query,
+      sort,
+    }),
   }));
-  const sortedItems =
-    sort === "recent" ? [...items].sort(compareWorkInboxItemsByRecent) : items;
-  const visibleItems = sortedItems.filter((item) => {
+  const visibleItems = items.filter((item) => {
     if (selectedTab !== "all" && !item.categories.includes(selectedTab))
+      return false;
+    if (importanceFilter === "hide-unimportant" && item.isUnimportant)
       return false;
     if (priorityFilter !== "all" && item.priorityLevel !== priorityFilter)
       return false;
@@ -143,12 +163,14 @@ function workInboxThreadHref(
   threadId: string,
   {
     crmFilter,
+    importanceFilter,
     priorityFilter,
     query,
     selectedTab,
     sort,
   }: {
     crmFilter: WorkInboxCrmFilter;
+    importanceFilter: WorkInboxImportanceFilter;
     priorityFilter: WorkInboxPriorityFilter;
     query: string;
     selectedTab: WorkInboxTabId;
@@ -157,9 +179,10 @@ function workInboxThreadHref(
 ) {
   const params = new URLSearchParams({ inbox: selectedTab, thread: threadId });
   if (query) params.set("q", query);
+  if (importanceFilter !== "all") params.set("importance", importanceFilter);
   if (priorityFilter !== "all") params.set("priority", priorityFilter);
   if (crmFilter !== "all") params.set("crm", crmFilter);
-  if (sort !== "priority") params.set("sort", sort);
+  if (sort !== "newest") params.set("sort", sort);
   return `/email?${params.toString()}` as Route;
 }
 
@@ -167,11 +190,13 @@ function workInboxTabHref(
   tabId: WorkInboxTabId,
   {
     crmFilter,
+    importanceFilter,
     priorityFilter,
     query,
     sort,
   }: {
     crmFilter: WorkInboxCrmFilter;
+    importanceFilter: WorkInboxImportanceFilter;
     priorityFilter: WorkInboxPriorityFilter;
     query: string;
     sort: WorkInboxSort;
@@ -179,9 +204,10 @@ function workInboxTabHref(
 ) {
   const params = new URLSearchParams({ inbox: tabId });
   if (query) params.set("q", query);
+  if (importanceFilter !== "all") params.set("importance", importanceFilter);
   if (priorityFilter !== "all") params.set("priority", priorityFilter);
   if (crmFilter !== "all") params.set("crm", crmFilter);
-  if (sort !== "priority") params.set("sort", sort);
+  if (sort !== "newest") params.set("sort", sort);
   return `/email?${params.toString()}` as Route;
 }
 
@@ -216,11 +242,13 @@ function buildWorkInboxItem({
       "view in browser",
       "marketing",
       "promotion",
+      "promotional",
       "webinar",
       "digest",
       "no-reply",
       "noreply",
       "notification",
+      "automated notification",
     ]) ||
     providerLabels.some((label) =>
       ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"].includes(
@@ -236,6 +264,23 @@ function buildWorkInboxItem({
       "dinner",
       "weekend",
       "vacation",
+    ]);
+  const noReplySender = /\b(no-?reply|donotreply|do-not-reply)\b/i.test(
+    primaryMessage.fromText ?? "",
+  );
+  const lowActionStatusUpdate =
+    !linkedRecordLabel &&
+    hasAny(lower, [
+      "receipt",
+      "invoice paid",
+      "payment received",
+      "order confirmation",
+      "status update",
+      "delivery update",
+      "your statement is ready",
+      "password changed",
+      "security alert",
+      "login alert",
     ]);
   const needsReply =
     isInbound &&
@@ -330,6 +375,21 @@ function buildWorkInboxItem({
   if (isAutomated)
     addScore("Automated or marketing signals lower work priority", -35);
   if (isPersonal) addScore("Likely personal or low-work message", -20);
+  if (lowActionStatusUpdate)
+    addScore("Informational status update with no clear CRM action", -18);
+
+  const unimportantReasons = buildUnimportantReasons({
+    followUpSignal,
+    isAutomated,
+    isPersonal,
+    linkedRecordLabel,
+    lowActionStatusUpdate,
+    needsReply,
+    noReplySender,
+    opportunitySignal,
+    riskSignal,
+  });
+  const isUnimportant = unimportantReasons.length > 0;
 
   const categories = new Set<WorkInboxTabId>(["all"]);
   if (score >= 70) categories.add("priority");
@@ -346,6 +406,8 @@ function buildWorkInboxItem({
   if (customerSignal) categories.add("customers");
   if (isPersonal) categories.add("personal-low-priority");
   if (isAutomated) categories.add("automated-marketing");
+  if (lowActionStatusUpdate && !isAutomated)
+    categories.add("automated-marketing");
   if (!categories.has("priority") && categories.has("work") && score >= 62)
     categories.add("priority");
 
@@ -360,6 +422,7 @@ function buildWorkInboxItem({
   if (riskSignal) tags.add("Risk");
   if (isAutomated) tags.add("Automated");
   if (isPersonal) tags.add("Personal");
+  if (isUnimportant) tags.add("Unimportant");
   if (linkedRecordLabel) tags.delete("No CRM link");
   else tags.delete("CRM linked");
   tags.add(linkedRecordLabel ? "CRM linked" : "No CRM link");
@@ -406,6 +469,7 @@ function buildWorkInboxItem({
       riskSignal,
     }),
     href: `/email?thread=${thread.id}` as Route,
+    isUnimportant,
     missingCrmLinkSuggestion: linkedRecordLabel
       ? null
       : "Review sender and create/link a CRM contact or lead if this is business-relevant.",
@@ -418,6 +482,7 @@ function buildWorkInboxItem({
     suggestedNextAction,
     tags: displayTags.slice(0, 7),
     thread,
+    unimportantReasons,
     unansweredQuestions,
     urgencyRisk:
       urgencySignal || riskSignal
@@ -449,17 +514,60 @@ function prioritizeWorkInboxTags(
   return [linkTag, ...values];
 }
 
-function compareWorkInboxItems(left: WorkInboxItem, right: WorkInboxItem) {
-  if (right.priorityScore !== left.priorityScore)
-    return right.priorityScore - left.priorityScore;
+function compareWorkInboxItems(
+  left: WorkInboxItem,
+  right: WorkInboxItem,
+  sort: WorkInboxSort,
+) {
+  if (sort === "oldest")
+    return left.thread.latestAt.getTime() - right.thread.latestAt.getTime();
+  if (sort === "priority") {
+    if (right.priorityScore !== left.priorityScore)
+      return right.priorityScore - left.priorityScore;
+    return right.thread.latestAt.getTime() - left.thread.latestAt.getTime();
+  }
+  if (sort === "unread") {
+    if (left.thread.isUnread !== right.thread.isUnread)
+      return left.thread.isUnread ? -1 : 1;
+    return right.thread.latestAt.getTime() - left.thread.latestAt.getTime();
+  }
   return right.thread.latestAt.getTime() - left.thread.latestAt.getTime();
 }
 
-function compareWorkInboxItemsByRecent(
-  left: WorkInboxItem,
-  right: WorkInboxItem,
-) {
-  return right.thread.latestAt.getTime() - left.thread.latestAt.getTime();
+function buildUnimportantReasons(input: {
+  followUpSignal: boolean;
+  isAutomated: boolean;
+  isPersonal: boolean;
+  linkedRecordLabel: string | null;
+  lowActionStatusUpdate: boolean;
+  needsReply: boolean;
+  noReplySender: boolean;
+  opportunitySignal: boolean;
+  riskSignal: boolean;
+}) {
+  if (
+    input.linkedRecordLabel ||
+    input.needsReply ||
+    input.followUpSignal ||
+    input.opportunitySignal ||
+    input.riskSignal
+  )
+    return [];
+
+  const reasons: string[] = [];
+  if (input.noReplySender)
+    reasons.push("Sender appears to be a no-reply or automated mailbox.");
+  if (input.isAutomated)
+    reasons.push(
+      "Newsletter, promotion, digest, or provider category signals.",
+    );
+  if (input.lowActionStatusUpdate)
+    reasons.push(
+      "Informational status or receipt-style update with no clear action.",
+    );
+  if (input.isPersonal)
+    reasons.push("Personal or non-work language without CRM context.");
+  return reasons;
 }
 
 function searchableThreadText(item: WorkInboxItem) {

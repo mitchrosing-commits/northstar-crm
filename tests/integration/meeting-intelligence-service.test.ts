@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runJobsOnce } from "@/lib/jobs/run-once";
+import { meetingMediaExtractionJobType } from "@/lib/jobs/handlers";
 import { deleteStoredMeetingIntelligenceFile, storeMeetingIntelligenceFile } from "@/lib/meeting-intelligence/file-storage";
 import { handleInternalMeetingMediaExtract } from "@/lib/meeting-intelligence/internal-media-extract-route";
 import { internalMeetingMediaExtractionRoutePath } from "@/lib/meeting-intelligence/openai-media-provider";
@@ -1168,7 +1169,7 @@ describe("meeting intelligence service", () => {
       expect(JSON.stringify(job.payload)).not.toContain(mediaBase64);
       await expect(crmMutationCounts(fx)).resolves.toEqual(before);
 
-      await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-test" })).resolves.toMatchObject({
+      await expect(runMeetingMediaJobOnce(fx, "meeting-media-test")).resolves.toMatchObject({
         claimed: 1,
         failed: 0,
         succeeded: 1
@@ -1257,7 +1258,7 @@ describe("meeting intelligence service", () => {
         expect(s3.objects.has(`${storedFile.key}/content.bin`)).toBe(true);
         await expect(crmMutationCounts(fx)).resolves.toEqual(before);
 
-        await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-s3-test" })).resolves.toMatchObject({
+        await expect(runMeetingMediaJobOnce(fx, "meeting-media-s3-test")).resolves.toMatchObject({
           claimed: 1,
           failed: 0,
           succeeded: 1
@@ -1338,7 +1339,7 @@ describe("meeting intelligence service", () => {
       expect(JSON.stringify(job.payload)).not.toContain(scannedPdfFixtureBase64);
       await expect(crmMutationCounts(fx)).resolves.toEqual(before);
 
-      await expect(runJobsOnce({ limit: 1, workerId: "meeting-scanned-pdf-test" })).resolves.toMatchObject({
+      await expect(runMeetingMediaJobOnce(fx, "meeting-scanned-pdf-test")).resolves.toMatchObject({
         claimed: 1,
         failed: 0,
         succeeded: 1
@@ -1377,7 +1378,7 @@ describe("meeting intelligence service", () => {
       });
       const job = await fx.prisma.job.findFirstOrThrow({ where: { workspaceId: fx.workspaceA.id, type: "meeting_intake.extract_media" } });
 
-      await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-provider-failure-test" })).resolves.toMatchObject({
+      await expect(runMeetingMediaJobOnce(fx, "meeting-media-provider-failure-test")).resolves.toMatchObject({
         claimed: 1,
         failed: 1,
         succeeded: 0
@@ -1409,7 +1410,7 @@ describe("meeting intelligence service", () => {
       const storedFile = (job.payload as { storedFile?: Parameters<typeof deleteStoredMeetingIntelligenceFile>[0] }).storedFile;
       await deleteStoredMeetingIntelligenceFile(storedFile);
 
-      await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-missing-file-test" })).resolves.toMatchObject({
+      await expect(runMeetingMediaJobOnce(fx, "meeting-media-missing-file-test")).resolves.toMatchObject({
         claimed: 1,
         failed: 1,
         succeeded: 0
@@ -1504,7 +1505,7 @@ describe("meeting intelligence service", () => {
 
     expect(intake.status).toBe("EXTRACTING");
     await expect(crmMutationCounts(fx)).resolves.toEqual(before);
-    await expect(runJobsOnce({ limit: 1, workerId: "meeting-media-internal-route-test" })).resolves.toMatchObject({
+    await expect(runMeetingMediaJobOnce(fx, "meeting-media-internal-route-test")).resolves.toMatchObject({
       claimed: 1,
       failed: 0,
       succeeded: 1
@@ -1672,6 +1673,15 @@ describe("meeting intelligence service", () => {
 function currentFixture() {
   if (!fixture) throw new Error("Fixture was not initialized.");
   return fixture;
+}
+
+function runMeetingMediaJobOnce(fx: Fixture, workerId: string) {
+  return runJobsOnce({
+    limit: 1,
+    types: [meetingMediaExtractionJobType],
+    workerId,
+    workspaceId: fx.workspaceA.id
+  });
 }
 
 async function crmMutationCounts(fx: Fixture) {

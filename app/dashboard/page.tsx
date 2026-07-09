@@ -10,6 +10,7 @@ import { AuditEventList } from "@/components/audit-event-list";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
+import { CrmAiInsightCard } from "@/components/crm-ai-insight-card";
 import { EmptyState } from "@/components/empty-state";
 import {
   FieldMetric as DashboardHealthItem,
@@ -33,6 +34,7 @@ import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { formatPersonName } from "@/lib/person-name";
 import { recordOwnerLabel } from "@/lib/record-owner-label";
 import {
+  buildDashboardAiInsight,
   getDashboardSummary,
   getNeedsAttentionSummary,
   type NeedsAttentionItem,
@@ -56,6 +58,7 @@ export default async function DashboardPage() {
     getDashboardSummary(actor),
     getNeedsAttentionSummary(actor),
   ]);
+  const dashboardAiInsight = buildDashboardAiInsight(summary, needsAttention);
   const viewPipelineLabel = "View pipeline board";
   const newDealLabel = "Create a new deal from dashboard";
   const viewActiveDealsLabel = "View all open deals";
@@ -104,6 +107,8 @@ export default async function DashboardPage() {
         />
 
         {summary.onboarding.isCleanWorkspace ? <FirstRunChecklist /> : null}
+
+        <CrmAiInsightCard insight={dashboardAiInsight} />
 
         <NeedsAttentionPanel
           items={needsAttention}

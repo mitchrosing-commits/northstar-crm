@@ -28,6 +28,8 @@ export type EnqueueJobInput = {
 export type ClaimJobsInput = {
   limit?: number;
   now?: Date;
+  types?: unknown;
+  workspaceId?: unknown;
   workerId: string;
 };
 
@@ -109,8 +111,16 @@ export async function claimJobs(input: unknown = {}) {
   if (!normalizedWorkerId) {
     throw new ApiError("VALIDATION_ERROR", "Job worker id is required.", 422);
   }
+  const normalizedTypes = normalizeClaimTypes(claimInput.types);
+  const normalizedWorkspaceId = normalizeOptionalJobWorkspaceId(claimInput.workspaceId);
   const now = normalizeOptionalJobDate(claimInput.now, "Job claim timestamp is invalid.");
   const claimNow = now.toISOString();
+  const typeFilter = normalizedTypes.length > 0
+    ? Prisma.sql`AND "type" IN (${Prisma.join(normalizedTypes)})`
+    : Prisma.empty;
+  const workspaceFilter = normalizedWorkspaceId
+    ? Prisma.sql`AND "workspaceId" = ${normalizedWorkspaceId}`
+    : Prisma.empty;
 
   return prisma.$transaction(async (tx) => {
     const candidates = await tx.$queryRaw<Array<{ id: string }>>`
@@ -118,6 +128,8 @@ export async function claimJobs(input: unknown = {}) {
       FROM "Job"
       WHERE "status" = 'PENDING'::"JobStatus"
         AND "runAt" <= ${claimNow}::timestamp
+        ${typeFilter}
+        ${workspaceFilter}
         AND (
           "workspaceId" IS NULL
           OR EXISTS (
@@ -523,6 +535,12 @@ function normalizeClaimLimit(limit: unknown): number {
   }
 
   return Math.min(normalizedLimit, 100);
+}
+
+function normalizeClaimTypes(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return Array.from(new Set(values.map((item) => normalizeJobType(item))));
 }
 
 function normalizeStaleAfterMs(staleAfterMs: unknown): number {
