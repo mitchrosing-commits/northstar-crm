@@ -569,6 +569,33 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("EmailInboxEmptyShell");
   });
 
+  it("surfaces account-aware inbox freshness without enabling recurring sync", () => {
+    expect(emailPage).toContain("const inboxFreshness = inboxFreshnessState({");
+    expect(emailPage).toContain("selectedAccount: selectedInboxAccount");
+    expect(emailPage).toContain("threadCount: workInbox.items.length");
+    expect(emailPage).toContain("type InboxFreshness =");
+    expect(emailPage).toContain("INBOX_FRESHNESS_STALE_MS = 15 * 60 * 1000");
+    expect(emailPage).toContain("newestAccountSyncAt(accounts)");
+    expect(emailPage).toContain("InboxFreshnessStrip");
+    expect(emailPage).toContain('aria-label="Inbox freshness"');
+    expect(emailPage).toContain("Manual refresh only");
+    expect(emailPage).toContain(
+      "Northstar does not run aggressive recurring Gmail sync yet",
+    );
+    expect(emailPage).toContain("Refresh recommended");
+    expect(emailPage).toContain("Recently synced");
+    expect(emailPage).toContain("Future auto-sync readiness");
+    expect(emailPage).toContain("per-account throttling");
+    expect(emailPage).toContain("job dedupe");
+    expect(emailPage).toContain("High-priority dashboard alert eligibility");
+    expect(emailPage).toContain("Load older targets");
+    expect(globalCss).toContain(".inbox-freshness-strip");
+    expect(globalCss).toContain(".inbox-freshness-success");
+    expect(globalCss).toContain(".inbox-freshness-attention");
+    expect(globalCss).toContain(".inbox-auto-sync-readiness");
+    expect(globalCss).toContain(".mailbox-freshness-note");
+  });
+
   it("renders command-center email cards with previews, attention badges, and linked CRM records", () => {
     expect(emailPage).toContain("Stored Email History");
     expect(emailPage).toContain("Suggested Follow-ups");
@@ -987,6 +1014,43 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Newest first");
     expect(emailPage).toContain("Oldest first");
     expect(emailPage).toContain("Unread first");
+    expect(emailPage).toContain("priorityShortcuts={workInbox.priorityShortcuts}");
+    expect(emailPage).toContain('label="Inbox priority and signal filters"');
+    expect(emailPage).toContain("priorityShortcuts.map");
+    expect(emailPage).toContain("shortcut.label");
+    expect(emailPage).toContain("shortcut.count");
+    expect(emailPage).toContain("shortcut.priorityFilter");
+    expect(emailPage).toContain("shortcut.tabId");
+    expect(emailPage).toContain("compactPriorityLevelLabel");
+    expect(emailPage).toContain("inbox-thread-priority-copy");
+    expect(emailPage).toContain("Priority reasoning");
+    expect(emailPage).toContain("Score");
+    expect(emailPage).toContain("item.reasonList.map");
+    expect(emailPage).toContain("item.detectedIntent");
+    expect(emailPage).toContain("item.whyItMatters");
+    expect(emailPage).toContain("WorkInboxTriageActions");
+    expect(emailPage).toContain("Suggested triage");
+    expect(emailPage).toContain("Review-first actions only.");
+    expect(emailPage).toContain("These links do not send email");
+    expect(emailPage).toContain("mutate Gmail");
+    expect(emailPage).toContain("change CRM records automatically");
+    expect(emailPage).toContain("workInboxTriageActionHref");
+    expect(emailPage).toContain('return "#email-ai-reply-panel"');
+    expect(emailPage).toContain('return "#email-follow-up-panel"');
+    expect(emailPage).toContain("linkedRecordHrefForEmailMessage");
+    expect(emailPage).toContain('id="reader-messages"');
+    expect(emailPage).toContain('id="email-ai-reply-panel"');
+    expect(emailPage).toContain('id="email-follow-up-panel"');
+    expect(emailPage).toContain('id="email-draft-panel"');
+    expect(emailPage).toContain("workInboxFilterGuidance");
+    expect(emailPage).toContain("No high priority inbox work");
+    expect(emailPage).toContain("No reply-needed messages");
+    expect(emailPage).toContain("No follow-up messages");
+    expect(emailPage).toContain("No low-priority automated messages");
+    expect(emailPage).toContain("High priority is for direct customer/prospect questions");
+    expect(emailPage).toContain("Needs reply is for inbound messages");
+    expect(emailPage).toContain("Follow-up is for messages with next-step language");
+    expect(emailPage).toContain("Low / automated is for demoted newsletters");
     expect(emailPage).toContain("Why marked unimportant");
     expect(emailPage).toContain("inbox-thread-importance");
     expect(emailPage).toContain("item.tags.slice(0, 3)");
@@ -1001,6 +1065,10 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("params.set(\"pageSize\", String(pageSize))");
     expect(emailPage).toContain('activeTab: "all"');
     expect(globalCss).toContain(".inbox-thread-row");
+    expect(globalCss).toContain(".work-inbox-priority-shortcuts");
+    expect(globalCss).toContain(".inbox-thread-priority-copy");
+    expect(globalCss).toContain(".work-inbox-priority-reasons");
+    expect(globalCss).toContain(".work-inbox-triage-actions");
     expect(rowCss).toContain("height: 36px");
     expect(rowCss).toContain("min-height: 36px");
     expect(rowCss).toContain("max-height: 40px");

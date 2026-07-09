@@ -152,6 +152,10 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("label: \"Quotes\"");
     expect(navigation).toContain("icon: \"FileText\"");
     expect(navigation).toContain("Review quote snapshots and their related deals.");
+    expect(navigation).toContain("href: \"/products\"");
+    expect(navigation).toContain("label: \"Products\"");
+    expect(navigation).toContain("helper: \"Sellable catalog\"");
+    expect(navigation).toContain("Manage products, services, packages, and reusable pricing used in deals and quotes.");
     expect(quotesPage).toContain("export default async function QuotesPage");
     expect(quotesPage).toContain("listQuotesPage");
     expect(quotesPage).toContain("resetHref=\"/quotes\"");
@@ -166,6 +170,7 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("helper: \"Accounts\"");
     expect(navigation).toContain("helper: \"Prospects\"");
     expect(navigation).toContain("helper: \"Work queue\"");
+    expect(navigation).toContain("helper: \"Sellable catalog\"");
     expect(navigation).toContain("helper: \"Metrics\"");
     expect(navigation).toContain("helper: \"Admin\"");
     expect(navigation).toContain("commandJump: true");
@@ -190,6 +195,7 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("href: \"/organizations\"");
     expect(navigation).toContain("href: \"/leads\"");
     expect(navigation).toContain("href: \"/activities\"");
+    expect(navigation).toContain("href: \"/products\"");
     expect(primaryNav).toContain("aria-current={isActive ? \"page\" : undefined}");
     expect(globalStyles).toContain(".sidebar-search");
     expect(globalStyles).toContain(".sidebar-command-header");

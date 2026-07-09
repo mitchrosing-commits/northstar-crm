@@ -21,7 +21,7 @@ export async function saveAssistantDraftActionRequest(formData: FormData) {
   }
 
   revalidatePath("/assistant");
-  redirect(assistantRedirect("saved", returnCommand));
+  redirect(assistantRedirect("saved", returnCommand, "pending"));
 }
 
 export async function rejectAssistantActionRequestAction(formData: FormData) {
@@ -35,7 +35,7 @@ export async function rejectAssistantActionRequestAction(formData: FormData) {
   }
 
   revalidatePath("/assistant");
-  redirect(assistantRedirect("rejected"));
+  redirect(assistantRedirect("rejected", "", "rejected"));
 }
 
 export async function applyAssistantActionRequestAction(formData: FormData) {
@@ -49,7 +49,7 @@ export async function applyAssistantActionRequestAction(formData: FormData) {
   }
 
   revalidatePath("/assistant");
-  redirect(assistantRedirect("applied"));
+  redirect(assistantRedirect("applied", "", "applied"));
 }
 
 function parseDraftAction(value: FormDataEntryValue | null): AssistantDraftAction {
@@ -69,8 +69,9 @@ function stringValue(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim().slice(0, 640) : "";
 }
 
-function assistantRedirect(status: string, command = "") {
+function assistantRedirect(status: string, command = "", queue?: string) {
   const params = new URLSearchParams({ actionRequest: status });
   if (command) params.set("command", command);
+  if (queue) params.set("queue", queue);
   return `/assistant?${params.toString()}#assistant-review-queue` as Route;
 }

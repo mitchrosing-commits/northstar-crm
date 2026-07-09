@@ -19,7 +19,10 @@ export type RecordPanelJumpCounts = {
   auditHistory?: number;
   customFields?: number;
   emailLog?: number;
+  linkedDeals?: number;
+  linkedPeople?: number;
   notes?: number;
+  quotes?: number;
   timeline?: number;
 };
 

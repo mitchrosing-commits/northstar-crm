@@ -54,10 +54,10 @@ export function QuoteDraftsPanel({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const emptyQuoteDescription = canCreate
-    ? "Create one after the deal has line items to review a frozen snapshot."
+    ? "Create one after the deal has product-backed line items to review a frozen pricing snapshot."
     : disabledReason
       ? "Quote drafts are read-only for this deal."
-      : "Add at least one deal line item to enable draft quote creation.";
+      : "Add at least one product-backed deal line item to enable draft quote creation.";
   const quoteStatusSummaryLabel = "Quote status summary";
 
   async function createDraftQuote() {
@@ -172,27 +172,35 @@ export function QuoteDraftsPanel({
                       </tr>
                     </thead>
                     <tbody>
-                      {quote.items.map((item) => (
-                        <tr key={item.id}>
-                          <td data-label="Item">
-                            <div className="table-primary-cell">
-                              <strong>{item.name}</strong>
-                              {item.description ? (
-                                <span className="table-secondary-text">
-                                  {item.description}
-                                </span>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td data-label="Qty">{item.quantity}</td>
-                          <td data-label="Unit price">
-                            {formatMoney(item.unitPriceCents, item.currency)}
-                          </td>
-                          <td data-label="Total">
-                            {formatMoney(item.lineTotalCents, item.currency)}
+                      {quote.items.length > 0 ? (
+                        quote.items.map((item) => (
+                          <tr key={item.id}>
+                            <td data-label="Item">
+                              <div className="table-primary-cell">
+                                <strong>{item.name}</strong>
+                                {item.description ? (
+                                  <span className="table-secondary-text">
+                                    {item.description}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td data-label="Qty">{item.quantity}</td>
+                            <td data-label="Unit price">
+                              {formatMoney(item.unitPriceCents, item.currency)}
+                            </td>
+                            <td data-label="Total">
+                              {formatMoney(item.lineTotalCents, item.currency)}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} data-label="Quote items">
+                            This quote has no line items. Add product-backed line items to the deal, then create a fresh quote draft.
                           </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </TableScroll>

@@ -8,13 +8,14 @@ import { answerAssistantCommand } from "@/lib/services/assistant/assistant-comma
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams: Promise<{ actionRequest?: string; command?: string }>;
+  searchParams: Promise<{ actionRequest?: string; command?: string; queue?: string }>;
 };
 
 export default async function AssistantPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
   const command = normalizeCommandParam(resolvedSearchParams.command);
   const actionRequestStatus = normalizeActionRequestStatus(resolvedSearchParams.actionRequest);
+  const actionRequestQueue = normalizeActionRequestQueue(resolvedSearchParams.queue);
   const { actor, workspace } = await getCurrentWorkspaceContext();
   const [answer, pendingActionRequests] = await Promise.all([
     command ? answerAssistantCommand(actor, command) : Promise.resolve(null),
@@ -29,6 +30,7 @@ export default async function AssistantPage({ searchParams }: PageProps) {
         title="Assistant"
       />
       <AssistantConsole
+        actionRequestQueue={actionRequestQueue}
         actionRequestStatus={actionRequestStatus}
         answer={answer}
         command={command}
@@ -47,4 +49,11 @@ function normalizeActionRequestStatus(value: string | undefined) {
     return value;
   }
   return "";
+}
+
+function normalizeActionRequestQueue(value: string | undefined) {
+  if (value === "all" || value === "applied" || value === "pending" || value === "rejected") {
+    return value;
+  }
+  return "pending";
 }

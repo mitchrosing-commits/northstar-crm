@@ -38,7 +38,7 @@ export function AssistantDraftActionCard({ draft, sourceCommand }: { draft: Assi
         </div>
         <div>
           <dt>Apply</dt>
-          <dd>Save for review first</dd>
+          <dd>{draftApplyLabel(draft)}</dd>
         </div>
       </dl>
 
@@ -97,7 +97,7 @@ export function AssistantDraftActionCard({ draft, sourceCommand }: { draft: Assi
         <button className="button-secondary" type="submit">
           Save to review queue
         </button>
-        <small>Saving does not apply changes. Eligible activity or note requests can be applied from the queue after review.</small>
+        <small>{draftApplyHelp(draft)}</small>
       </form>
     </article>
   );
@@ -106,4 +106,27 @@ export function AssistantDraftActionCard({ draft, sourceCommand }: { draft: Assi
 function confidenceLabel(confidence: AssistantDraftAction["confidence"]) {
   if (confidence === "needs_clarification") return "Needs clarification";
   return confidence.charAt(0).toUpperCase() + confidence.slice(1);
+}
+
+function draftApplyLabel(draft: AssistantDraftAction) {
+  if (isPotentiallyApplyableDraft(draft)) return "Save, then review";
+  if (draft.kind === "activity" || draft.kind === "note") return "Needs clearer target";
+  return "Review-only for now";
+}
+
+function draftApplyHelp(draft: AssistantDraftAction) {
+  if (isPotentiallyApplyableDraft(draft)) {
+    return "Saving does not apply changes. After review, this activity or note can be applied from the queue.";
+  }
+  if (draft.kind === "activity" || draft.kind === "note") {
+    return "Saving does not apply changes. Apply stays blocked until one clear target and all required information are present.";
+  }
+  return "Saving does not apply changes. This draft is review-only for now and cannot be applied from the queue.";
+}
+
+function isPotentiallyApplyableDraft(draft: AssistantDraftAction) {
+  return (draft.kind === "activity" || draft.kind === "note") &&
+    draft.confidence === "high" &&
+    Boolean(draft.targetHref) &&
+    draft.missingInfo.length === 0;
 }

@@ -5,7 +5,24 @@ export function buildPublicQuoteUrl(
   appBaseUrl = process.env.APP_BASE_URL,
   env: { NODE_ENV?: string } = process.env
 ) {
-  const path = `/q/${encodeURIComponent(typeof token === "string" ? token : "")}`;
+  return buildPublicTokenUrl("/q", token, appBaseUrl, env);
+}
+
+export function buildPublicWebFormUrl(
+  token: unknown,
+  appBaseUrl = process.env.APP_BASE_URL,
+  env: { NODE_ENV?: string } = process.env
+) {
+  return buildPublicTokenUrl("/f", token, appBaseUrl, env);
+}
+
+function buildPublicTokenUrl(
+  routePrefix: "/f" | "/q",
+  token: unknown,
+  appBaseUrl = process.env.APP_BASE_URL,
+  env: { NODE_ENV?: string } = process.env
+) {
+  const path = `${routePrefix}/${encodeURIComponent(typeof token === "string" ? token : "")}`;
   const baseUrl = appBaseUrl?.trim();
   if (!baseUrl) return path;
 

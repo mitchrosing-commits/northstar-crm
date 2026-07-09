@@ -21,11 +21,13 @@ GET /deals/:dealId/quotes/:quoteId     Internal quote draft review
 GET /deals/:dealId/quotes/:quoteId/print Internal quote draft print view
 GET /deals/:dealId/quotes/:quoteId/pdf Authenticated on-demand quote PDF download
 GET /q/:token                           Public quote snapshot and sent-quote acceptance form
+GET /f/:token                           Public lead capture form submission page
 
 GET /leads                             Lead list
 GET /leads/new                         Create lead
 GET /leads/:leadId                     Lead detail and conversion form
 GET /leads/:leadId/edit                Edit unconverted lead and supported custom field values
+GET /web-forms                         Lead capture form admin and public-link management
 
 GET /contacts                          Contact list
 GET /contacts/new                      Create contact
@@ -199,6 +201,7 @@ Notes:
 
 - Converted leads are locked from normal edits and reject new activity, note, and manual email-log attachments.
 - Conversion creates a deal transactionally and reattaches lead activities/notes to the new deal.
+- Browser-managed web forms are available at `/web-forms` and publish no-chrome public form pages at `/f/:token`. Public submissions create one workspace-scoped lead plus a lead note with submitted details, use a honeypot and short duplicate-protection window, and do not create contacts, organizations, deals, send email, trigger automations, or mutate providers.
 
 ## People / Contacts
 

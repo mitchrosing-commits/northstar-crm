@@ -11,13 +11,14 @@ import { assistantSuggestedCommands } from "@/lib/services/assistant/assistant-c
 import type { AssistantActionRequestView } from "@/lib/services/assistant/assistant-action-request-service";
 
 type AssistantConsoleProps = {
+  actionRequestQueue: "all" | "applied" | "pending" | "rejected";
   actionRequestStatus: string;
   answer: AssistantCommandResult | null;
   command: string;
   pendingActionRequests: AssistantActionRequestView[];
 };
 
-export function AssistantConsole({ actionRequestStatus, answer, command, pendingActionRequests }: AssistantConsoleProps) {
+export function AssistantConsole({ actionRequestQueue, actionRequestStatus, answer, command, pendingActionRequests }: AssistantConsoleProps) {
   return (
     <section className="assistant-console" aria-label="Northstar Assistant console">
       <section className="panel assistant-command-panel" aria-labelledby="assistant-command-title">
@@ -38,6 +39,7 @@ export function AssistantConsole({ actionRequestStatus, answer, command, pending
             </Link>
           ))}
         </div>
+        <AssistantPermissionSummary />
         <form action="/assistant" className="assistant-command-form">
           <label className="form-field assistant-command-input">
             <FormFieldLabel>Command</FormFieldLabel>
@@ -56,7 +58,7 @@ export function AssistantConsole({ actionRequestStatus, answer, command, pending
       </section>
 
       {answer ? <AssistantAnswerCard answer={answer} /> : <AssistantEmptyState />}
-      <AssistantActionReviewQueue requests={pendingActionRequests} status={actionRequestStatus} />
+      <AssistantActionReviewQueue queue={actionRequestQueue} requests={pendingActionRequests} status={actionRequestStatus} />
     </section>
   );
 }
@@ -127,8 +129,23 @@ function AssistantEmptyState() {
         title="Ready for a workspace question"
       />
       <p className="assistant-answer-summary">
-        Northstar can summarize today&apos;s work, identify deterministic deal risk, check stored email logs for likely replies, and draft CRM actions for review. It will not sync, send, save settings, or apply anything except an explicitly confirmed low-risk activity draft.
+        Northstar can summarize today&apos;s work, identify deterministic deal risk, check stored email logs for likely replies, and draft CRM actions for review. It will not sync, send, save settings, or apply anything except an explicitly confirmed low-risk activity or note draft.
       </p>
     </section>
+  );
+}
+
+function AssistantPermissionSummary() {
+  return (
+    <div className="assistant-permission-summary" aria-label="Assistant permissions and limits">
+      <div>
+        <strong>Available now</strong>
+        <span>Read-only answers, draft actions, save to review, and confirmed activity or note apply.</span>
+      </div>
+      <div>
+        <strong>Review-only for now</strong>
+        <span>Contact, organization, deal, quote, relationship memory, AI preference, email send, sync, and autonomous actions.</span>
+      </div>
+    </div>
   );
 }

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/badge";
@@ -24,22 +26,52 @@ export default async function ProductsPage() {
     <AppShell workspace={workspace}>
       <PageHeader
         actions={
-          <ListExportLink
-            label="Export products"
-            matchingCount={products.length}
-            resource="products"
-            searchParams={{}}
-            workspaceId={workspace.id}
-          />
+          <>
+            <Link className="button-secondary" href="/deals?commercial=valueNoLineItems">
+              Find deals to scope
+            </Link>
+            <ListExportLink
+              label="Export products"
+              matchingCount={products.length}
+              resource="products"
+              searchParams={{}}
+              workspaceId={workspace.id}
+            />
+          </>
         }
-        eyebrow="Catalog"
-        subtitle="Manage reusable pricing inputs for deal line items without rewriting historical quotes."
+        eyebrow="Products and services"
+        subtitle="Manage the products, services, packages, and reusable pricing your company sells. Reps add these to deals as line items, then quote drafts copy those snapshots without rewriting historical quotes."
         title="Products"
       />
 
+      <section className="panel product-flow-guide" aria-labelledby="product-flow-guide-title">
+        <PanelTitleRow
+          description="Use this catalog as the source for what your company sells. Deal line items copy the product name, description, price, and currency at the time they are added; quote drafts then freeze those line items for review."
+          title="How Products Feed Quotes"
+          titleId="product-flow-guide-title"
+        />
+        <div className="product-flow-steps">
+          <div>
+            <span>1</span>
+            <strong>Catalog</strong>
+            <p>Define products, services, packages, and standard pricing.</p>
+          </div>
+          <div>
+            <span>2</span>
+            <strong>Deal scope</strong>
+            <p>Add active products to open deals as line items.</p>
+          </div>
+          <div>
+            <span>3</span>
+            <strong>Quote draft</strong>
+            <p>Create an internal quote snapshot from the deal line items.</p>
+          </div>
+        </div>
+      </section>
+
       <section className="panel section-separated">
         <PanelTitleRow
-          description="Products provide snapshot pricing for deal line items. Product changes do not rewrite existing deal line items."
+          description="Create reusable products, services, or packages for what your company offers. Prices are copied into deal line items as snapshots, so later product changes do not rewrite existing deals or quotes."
           title="Create Product"
         />
         <ProductCreateForm workspaceId={workspace.id} />
@@ -48,6 +80,7 @@ export default async function ProductsPage() {
       <section className="panel">
         <PanelTitleRow
           actions={<CountBadge className="badge">{products.length} total</CountBadge>}
+          description="Your sellable catalog for building deal scope, quote line items, and reusable pricing."
           title="Product Catalog"
         />
         {products.length > 0 ? (
@@ -105,7 +138,7 @@ export default async function ProductsPage() {
         ) : (
           <EmptyState
             className="empty-state-compact"
-            description="Create a product to add reusable pricing to deal line items and quote drafts."
+            description="Create the first product, service, or package your company sells so reps can add reusable pricing to deal line items and quote drafts."
             title="No products yet"
           />
         )}

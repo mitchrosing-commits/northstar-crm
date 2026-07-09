@@ -24,7 +24,28 @@ export const workInboxTabs = [
   { id: "automated-marketing", label: "Automated / Marketing" },
 ] as const;
 
+const workInboxSignalCategories = [
+  { id: "pricing-quote", label: "Pricing / Quote" },
+  { id: "contract-legal", label: "Contract / Legal" },
+  { id: "relationship-risk", label: "Relationship Risk" },
+  { id: "low-automated", label: "Low / Automated" },
+] as const;
+
+export const workInboxPriorityShortcuts = [
+  { id: "all", label: "All", priorityFilter: "all", tabId: "all" },
+  { id: "high", label: "High priority", priorityFilter: "high", tabId: "all" },
+  { id: "needs-reply", label: "Needs reply", priorityFilter: "all", tabId: "needs-reply" },
+  { id: "follow-ups", label: "Follow-up", priorityFilter: "all", tabId: "follow-ups" },
+  { id: "pricing-quote", label: "Pricing / quote", priorityFilter: "all", tabId: "pricing-quote" },
+  { id: "contract-legal", label: "Contract / legal", priorityFilter: "all", tabId: "contract-legal" },
+  { id: "relationship-risk", label: "Relationship risk", priorityFilter: "all", tabId: "relationship-risk" },
+  { id: "low-automated", label: "Low / automated", priorityFilter: "low", tabId: "low-automated" },
+] as const;
+
 export type WorkInboxTabId = (typeof workInboxTabs)[number]["id"];
+export type WorkInboxCategoryId =
+  | WorkInboxTabId
+  | (typeof workInboxSignalCategories)[number]["id"];
 export type WorkInboxPriorityLevel = "high" | "low" | "medium";
 export type WorkInboxCrmFilter = "all" | "linked" | "unlinked";
 export type WorkInboxImportanceFilter = "all" | "hide-unimportant";
@@ -32,7 +53,8 @@ export type WorkInboxPriorityFilter = WorkInboxPriorityLevel | "all";
 export type WorkInboxSort = "newest" | "oldest" | "priority" | "unread";
 
 export type WorkInboxItem = {
-  categories: WorkInboxTabId[];
+  alertEligibility: WorkInboxAlertEligibility;
+  categories: WorkInboxCategoryId[];
   confidence: "high" | "low" | "medium";
   crmLinkLabel: string;
   detectedIntent: string;
@@ -48,16 +70,41 @@ export type WorkInboxItem = {
   suggestedNextAction: string;
   tags: string[];
   thread: EmailInboxThreadSummary;
+  triageActions: WorkInboxTriageAction[];
   unimportantReasons: string[];
   unansweredQuestions: string[];
   urgencyRisk: string | null;
   whyItMatters: string;
 };
 
-export function normalizeWorkInboxTab(value: unknown): WorkInboxTabId {
+export type WorkInboxAlertEligibility = {
+  eligible: boolean;
+  reason: string;
+  severity: WorkInboxPriorityLevel;
+  signalKeys: string[];
+};
+
+export type WorkInboxTriageAction = {
+  detail: string;
+  id:
+    | "create-follow-up"
+    | "draft-reply"
+    | "no-action-needed"
+    | "review-contract"
+    | "review-crm-record"
+    | "review-follow-up"
+    | "review-pricing"
+    | "review-risk"
+    | "review-thread";
+  label: string;
+};
+
+export function normalizeWorkInboxTab(value: unknown): WorkInboxCategoryId {
   return typeof value === "string" &&
-    workInboxTabs.some((tab) => tab.id === value)
-    ? (value as WorkInboxTabId)
+    [...workInboxTabs, ...workInboxSignalCategories].some(
+      (tab) => tab.id === value,
+    )
+    ? (value as WorkInboxCategoryId)
     : "all";
 }
 
@@ -108,7 +155,7 @@ export function buildWorkInbox({
   priorityFilter?: WorkInboxPriorityFilter;
   preferences?: AiPreferences;
   query?: string;
-  selectedTab?: WorkInboxTabId;
+  selectedTab?: WorkInboxCategoryId;
   sort?: WorkInboxSort;
   threads: EmailInboxThreadSummary[];
 }) {
@@ -143,6 +190,18 @@ export function buildWorkInbox({
       sort,
     }),
   }));
+  const priorityShortcuts = workInboxPriorityShortcuts.map((shortcut) => ({
+    ...shortcut,
+    count: items.filter((item) => workInboxItemMatchesShortcut(item, shortcut))
+      .length,
+    href: workInboxTabHref(shortcut.tabId, {
+      crmFilter,
+      importanceFilter,
+      priorityFilter: shortcut.priorityFilter,
+      query,
+      sort,
+    }),
+  }));
   const visibleItems = items.filter((item) => {
     if (selectedTab !== "all" && !item.categories.includes(selectedTab))
       return false;
@@ -155,7 +214,7 @@ export function buildWorkInbox({
     if (!normalizedQuery) return true;
     return searchableThreadText(item).toLowerCase().includes(normalizedQuery);
   });
-  return { items, tabs, visibleItems };
+  return { items, priorityShortcuts, tabs, visibleItems };
 }
 
 function workInboxThreadHref(
@@ -172,7 +231,7 @@ function workInboxThreadHref(
     importanceFilter: WorkInboxImportanceFilter;
     priorityFilter: WorkInboxPriorityFilter;
     query: string;
-    selectedTab: WorkInboxTabId;
+    selectedTab: WorkInboxCategoryId;
     sort: WorkInboxSort;
   },
 ) {
@@ -186,7 +245,7 @@ function workInboxThreadHref(
 }
 
 function workInboxTabHref(
-  tabId: WorkInboxTabId,
+  tabId: WorkInboxCategoryId,
   {
     crmFilter,
     importanceFilter,
@@ -208,6 +267,18 @@ function workInboxTabHref(
   if (crmFilter !== "all") params.set("crm", crmFilter);
   if (sort !== "newest") params.set("sort", sort);
   return `/email?${params.toString()}` as Route;
+}
+
+function workInboxItemMatchesShortcut(
+  item: WorkInboxItem,
+  shortcut: (typeof workInboxPriorityShortcuts)[number],
+) {
+  if (
+    shortcut.priorityFilter !== "all" &&
+    item.priorityLevel !== shortcut.priorityFilter
+  )
+    return false;
+  return shortcut.tabId === "all" || item.categories.includes(shortcut.tabId);
 }
 
 function buildWorkInboxItem({
@@ -356,68 +427,152 @@ function buildWorkInboxItem({
     "cancel",
     "churn",
   ]);
+  const automatedPromotionSignal =
+    isAutomated &&
+    hasAny(lower, [
+      "action required",
+      "requires action",
+      "required action",
+      "deadline",
+      "due today",
+      "due by",
+      "overdue",
+      "expires",
+      "expiring",
+      "failed payment",
+      "payment failed",
+      "payment declined",
+      "invoice failed",
+      "service outage",
+      "outage",
+      "incident",
+      "security issue",
+      "security incident",
+      "compliance issue",
+      "legal notice",
+      "signature required",
+      "requires signature",
+      "document requires signature",
+      "contract requires signature",
+    ]);
+  const actionableNeedsReply =
+    needsReply && (!isAutomated || automatedPromotionSignal);
+  const actionableFollowUpSignal =
+    followUpSignal && (!isAutomated || automatedPromotionSignal);
+  const actionableOpportunitySignal =
+    opportunitySignal && (!isAutomated || automatedPromotionSignal);
+  const actionableCustomerSignal =
+    customerSignal && (!isAutomated || automatedPromotionSignal);
+  const actionableUrgencySignal =
+    urgencySignal && (!isAutomated || automatedPromotionSignal);
+  const actionableMeetingSignal =
+    meetingSignal && (!isAutomated || automatedPromotionSignal);
+  const actionableRiskSignal =
+    riskSignal && (!isAutomated || automatedPromotionSignal);
 
   let score = 35;
   const reasons: string[] = [];
+  if (automatedPromotionSignal)
+    addScore("Automated message promoted because it includes required action or risk", 18);
   if (linkedRecordLabel) addScore("Linked to CRM record", 18);
-  if (needsReply) addScore("Inbound message asks for a reply or decision", 18);
-  if (followUpSignal)
+  if (actionableNeedsReply)
+    addScore("Inbound message asks for a reply or decision", 18);
+  if (actionableFollowUpSignal)
     addScore("Follow-up or next-step language is present", 14);
-  if (opportunitySignal)
+  if (actionableOpportunitySignal)
     addScore("Opportunity, pricing, quote, or contract language", 14);
-  if (customerSignal) addScore("Customer/prospect context detected", 10);
-  if (urgencySignal) addScore("Urgency or risk language", 16);
-  if (meetingSignal) addScore("Meeting/demo context", 6);
-  if (riskSignal) addScore("Relationship risk language", 10);
+  if (actionableCustomerSignal)
+    addScore("Customer/prospect context detected", 10);
+  if (actionableUrgencySignal) addScore("Urgency or risk language", 16);
+  if (actionableMeetingSignal) addScore("Meeting/demo context", 6);
+  if (actionableRiskSignal) addScore("Relationship risk language", 10);
   if (thread.isUnread) addScore("Unread synced message", 6);
-  if (isAutomated)
-    addScore("Automated or marketing signals lower work priority", -35);
+  if (isAutomated && automatedPromotionSignal)
+    addScore("Automated or marketing signals still lower work priority", -18);
+  if (isAutomated && !automatedPromotionSignal)
+    addScore("Automated or marketing signals lower work priority", -45);
   if (isPersonal) addScore("Likely personal or low-work message", -20);
   if (lowActionStatusUpdate)
     addScore("Informational status update with no clear CRM action", -18);
 
   const unimportantReasons = buildUnimportantReasons({
-    followUpSignal,
+    automatedPromotionSignal,
+    followUpSignal: actionableFollowUpSignal,
     isAutomated,
     isPersonal,
     linkedRecordLabel,
     lowActionStatusUpdate,
-    needsReply,
+    needsReply: actionableNeedsReply,
     noReplySender,
-    opportunitySignal,
-    riskSignal,
+    opportunitySignal: actionableOpportunitySignal,
+    riskSignal: actionableRiskSignal,
   });
   const isUnimportant = unimportantReasons.length > 0;
 
-  const categories = new Set<WorkInboxTabId>(["all"]);
+  const priorityLevel: WorkInboxPriorityLevel =
+    score >= 70 ? "high" : score >= 45 ? "medium" : "low";
+
+  const categories = new Set<WorkInboxCategoryId>(["all"]);
   if (score >= 70) categories.add("priority");
   if (
     !isAutomated &&
     !isPersonal &&
-    (linkedRecordLabel || score >= 48 || opportunitySignal || needsReply)
+    (linkedRecordLabel ||
+      score >= 48 ||
+      actionableOpportunitySignal ||
+      actionableNeedsReply)
   )
     categories.add("work");
-  if (needsReply) categories.add("needs-reply");
-  if (followUpSignal) categories.add("follow-ups");
+  if (isAutomated && automatedPromotionSignal) categories.add("work");
+  if (actionableNeedsReply) categories.add("needs-reply");
+  if (actionableFollowUpSignal) categories.add("follow-ups");
   if (linkedRecordLabel) categories.add("crm-linked");
-  if (opportunitySignal) categories.add("leads-opportunities");
-  if (customerSignal) categories.add("customers");
+  if (actionableOpportunitySignal) {
+    categories.add("leads-opportunities");
+    const label = opportunityTag(lower);
+    if (label === "Pricing / quote") categories.add("pricing-quote");
+    if (label === "Contract / legal") categories.add("contract-legal");
+  }
+  if (actionableCustomerSignal) categories.add("customers");
+  if (actionableRiskSignal) categories.add("relationship-risk");
   if (isPersonal) categories.add("personal-low-priority");
   if (isAutomated) categories.add("automated-marketing");
   if (lowActionStatusUpdate && !isAutomated)
     categories.add("automated-marketing");
+  if (
+    (isAutomated || lowActionStatusUpdate) &&
+    (priorityLevel === "low" || isUnimportant)
+  )
+    categories.add("low-automated");
   if (!categories.has("priority") && categories.has("work") && score >= 62)
     categories.add("priority");
 
   const summary = summarizeStoredEmailForAi(primaryMessage, preferences);
   const tags = new Set(buildLocalEmailLabelSuggestions(primaryMessage));
-  if (needsReply) tags.add("Needs reply");
-  if (followUpSignal) tags.add("Follow-up");
-  if (customerSignal)
-    tags.add(customerSignal && linkedRecordLabel ? "Customer" : "Prospect");
-  if (opportunitySignal) tags.add(opportunityTag(lower));
-  if (meetingSignal) tags.add("Meeting / scheduling");
-  if (riskSignal) tags.add("Relationship risk");
+  if (isAutomated && !automatedPromotionSignal) {
+    for (const tag of [
+      "Needs reply",
+      "Follow-up",
+      "Pricing / quote",
+      "Contract / legal",
+      "Meeting / scheduling",
+      "Relationship risk",
+      "Lead",
+      "Opportunity",
+      "Prospect",
+    ]) {
+      tags.delete(tag);
+    }
+  }
+  if (actionableNeedsReply) tags.add("Needs reply");
+  if (actionableFollowUpSignal) tags.add("Follow-up");
+  if (actionableCustomerSignal)
+    tags.add(
+      actionableCustomerSignal && linkedRecordLabel ? "Customer" : "Prospect",
+    );
+  if (actionableOpportunitySignal) tags.add(opportunityTag(lower));
+  if (actionableMeetingSignal) tags.add("Meeting / scheduling");
+  if (actionableRiskSignal) tags.add("Relationship risk");
   if (isAutomated) {
     tags.add("Newsletter / promotion");
     tags.add("Automated / no-reply");
@@ -430,13 +585,11 @@ function buildWorkInboxItem({
   tags.add(summary.status === "ready" ? "AI summary" : "Summary unavailable");
   const displayTags = prioritizeWorkInboxTags(tags, linkedRecordLabel);
 
-  const priorityLevel: WorkInboxPriorityLevel =
-    score >= 70 ? "high" : score >= 45 ? "medium" : "low";
   const reasonList = trimByPreference(
     reasons,
     preferences?.assistantDetailLevel,
   );
-  const unansweredQuestions = needsReply
+  const unansweredQuestions = actionableNeedsReply
     ? extractQuestionSentences(text).slice(
         0,
         preferences?.assistantDetailLevel === "detailed" ? 3 : 1,
@@ -444,13 +597,37 @@ function buildWorkInboxItem({
     : [];
   const suggestedNextAction = nextAction({
     followUpState: followUpDetail?.state,
+    isUnimportant,
     linkedRecordLabel,
-    needsReply,
-    opportunitySignal,
+    needsReply: actionableNeedsReply,
+    opportunitySignal: actionableOpportunitySignal,
+    priorityLevel,
+  });
+  const triageActions = buildTriageActions({
+    actionableFollowUpSignal,
+    actionableNeedsReply,
+    actionableRiskSignal,
+    automatedPromotionSignal,
+    followUpState: followUpDetail?.state,
+    isUnimportant,
+    linkedRecordLabel,
+    opportunityTag: actionableOpportunitySignal ? opportunityTag(lower) : null,
+    priorityLevel,
+  });
+  const alertEligibility = buildAlertEligibility({
+    actionableFollowUpSignal,
+    actionableNeedsReply,
+    actionableOpportunitySignal,
+    actionableRiskSignal,
+    actionableUrgencySignal,
+    automatedPromotionSignal,
+    isUnimportant,
+    linkedRecordLabel,
     priorityLevel,
   });
 
   return {
+    alertEligibility,
     categories: [...categories],
     confidence:
       reasonList.length >= 3
@@ -462,11 +639,12 @@ function buildWorkInboxItem({
       ? `Linked: ${linkedRecordLabel}`
       : "No CRM link",
     detectedIntent: detectedIntent({
-      followUpSignal,
+      automatedPromotionSignal,
+      followUpSignal: actionableFollowUpSignal,
       isAutomated,
-      needsReply,
-      opportunitySignal,
-      riskSignal,
+      needsReply: actionableNeedsReply,
+      opportunitySignal: actionableOpportunitySignal,
+      riskSignal: actionableRiskSignal,
     }),
     href: `/email?thread=${thread.id}` as Route,
     isUnimportant,
@@ -482,16 +660,20 @@ function buildWorkInboxItem({
     suggestedNextAction,
     tags: displayTags.slice(0, 7),
     thread,
+    triageActions,
     unimportantReasons,
     unansweredQuestions,
     urgencyRisk:
-      urgencySignal || riskSignal
+      actionableUrgencySignal || actionableRiskSignal
         ? "Review timing, risk language, and customer impact before replying."
         : null,
     whyItMatters: whyItMatters({
+      automatedPromotionSignal,
+      isAutomated,
+      isUnimportant,
       linkedRecordLabel,
-      needsReply,
-      opportunitySignal,
+      needsReply: actionableNeedsReply,
+      opportunitySignal: actionableOpportunitySignal,
       priorityLevel,
     }),
   };
@@ -535,6 +717,7 @@ function compareWorkInboxItems(
 }
 
 function buildUnimportantReasons(input: {
+  automatedPromotionSignal: boolean;
   followUpSignal: boolean;
   isAutomated: boolean;
   isPersonal: boolean;
@@ -545,6 +728,20 @@ function buildUnimportantReasons(input: {
   opportunitySignal: boolean;
   riskSignal: boolean;
 }) {
+  if (input.isAutomated && !input.automatedPromotionSignal) {
+    const reasons: string[] = [];
+    if (input.noReplySender)
+      reasons.push("Sender appears to be a no-reply or automated mailbox.");
+    reasons.push(
+      "Automated, newsletter, promotion, digest, or provider category signals without a strong CRM action.",
+    );
+    if (input.lowActionStatusUpdate)
+      reasons.push(
+        "Informational status or receipt-style update with no clear action.",
+      );
+    return reasons;
+  }
+
   if (
     input.linkedRecordLabel ||
     input.needsReply ||
@@ -659,12 +856,15 @@ function trimByPreference(
 }
 
 function detectedIntent(input: {
+  automatedPromotionSignal: boolean;
   followUpSignal: boolean;
   isAutomated: boolean;
   needsReply: boolean;
   opportunitySignal: boolean;
   riskSignal: boolean;
 }) {
+  if (input.isAutomated && input.automatedPromotionSignal)
+    return "Automated action or risk alert";
   if (input.isAutomated) return "Automated update or marketing message";
   if (input.riskSignal) return "Risk or escalation";
   if (input.opportunitySignal) return "Commercial opportunity";
@@ -675,11 +875,14 @@ function detectedIntent(input: {
 
 function nextAction(input: {
   followUpState?: string;
+  isUnimportant: boolean;
   linkedRecordLabel: string | null;
   needsReply: boolean;
   opportunitySignal: boolean;
   priorityLevel: WorkInboxPriorityLevel;
 }) {
+  if (input.isUnimportant)
+    return "Leave for later or hide with the unimportant filter.";
   if (input.needsReply) return "Draft a reply and answer the open question.";
   if (input.followUpState === "created")
     return "Open or complete the linked follow-up.";
@@ -690,12 +893,168 @@ function nextAction(input: {
   return "Review when triaging the inbox.";
 }
 
+function buildTriageActions(input: {
+  actionableFollowUpSignal: boolean;
+  actionableNeedsReply: boolean;
+  actionableRiskSignal: boolean;
+  automatedPromotionSignal: boolean;
+  followUpState?: string;
+  isUnimportant: boolean;
+  linkedRecordLabel: string | null;
+  opportunityTag: string | null;
+  priorityLevel: WorkInboxPriorityLevel;
+}): WorkInboxTriageAction[] {
+  const actions: WorkInboxTriageAction[] = [];
+
+  if (input.isUnimportant) {
+    actions.push({
+      detail:
+        "Keep this in lower-priority review unless a clear customer action appears.",
+      id: "no-action-needed",
+      label: "No action needed",
+    });
+    return actions;
+  }
+
+  if (input.actionableNeedsReply) {
+    actions.push({
+      detail: "Use the existing draft panels, then review before sending.",
+      id: "draft-reply",
+      label: "Draft reply",
+    });
+  }
+
+  if (input.followUpState === "created") {
+    actions.push({
+      detail: "Open or complete the linked follow-up activity.",
+      id: "review-follow-up",
+      label: "Review follow-up",
+    });
+  } else if (input.actionableFollowUpSignal || input.priorityLevel === "high") {
+    actions.push({
+      detail: "Review and edit the activity draft before creating anything.",
+      id: "create-follow-up",
+      label: "Create follow-up",
+    });
+  }
+
+  if (input.opportunityTag === "Pricing / quote") {
+    actions.push({
+      detail: "Check pricing, proposal, or quote context before replying.",
+      id: "review-pricing",
+      label: "Review pricing context",
+    });
+  }
+
+  if (input.opportunityTag === "Contract / legal") {
+    actions.push({
+      detail: "Review contract, legal, MSA, SOW, or signature context.",
+      id: "review-contract",
+      label: "Review contract/legal context",
+    });
+  }
+
+  if (input.actionableRiskSignal || input.automatedPromotionSignal) {
+    actions.push({
+      detail: "Review risk language and customer impact before clearing it.",
+      id: "review-risk",
+      label: "Review relationship risk",
+    });
+  }
+
+  if (input.linkedRecordLabel) {
+    actions.push({
+      detail: "Open the linked CRM record in a separate review step.",
+      id: "review-crm-record",
+      label: "Review related CRM record",
+    });
+  }
+
+  if (actions.length === 0) {
+    actions.push({
+      detail: "Read the thread and decide whether it needs a manual next step.",
+      id: "review-thread",
+      label: "Review thread",
+    });
+  }
+
+  return dedupeTriageActions(actions).slice(0, 5);
+}
+
+function dedupeTriageActions(actions: WorkInboxTriageAction[]) {
+  const seen = new Set<WorkInboxTriageAction["id"]>();
+  return actions.filter((action) => {
+    if (seen.has(action.id)) return false;
+    seen.add(action.id);
+    return true;
+  });
+}
+
+function buildAlertEligibility(input: {
+  actionableFollowUpSignal: boolean;
+  actionableNeedsReply: boolean;
+  actionableOpportunitySignal: boolean;
+  actionableRiskSignal: boolean;
+  actionableUrgencySignal: boolean;
+  automatedPromotionSignal: boolean;
+  isUnimportant: boolean;
+  linkedRecordLabel: string | null;
+  priorityLevel: WorkInboxPriorityLevel;
+}): WorkInboxAlertEligibility {
+  const signalKeys: string[] = [];
+  if (input.actionableNeedsReply) signalKeys.push("needs_reply");
+  if (input.actionableFollowUpSignal) signalKeys.push("follow_up");
+  if (input.actionableOpportunitySignal) signalKeys.push("pipeline_or_contract");
+  if (input.actionableRiskSignal) signalKeys.push("relationship_risk");
+  if (input.actionableUrgencySignal) signalKeys.push("urgency");
+  if (input.automatedPromotionSignal) signalKeys.push("automated_action_alert");
+  if (input.linkedRecordLabel) signalKeys.push("crm_linked");
+
+  const eligible =
+    !input.isUnimportant &&
+    input.priorityLevel === "high" &&
+    signalKeys.some((key) =>
+      [
+        "needs_reply",
+        "follow_up",
+        "pipeline_or_contract",
+        "relationship_risk",
+        "urgency",
+        "automated_action_alert",
+      ].includes(key),
+    );
+
+  const severity: WorkInboxPriorityLevel = eligible
+    ? input.actionableRiskSignal ||
+      input.actionableUrgencySignal ||
+      input.automatedPromotionSignal
+      ? "high"
+      : "medium"
+    : "low";
+
+  return {
+    eligible,
+    reason: eligible
+      ? "Eligible for future dashboard alerting because this is high-priority CRM inbox work with clear action signals."
+      : "Not eligible for future dashboard alerting because it is low priority, hidden/unimportant, or lacks a clear CRM action signal.",
+    severity,
+    signalKeys,
+  };
+}
+
 function whyItMatters(input: {
+  automatedPromotionSignal: boolean;
+  isAutomated: boolean;
+  isUnimportant: boolean;
   linkedRecordLabel: string | null;
   needsReply: boolean;
   opportunitySignal: boolean;
   priorityLevel: WorkInboxPriorityLevel;
 }) {
+  if (input.isUnimportant)
+    return "Automation, marketing, or status-update signals make this lower priority unless a clear CRM action appears.";
+  if (input.isAutomated && input.automatedPromotionSignal)
+    return "This automated message was promoted because it includes required action, deadline, risk, or deal-blocking language.";
   if (input.needsReply && input.linkedRecordLabel)
     return "A linked CRM relationship appears to be waiting on a response.";
   if (input.opportunitySignal)

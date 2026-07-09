@@ -64,7 +64,9 @@ describe("lead conversion behavior", () => {
   it("replaces the disabled conversion placeholder with a browser form", () => {
     expect(leadPage).toContain("LeadConversionForm");
     expect(leadPage).toContain("listPipelines(actor)");
-    expect(leadPage).toContain("extraJumps={[{ href: \"#convert-lead\" as Route, label: \"Conversion\" }]}");
+    expect(leadPage).toContain("jumps={[");
+    expect(leadPage).toContain('{ href: "#overview" as Route, label: "Overview" }');
+    expect(leadPage).toContain('{ href: "#convert-lead" as Route, label: "Conversion" }');
     expect(leadPage).toContain("activities: lead.activities.length");
     expect(leadPage).toContain("id=\"convert-lead\"");
     expect(leadPage).toContain("<PanelTitleRow title=\"Convert to Deal\" />");

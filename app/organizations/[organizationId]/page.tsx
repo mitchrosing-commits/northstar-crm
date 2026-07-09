@@ -95,29 +95,73 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
               auditHistory: organization.auditLogs.length,
               customFields: customFields.length,
               emailLog: emailLogCount,
+              linkedDeals: organization.deals.length,
+              linkedPeople: organization.people.length,
               notes: organization.notes.length,
               timeline: timelineItems.length
             }}
-            extraJumps={[
+            ariaLabel={`${organization.name} organization sections`}
+            jumps={[
+              {
+                href: "#overview" as Route,
+                label: "Overview"
+              },
               {
                 href: "#ai-record-brief" as Route,
-                label: "AI",
+                label: "AI brief",
                 count: northstarInsight.findings.length,
                 countLabel: { singular: "AI finding", plural: "AI findings" }
               },
               {
+                href: "#notes" as Route,
+                label: "Notes",
+                countKey: "notes",
+                countLabel: { singular: "note", plural: "notes" }
+              },
+              {
+                href: "#activities" as Route,
+                label: "Activities",
+                countKey: "activities",
+                countLabel: { singular: "activity", plural: "activities" }
+              },
+              {
+                href: "#email-log" as Route,
+                label: "Emails",
+                countKey: "emailLog",
+                countLabel: { singular: "email log", plural: "email logs" }
+              },
+              {
                 href: "#related-people" as Route,
                 label: "People",
-                count: organization.people.length,
+                countKey: "linkedPeople",
                 countLabel: { singular: "person", plural: "people" }
               },
               {
                 href: "#related-deals" as Route,
                 label: "Deals",
-                count: organization.deals.length,
+                countKey: "linkedDeals",
                 countLabel: { singular: "deal", plural: "deals" }
+              },
+              {
+                href: "#custom-fields" as Route,
+                label: "Custom fields",
+                countKey: "customFields",
+                countLabel: { singular: "custom field", plural: "custom fields" }
+              },
+              {
+                href: "#timeline" as Route,
+                label: "Timeline",
+                countKey: "timeline",
+                countLabel: { singular: "timeline event", plural: "timeline events" }
+              },
+              {
+                href: "#audit-history" as Route,
+                label: "History",
+                countKey: "auditHistory",
+                countLabel: { singular: "audit event", plural: "audit events" }
               }
             ]}
+            label="Sections"
           />
         }
         eyebrow="Account snapshot"
@@ -138,7 +182,7 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
 
       <AiRecordBriefCard brief={aiRecordBrief} />
 
-      <section className="detail-grid">
+      <section className="detail-grid" id="overview">
         <DetailFieldGrid
           fields={[
             { emptyLabel: "No domain", label: "Domain", value: organization.domain },

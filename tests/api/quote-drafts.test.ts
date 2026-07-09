@@ -614,7 +614,8 @@ describe("quote draft MVP", () => {
       'disabledReason={deal.status === "OPEN" ? undefined : closedDealLockMessage("quoteDrafts")}',
     );
     expect(dealPage).toContain('href: "#quotes" as Route');
-    expect(dealPage).toContain("count: deal.quotes.length");
+    expect(dealPage).toContain("quotes: deal.quotes.length");
+    expect(dealPage).toContain('countKey: "quotes"');
     expect(dealPage).toContain('countLabel: { singular: "quote", plural: "quotes" }');
     expect(dealPage).toContain("quotes={deal.quotes}");
     expect(quotePanel).toContain("Create quote draft");
@@ -626,7 +627,13 @@ describe("quote draft MVP", () => {
       "public links, PDFs, and customer acceptance are managed from quote detail",
     );
     expect(quotePanel).toContain(
-      "Add at least one deal line item to enable draft quote creation.",
+      "Add at least one product-backed deal line item to enable draft quote creation.",
+    );
+    expect(quotePanel).toContain(
+      "Create one after the deal has product-backed line items to review a frozen pricing snapshot.",
+    );
+    expect(quotePanel).toContain(
+      "This quote has no line items. Add product-backed line items to the deal, then create a fresh quote draft.",
     );
     expect(quotePanel).toContain("Quote drafts are read-only for this deal.");
     expect(quotePanel).toContain("disabledReason");
@@ -704,8 +711,20 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain("getQuote(actor, dealId, quoteId)");
     expect(quoteDetailPage).toContain("Internal quote");
     expect(quoteDetailPage).toContain("summarizeQuoteReadiness");
+    expect(quoteDetailPage).toContain("RecordPanelJumpNav");
+    expect(quoteDetailPage).toContain('label="Quote sections"');
+    expect(quoteDetailPage).toContain('href: "#quote-overview" as Route');
+    expect(quoteDetailPage).toContain('href: "#quote-context" as Route');
+    expect(quoteDetailPage).toContain('href: "#quote-totals" as Route');
+    expect(quoteDetailPage).toContain('href: "#quote-readiness" as Route');
+    expect(quoteDetailPage).toContain('href: "#quote-adjustments" as Route');
+    expect(quoteDetailPage).toContain('href: "#quote-status" as Route');
+    expect(quoteDetailPage).toContain('href: "#public-link" as Route');
+    expect(quoteDetailPage).toContain('href: "#quote-items" as Route');
     expect(quoteDetailPage).toContain("<QuoteReadinessPanel");
+    expect(quoteDetailPage).toContain('id="quote-readiness"');
     expect(quoteDetailPage).toContain("<QuoteStatusActions");
+    expect(quoteDetailPage).toContain('id="quote-status"');
     expect(quoteDetailPage).toContain("quoteNumber={quote.number}");
     expect(quoteDetailPage).toContain('import { StatusBadge } from "@/components/status-badge"');
     expect(quoteDetailPage).toContain("<StatusBadge status={quote.status} />");
@@ -724,7 +743,9 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain("title={backToDealActionLabel}");
     expect(quoteDetailPage).toContain("buildActivityFollowUpHref");
     expect(quoteDetailPage).toContain("<QuoteAdjustmentsForm");
+    expect(quoteDetailPage).toContain('id="quote-adjustments"');
     expect(quoteDetailPage).toContain("<QuotePublicLinkControls");
+    expect(quoteDetailPage).toContain('id="public-link"');
     expect(quoteDetailPage).toContain(
       'canTransition={quote.deal.status === "OPEN"}',
     );
@@ -737,9 +758,15 @@ describe("quote draft MVP", () => {
     );
     expect(quoteDetailPage).toContain('quote.status === "ACCEPTED"');
     expect(quoteDetailPage).toContain("<QuoteDealValueSyncAction");
-    expect(quoteDetailPage).toContain("Quote Context");
-    expect(quoteDetailPage).toContain("Quote Totals");
+    expect(quoteDetailPage).toContain("Quote Overview");
+    expect(quoteDetailPage).toContain("Customer and Deal Context");
+    expect(quoteDetailPage).toContain("Totals and Adjustments");
     expect(quoteDetailPage).toContain("Quote Items");
+    expect(quoteDetailPage).toContain('className="data-card quote-overview-summary" id="quote-overview"');
+    expect(quoteDetailPage).toContain('className="detail-grid quote-detail-overview" id="quote-context"');
+    expect(quoteDetailPage).toContain('className="detail-grid quote-detail-overview" id="quote-totals"');
+    expect(quoteDetailPage).toContain("quote-summary-grid");
+    expect(quoteDetailPage).toContain("Line items");
     expect(quoteDetailPage).toContain('import { formatPersonName } from "@/lib/person-name"');
     expect(quoteDetailPage).toContain('formatPersonName(quote.deal.person) ?? "Unnamed contact"');
     expect(quoteDetailPage).not.toContain("function formatPersonName");
@@ -752,12 +779,15 @@ describe("quote draft MVP", () => {
     );
     expect(quoteDetailPage).toContain('title="Quote Items"');
     expect(quoteDetailPage).toContain(
-      'description="These items are snapshots from the deal line items',
+      "These line items are copied from product-backed deal line items",
+    );
+    expect(quoteDetailPage).toContain(
+      "This quote has no line items. Add product-backed line items to the deal, then create a fresh quote draft.",
     );
     expect(quoteDetailPage).not.toContain(
       '<h2 className="panel-title">Quote Items</h2>',
     );
-    expect(quoteDetailPage).toContain('className="data-card section-spaced"');
+    expect(quoteDetailPage).toContain('className="data-card section-spaced quote-items-panel" id="quote-items"');
     expect(quoteDetailPage).not.toContain("panel-intro-copy");
     expect(quoteDetailPage).toContain("<TableScroll");
     expect(quoteDetailPage).toContain(
@@ -791,10 +821,12 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain(
       "formatMoney(item.lineTotalCents, item.currency)",
     );
-    expect(quoteDetailPage).toContain(
-      "These items are snapshots from the deal line items",
-    );
+    expect(globalStyles).toContain(".quote-overview-summary");
+    expect(globalStyles).toContain(".quote-summary-grid");
+    expect(globalStyles).toContain(".quote-items-panel .table-primary-cell");
     expect(commercialPanel).toContain("Quote readiness");
+    expect(commercialPanel).toContain("id?: string");
+    expect(commercialPanel).toContain('id={id}');
     expect(commercialPanel).toContain("Blockers");
     expect(commercialPanel).toContain("Guidance");
     expect(quotePublicLinkControls).toContain("Generate public link");
@@ -1018,10 +1050,10 @@ describe("quote draft MVP", () => {
       'className="data-card section-spaced"',
     );
     expect(quoteStatusActions).toContain("PanelTitleRow");
-    expect(quoteStatusActions).toContain('title="Internal Status"');
+    expect(quoteStatusActions).toContain('title="Status and Actions"');
     expect(panelTitleRow).toContain("export function PanelTitleRow");
     expect(quoteStatusActions).toContain(
-      'description="These actions track internal sales progress only.',
+      'description="Use these actions to track internal sales progress.',
     );
     expect(quoteStatusActions).toContain('import { StatusBadge } from "@/components/status-badge"');
     expect(quoteStatusActions).toContain("actions={<StatusBadge status={status} />}");
@@ -1043,7 +1075,7 @@ describe("quote draft MVP", () => {
     );
     expect(quoteStatusActions).not.toContain("panel-intro-copy");
     expect(quoteStatusActions).toContain(
-      "These actions track internal sales progress only",
+      "Use these actions to track internal sales progress",
     );
     expect(quoteStatusActions).toContain("LockedPanelNotice");
     expect(quoteStatusActions).toContain(

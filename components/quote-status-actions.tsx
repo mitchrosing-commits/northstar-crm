@@ -13,11 +13,12 @@ import { StatusBadge } from "@/components/status-badge";
 type QuoteStatus = "DRAFT" | "SENT" | "ACCEPTED" | "DECLINED";
 
 type QuoteStatusActionsProps = {
-  workspaceId: string;
+  canTransition?: boolean;
+  id?: string;
   quoteId: string;
   quoteNumber?: string;
   status: QuoteStatus;
-  canTransition?: boolean;
+  workspaceId: string;
 };
 
 const nextActions: Record<QuoteStatus, Array<{ label: string; action: string }>> = {
@@ -31,11 +32,12 @@ const nextActions: Record<QuoteStatus, Array<{ label: string; action: string }>>
 };
 
 export function QuoteStatusActions({
-  workspaceId,
+  canTransition = true,
+  id,
   quoteId,
   quoteNumber = "quote",
   status,
-  canTransition = true
+  workspaceId
 }: QuoteStatusActionsProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -63,11 +65,11 @@ export function QuoteStatusActions({
   }
 
   return (
-    <section className="data-card section-spaced">
+    <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
         actions={<StatusBadge status={status} />}
-        description="These actions track internal sales progress only. They do not send email, expose a public link, or collect customer acceptance."
-        title="Internal Status"
+        description="Use these actions to track internal sales progress. They do not send email, expose a public link, or collect customer acceptance."
+        title="Status and Actions"
       />
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       {!canTransition ? (

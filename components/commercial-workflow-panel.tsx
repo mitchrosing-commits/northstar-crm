@@ -105,15 +105,17 @@ export function DealCommercialSummaryPanel({
 }
 
 export function QuoteReadinessPanel({
+  id,
   summary,
 }: {
+  id?: string;
   summary: QuoteReadinessSummary;
 }) {
   const description =
     summary.nextActions.length > 0 ? summary.nextActions.join(" ") : undefined;
 
   return (
-    <section className="data-card section-spaced">
+    <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
         actions={
           <Badge

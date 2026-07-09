@@ -196,6 +196,8 @@ export default async function DashboardPage() {
         <CommercialSnapshotPanel snapshot={summary.commercialSnapshot} />
       </section>
 
+      <CommercialToolkitPanel />
+
       <section className="content-grid">
         <RecentClosedDealsPanel deals={summary.recentClosedDeals} />
       </section>
@@ -912,6 +914,65 @@ function CommercialSnapshotPanel({
   );
 }
 
+function CommercialToolkitPanel() {
+  const commercialActions = [
+    {
+      detail: "Manage products, services, packages, and reusable pricing your company sells.",
+      href: "/products",
+      label: "Products and services",
+      value: "Catalog",
+    },
+    {
+      detail: "Review quote snapshots, customer-facing links, status, line items, and totals.",
+      href: "/quotes",
+      label: "Quotes",
+      value: "Review",
+    },
+    {
+      detail: "Add product-backed line items to open deals before creating quote drafts.",
+      href: "/deals?commercial=valueNoLineItems",
+      label: "Deals missing line items",
+      value: "Scope",
+    },
+  ] satisfies Array<{
+    detail: string;
+    href: Route | string;
+    label: string;
+    value: string;
+  }>;
+
+  return (
+    <section className="panel dashboard-commercial-toolkit" aria-labelledby="dashboard-commercial-toolkit-title">
+      <PanelTitleRow
+        description="The commercial flow starts with the sellable catalog, adds product-backed deal line items, then turns those snapshots into quote drafts."
+        title="Commercial Toolkit"
+        titleId="dashboard-commercial-toolkit-title"
+      />
+      <div className="dashboard-commercial-actions">
+        {commercialActions.map((action) => {
+          const actionLabel = `${action.label}: ${action.detail}`;
+
+          return (
+            <Link
+              aria-label={actionLabel}
+              className="dashboard-action-card"
+              href={action.href as Route}
+              key={action.href}
+              title={actionLabel}
+            >
+              <span className="dashboard-action-count">{action.value}</span>
+              <span className="dashboard-action-copy">
+                <strong>{action.label}</strong>
+                <small>{action.detail}</small>
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function RecentClosedDealsPanel({
   deals,
 }: {
@@ -1239,6 +1300,13 @@ function RelatedLinks({
 
 function FirstRunChecklist() {
   const steps = [
+    {
+      title: "Personalize your AI guide",
+      description:
+        "Choose the assistant name, tone, setup goals, and where Northstar should guide you.",
+      href: "/onboarding",
+      action: "Open setup",
+    },
     {
       title: "Create or import contacts",
       description:

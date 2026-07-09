@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import { Badge } from "@/components/badge";
 import { FormActionBar } from "@/components/form-action-bar";
@@ -45,7 +45,7 @@ export function ManualEmailLogPanel({
 }: ManualEmailLogPanelProps) {
   const router = useRouter();
   const [direction, setDirection] = useState<"INBOUND" | "OUTBOUND">("OUTBOUND");
-  const [occurredAt, setOccurredAt] = useState(defaultDateTimeLocal());
+  const [occurredAt, setOccurredAt] = useState("");
   const [fromText, setFromText] = useState("");
   const [toText, setToText] = useState("");
   const [ccText, setCcText] = useState("");
@@ -55,6 +55,10 @@ export function ManualEmailLogPanel({
   const [isSaving, setIsSaving] = useState(false);
   const activeTemplates = templates.filter((template) => template.active !== false);
   const emailWorkspaceLabel = "Open Inbox to connect or sync email";
+
+  useEffect(() => {
+    setOccurredAt(defaultDateTimeLocal());
+  }, []);
 
   function applyTemplate(templateId: string) {
     const template = activeTemplates.find((item) => item.id === templateId);

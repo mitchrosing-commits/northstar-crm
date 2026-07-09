@@ -87,6 +87,7 @@ export default async function SettingsPage({
   const currentUserIsOwner = summary.currentMembership.role === "OWNER";
   const importExportActionLabel = "Open import and export settings";
   const developerApiActionLabel = "Open developer API surface";
+  const onboardingActionLabel = "Open guided onboarding setup";
   const aiPreferencesActionLabel = "Open AI preferences";
 
   return (
@@ -167,6 +168,22 @@ export default async function SettingsPage({
         intro="Review the workspace-scoped REST surface, OpenAPI reference files, CSV export endpoints, and planned API key and webhook controls."
         introClassName="empty-copy"
         title="Developer / API"
+      />
+
+      <SettingsSection
+        action={
+          <Link
+            aria-label={onboardingActionLabel}
+            className="button-secondary"
+            href={"/onboarding" as Route}
+            title={onboardingActionLabel}
+          >
+            Open guided setup
+          </Link>
+        }
+        intro="Personalize your review-first AI guide, choose a name and tone, and review the main CRM areas without changing data."
+        introClassName="empty-copy"
+        title="Guided Onboarding"
       />
 
       <SettingsSection

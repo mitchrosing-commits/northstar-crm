@@ -519,8 +519,11 @@ describe("production readiness foundation", () => {
     expect(browserSmokeDoc).toContain("/settings/developer-api");
     expect(browserSmokeDoc).not.toContain("starts a local Next.js dev server on port `3100`");
     expect(browserSmokeDoc).not.toContain("AUTH_MODE=demo npm run start");
-    expect(playwrightConfig).toContain("command: \"npm run start -- --hostname 127.0.0.1 --port 3100\"");
+    expect(playwrightConfig).toContain("PLAYWRIGHT_WEB_SERVER_COMMAND");
+    expect(playwrightConfig).toContain("\"npm run start -- --hostname 127.0.0.1 --port 3100\"");
     expect(playwrightConfig).toContain("PLAYWRIGHT_REUSE_SERVER");
+    expect(playwrightConfig).toContain("PLAYWRIGHT_INCLUDE_ASSISTANT_BROWSER");
+    expect(playwrightConfig).toContain("[\"**/assistant.spec.ts\"]");
     expect(currentStatus).toContain("Runtime environment validation");
     expect(currentStatus).toContain("minimal Railway preview configuration");
     expect(architecture).toContain("lib/env.ts");

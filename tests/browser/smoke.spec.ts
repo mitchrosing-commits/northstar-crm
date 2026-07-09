@@ -8,6 +8,7 @@ import { hashPasswordResetToken } from "@/lib/auth/password-reset";
 import { localSessionCookieName, serializeLocalSessionCookieValue } from "@/lib/auth/session";
 import { createMeetingIntake } from "@/lib/services/meeting-intelligence-service";
 import { generatePublicQuoteToken } from "@/lib/services/quote-service";
+import { generatePublicWebFormToken } from "@/lib/services/web-form-service";
 
 const prisma = new PrismaClient();
 const browserBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3100";
@@ -17,7 +18,9 @@ const smokeIds = {
   productId: "",
   publicLinkId: "",
   quoteId: "",
-  quoteItemId: ""
+  quoteItemId: "",
+  webFormId: "",
+  webFormLeadId: ""
 };
 const browserFlowSuffixes = new Set<string>();
 const browserAuthSmokeUserIds = new Set<string>();
@@ -43,6 +46,7 @@ test.describe("Northstar CRM browser smoke", () => {
 
   test.afterAll(async () => {
     if (smokeAuth?.token) await revokeLocalSessionToken(smokeAuth.token);
+    await cleanupSmokeWebForm();
     await cleanupSmokeQuote();
     await cleanupBrowserMeetingIntakes();
     await cleanupBrowserFlowRecords();
@@ -78,6 +82,7 @@ test.describe("Northstar CRM browser smoke", () => {
     for (const path of [
       "/",
       "/dashboard",
+      "/onboarding",
       "/assistant",
       "/pipeline",
       "/deals",
@@ -112,9 +117,20 @@ test.describe("Northstar CRM browser smoke", () => {
     ]) {
       await expectPageReady(page, path);
       if (path === dealHref || path === communicationDealPath) {
+        await expectRecordSectionNav(page, ["#overview", "#ai-record-brief", "#quotes", "#custom-fields", "#timeline"], "#quotes");
         await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Log Manual Email" })).toBeVisible();
         await expect(page.locator(".badge").getByText("Manual", { exact: true })).toBeVisible();
+      }
+      if (path === leadHref) {
+        await expectRecordSectionNav(page, ["#overview", "#ai-record-brief", "#convert-lead", "#custom-fields", "#timeline"], "#convert-lead");
+      }
+      if (path === contactHref) {
+        await expectRecordSectionNav(page, ["#profile", "#ai-record-brief", "#relationship-brief", "#notes", "#custom-fields"], "#relationship-brief");
+        await expect(page.getByRole("heading", { name: "Relationship Context" })).toBeVisible();
+      }
+      if (path === organizationHref) {
+        await expectRecordSectionNav(page, ["#overview", "#ai-record-brief", "#related-people", "#related-deals", "#custom-fields"], "#related-people");
       }
       if (path === communicationDealPath) {
         await expect(page.getByText("Quote shared for manager training package")).toBeVisible();
@@ -133,6 +149,8 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Active Deals" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Priority Activities" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Recent Quotes" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Commercial Toolkit" })).toBeVisible();
+        await expect(page.getByRole("link", { name: /Products and services/ })).toBeVisible();
         const dashboardDealHref = await firstHref(page, "/deals/");
         expect(dashboardDealHref, "Expected dashboard to include a deal detail link").toBeTruthy();
         const dashboardQuoteHref = await firstQuoteHref(page);
@@ -141,6 +159,14 @@ test.describe("Northstar CRM browser smoke", () => {
         expect(await settingsShortcut.count(), "Expected one persistent Settings shortcut in the app shell").toBe(1);
         await expect(settingsShortcut, "Expected Settings shortcut to be visible in the app shell").toBeVisible();
         await expectSettingsShortcutNavigation(page, settingsShortcut);
+      }
+      if (path === "/onboarding") {
+        await expect(page.getByRole("heading", { name: "First-Run AI-Guided Onboarding" })).toBeVisible();
+        await expect(page.getByText("Personalize Your AI Guide")).toBeVisible();
+        await expect(page.getByText("Stella", { exact: true })).toBeVisible();
+        await expect(page.getByText("Nova", { exact: true })).toBeVisible();
+        await expect(page.getByText("Warm and helpful")).toBeVisible();
+        await expect(page.getByText("Future, not yet available")).toBeVisible();
       }
       if (path === "/assistant") {
         await expect(page.getByRole("link", { name: "Current section: Assistant" })).toBeVisible();
@@ -222,7 +248,11 @@ test.describe("Northstar CRM browser smoke", () => {
         expect(overflowingProviderCards, "Expected provider card text and controls to stay inside their cards").toBe(0);
       }
       if (path === "/products") {
+        await expect(page.getByRole("link", { name: "Current section: Products" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "How Products Feed Quotes" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Product Catalog" })).toBeVisible();
+        await expect(page.getByText("products, services, packages, and reusable pricing your company sells")).toBeVisible();
+        await expect(page.getByText("Your sellable catalog for building deal scope, quote line items, and reusable pricing.")).toBeVisible();
         expect(await page.locator(".product-catalog-card").count(), "Expected seeded products to render as cards").toBeGreaterThan(0);
         const overflowingProductCards = await page.locator(".product-catalog-card").evaluateAll((cards) =>
           cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length
@@ -748,8 +778,12 @@ test.describe("Northstar CRM browser smoke", () => {
 
     const quotePath = `/deals/${smokeQuote.dealId}/quotes/${smokeQuote.quoteId}`;
     await expectPageReady(page, quotePath);
+    await expectRecordSectionNav(page, ["#quote-overview", "#quote-context", "#quote-totals", "#quote-readiness", "#quote-status", "#public-link", "#quote-items"], "#quote-items");
     await expect(page.getByRole("heading", { name: /Q-SMOKE-/ })).toBeVisible();
-    await expect(page.getByText("Internal quote")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Quote Overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Customer and Deal Context" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Totals and Adjustments" })).toBeVisible();
+    await expect(page.getByText("Internal quote", { exact: true })).toBeVisible();
     await expect(page.getByText("Internal tracking only")).toBeVisible();
 
     await expectPageReady(page, `${quotePath}/print`, { requireAppShell: false });
@@ -784,6 +818,114 @@ test.describe("Northstar CRM browser smoke", () => {
         })
       )
       .toBe(1);
+  });
+
+  test("creates and submits a public web form lead capture flow", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const suffix = uniqueSmokeSuffix();
+    const formName = `Browser lead form ${suffix}`;
+    const publicTitle = `Browser lead capture ${suffix}`;
+    const leadEmail = `browser-web-form-${suffix}@example.test`;
+
+    await expectPageReady(page, "/web-forms");
+    await expect(page.getByRole("link", { exact: true, name: "Current section: Web Forms" })).toBeVisible();
+    await expect(page.getByRole("heading", { exact: true, name: "Web Forms" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create Lead Capture Form" })).toBeVisible();
+
+    await page.getByLabel("Internal name").fill(formName);
+    await page.getByLabel("Public title").fill(publicTitle);
+    await page.getByLabel("Public description").fill("Browser smoke public form description.");
+    await page.getByLabel("Source label").fill(`Web Form / Browser smoke ${suffix}`);
+    await page.getByRole("button", { name: "Create form" }).click();
+    await page.waitForURL(/\/web-forms\?created=1$/);
+    await expect(page.getByText("Web form created.")).toBeVisible();
+    await expect(page.getByText(formName)).toBeVisible();
+    await expect(page.getByText(publicTitle)).toBeVisible();
+
+    const webForm = await prisma.webForm.findFirstOrThrow({
+      where: { workspaceId: smokeAuth.workspaceId, name: formName, deletedAt: null },
+      select: { id: true, token: true }
+    });
+    smokeIds.webFormId = webForm.id;
+    const publicPath = `/f/${webForm.token}`;
+
+    const createdFormRow = page.locator("tr", { hasText: formName });
+    await expect(createdFormRow.getByLabel(`Public web form URL for ${formName}. Enabled`)).toHaveValue(publicPath);
+    await expect(createdFormRow.getByRole("button", { name: `Copy public web form link for ${formName}` })).toBeVisible();
+    await expect(createdFormRow.getByRole("link", { name: "Open", exact: true })).toBeVisible();
+
+    await expectPageReady(page, publicPath, { requireAppShell: false });
+    await expect(page.locator("main.public-form-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: publicTitle })).toBeVisible();
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+
+    await page.getByLabel("What should we call this?").fill("Browser web form inquiry");
+    await page.getByLabel("Your name").fill("Browser Form Contact");
+    await page.getByLabel("Email").fill(leadEmail);
+    await page.getByLabel("Phone").fill("+1 555 0133");
+    await page.locator('input[name="organizationName"]').fill("Browser Forms Co");
+    await page.getByLabel("Message").fill("This should create one lead and one note.");
+    await page.getByRole("button", { name: "Submit" }).click();
+    await page.waitForURL(new RegExp(`/f/${webForm.token}\\?submitted=1$`));
+    await expect(page.getByText("Your request was received.")).toBeVisible();
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+
+    const lead = await prisma.lead.findFirstOrThrow({
+      where: {
+        workspaceId: smokeAuth.workspaceId,
+        source: `Web Form / Browser smoke ${suffix}`,
+        title: "Browser web form inquiry"
+      },
+      include: { notes: true }
+    });
+    smokeIds.webFormLeadId = lead.id;
+    expect(lead.personId).toBeNull();
+    expect(lead.organizationId).toBeNull();
+    expect(lead.notes).toHaveLength(1);
+    expect(lead.notes[0]?.body).toContain("This should create one lead and one note.");
+
+    await page.goto(publicPath);
+    await page.getByLabel("What should we call this?").fill("Browser web form inquiry");
+    await page.getByLabel("Your name").fill("Browser Form Contact");
+    await page.getByLabel("Email").fill(leadEmail);
+    await page.getByLabel("Phone").fill("+1 555 0133");
+    await page.locator('input[name="organizationName"]').fill("Browser Forms Co");
+    await page.getByLabel("Message").fill("This should create one lead and one note.");
+    await page.getByRole("button", { name: "Submit" }).click();
+    await page.waitForURL(new RegExp(`/f/${webForm.token}\\?submitted=1$`));
+    await expect
+      .poll(() =>
+        prisma.lead.count({
+          where: { workspaceId: smokeAuth.workspaceId, source: `Web Form / Browser smoke ${suffix}` }
+        })
+      )
+      .toBe(1);
+
+    await page.goto(publicPath);
+    await page.locator('input[name="website"]').fill("https://spam.example.test", { force: true });
+    await page.getByLabel("Email").fill(`honeypot-${leadEmail}`);
+    await page.getByRole("button", { name: "Submit" }).click();
+    await page.waitForURL(new RegExp(`/f/${webForm.token}\\?submitted=1$`));
+    await expect
+      .poll(() =>
+        prisma.lead.count({
+          where: { workspaceId: smokeAuth.workspaceId, source: `Web Form / Browser smoke ${suffix}` }
+        })
+      )
+      .toBe(1);
+
+    await expectPageReady(page, "/web-forms");
+    const formRow = page.locator("tr", { hasText: formName });
+    await formRow.getByRole("button", { name: "Disable" }).click();
+    await page.waitForURL(/\/web-forms\?disabled=1$/);
+    await expect(page.getByText("Web form disabled.")).toBeVisible();
+
+    await expectPageReady(page, publicPath, { requireAppShell: false });
+    await expect(page.getByRole("heading", { name: "Form unavailable" })).toBeVisible();
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+
+    await expectPageReady(page, `/f/${generatePublicWebFormToken()}`, { requireAppShell: false });
+    await expect(page.getByRole("heading", { name: "Form unavailable" })).toBeVisible();
   });
 });
 
@@ -1045,6 +1187,21 @@ async function expectSidebarLabelsReadable(page: Page, path: string) {
   expect(truncated.quickLabels, `Expected sidebar quick-action labels to fit naturally on ${path}`).toEqual([]);
 }
 
+async function expectRecordSectionNav(page: Page, hrefs: string[], clickHref: string) {
+  const nav = page.locator(".record-panel-jump-nav").first();
+  await expect(nav, "Expected record section navigation to be visible").toBeVisible();
+
+  for (const href of hrefs) {
+    await expect(nav.locator(`a[href="${href}"]`), `Expected section nav link ${href}`).toBeVisible();
+    await expect(page.locator(href), `Expected section target ${href}`).toHaveCount(1);
+  }
+
+  await nav.locator(`a[href="${clickHref}"]`).click();
+  await expect.poll(() => new URL(page.url()).hash, {
+    message: `Expected section nav click to update URL hash to ${clickHref}`
+  }).toBe(clickHref);
+}
+
 async function expectSettingsShortcutNavigation(page: Page, settingsShortcut: Locator) {
   const errors: string[] = [];
   const onPageError = (error: Error) => errors.push(error.message);
@@ -1281,6 +1438,32 @@ async function cleanupSmokeQuote() {
   if (smokeIds.quoteId) await prisma.quote.deleteMany({ where: { id: smokeIds.quoteId } });
   if (smokeIds.dealLineItemId) await prisma.dealLineItem.deleteMany({ where: { id: smokeIds.dealLineItemId } });
   if (smokeIds.productId) await prisma.product.deleteMany({ where: { id: smokeIds.productId } });
+}
+
+async function cleanupSmokeWebForm() {
+  if (smokeIds.webFormLeadId) {
+    await prisma.webFormSubmission.deleteMany({ where: { leadId: smokeIds.webFormLeadId } });
+    await prisma.auditLog.deleteMany({
+      where: {
+        entityId: smokeIds.webFormLeadId,
+        entityType: "Lead",
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    await prisma.note.deleteMany({ where: { leadId: smokeIds.webFormLeadId, workspaceId: smokeAuth.workspaceId } });
+    await prisma.lead.deleteMany({ where: { id: smokeIds.webFormLeadId, workspaceId: smokeAuth.workspaceId } });
+  }
+  if (smokeIds.webFormId) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        entityId: smokeIds.webFormId,
+        entityType: "WebForm",
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    await prisma.webFormSubmission.deleteMany({ where: { webFormId: smokeIds.webFormId, workspaceId: smokeAuth.workspaceId } });
+    await prisma.webForm.deleteMany({ where: { id: smokeIds.webFormId, workspaceId: smokeAuth.workspaceId } });
+  }
 }
 
 async function cleanupBrowserMeetingIntakes() {

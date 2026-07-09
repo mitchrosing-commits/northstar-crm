@@ -441,10 +441,12 @@ describe("global workspace search", () => {
       "/assistant",
       "/pipeline",
       "/quotes",
+      "/web-forms",
       "/activities",
       "/email",
       "/meeting-intelligence",
       "/reports",
+      "/products",
       "/settings"
     ]);
     expect(queryListHref("/contacts", "avery@example.test")).toBe("/contacts?q=avery%40example.test");

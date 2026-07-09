@@ -345,6 +345,69 @@ describe("read-only Assistant command service integration", () => {
     await expect(crmRecordCounts(fx)).resolves.toEqual(beforeCrm);
   });
 
+  it("lists pending, applied, and rejected requests for the review queue without exposing cross-user rows", async () => {
+    const fx = currentFixture();
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    const activityAnswer = await crm.answerAssistantCommand(fx.actorA, `Remind me to follow up with ${contactName} tomorrow.`);
+    const activityDraft = activityAnswer.draftActions?.[0];
+    if (!activityDraft) throw new Error("Expected an activity draft.");
+    const activityRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: activityDraft,
+      sourceCommand: "Authorization: Bearer activity-secret"
+    });
+    const preferenceAnswer = await crm.answerAssistantCommand(fx.actorA, "Make email replies more casual and concise.");
+    const preferenceDraft = preferenceAnswer.draftActions?.[0];
+    if (!preferenceDraft) throw new Error("Expected a preference draft.");
+    const preferenceRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: preferenceDraft,
+      sourceCommand: "refresh_token=preference-secret"
+    });
+    const noteAnswer = await crm.answerAssistantCommand(fx.actorA, `Add a note for ${contactName}: Prefers concise renewal summaries.`);
+    const noteDraft = noteAnswer.draftActions?.[0];
+    if (!noteDraft) throw new Error("Expected a note draft.");
+    const noteRequest = await crm.createAssistantActionRequest(fx.actorA, {
+      draftAction: noteDraft,
+      sourceCommand: "Provider payload: note-secret"
+    });
+
+    await crm.applyAssistantActionRequest(fx.actorA, activityRequest.id);
+    await crm.rejectAssistantActionRequest(fx.actorA, preferenceRequest.id);
+
+    const [allForA, pendingForA, allForB] = await Promise.all([
+      crm.listAssistantActionRequests(fx.actorA),
+      crm.listPendingAssistantActionRequests(fx.actorA),
+      crm.listAssistantActionRequests(fx.actorB)
+    ]);
+    const byId = new Map(allForA.map((request) => [request.id, request]));
+    const serialized = JSON.stringify({ allForA, pendingForA });
+
+    expect(allForA).toHaveLength(3);
+    expect(allForB).toEqual([]);
+    expect(pendingForA.map((request) => request.id)).toEqual([noteRequest.id]);
+    expect(byId.get(activityRequest.id)).toMatchObject({
+      actionType: "activity",
+      canApply: false,
+      status: "APPLIED"
+    });
+    expect(byId.get(preferenceRequest.id)).toMatchObject({
+      actionType: "ai_preference_update",
+      canApply: false,
+      status: "REJECTED"
+    });
+    expect(byId.get(noteRequest.id)).toMatchObject({
+      actionType: "note",
+      canApply: true,
+      status: "PENDING",
+      targetHref: `/contacts/${fx.recordsA.person.id}`,
+      targetLabel: contactName
+    });
+    expect(byId.get(noteRequest.id)?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(serialized).not.toContain("activity-secret");
+    expect(serialized).not.toContain("preference-secret");
+    expect(serialized).not.toContain("note-secret");
+    expect(serialized).not.toMatch(/\b(refresh_token|Authorization: Bearer|Provider payload)\b/i);
+  });
+
   it("applies only clear pending activity requests through the activity service", async () => {
     const fx = currentFixture();
     const answer = await crm.answerAssistantCommand(

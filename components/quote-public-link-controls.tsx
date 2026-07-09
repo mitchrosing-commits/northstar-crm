@@ -12,19 +12,21 @@ import { FormIntroCallout } from "@/components/form-intro-callout";
 import { PanelTitleRow } from "@/components/panel-title-row";
 
 type QuotePublicLinkControlsProps = {
-  workspaceId: string;
+  canGenerate: boolean;
+  id?: string;
+  publicUrl: string | null;
   quoteId: string;
   quoteNumber?: string;
-  publicUrl: string | null;
-  canGenerate: boolean;
+  workspaceId: string;
 };
 
 export function QuotePublicLinkControls({
-  workspaceId,
+  canGenerate,
+  id,
+  publicUrl,
   quoteId,
   quoteNumber = "quote",
-  publicUrl,
-  canGenerate
+  workspaceId
 }: QuotePublicLinkControlsProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +82,7 @@ export function QuotePublicLinkControls({
   }
 
   return (
-    <section className="data-card section-spaced">
+    <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
         actions={<Badge label={`Public quote link status: ${publicLinkStatus}`}>{publicLinkStatus}</Badge>}
         description="Public links are customer-facing quote views with optional acceptance while the quote is sent. Revoking a link immediately makes it return a safe 404. Links do not expose the CRM app, send email, capture signatures, or allow payment."

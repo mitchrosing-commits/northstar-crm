@@ -9,6 +9,7 @@ import {
   buildEmailReplyAssistantAnswer,
   buildTodayAssistantAnswer,
   buildUnsupportedAssistantAnswer,
+  assistantSuggestedCommands,
   parseAssistantCommand
 } from "@/lib/services/assistant/assistant-command-service";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
@@ -102,8 +103,20 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(answer.command).toBe("unsupported");
     expect(answer.reviewFirst).toBe(true);
     expect(answer.summary).toContain("draft a small set of review-first actions");
-    expect(answer.items).toHaveLength(8);
+    expect(answer.items).toHaveLength(5);
     expect(answer.safetyNotice).toContain("does not create, update, delete");
+  });
+
+  it("suggests only current safe capabilities", () => {
+    expect([...assistantSuggestedCommands]).toEqual([
+      "Tell me what I have to do today.",
+      "Show me the highest-risk deals this week.",
+      "Check whether Mike Fox replied to my recent email.",
+      "Remind me to follow up with Jane Doe next Tuesday.",
+      "Add a note for Jane Doe: she prefers concise email updates."
+    ]);
+    expect(assistantSuggestedCommands.join(" ")).not.toMatch(/\b(create|send|convert|close|delete)\b/i);
+    expect(assistantSuggestedCommands.join(" ")).not.toMatch(/\b(organization|quote|relationship memory|AI preference|sync)\b/i);
   });
 
   it("returns draft-only action previews without implying apply behavior", () => {
@@ -134,30 +147,56 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantPage).toContain("export default async function AssistantPage");
     expect(assistantPage).toContain("answerAssistantCommand(actor, command)");
     expect(assistantPage).toContain("listAssistantActionRequests(actor)");
+    expect(assistantPage).toContain("actionRequestQueue={actionRequestQueue}");
     expect(assistantPage).toContain("pendingActionRequests={pendingActionRequests}");
+    expect(assistantPage).toContain('return "pending"');
     expect(assistantConsole).toContain("assistantSuggestedCommands");
     expect(assistantConsole).toContain("AssistantDraftActionCard");
     expect(assistantConsole).toContain("AssistantActionReviewQueue");
+    expect(assistantConsole).toContain("AssistantPermissionSummary");
+    expect(assistantConsole).toContain("Available now");
+    expect(assistantConsole).toContain("Review-only for now");
     expect(assistantConsole).toContain('action="/assistant"');
     expect(assistantConsole).toContain("Context-only");
     expect(assistantConsole).toContain("Draft only");
     expect(assistantActions).toContain("saveAssistantDraftActionRequest");
     expect(assistantActions).toContain("applyAssistantActionRequestAction");
     expect(assistantActions).toContain("rejectAssistantActionRequestAction");
+    expect(assistantActions).toContain('assistantRedirect("saved", returnCommand, "pending")');
+    expect(assistantActions).toContain('assistantRedirect("applied", "", "applied")');
+    expect(assistantActions).toContain('assistantRedirect("rejected", "", "rejected")');
     expect(assistantDraftCard).toContain("Review required");
-    expect(assistantDraftCard).toContain("Save for review first");
+    expect(assistantDraftCard).toContain("Save, then review");
+    expect(assistantDraftCard).toContain("Needs clearer target");
+    expect(assistantDraftCard).toContain("Review-only for now");
     expect(assistantDraftCard).toContain("Save to review queue");
     expect(assistantReviewQueue).toContain("Review queue");
-    expect(assistantReviewQueue).toContain("activity or note drafts");
+    expect(assistantReviewQueue).toContain("Assistant review queue filters");
+    expect(assistantReviewQueue).toContain("Hide completed requests");
+    expect(assistantReviewQueue).toContain("Filters hide completed requests from view without deleting audit history or CRM records.");
+    expect(assistantReviewQueue).toContain("Created");
+    expect(assistantReviewQueue).toContain("Action type");
+    expect(assistantReviewQueue).toContain("Apply availability");
+    expect(assistantReviewQueue).toContain("Review-only");
+    expect(assistantReviewQueue).toContain("No pending Assistant action requests.");
+    expect(assistantReviewQueue).toContain("No applied Assistant action requests yet.");
+    expect(assistantReviewQueue).toContain("No rejected Assistant action requests yet.");
+    expect(assistantReviewQueue).toContain("No Assistant action requests yet.");
     expect(assistantReviewQueue).toContain("Review-first");
     expect(assistantReviewQueue).toContain("Apply {applyNoun(request)}");
     expect(assistantReviewQueue).toContain("Apply not available yet");
+    expect(assistantReviewQueue).toContain("Apply is blocked until one clear target record is selected.");
+    expect(assistantReviewQueue).toContain("This request has already been applied and cannot be applied again.");
+    expect(assistantReviewQueue).toContain("This request was rejected and cannot be applied.");
     expect(assistantReviewQueue).toContain("Reject request");
     expect(globalStyles).toContain(".assistant-console");
     expect(globalStyles).toContain(".assistant-answer-card");
+    expect(globalStyles).toContain(".assistant-permission-summary");
     expect(globalStyles).toContain(".assistant-draft-card");
     expect(globalStyles).toContain(".assistant-review-queue");
     expect(globalStyles).toContain(".assistant-review-request");
+    expect(globalStyles).toContain(".assistant-review-request-applied");
+    expect(globalStyles).toContain(".assistant-review-request-rejected");
     expect(crmBarrel).toContain('export * from "./assistant/assistant-command-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-context-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-draft-action-service"');

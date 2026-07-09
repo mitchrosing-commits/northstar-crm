@@ -10,6 +10,9 @@ const workspaceService = readFileSync(join(process.cwd(), "lib/services/workspac
 const pipelineService = readFileSync(join(process.cwd(), "lib/services/pipeline-service.ts"), "utf8");
 const dashboardService = readFileSync(join(process.cwd(), "lib/services/dashboard-service.ts"), "utf8");
 const dashboardPage = readFileSync(join(process.cwd(), "app/dashboard/page.tsx"), "utf8");
+const onboardingPage = readFileSync(join(process.cwd(), "app/onboarding/page.tsx"), "utf8");
+const onboardingActions = readFileSync(join(process.cwd(), "app/onboarding/actions.ts"), "utf8");
+const aiPreferencesService = readFileSync(join(process.cwd(), "lib/services/ai-preferences-service.ts"), "utf8");
 const pipelineBoard = readFileSync(join(process.cwd(), "components/pipeline-board.tsx"), "utf8");
 const dealForm = readFileSync(join(process.cwd(), "components/deal-form.tsx"), "utf8");
 const leadForm = readFileSync(join(process.cwd(), "components/lead-form.tsx"), "utf8");
@@ -84,6 +87,8 @@ describe("first-run clean workspace experience", () => {
   it("renders a polished first-run checklist with useful CRM actions", () => {
     expect(dashboardPage).toContain("Set up your sales workspace");
     expect(dashboardPage).toContain("Your workspace is clean and ready.");
+    expect(dashboardPage).toContain("Personalize your AI guide");
+    expect(dashboardPage).toContain("href: \"/onboarding\"");
     expect(dashboardPage).toContain("Create or import contacts");
     expect(dashboardPage).toContain("href: \"/contacts/new\"");
     expect(dashboardPage).toContain("Add an organization");
@@ -99,6 +104,59 @@ describe("first-run clean workspace experience", () => {
     expect(dashboardPage).toContain("const actionLabel = `${step.action}: ${step.title}`");
     expect(dashboardPage).toContain("aria-label={actionLabel}");
     expect(dashboardPage).toContain("title={actionLabel}");
+  });
+
+  it("renders AI-guided onboarding with assistant naming, tone, help areas, and review-first limits", () => {
+    expect(onboardingPage).toContain("First-Run AI-Guided Onboarding");
+    expect(onboardingPage).toContain("Northstar CRM keeps relationships, pipeline, follow-ups, products, quotes, and customer context");
+    expect(onboardingPage).toContain("Dashboard / Today");
+    expect(onboardingPage).toContain("Inbox");
+    expect(onboardingPage).toContain("Contacts / Organizations");
+    expect(onboardingPage).toContain("Leads / Deals / Pipeline");
+    expect(onboardingPage).toContain("Products / Quotes");
+    expect(onboardingPage).toContain("Web Forms");
+    expect(onboardingPage).toContain("Meeting Intelligence");
+    expect(onboardingPage).toContain("Assistant");
+    expect(onboardingPage).toContain("Personalize Your AI Guide");
+    expect(onboardingPage).toContain("Stella");
+    expect(onboardingPage).toContain("Nova");
+    expect(onboardingPage).toContain("Custom");
+    expect(onboardingPage).toContain("Professional and concise");
+    expect(onboardingPage).toContain("Warm and helpful");
+    expect(onboardingPage).toContain("Direct and action-oriented");
+    expect(onboardingPage).toContain("Detailed and analytical");
+    expect(onboardingPage).toContain("Prioritize Inbox");
+    expect(onboardingPage).toContain("Draft email replies");
+    expect(onboardingPage).toContain("Suggest CRM updates from emails");
+    expect(onboardingPage).toContain("Prep for meetings");
+    expect(onboardingPage).toContain("Summarize contact relationships");
+    expect(onboardingPage).toContain("Watch stale deals");
+    expect(onboardingPage).toContain("Suggest follow-ups");
+    expect(onboardingPage).toContain("Help create quotes");
+    expect(onboardingPage).toContain("Guide around the app");
+    expect(onboardingPage).toContain("review-first");
+    expect(onboardingPage).toContain("Applies only approved low-risk activity and note actions where already supported.");
+    expect(onboardingPage).toContain("Autonomous actions");
+    expect(onboardingPage).toContain("Email send");
+  });
+
+  it("saves onboarding preferences through existing AI preferences without expanding Assistant apply paths", () => {
+    expect(onboardingActions).toContain("updateAiPreferences(actor");
+    expect(onboardingActions).toContain("assistantNamePreset");
+    expect(onboardingActions).toContain("assistantTonePreset");
+    expect(onboardingActions).toContain("assistantHelpAreas");
+    expect(onboardingActions).toContain("assistantPermissionMode: \"review_first\"");
+    expect(onboardingActions).toContain("redirect(\"/onboarding?saved=1\")");
+    expect(aiPreferencesService).toContain("assistantNamePreset: [\"Stella\", \"Nova\", \"Lyra\", \"Astra\", \"Orion\", \"Maris\", \"Sage\", \"Custom\"]");
+    expect(aiPreferencesService).toContain("assistantTonePreset");
+    expect(aiPreferencesService).toContain("serializeHelpAreas");
+
+    const onboardingSources = [onboardingPage, onboardingActions, aiPreferencesService].join("\n");
+    expect(onboardingSources).not.toContain("sendEmail");
+    expect(onboardingSources).not.toContain("gmail.metadata");
+    expect(onboardingSources).not.toContain("include_granted_scopes");
+    expect(onboardingSources).not.toContain("createAssistantActionRequest");
+    expect(onboardingSources).not.toContain("applyAssistantActionRequest");
   });
 
   it("keeps fresh-workspace empty states product-facing and action-oriented", () => {
@@ -124,7 +182,7 @@ describe("first-run clean workspace experience", () => {
     expect(dashboardPage).toContain("title=\"No quotes yet\"");
     expect(dashboardPage).toContain("description=\"Quotes usually come after a deal has a customer conversation and line items to review.\"");
     expect(quoteDraftsPanel).toContain("title=\"No internal quote drafts yet\"");
-    expect(quoteDraftsPanel).toContain("Create one after the deal has line items to review a frozen snapshot.");
+    expect(quoteDraftsPanel).toContain("Create one after the deal has product-backed line items to review a frozen pricing snapshot.");
     expect(emptyStateSources).not.toContain("run seed script");
     expect(emptyStateSources).not.toContain("Run the seed script");
   });

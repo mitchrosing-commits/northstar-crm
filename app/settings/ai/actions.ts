@@ -10,10 +10,16 @@ export async function updateAiPreferencesAction(formData: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
   await updateAiPreferences(actor, {
     assistantDetailLevel: stringValue(formData.get("assistantDetailLevel")),
+    assistantNamePreset: stringValue(formData.get("assistantNamePreset")),
+    assistantCustomName: stringValue(formData.get("assistantCustomName")),
+    assistantHelpAreas: formData.getAll("assistantHelpAreas").map(stringValue),
+    assistantPermissionMode: "review_first",
+    assistantTonePreset: stringValue(formData.get("assistantTonePreset")),
     diagnosticsDetailLevel: stringValue(formData.get("diagnosticsDetailLevel")),
     emailSummaryLength: stringValue(formData.get("emailSummaryLength")),
     meetingIntelligenceNoteStyle: stringValue(formData.get("meetingIntelligenceNoteStyle")),
     naturalLanguageInstructions: stringValue(formData.get("naturalLanguageInstructions")),
+    onboardingGoals: stringValue(formData.get("onboardingGoals")),
     recordSummaryStyle: stringValue(formData.get("recordSummaryStyle")),
     relationshipMemoryUsage: stringValue(formData.get("relationshipMemoryUsage")),
     replyTone: stringValue(formData.get("replyTone")),

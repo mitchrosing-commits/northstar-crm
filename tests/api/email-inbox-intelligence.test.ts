@@ -39,11 +39,48 @@ describe("work inbox intelligence", () => {
       detectedIntent: "Commercial opportunity",
       priorityLevel: "high",
       relatedRecordLabel: "Deal: Expansion",
+      suggestedNextAction: "Draft a reply and answer the open question.",
       tags: expect.arrayContaining([
         "Needs reply",
         "Pricing / quote",
         "CRM linked",
         "AI summary",
+      ]),
+      whyItMatters:
+        "A linked CRM relationship appears to be waiting on a response.",
+    });
+    expect(inbox.items[0].reasonList).toEqual(
+      expect.arrayContaining([
+        "Linked to CRM record",
+        "Inbound message asks for a reply or decision",
+        "Opportunity, pricing, quote, or contract language",
+      ]),
+    );
+    expect(inbox.items[0].triageActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "draft-reply", label: "Draft reply" }),
+        expect.objectContaining({
+          id: "create-follow-up",
+          label: "Create follow-up",
+        }),
+        expect.objectContaining({
+          id: "review-pricing",
+          label: "Review pricing context",
+        }),
+        expect.objectContaining({
+          id: "review-crm-record",
+          label: "Review related CRM record",
+        }),
+      ]),
+    );
+    expect(inbox.items[0].alertEligibility).toMatchObject({
+      eligible: true,
+      severity: "high",
+      signalKeys: expect.arrayContaining([
+        "needs_reply",
+        "pipeline_or_contract",
+        "urgency",
+        "crm_linked",
       ]),
     });
     expect(inbox.tabs.find((tab) => tab.id === "priority")?.count).toBe(1);
@@ -72,10 +109,315 @@ describe("work inbox intelligence", () => {
         "Unimportant",
       ]),
       unimportantReasons: expect.arrayContaining([
-        "Newsletter, promotion, digest, or provider category signals.",
+        "Automated, newsletter, promotion, digest, or provider category signals without a strong CRM action.",
       ]),
     });
     expect(inbox.items[0].categories).not.toContain("priority");
+    expect(inbox.items[0].alertEligibility).toMatchObject({
+      eligible: false,
+      severity: "low",
+    });
+  });
+
+  it("demotes no-reply blasts even when they contain business words", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Please join our pricing webinar for the newest sales playbook. Unsubscribe anytime or view in browser.",
+          fromText: "No Reply <no-reply@vendor.example>",
+          providerLabels: ["CATEGORY_PROMOTIONS"],
+          subject: "Pricing webinar invitation",
+        }),
+      ],
+    });
+
+    expect(inbox.items[0]).toMatchObject({
+      categories: expect.arrayContaining(["automated-marketing"]),
+      detectedIntent: "Automated update or marketing message",
+      isUnimportant: true,
+      priorityLevel: "low",
+      suggestedNextAction: "Leave for later or hide with the unimportant filter.",
+      whyItMatters:
+        "Automation, marketing, or status-update signals make this lower priority unless a clear CRM action appears.",
+    });
+    expect(inbox.items[0].categories).not.toContain("priority");
+    expect(inbox.items[0].categories).not.toContain("needs-reply");
+    expect(inbox.items[0].categories).not.toContain("leads-opportunities");
+    expect(inbox.items[0].tags).not.toContain("Needs reply");
+    expect(inbox.items[0].tags).not.toContain("Pricing / quote");
+    expect(inbox.items[0].unimportantReasons).toEqual(
+      expect.arrayContaining([
+        "Sender appears to be a no-reply or automated mailbox.",
+        "Automated, newsletter, promotion, digest, or provider category signals without a strong CRM action.",
+      ]),
+    );
+    expect(inbox.items[0].triageActions).toEqual([
+      expect.objectContaining({
+        id: "no-action-needed",
+        label: "No action needed",
+      }),
+    ]);
+  });
+
+  it("keeps receipt and status updates low priority when no action is needed", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Receipt for your subscription. Payment received. This is a status update and no action is needed.",
+          fromText: "Billing <billing@vendor.example>",
+          subject: "Payment receipt",
+        }),
+      ],
+    });
+
+    expect(inbox.items[0]).toMatchObject({
+      categories: expect.arrayContaining(["automated-marketing"]),
+      detectedIntent: "General inbox review",
+      isUnimportant: true,
+      priorityLevel: "low",
+      unimportantReasons: expect.arrayContaining([
+        "Informational status or receipt-style update with no clear action.",
+      ]),
+    });
+    expect(inbox.items[0].categories).not.toContain("priority");
+  });
+
+  it("promotes automated messages only when strong action or risk signals are present", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Payment failed for the Acme contract. Action required by deadline today. Contract requires signature before launch.",
+          fromText: "No Reply <no-reply@payments.example>",
+          linkedRecordLabel: "Deal: Acme",
+          providerLabels: ["CATEGORY_UPDATES"],
+          subject: "Payment failed - action required",
+        }),
+      ],
+    });
+
+    expect(inbox.items[0]).toMatchObject({
+      categories: expect.arrayContaining([
+        "priority",
+        "work",
+        "crm-linked",
+        "leads-opportunities",
+      ]),
+      detectedIntent: "Automated action or risk alert",
+      isUnimportant: false,
+      priorityLevel: "high",
+      reasonList: expect.arrayContaining([
+        "Automated message promoted because it includes required action or risk",
+      ]),
+      whyItMatters:
+        "This automated message was promoted because it includes required action, deadline, risk, or deal-blocking language.",
+    });
+    expect(inbox.items[0].unimportantReasons).toEqual([]);
+    expect(inbox.items[0].triageActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "create-follow-up",
+          label: "Create follow-up",
+        }),
+        expect.objectContaining({
+          id: "review-contract",
+          label: "Review contract/legal context",
+        }),
+        expect.objectContaining({
+          id: "review-risk",
+          label: "Review relationship risk",
+        }),
+        expect.objectContaining({
+          id: "review-crm-record",
+          label: "Review related CRM record",
+        }),
+      ]),
+    );
+    expect(inbox.items[0].alertEligibility).toMatchObject({
+      eligible: true,
+      severity: "high",
+      signalKeys: expect.arrayContaining([
+        "automated_action_alert",
+        "pipeline_or_contract",
+        "urgency",
+        "crm_linked",
+      ]),
+    });
+  });
+
+  it("builds compact priority shortcuts for action-oriented inbox filters", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Can you send pricing today?",
+          fromText: "Buyer <buyer@example.test>",
+          id: "gmail_thread_pricing",
+          subject: "Pricing question",
+        }),
+        thread({
+          body: "Can legal review the contract and MSA today?",
+          fromText: "Legal Buyer <legal@example.test>",
+          id: "gmail_thread_contract",
+          subject: "Contract review",
+        }),
+        thread({
+          body: "We are blocked and there is churn risk unless this issue is fixed.",
+          fromText: "Customer <customer@example.test>",
+          id: "gmail_thread_risk",
+          linkedRecordLabel: "Deal: Renewal",
+          subject: "Escalation risk",
+        }),
+        thread({
+          body: "Weekly newsletter. Unsubscribe or view in browser.",
+          fromText: "newsletter@vendor.example",
+          id: "gmail_thread_marketing",
+          providerLabels: ["CATEGORY_PROMOTIONS"],
+          subject: "Vendor digest",
+        }),
+      ],
+    });
+
+    expect(inbox.priorityShortcuts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ count: 4, id: "all", label: "All" }),
+        expect.objectContaining({
+          id: "high",
+          label: "High priority",
+          priorityFilter: "high",
+        }),
+        expect.objectContaining({
+          count: 1,
+          id: "pricing-quote",
+          label: "Pricing / quote",
+        }),
+        expect.objectContaining({
+          count: 1,
+          id: "contract-legal",
+          label: "Contract / legal",
+        }),
+        expect.objectContaining({
+          count: 1,
+          id: "relationship-risk",
+          label: "Relationship risk",
+        }),
+        expect.objectContaining({
+          count: 1,
+          id: "low-automated",
+          label: "Low / automated",
+          priorityFilter: "low",
+        }),
+      ]),
+    );
+    expect(
+      inbox.priorityShortcuts.find((shortcut) => shortcut.id === "high")?.href,
+    ).toContain("priority=high");
+    expect(
+      inbox.priorityShortcuts.find((shortcut) => shortcut.id === "pricing-quote")
+        ?.href,
+    ).toContain("inbox=pricing-quote");
+    expect(
+      inbox.priorityShortcuts.find((shortcut) => shortcut.id === "low-automated")
+        ?.href,
+    ).toContain("priority=low");
+  });
+
+  it("filters by priority shortcut categories without changing hide-unimportant behavior", () => {
+    const pricing = thread({
+      body: "Can you send pricing today?",
+      fromText: "Buyer <buyer@example.test>",
+      id: "gmail_thread_pricing",
+      subject: "Pricing question",
+    });
+    const marketing = thread({
+      body: "Weekly newsletter. Unsubscribe or view in browser.",
+      fromText: "newsletter@vendor.example",
+      id: "gmail_thread_marketing",
+      providerLabels: ["CATEGORY_PROMOTIONS"],
+      subject: "Vendor digest",
+    });
+
+    expect(
+      buildWorkInbox({
+        selectedTab: "pricing-quote",
+        threads: [pricing, marketing],
+      }).visibleItems.map((item) => item.thread.subject),
+    ).toEqual(["Pricing question"]);
+    expect(
+      buildWorkInbox({
+        selectedTab: "low-automated",
+        threads: [pricing, marketing],
+      }).visibleItems.map((item) => item.thread.subject),
+    ).toEqual(["Vendor digest"]);
+    expect(
+      buildWorkInbox({
+        importanceFilter: "hide-unimportant",
+        selectedTab: "low-automated",
+        threads: [pricing, marketing],
+      }).visibleItems,
+    ).toEqual([]);
+  });
+
+  it("sorts direct customer questions ahead of automated marketing noise by priority", () => {
+    const marketing = thread({
+      body: "Please join our pricing webinar and download the contract checklist. Unsubscribe anytime.",
+      fromText: "marketing@vendor.example",
+      id: "gmail_thread_marketing",
+      occurredAt: new Date("2030-01-02T12:00:00.000Z"),
+      providerLabels: ["CATEGORY_PROMOTIONS"],
+      subject: "Pricing webinar",
+    });
+    const customerQuestion = thread({
+      body: "Can you send the updated quote today?",
+      fromText: "Buyer <buyer@acme.example>",
+      id: "gmail_thread_customer",
+      linkedRecordLabel: "Deal: Acme",
+      occurredAt: new Date("2030-01-01T12:00:00.000Z"),
+      subject: "Updated quote",
+    });
+
+    const inbox = buildWorkInbox({
+      sort: "priority",
+      threads: [marketing, customerQuestion],
+    });
+
+    expect(inbox.visibleItems.map((item) => item.thread.subject)).toEqual([
+      "Updated quote",
+      "Pricing webinar",
+    ]);
+    expect(inbox.items.find((item) => item.thread.id === marketing.id)).toMatchObject({
+      isUnimportant: true,
+      priorityLevel: "low",
+    });
+  });
+
+  it("keeps person-sent pricing and quote requests high priority", () => {
+    const inbox = buildWorkInbox({
+      threads: [
+        thread({
+          body: "Can you send pricing and a quote today?",
+          fromText: "Founder <founder@startup.ai>",
+          subject: "Pricing quote request",
+        }),
+      ],
+    });
+
+    expect(inbox.items[0]).toMatchObject({
+      categories: expect.arrayContaining([
+        "priority",
+        "work",
+        "needs-reply",
+        "leads-opportunities",
+      ]),
+      detectedIntent: "Commercial opportunity",
+      isUnimportant: false,
+      priorityLevel: "high",
+      tags: expect.arrayContaining(["Needs reply", "Pricing / quote"]),
+    });
+    expect(inbox.items[0].triageActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "draft-reply" }),
+        expect.objectContaining({ id: "review-pricing" }),
+      ]),
+    );
   });
 
   it("does not penalize .info and other custom-domain business senders by TLD", () => {
@@ -374,6 +716,8 @@ describe("work inbox intelligence", () => {
       label: "All",
     });
     expect(normalizeWorkInboxTab("customers")).toBe("customers");
+    expect(normalizeWorkInboxTab("pricing-quote")).toBe("pricing-quote");
+    expect(normalizeWorkInboxTab("low-automated")).toBe("low-automated");
     expect(normalizeWorkInboxTab("unknown")).toBe("all");
     expect(normalizeWorkInboxPriorityFilter("medium")).toBe("medium");
     expect(normalizeWorkInboxPriorityFilter("urgent")).toBe("all");

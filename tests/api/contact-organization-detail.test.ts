@@ -67,6 +67,24 @@ describe("contact and organization detail pages", () => {
     expect(contactPage).toContain("Create linked deal");
     expect(contactPage).toContain("No deals are linked to this contact.");
     expect(contactPage).toContain("AuditHistoryPanel");
+    expect(contactPage).toContain('ariaLabel={`${personName} contact profile sections`}');
+    expect(contactPage).toContain('label="Profile sections"');
+    expect(contactPage).toContain('label: "Overview"');
+    expect(contactPage).toContain('label: "AI brief"');
+    expect(contactPage).toContain('label: "Relationship brief"');
+    expect(contactPage).toContain('label: "Emails"');
+    expect(contactPage).toContain('label: "Custom fields"');
+    expect(contactPage).toContain('label: "History"');
+    expect(contactPage).toContain('className="contact-profile-overview section-spaced"');
+    expect(contactPage).toContain('className="contact-profile-avatar"');
+    expect(contactPage).toContain('title="Identity"');
+    expect(contactPage).toContain('title="Relationship Context"');
+    expect(contactPage).toContain("Fast relationship context before you scroll into notes");
+    expect(contactPage).toContain("function contactInitials");
+    expect(contactPage.indexOf('id="profile"')).toBeLessThan(contactPage.indexOf("<AiRecordBriefCard"));
+    expect(contactPage.indexOf("<RelationshipBriefPanel")).toBeLessThan(contactPage.indexOf("<NotesPanel"));
+    expect(contactPage).toContain("Small internal facts and follow-up notes for this person.");
+    expect(contactPage).toContain("Keep longer meeting transcripts in source records.");
     expect(organizationPage).toContain("getOrganization(actor, organizationId)");
     expect(organizationPage).toContain('import { recordSubtitle } from "@/lib/record-subtitle"');
     expect(organizationPage).toContain("notFound()");
@@ -74,10 +92,12 @@ describe("contact and organization detail pages", () => {
     expect(organizationPage).not.toContain('subtitle={[organization.domain, organization.owner?.name ?? organization.owner?.email].filter(Boolean).join(" · ")}');
     expect(organizationPage).toContain("href: \"#related-people\" as Route");
     expect(organizationPage).toContain("label: \"People\"");
-    expect(organizationPage).toContain("count: organization.people.length");
+    expect(organizationPage).toContain("linkedPeople: organization.people.length");
+    expect(organizationPage).toContain('countKey: "linkedPeople"');
     expect(organizationPage).toContain("href: \"#related-deals\" as Route");
     expect(organizationPage).toContain("label: \"Deals\"");
-    expect(organizationPage).toContain("count: organization.deals.length");
+    expect(organizationPage).toContain("linkedDeals: organization.deals.length");
+    expect(organizationPage).toContain('countKey: "linkedDeals"');
     expect(organizationPage).toContain("countLabel: { singular: \"person\", plural: \"people\" }");
     expect(organizationPage).toContain("countLabel: { singular: \"deal\", plural: \"deals\" }");
     expect(organizationPage).toContain("activities: organization.activities.length");
@@ -111,6 +131,13 @@ describe("contact and organization detail pages", () => {
     expect(organizationPage).toContain("Create linked deal");
     expect(organizationPage).toContain("No people are linked to this organization.");
     expect(organizationPage).toContain("AuditHistoryPanel");
+    expect(organizationPage).toContain('ariaLabel={`${organization.name} organization sections`}');
+    expect(organizationPage).toContain('label="Sections"');
+    expect(organizationPage).toContain('id="overview"');
+    expect(organizationPage).toContain('label: "Overview"');
+    expect(organizationPage).toContain('label: "Emails"');
+    expect(organizationPage).toContain('label: "Custom fields"');
+    expect(organizationPage).toContain('label: "History"');
   });
 
   it("uses shared record subtitles for stable page-header context", () => {

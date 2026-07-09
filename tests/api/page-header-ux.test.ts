@@ -189,10 +189,10 @@ describe("shared page header UX", () => {
   });
 
   it("preserves existing product, pipeline, and search header copy and actions", () => {
-    expect(productsPage).toContain('eyebrow="Catalog"');
+    expect(productsPage).toContain('eyebrow="Products and services"');
     expect(productsPage).toContain('title="Products"');
     expect(productsPage).toContain(
-      'subtitle="Manage reusable pricing inputs for deal line items without rewriting historical quotes."',
+      'subtitle="Manage the products, services, packages, and reusable pricing your company sells.',
     );
     expect(productsPage).toContain("Export products");
 

@@ -119,6 +119,16 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     searchListOrder: 50
   },
   {
+    href: "/web-forms" as Route,
+    label: "Web Forms",
+    icon: "FileText",
+    group: "Work",
+    helper: "Lead capture",
+    commandJump: true,
+    searchDescription: "Create and manage public lead capture forms.",
+    searchJump: true
+  },
+  {
     href: "/activities",
     label: "Activities",
     icon: "CalendarCheck",
@@ -162,7 +172,16 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     searchDescription: "Review sales operating metrics.",
     searchJump: true
   },
-  { href: "/products", label: "Products", icon: "Package", group: "Work", primary: false },
+  {
+    href: "/products",
+    label: "Products",
+    icon: "Package",
+    group: "Work",
+    helper: "Sellable catalog",
+    commandJump: true,
+    searchDescription: "Manage products, services, packages, and reusable pricing used in deals and quotes.",
+    searchJump: true
+  },
   { href: "/search", label: "Search", icon: "Search", group: "System", primary: false },
   { href: "/custom-fields", label: "Custom Fields", icon: "SlidersHorizontal", group: "System", primary: false },
   {

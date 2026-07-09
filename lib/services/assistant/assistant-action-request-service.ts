@@ -232,7 +232,7 @@ function normalizeDraftActionRequest(draft: AssistantDraftAction, sourceCommand:
       targetLabel: safeText(draft.targetLabel)
     } satisfies Prisma.InputJsonObject,
     riskLevel: riskLevelForDraft(draft),
-    sourceSummary: sourceCommand ? safeText(sourceCommand, maxStoredSourceLength) : null,
+    sourceSummary: sourceCommand ? safeSourceSummary(sourceCommand) : null,
     targetHref: draft.targetHref ? safeHref(draft.targetHref) : null,
     targetLabel: safeText(draft.targetLabel),
     title: safeText(draft.title),
@@ -461,6 +461,16 @@ function riskLevelForDraft(draft: AssistantDraftAction) {
 
 function safeText(value: string, maxLength = maxStoredTextLength) {
   return redactSensitiveText(value).trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function safeSourceSummary(value: string) {
+  return safeText(value, maxStoredSourceLength)
+    .replace(
+      /\b(?:access_token|accessToken|authorization|client_secret|clientSecret|id_token|idToken|refresh_token|refreshToken|session_token|sessionToken|token)\s*[:=]\s*\[redacted\]/gi,
+      "[redacted credential]"
+    )
+    .replace(/\bAuthorization\s*:\s*Bearer\s+\[redacted\]/gi, "[redacted credential]")
+    .slice(0, maxStoredSourceLength);
 }
 
 function safeTextArray(values: string[]) {

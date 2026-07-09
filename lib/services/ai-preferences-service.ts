@@ -12,13 +12,32 @@ export type DiagnosticsDetailLevel = "simple" | "technical";
 export type RelationshipMemoryUsage = "balanced" | "conservative" | "proactive";
 export type MeetingIntelligenceNoteStyle = "concise" | "detailed" | "structured";
 export type AiSuggestionAggressiveness = "high" | "low" | "medium";
+export type AssistantNamePreset = "Astra" | "Custom" | "Lyra" | "Maris" | "Nova" | "Orion" | "Sage" | "Stella";
+export type AssistantTonePreset = "custom_later" | "detailed_analytical" | "direct_action_oriented" | "professional_concise" | "warm_helpful";
+export type AssistantHelpArea =
+  | "draft_email_replies"
+  | "guide_around_app"
+  | "help_create_quotes"
+  | "prep_for_meetings"
+  | "prioritize_inbox"
+  | "suggest_crm_updates_from_emails"
+  | "suggest_follow_ups"
+  | "summarize_contact_relationships"
+  | "watch_stale_deals";
+export type AssistantPermissionMode = "review_first";
 
 export type AiPreferences = {
   assistantDetailLevel: AssistantDetailLevel;
+  assistantNamePreset: AssistantNamePreset;
+  assistantCustomName: string | null;
+  assistantHelpAreas: AssistantHelpArea[];
+  assistantPermissionMode: AssistantPermissionMode;
+  assistantTonePreset: AssistantTonePreset;
   diagnosticsDetailLevel: DiagnosticsDetailLevel;
   emailSummaryLength: EmailSummaryLength;
   meetingIntelligenceNoteStyle: MeetingIntelligenceNoteStyle;
   naturalLanguageInstructions: string | null;
+  onboardingGoals: string | null;
   recordSummaryStyle: RecordSummaryStyle;
   relationshipMemoryUsage: RelationshipMemoryUsage;
   replyTone: AiReplyTone;
@@ -31,8 +50,26 @@ export type AiPreferenceDraft = {
   summary: string;
 };
 
+type StoredAiPreferenceUpdate = Partial<Omit<AiPreferences, "assistantHelpAreas">> & {
+  assistantHelpAreas?: string | null;
+};
+
 export const aiPreferenceOptions = {
   assistantDetailLevel: ["minimal", "balanced", "detailed"] as const,
+  assistantHelpAreas: [
+    "prioritize_inbox",
+    "draft_email_replies",
+    "suggest_crm_updates_from_emails",
+    "prep_for_meetings",
+    "summarize_contact_relationships",
+    "watch_stale_deals",
+    "suggest_follow_ups",
+    "help_create_quotes",
+    "guide_around_app"
+  ] as const,
+  assistantNamePreset: ["Stella", "Nova", "Lyra", "Astra", "Orion", "Maris", "Sage", "Custom"] as const,
+  assistantPermissionMode: ["review_first"] as const,
+  assistantTonePreset: ["professional_concise", "warm_helpful", "direct_action_oriented", "detailed_analytical", "custom_later"] as const,
   diagnosticsDetailLevel: ["simple", "technical"] as const,
   emailSummaryLength: ["none", "one_sentence", "short", "detailed"] as const,
   meetingIntelligenceNoteStyle: ["concise", "structured", "detailed"] as const,
@@ -44,22 +81,39 @@ export const aiPreferenceOptions = {
 
 export const defaultAiPreferences: AiPreferences = {
   assistantDetailLevel: "balanced",
+  assistantNamePreset: "Stella",
+  assistantCustomName: null,
+  assistantHelpAreas: ["guide_around_app", "suggest_follow_ups"],
+  assistantPermissionMode: "review_first",
+  assistantTonePreset: "warm_helpful",
   diagnosticsDetailLevel: "simple",
   emailSummaryLength: "short",
   meetingIntelligenceNoteStyle: "structured",
   naturalLanguageInstructions: null,
+  onboardingGoals: null,
   recordSummaryStyle: "balanced",
   relationshipMemoryUsage: "conservative",
   replyTone: "warm",
   suggestionAggressiveness: "medium"
 };
 
+const defaultStoredAiPreferenceValues = {
+  ...defaultAiPreferences,
+  assistantHelpAreas: defaultAiPreferences.assistantHelpAreas.join(",")
+};
+
 const aiPreferenceSelect = {
   assistantDetailLevel: true,
+  assistantNamePreset: true,
+  assistantCustomName: true,
+  assistantHelpAreas: true,
+  assistantPermissionMode: true,
+  assistantTonePreset: true,
   diagnosticsDetailLevel: true,
   emailSummaryLength: true,
   meetingIntelligenceNoteStyle: true,
   naturalLanguageInstructions: true,
+  onboardingGoals: true,
   recordSummaryStyle: true,
   relationshipMemoryUsage: true,
   replyTone: true,
@@ -85,7 +139,7 @@ export async function updateAiPreferences(actor: WorkspaceActor, input: unknown)
   const normalized = normalizeAiPreferenceUpdate(input);
   const row = await prisma.aiPreference.upsert({
     create: {
-      ...defaultAiPreferences,
+      ...defaultStoredAiPreferenceValues,
       ...normalized,
       userId: actor.actorUserId,
       workspaceId: actor.workspaceId
@@ -159,7 +213,7 @@ export function sanitizeInstructionText(value: unknown) {
   return redactSensitiveText(trimmed).slice(0, 1200);
 }
 
-function normalizeAiPreferenceUpdate(input: unknown): Partial<AiPreferences> {
+function normalizeAiPreferenceUpdate(input: unknown): StoredAiPreferenceUpdate {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new ApiError("VALIDATION_ERROR", "AI preferences update must be an object.", 422);
   }
@@ -167,6 +221,21 @@ function normalizeAiPreferenceUpdate(input: unknown): Partial<AiPreferences> {
   return omitUndefined({
     assistantDetailLevel: hasKey(value, "assistantDetailLevel")
       ? optionValue(value.assistantDetailLevel, aiPreferenceOptions.assistantDetailLevel, "Assistant detail level is invalid.")
+      : undefined,
+    assistantNamePreset: hasKey(value, "assistantNamePreset")
+      ? optionValue(value.assistantNamePreset, aiPreferenceOptions.assistantNamePreset, "Assistant name is invalid.")
+      : undefined,
+    assistantCustomName: hasKey(value, "assistantCustomName")
+      ? sanitizeAssistantName(value.assistantCustomName) || null
+      : undefined,
+    assistantHelpAreas: hasKey(value, "assistantHelpAreas")
+      ? serializeHelpAreas(value.assistantHelpAreas)
+      : undefined,
+    assistantPermissionMode: hasKey(value, "assistantPermissionMode")
+      ? optionValue(value.assistantPermissionMode, aiPreferenceOptions.assistantPermissionMode, "Assistant permission level is invalid.")
+      : undefined,
+    assistantTonePreset: hasKey(value, "assistantTonePreset")
+      ? optionValue(value.assistantTonePreset, aiPreferenceOptions.assistantTonePreset, "Assistant tone is invalid.")
       : undefined,
     diagnosticsDetailLevel: hasKey(value, "diagnosticsDetailLevel")
       ? optionValue(value.diagnosticsDetailLevel, aiPreferenceOptions.diagnosticsDetailLevel, "Diagnostics detail level is invalid.")
@@ -179,6 +248,9 @@ function normalizeAiPreferenceUpdate(input: unknown): Partial<AiPreferences> {
       : undefined,
     naturalLanguageInstructions: hasKey(value, "naturalLanguageInstructions")
       ? sanitizeInstructionText(value.naturalLanguageInstructions) || null
+      : undefined,
+    onboardingGoals: hasKey(value, "onboardingGoals")
+      ? sanitizeInstructionText(value.onboardingGoals) || null
       : undefined,
     recordSummaryStyle: hasKey(value, "recordSummaryStyle")
       ? optionValue(value.recordSummaryStyle, aiPreferenceOptions.recordSummaryStyle, "Record summary style is invalid.")
@@ -195,13 +267,23 @@ function normalizeAiPreferenceUpdate(input: unknown): Partial<AiPreferences> {
   });
 }
 
-function normalizeStoredAiPreferences(row: Record<keyof AiPreferences, string | null>): AiPreferences {
+type StoredAiPreferenceRow = Omit<Record<keyof AiPreferences, string | null>, "assistantHelpAreas"> & {
+  assistantHelpAreas: string | null;
+};
+
+function normalizeStoredAiPreferences(row: StoredAiPreferenceRow): AiPreferences {
   return {
     assistantDetailLevel: optionOrDefault(row.assistantDetailLevel, aiPreferenceOptions.assistantDetailLevel, defaultAiPreferences.assistantDetailLevel),
+    assistantNamePreset: optionOrDefault(row.assistantNamePreset, aiPreferenceOptions.assistantNamePreset, defaultAiPreferences.assistantNamePreset),
+    assistantCustomName: row.assistantCustomName || null,
+    assistantHelpAreas: parseHelpAreas(row.assistantHelpAreas),
+    assistantPermissionMode: optionOrDefault(row.assistantPermissionMode, aiPreferenceOptions.assistantPermissionMode, defaultAiPreferences.assistantPermissionMode),
+    assistantTonePreset: optionOrDefault(row.assistantTonePreset, aiPreferenceOptions.assistantTonePreset, defaultAiPreferences.assistantTonePreset),
     diagnosticsDetailLevel: optionOrDefault(row.diagnosticsDetailLevel, aiPreferenceOptions.diagnosticsDetailLevel, defaultAiPreferences.diagnosticsDetailLevel),
     emailSummaryLength: optionOrDefault(row.emailSummaryLength, aiPreferenceOptions.emailSummaryLength, defaultAiPreferences.emailSummaryLength),
     meetingIntelligenceNoteStyle: optionOrDefault(row.meetingIntelligenceNoteStyle, aiPreferenceOptions.meetingIntelligenceNoteStyle, defaultAiPreferences.meetingIntelligenceNoteStyle),
     naturalLanguageInstructions: row.naturalLanguageInstructions || null,
+    onboardingGoals: row.onboardingGoals || null,
     recordSummaryStyle: optionOrDefault(row.recordSummaryStyle, aiPreferenceOptions.recordSummaryStyle, defaultAiPreferences.recordSummaryStyle),
     relationshipMemoryUsage: optionOrDefault(row.relationshipMemoryUsage, aiPreferenceOptions.relationshipMemoryUsage, defaultAiPreferences.relationshipMemoryUsage),
     replyTone: optionOrDefault(row.replyTone, aiPreferenceOptions.replyTone, defaultAiPreferences.replyTone),
@@ -218,10 +300,36 @@ function optionOrDefault<const T extends readonly string[]>(value: string | null
   return typeof value === "string" && (options as readonly string[]).includes(value) ? value as T[number] : fallback;
 }
 
+function parseHelpAreas(value: string | null): AssistantHelpArea[] {
+  if (!value) return defaultAiPreferences.assistantHelpAreas;
+  const areas = value
+    .split(",")
+    .map((area) => area.trim())
+    .filter((area): area is AssistantHelpArea => (aiPreferenceOptions.assistantHelpAreas as readonly string[]).includes(area));
+  return areas.length > 0 ? [...new Set(areas)] : defaultAiPreferences.assistantHelpAreas;
+}
+
+function serializeHelpAreas(value: unknown) {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  const areas = values
+    .map((area) => String(area).trim())
+    .filter((area): area is AssistantHelpArea => (aiPreferenceOptions.assistantHelpAreas as readonly string[]).includes(area));
+  return [...new Set(areas)].join(",") || null;
+}
+
+function sanitizeAssistantName(value: unknown) {
+  if (typeof value !== "string") return "";
+  return redactSensitiveText(value)
+    .replace(/[^\p{L}\p{N} .'_-]/gu, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 40);
+}
+
 function hasKey(input: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(input, key);
 }
 
 function omitUndefined<T extends Record<string, unknown>>(input: T) {
-  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as Partial<AiPreferences>;
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as StoredAiPreferenceUpdate;
 }

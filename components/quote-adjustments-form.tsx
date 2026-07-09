@@ -12,21 +12,23 @@ import { PanelTitleRow } from "@/components/panel-title-row";
 type AdjustmentType = "NONE" | "PERCENT" | "FIXED";
 
 type QuoteAdjustmentsFormProps = {
-  workspaceId: string;
-  quoteId: string;
   discountType: AdjustmentType;
   discountValue: number;
+  id?: string;
+  quoteId: string;
   taxType: AdjustmentType;
   taxValue: number;
+  workspaceId: string;
 };
 
 export function QuoteAdjustmentsForm({
-  workspaceId,
-  quoteId,
   discountType: initialDiscountType,
   discountValue: initialDiscountValue,
+  id,
+  quoteId,
   taxType: initialTaxType,
-  taxValue: initialTaxValue
+  taxValue: initialTaxValue,
+  workspaceId
 }: QuoteAdjustmentsFormProps) {
   const router = useRouter();
   const [discountType, setDiscountType] = useState<AdjustmentType>(initialDiscountType);
@@ -71,7 +73,7 @@ export function QuoteAdjustmentsForm({
   }
 
   return (
-    <section className="data-card section-spaced">
+    <section className="data-card section-spaced" id={id}>
       <PanelTitleRow
         actions={<Badge label="Quote adjustments are available for draft quotes only">Draft only</Badge>}
         description="Apply one quote-level discount and one quote-level tax while this quote is DRAFT. Percent tax is calculated after discount. Line item snapshots stay unchanged."

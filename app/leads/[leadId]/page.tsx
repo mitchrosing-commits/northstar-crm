@@ -112,7 +112,54 @@ export default async function LeadDetailPage({ params }: PageProps) {
               notes: lead.notes.length,
               timeline: timelineItems.length
             }}
-            extraJumps={[{ href: "#convert-lead" as Route, label: "Conversion" }]}
+            ariaLabel={`${lead.title} lead sections`}
+            jumps={[
+              { href: "#overview" as Route, label: "Overview" },
+              {
+                href: "#ai-record-brief" as Route,
+                label: "AI brief",
+                count: northstarInsight.findings.length,
+                countLabel: { singular: "AI finding", plural: "AI findings" }
+              },
+              { href: "#convert-lead" as Route, label: "Conversion" },
+              {
+                href: "#notes" as Route,
+                label: "Notes",
+                countKey: "notes",
+                countLabel: { singular: "note", plural: "notes" }
+              },
+              {
+                href: "#activities" as Route,
+                label: "Activities",
+                countKey: "activities",
+                countLabel: { singular: "activity", plural: "activities" }
+              },
+              {
+                href: "#email-log" as Route,
+                label: "Emails",
+                countKey: "emailLog",
+                countLabel: { singular: "email log", plural: "email logs" }
+              },
+              {
+                href: "#custom-fields" as Route,
+                label: "Custom fields",
+                countKey: "customFields",
+                countLabel: { singular: "custom field", plural: "custom fields" }
+              },
+              {
+                href: "#timeline" as Route,
+                label: "Timeline",
+                countKey: "timeline",
+                countLabel: { singular: "timeline event", plural: "timeline events" }
+              },
+              {
+                href: "#audit-history" as Route,
+                label: "History",
+                countKey: "auditHistory",
+                countLabel: { singular: "audit event", plural: "audit events" }
+              }
+            ]}
+            label="Sections"
           />
         }
         eyebrow="Lead readiness"
@@ -161,7 +208,7 @@ export default async function LeadDetailPage({ params }: PageProps) {
         </section>
       ) : null}
 
-      <section className="detail-grid">
+      <section className="detail-grid" id="overview">
         <DetailFieldGrid
           fields={[
             { emptyLabel: "No source", label: "Source", value: lead.source },

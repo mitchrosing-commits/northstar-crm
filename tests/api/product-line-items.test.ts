@@ -194,9 +194,14 @@ describe("product catalog and deal line items MVP", () => {
     expect(primaryNav).toContain("appShellNavigationManifest");
     expect(navigation).toContain('label: "Products"');
     expect(navigation).toContain('href: "/products"');
+    expect(navigation).toContain('helper: "Sellable catalog"');
+    expect(navigation).toContain("Manage products, services, packages, and reusable pricing used in deals and quotes.");
     expect(productsPage).toContain("<ProductCreateForm");
     expect(productsPage).toContain("<ProductStatusButton");
     expect(productsPage).toContain("Product Catalog");
+    expect(productsPage).toContain("How Products Feed Quotes");
+    expect(productsPage).toContain("Deal line items copy the product name, description, price, and currency");
+    expect(productsPage).toContain("Find deals to scope");
     expect(productsPage).toContain("ListExportLink");
     expect(productsPage).toContain("Export products");
     expect(productsPage).toContain("matchingCount={products.length}");
@@ -204,22 +209,23 @@ describe("product catalog and deal line items MVP", () => {
     expect(productsPage).toContain("searchParams={{}}");
     expect(productsPage).toContain("workspaceId={workspace.id}");
     expect(productsPage).toContain(
-      "Manage reusable pricing inputs for deal line items without rewriting historical quotes.",
+      "Manage the products, services, packages, and reusable pricing your company sells.",
     );
     expect(productsPage).toContain('className="panel section-separated"');
     expect(productsPage).toContain("PanelTitleRow");
     expect(productsPage).toContain('title="Create Product"');
     expect(productsPage).toContain(
-      'description="Products provide snapshot pricing for deal line items.',
+      "Create reusable products, services, or packages for what your company offers.",
     );
     expect(productsPage).toContain(
       'actions={<CountBadge className="badge">{products.length} total</CountBadge>}',
     );
     expect(productsPage).toContain('title="Product Catalog"');
+    expect(productsPage).toContain("Your sellable catalog for building deal scope, quote line items, and reusable pricing.");
     expect(productsPage).toContain("EmptyState");
     expect(productsPage).toContain('title="No products yet"');
     expect(productsPage).toContain(
-      'description="Create a product to add reusable pricing to deal line items and quote drafts."',
+      "Create the first product, service, or package your company sells",
     );
     expect(productsPage).not.toContain(
       '<div className="empty-state empty-state-compact">',
@@ -300,11 +306,13 @@ describe("product catalog and deal line items MVP", () => {
     expect(dealPage).toContain("summarizeDealCommercialReadiness");
     expect(dealPage).toContain("listProducts(actor)");
     expect(lineItemsPanel).toContain(
-      "Line items snapshot active product pricing when added.",
+      "Line items start from active Products",
     );
     expect(lineItemsPanel).toContain(
-      "They stay separate from deal value, reporting totals, and Forecasting v1 until an accepted quote is manually synced.",
+      "They snapshot product pricing when added and stay separate from deal value until an accepted quote is manually synced.",
     );
+    expect(lineItemsPanel).toContain("Open products");
+    expect(lineItemsPanel).toContain('href="/products"');
     expect(lineItemsPanel).toContain("canEdit = true");
     expect(lineItemsPanel).toContain("if (!canEdit)");
     expect(lineItemsPanel).toContain("LockedPanelNotice");
@@ -323,7 +331,7 @@ describe("product catalog and deal line items MVP", () => {
     expect(lineItemsPanel).toContain("PanelTitleRow");
     expect(lineItemsPanel).toContain('actions={<Badge label={`Line item total: ${totalLabel}`}>{totalLabel}</Badge>}');
     expect(lineItemsPanel).toContain(
-      'description="Line items snapshot active product pricing when added.',
+      'description="Line items start from active Products:',
     );
     expect(lineItemsPanel).toContain('title="Line Items"');
     expect(lineItemsPanel).not.toContain("panel-intro-copy");
@@ -349,7 +357,7 @@ describe("product catalog and deal line items MVP", () => {
     expect(lineItemsPanel).toContain('className="table-secondary-text"');
     expect(lineItemsPanel).toContain("import { InlineEmptyStateText }");
     expect(lineItemsPanel).toContain(
-      "<InlineEmptyStateText>No line items have been added.</InlineEmptyStateText>",
+      "<InlineEmptyStateText>No line items yet. Add products, services, or packages to define the deal scope before creating a quote draft.</InlineEmptyStateText>",
     );
     expect(lineItemsPanel).toContain(
       "const removeLineItemLabel = `Remove line item ${lineItem.productName}`",
@@ -360,7 +368,7 @@ describe("product catalog and deal line items MVP", () => {
     expect(lineItemsPanel).toContain('title="No active products available"');
     expect(lineItemsPanel).toContain("deal-line-items-empty");
     expect(lineItemsPanel).toContain(
-      "Create or reactivate a product before adding line items to this deal.",
+      "Create or reactivate a product, service, or package before adding line items to this deal.",
     );
     expect(lineItemsPanel).not.toContain(
       '<p className="empty-copy section-spaced">',

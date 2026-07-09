@@ -25,6 +25,9 @@ describe("AI preferences and review-first briefs", () => {
     expect(schema).toContain("workspace                    Workspace @relation");
     expect(schema).toContain("user                         User      @relation");
     expect(schema).toContain("naturalLanguageInstructions  String?");
+    expect(schema).toContain("assistantNamePreset");
+    expect(schema).toContain("assistantTonePreset");
+    expect(schema).toContain("assistantHelpAreas");
     expect(schema).not.toContain("aiPreferences Json");
     expect(migration).toContain('CREATE TABLE "AiPreference"');
     expect(migration).toContain('"workspaceId" TEXT NOT NULL');
@@ -35,6 +38,8 @@ describe("AI preferences and review-first briefs", () => {
     expect(settingsPage).toContain('href={"/settings/ai" as Route}');
     expect(aiSettingsPage).toContain("AI Preferences");
     expect(aiSettingsPage).toContain("Review-first");
+    expect(aiSettingsPage).toContain("Assistant name");
+    expect(aiSettingsPage).toContain("Where the assistant helps");
     expect(aiSettingsPage).toContain("CRM Hygiene Suggestions");
     expect(aiSettingsPage).toContain("Provider-specific model choice");
     expect(aiSettingsPage).toContain("updateAiPreferencesAction");
@@ -294,10 +299,16 @@ describe("AI preferences and review-first briefs", () => {
 function samplePreferences(overrides: Partial<AiPreferences> = {}): AiPreferences {
   return {
     assistantDetailLevel: "balanced",
+    assistantNamePreset: "Stella",
+    assistantCustomName: null,
+    assistantHelpAreas: ["guide_around_app", "suggest_follow_ups"],
+    assistantPermissionMode: "review_first",
+    assistantTonePreset: "warm_helpful",
     diagnosticsDetailLevel: "simple",
     emailSummaryLength: "short",
     meetingIntelligenceNoteStyle: "structured",
     naturalLanguageInstructions: null,
+    onboardingGoals: null,
     recordSummaryStyle: "balanced",
     relationshipMemoryUsage: "conservative",
     replyTone: "warm",

@@ -24,6 +24,7 @@ model User {
   ownedActivities          Activity[]              @relation("ActivityOwner")
   ownedContractSteps       DealContractStep[]      @relation("DealContractStepOwner")
   authoredNotes            Note[]                  @relation("NoteAuthor")
+  createdWebForms          WebForm[]               @relation("WebFormCreator")
   createdEmailLogs         EmailLog[]              @relation("EmailLogCreator")
   createdEmailConnections  EmailConnection[]       @relation("EmailConnectionCreator")
   createdMeetingIntakes    MeetingIntake[]         @relation("MeetingIntakeCreator")
@@ -82,6 +83,8 @@ model Workspace {
   quotes                      Quote[]
   quoteItems                  QuoteItem[]
   quotePublicLinks            QuotePublicLink[]
+  webForms                    WebForm[]
+  webFormSubmissions          WebFormSubmission[]
   activities                  Activity[]
   notes                       Note[]
   emailLogs                   EmailLog[]
@@ -358,6 +361,7 @@ model Lead {
   meetingActivityAssociations MeetingActivityAssociation[]
   notes                       Note[]
   emailLogs                   EmailLog[]
+  webFormSubmissions          WebFormSubmission[]
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
   deletedAt                   DateTime?
@@ -365,6 +369,45 @@ model Lead {
   @@index([workspaceId, ownerId])
   @@index([workspaceId, personId])
   @@index([workspaceId, organizationId])
+}
+
+model WebForm {
+  id                  String              @id @default(cuid())
+  workspaceId         String
+  createdById         String?
+  name                String
+  publicTitle         String
+  publicDescription   String?
+  token               String              @unique
+  isEnabled           Boolean             @default(true)
+  sourceLabel         String
+  requireLeadTitle    Boolean             @default(false)
+  workspace           Workspace           @relation(fields: [workspaceId], references: [id])
+  createdBy           User?               @relation("WebFormCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  submissions         WebFormSubmission[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  deletedAt           DateTime?
+
+  @@index([workspaceId])
+  @@index([workspaceId, isEnabled])
+  @@index([token, isEnabled])
+}
+
+model WebFormSubmission {
+  id          String    @id @default(cuid())
+  workspaceId String
+  webFormId   String
+  leadId      String?
+  fingerprint String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  webForm     WebForm   @relation(fields: [webFormId], references: [id], onDelete: Cascade)
+  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  submittedAt DateTime  @default(now())
+
+  @@index([workspaceId, webFormId, submittedAt])
+  @@index([workspaceId, fingerprint, submittedAt])
+  @@index([leadId])
 }
 
 model Person {
@@ -770,6 +813,12 @@ model AiPreference {
   meetingIntelligenceNoteStyle String    @default("structured")
   suggestionAggressiveness     String    @default("medium")
   naturalLanguageInstructions  String?
+  assistantNamePreset          String    @default("Stella")
+  assistantCustomName          String?
+  assistantTonePreset          String    @default("warm_helpful")
+  assistantHelpAreas           String?
+  assistantPermissionMode      String    @default("review_first")
+  onboardingGoals              String?
   workspace                    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user                         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt                    DateTime  @default(now())

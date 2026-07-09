@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { AiRecordBriefCard } from "@/components/ai-record-brief-card";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
+import { Badge } from "@/components/badge";
 import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel";
 import { DetailFieldGrid } from "@/components/detail-field-grid";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
@@ -12,6 +13,7 @@ import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
 import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
+import { PanelTitleRow } from "@/components/panel-title-row";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
 import { getNextOpenActivity, RecordNextActivitySummary } from "@/components/record-next-activity-summary";
 import { RecordHeaderActions } from "@/components/record-header-actions";
@@ -129,35 +131,74 @@ export default async function ContactDetailPage({ params }: PageProps) {
               auditHistory: person.auditLogs.length,
               customFields: customFields.length,
               emailLog: emailLogCount,
+              linkedDeals: person.deals.length,
               notes: person.notes.length,
               timeline: timelineItems.length
             }}
-            extraJumps={[
+            ariaLabel={`${personName} contact profile sections`}
+            jumps={[
               {
                 href: "#profile" as Route,
-                label: "Profile",
+                label: "Overview",
                 count: 4,
                 countLabel: { singular: "profile field", plural: "profile fields" }
               },
               {
-                href: "#northstar-assistant" as Route,
-                label: "AI",
+                href: "#ai-record-brief" as Route,
+                label: "AI brief",
                 count: northstarInsight.findings.length,
                 countLabel: { singular: "AI finding", plural: "AI findings" }
               },
               {
                 href: "#relationship-brief" as Route,
-                label: "Memory",
+                label: "Relationship brief",
                 count: relationshipBriefCount,
                 countLabel: { singular: "saved memory section", plural: "saved memory sections" }
               },
               {
+                href: "#notes" as Route,
+                label: "Notes",
+                countKey: "notes",
+                countLabel: { singular: "note", plural: "notes" }
+              },
+              {
+                href: "#activities" as Route,
+                label: "Activities",
+                countKey: "activities",
+                countLabel: { singular: "activity", plural: "activities" }
+              },
+              {
+                href: "#email-log" as Route,
+                label: "Emails",
+                countKey: "emailLog",
+                countLabel: { singular: "email log", plural: "email logs" }
+              },
+              {
                 href: "#related-deals" as Route,
                 label: "Deals",
-                count: person.deals.length,
+                countKey: "linkedDeals",
                 countLabel: { singular: "deal", plural: "deals" }
+              },
+              {
+                href: "#custom-fields" as Route,
+                label: "Custom fields",
+                countKey: "customFields",
+                countLabel: { singular: "custom field", plural: "custom fields" }
+              },
+              {
+                href: "#timeline" as Route,
+                label: "Timeline",
+                countKey: "timeline",
+                countLabel: { singular: "timeline event", plural: "timeline events" }
+              },
+              {
+                href: "#audit-history" as Route,
+                label: "History",
+                countKey: "auditHistory",
+                countLabel: { singular: "audit event", plural: "audit events" }
               }
             ]}
+            label="Profile sections"
           />
         }
         eyebrow="Relationship snapshot"
@@ -186,6 +227,65 @@ export default async function ContactDetailPage({ params }: PageProps) {
         title="Contact workspace"
       />
 
+      <section className="contact-profile-overview section-spaced" id="profile">
+        <div className="data-card contact-profile-identity-card">
+          <div className="contact-profile-heading">
+            <span aria-hidden="true" className="contact-profile-avatar">
+              {contactInitials(personName)}
+            </span>
+            <div>
+              <p className="page-kicker">Contact profile</p>
+              <h2>{personName}</h2>
+              <p>{recordSubtitle([person.organization?.name, person.email, person.owner?.name ?? person.owner?.email]) ?? "Relationship profile"}</p>
+            </div>
+          </div>
+          <DetailFieldGrid
+            fields={[
+              { emptyLabel: "No email", label: "Email", value: person.email },
+              { emptyLabel: "No phone", label: "Phone", value: person.phone },
+              { label: "Owner", value: person.owner?.name ?? person.owner?.email ?? "Unassigned" },
+              {
+                emptyLabel: "No organization",
+                label: "Organization",
+                value: person.organization ? (
+                  <Link className="inline-link" href={`/organizations/${person.organization.id}`}>
+                    {person.organization.name}
+                  </Link>
+                ) : (
+                  null
+                )
+              }
+            ]}
+            title="Identity"
+          />
+        </div>
+        <div className="data-card contact-profile-context-card">
+          <PanelTitleRow
+            actions={<Badge>Profile</Badge>}
+            description="Fast relationship context before you scroll into notes, activity history, and custom fields."
+            title="Relationship Context"
+          />
+          <div className="deal-context-metrics">
+            <div>
+              <span>Memory sections</span>
+              <strong>{relationshipBriefCount}/5</strong>
+            </div>
+            <div>
+              <span>Recent notes</span>
+              <strong>{person.notes.length}</strong>
+            </div>
+            <div>
+              <span>Linked deals</span>
+              <strong>{person.deals.length}</strong>
+            </div>
+            <div>
+              <span>Email logs</span>
+              <strong>{emailLogCount}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <AiRecordBriefCard brief={aiRecordBrief} />
       <NorthstarAssistantPanel insight={northstarInsight} />
 
@@ -197,33 +297,13 @@ export default async function ContactDetailPage({ params }: PageProps) {
         workspaceId={workspace.id}
       />
 
-      <section className="detail-grid" id="profile">
-        <DetailFieldGrid
-          fields={[
-            { emptyLabel: "No email", label: "Email", value: person.email },
-            { emptyLabel: "No phone", label: "Phone", value: person.phone },
-            { label: "Owner", value: person.owner?.name ?? person.owner?.email ?? "Unassigned" },
-            {
-              emptyLabel: "No organization",
-              label: "Organization",
-              value: person.organization ? (
-                <Link className="inline-link" href={`/organizations/${person.organization.id}`}>
-                  {person.organization.name}
-                </Link>
-              ) : (
-                null
-              )
-            }
-          ]}
-        />
-        <NotesPanel
-          attachment={{ personId: person.id }}
-          emptyMessage="No notes are linked to this contact."
-          notes={person.notes}
-          topMargin={false}
-          workspaceId={workspace.id}
-        />
-      </section>
+      <NotesPanel
+        attachment={{ personId: person.id }}
+        description="Small internal facts and follow-up notes for this person. Keep longer meeting transcripts in source records."
+        emptyMessage="No notes are linked to this contact."
+        notes={person.notes}
+        workspaceId={workspace.id}
+      />
 
       <RelatedRecordsPanel count={person.deals.length} id="related-deals" title="Linked Deals">
         <RelatedDealsTable
@@ -384,4 +464,15 @@ function relationshipBriefAcceptedFacts(change: ParsedRelationshipBriefChange) {
 
 function relationshipBriefSourceString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function contactInitials(name: string) {
+  const initials = name
+    .split(/\s+/)
+    .map((part) => part.trim().slice(0, 1))
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return initials || "C";
 }

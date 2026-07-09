@@ -66,10 +66,7 @@ export const assistantSuggestedCommands = [
   "Show me the highest-risk deals this week.",
   "Check whether Mike Fox replied to my recent email.",
   "Remind me to follow up with Jane Doe next Tuesday.",
-  "Add a note for Jane Doe: Prefers Monday morning check-ins.",
-  "Update Jane Doe's profile to include that she is going on vacation to France in 3 weeks with her family.",
-  "Create an organization for Acme and add Mike Fox as CFO from this note: Mike said Acme is evaluating Q3 pricing.",
-  "Make email replies more casual and concise."
+  "Add a note for Jane Doe: she prefers concise email updates."
 ] as const;
 
 const readOnlySafetyNotice =

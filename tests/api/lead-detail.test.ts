@@ -63,7 +63,9 @@ describe("lead list and detail behavior", () => {
     expect(leadDetail).toContain("Create a first outreach activity for this lead.");
     expect(leadDetail).not.toContain("<h2 className=\"panel-title\">First outreach</h2>");
     expect(leadDetail).not.toContain("<p className=\"empty-copy\">\n            Create a first outreach activity for this lead.");
-    expect(leadDetail).toContain("extraJumps={[{ href: \"#convert-lead\" as Route, label: \"Conversion\" }]}");
+    expect(leadDetail).toContain("jumps={[");
+    expect(leadDetail).toContain('{ href: "#overview" as Route, label: "Overview" }');
+    expect(leadDetail).toContain('{ href: "#convert-lead" as Route, label: "Conversion" }');
     expect(leadDetail).toContain("activities: lead.activities.length");
     expect(leadDetail).toContain("customFields: customFields.length");
     expect(leadDetail).toContain("notes: lead.notes.length");

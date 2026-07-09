@@ -19,11 +19,15 @@ export function redactSensitiveText(value: string | undefined) {
       /\b((?:databaseUrl|encryptionKey|privateKey|sessionSecret|webhookUrl)\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
       "$1[redacted]"
     )
+    .replace(/\b(https?:\/\/[^\s"]+\/f\/)[A-Za-z0-9_-]{32,128}\b/gi, "$1[redacted]")
+    .replace(/(^|[\s"'])\/f\/[A-Za-z0-9_-]{32,128}\b/g, "$1/f/[redacted]")
     .replace(/\b(https?:\/\/[^\s"]+\/q\/)[A-Za-z0-9_-]{32,128}\b/gi, "$1[redacted]")
     .replace(/(^|[\s"'])\/q\/[A-Za-z0-9_-]{32,128}\b/g, "$1/q/[redacted]")
     .replace(/\b((?:cookie|set-cookie)\s*:\s*)[^\r\n"]+/gi, "$1[redacted]")
     .replace(/\b(authorization\s*[:=]\s*)(?:[^\s,:;&"]+[ \t]+)?[^\s,:;&"]+/gi, "$1[redacted]")
     .replace(/\b((?:x-api-key|api-key)\s*[:=]\s*)[^\s,:;&"]+/gi, "$1[redacted]")
+    .replace(/\b(?:raw\s+)?provider\s+(?:payload|error)\s*[:=]\s*[^\r\n]+/gi, "[redacted provider detail]")
+    .replace(/\braw\s+gmail\s+(?:body|headers?|payload|error)\s*[:=]\s*[^\r\n]+/gi, "[redacted provider detail]")
     .replace(/Bearer\s+[\w.+/~=-]+/gi, "Bearer [redacted]")
     .replace(/https?:\/\/[^\s"]+\/reset-password\?[^\s"]*\btoken=[^&\s"]+[^\s"]*/gi, "[redacted reset url]")
     .replace(/\/reset-password\?[^\s"]*\btoken=[^&\s"]+[^\s"]*/gi, "[redacted reset url]")

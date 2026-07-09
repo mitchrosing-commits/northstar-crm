@@ -59,6 +59,22 @@ export default async function AiSettingsPage({ searchParams }: PageProps) {
         <form action={updateAiPreferencesAction} className="inline-form section-spaced">
           <div className="form-grid">
             <PreferenceSelect
+              defaultValue={preferences.assistantNamePreset}
+              label="Assistant name"
+              name="assistantNamePreset"
+              options={aiPreferenceOptions.assistantNamePreset}
+            />
+            <label className="form-field">
+              <FormFieldLabel>Custom assistant name</FormFieldLabel>
+              <input defaultValue={preferences.assistantCustomName ?? ""} maxLength={40} name="assistantCustomName" placeholder="Use when Assistant name is Custom" />
+            </label>
+            <PreferenceSelect
+              defaultValue={preferences.assistantTonePreset}
+              label="Assistant tone"
+              name="assistantTonePreset"
+              options={aiPreferenceOptions.assistantTonePreset}
+            />
+            <PreferenceSelect
               defaultValue={preferences.recordSummaryStyle}
               label="Record summary style"
               name="recordSummaryStyle"
@@ -113,6 +129,30 @@ export default async function AiSettingsPage({ searchParams }: PageProps) {
                 maxLength={1200}
                 name="naturalLanguageInstructions"
                 rows={4}
+              />
+            </label>
+            <fieldset className="form-field form-field-wide onboarding-choice-grid">
+              <legend>Where the assistant helps</legend>
+              {aiPreferenceOptions.assistantHelpAreas.map((area) => (
+                <label className="checkbox-card" key={area}>
+                  <input
+                    defaultChecked={preferences.assistantHelpAreas.includes(area)}
+                    name="assistantHelpAreas"
+                    type="checkbox"
+                    value={area}
+                  />
+                  <span>{labelFromValue(area)}</span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="form-field form-field-wide">
+              <FormFieldLabel>Onboarding goals</FormFieldLabel>
+              <textarea
+                defaultValue={preferences.onboardingGoals ?? ""}
+                maxLength={1200}
+                name="onboardingGoals"
+                placeholder="Tell Northstar what you want help setting up first."
+                rows={3}
               />
             </label>
           </div>

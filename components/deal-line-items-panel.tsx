@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
@@ -127,7 +128,7 @@ export function DealLineItemsPanel({
     <section className="data-card section-spaced" id="line-items">
       <PanelTitleRow
         actions={<Badge label={`Line item total: ${totalLabel}`}>{totalLabel}</Badge>}
-        description="Line items snapshot active product pricing when added. They stay separate from deal value, reporting totals, and Forecasting v1 until an accepted quote is manually synced."
+        description="Line items start from active Products: the products, services, or packages your company sells. They snapshot product pricing when added and stay separate from deal value until an accepted quote is manually synced."
         title="Line Items"
       />
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
@@ -184,7 +185,7 @@ export function DealLineItemsPanel({
             ) : (
               <tr>
                 <td colSpan={5} data-label="Line items">
-                  <InlineEmptyStateText>No line items have been added.</InlineEmptyStateText>
+                  <InlineEmptyStateText>No line items yet. Add products, services, or packages to define the deal scope before creating a quote draft.</InlineEmptyStateText>
                 </td>
               </tr>
             )}
@@ -224,9 +225,14 @@ export function DealLineItemsPanel({
         </form>
       ) : (
         <EmptyState
+          actions={
+            <Link className="button-secondary button-compact" href="/products">
+              Open products
+            </Link>
+          }
           className="empty-state-compact empty-state-panel deal-line-items-empty"
           title="No active products available"
-          description="Create or reactivate a product before adding line items to this deal."
+          description="Create or reactivate a product, service, or package before adding line items to this deal."
         />
       )}
     </section>

@@ -171,15 +171,19 @@ export default async function DealDetailPage({ params }: PageProps) {
               customFields: customFields.length,
               emailLog: emailLogs.length,
               notes: deal.notes.length,
+              quotes: deal.quotes.length,
               timeline: timelineItems.length
             }}
-            extraJumps={[
+            ariaLabel={`${deal.title} deal sections`}
+            jumps={[
+              { href: "#overview" as Route, label: "Overview" },
               {
-                href: "#northstar-assistant" as Route,
-                label: "AI",
+                href: "#ai-record-brief" as Route,
+                label: "AI brief",
                 count: northstarInsight.findings.length,
                 countLabel: { singular: "AI finding", plural: "AI findings" }
               },
+              { href: "#northstar-assistant" as Route, label: "Guidance" },
               {
                 href: "#contract-workflow" as Route,
                 label: "Contract",
@@ -195,10 +199,48 @@ export default async function DealDetailPage({ params }: PageProps) {
               {
                 href: "#quotes" as Route,
                 label: "Quotes",
-                count: deal.quotes.length,
+                countKey: "quotes",
                 countLabel: { singular: "quote", plural: "quotes" }
+              },
+              {
+                href: "#custom-fields" as Route,
+                label: "Custom fields",
+                countKey: "customFields",
+                countLabel: { singular: "custom field", plural: "custom fields" }
+              },
+              { href: "#deal-outcome" as Route, label: "Outcome" },
+              {
+                href: "#activities" as Route,
+                label: "Activities",
+                countKey: "activities",
+                countLabel: { singular: "activity", plural: "activities" }
+              },
+              {
+                href: "#notes" as Route,
+                label: "Notes",
+                countKey: "notes",
+                countLabel: { singular: "note", plural: "notes" }
+              },
+              {
+                href: "#email-log" as Route,
+                label: "Emails",
+                countKey: "emailLog",
+                countLabel: { singular: "email log", plural: "email logs" }
+              },
+              {
+                href: "#timeline" as Route,
+                label: "Timeline",
+                countKey: "timeline",
+                countLabel: { singular: "timeline event", plural: "timeline events" }
+              },
+              {
+                href: "#audit-history" as Route,
+                label: "History",
+                countKey: "auditHistory",
+                countLabel: { singular: "audit event", plural: "audit events" }
               }
             ]}
+            label="Sections"
           />
         }
         description={`${deal.pipeline.name} pipeline · Expected close ${formatDate(deal.expectedCloseAt)}`}
@@ -262,7 +304,7 @@ export default async function DealDetailPage({ params }: PageProps) {
 
       <DealAutomationTemplatesPanel dealId={deal.id} suggestions={automationSuggestions} />
 
-      <section className="detail-grid">
+      <section className="detail-grid" id="overview">
         <DetailFieldGrid
           fields={[
             { label: "Value", value: formatMoney(deal.valueCents, deal.currency) },
@@ -348,7 +390,7 @@ export default async function DealDetailPage({ params }: PageProps) {
         workspaceId={workspace.id}
       />
 
-      <section className="data-card section-spaced">
+      <section className="data-card section-spaced" id="deal-outcome">
         <PanelTitleRow title="Deal Outcome" />
         <DealCloseActions dealId={deal.id} status={deal.status} workspaceId={workspace.id} />
       </section>
