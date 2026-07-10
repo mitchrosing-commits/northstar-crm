@@ -43,6 +43,9 @@ describe("Meeting Prep Brief v1", () => {
     expect(service).toContain("Existing Meeting Intelligence association");
     expect(service).toContain("Name-only candidate");
     expect(service).toContain("Workspace member email");
+    expect(service).toContain("attendeeManualActions");
+    expect(service).toContain('label: "Search organizations"');
+    expect(service).toContain('label: "Search deals"');
     expect(service).toContain("missingItems");
     expect(service).toContain("suggestionItems");
     expect(service).toContain('source: "Suggestion"');
@@ -58,6 +61,8 @@ describe("Meeting Prep Brief v1", () => {
     expect(card).toContain("Attendee Confidence");
     expect(card).toContain("confirmed CRM links");
     expect(card).toContain("suggested CRM candidates");
+    expect(card).toContain("MeetingPrepCandidateLinks");
+    expect(card).toContain("meeting-prep-candidate-link");
     expect(card).toContain("MeetingPrepActionLinks");
     expect(card).toContain("Organization Facts");
     expect(card).toContain("Active Deal Context");

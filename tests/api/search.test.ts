@@ -442,6 +442,7 @@ describe("global workspace search", () => {
       "/pipeline",
       "/quotes",
       "/web-forms",
+      "/scheduler",
       "/activities",
       "/email",
       "/meeting-intelligence",

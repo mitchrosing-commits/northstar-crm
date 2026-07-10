@@ -5,6 +5,7 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { listAssistantActionRequests } from "@/lib/services/assistant/assistant-action-request-service";
 import { answerAssistantCommand } from "@/lib/services/assistant/assistant-command-service";
 import { buildAssistantTodayCommandCenter } from "@/lib/services/assistant/assistant-today-command-center-service";
+import { getAiPreferences } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -20,11 +21,15 @@ export default async function AssistantPage({ searchParams }: PageProps) {
   const todayCommandCenterStatus = normalizeTodayCommandCenterStatus(resolvedSearchParams.todayCommandCenter);
   const showHiddenTodayItems = resolvedSearchParams.today === "hidden";
   const { actor, workspace } = await getCurrentWorkspaceContext();
-  const [answer, pendingActionRequests, todayCommandCenter] = await Promise.all([
+  const [answer, pendingActionRequests, todayCommandCenter, preferences] = await Promise.all([
     command ? answerAssistantCommand(actor, command) : Promise.resolve(null),
     listAssistantActionRequests(actor),
-    buildAssistantTodayCommandCenter(actor, new Date(), { showHidden: showHiddenTodayItems })
+    buildAssistantTodayCommandCenter(actor, new Date(), { showHidden: showHiddenTodayItems }),
+    getAiPreferences(actor)
   ]);
+  const assistantDisplayName = preferences.assistantNamePreset === "Custom" && preferences.assistantCustomName
+    ? preferences.assistantCustomName
+    : preferences.assistantNamePreset;
 
   return (
     <AppShell workspace={workspace}>
@@ -37,6 +42,8 @@ export default async function AssistantPage({ searchParams }: PageProps) {
         actionRequestQueue={actionRequestQueue}
         actionRequestStatus={actionRequestStatus}
         answer={answer}
+        assistantName={assistantDisplayName}
+        assistantTone={preferences.assistantTonePreset}
         command={command}
         pendingActionRequests={pendingActionRequests}
         todayCommandCenter={todayCommandCenter}

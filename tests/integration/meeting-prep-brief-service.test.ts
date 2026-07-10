@@ -381,14 +381,26 @@ describe("Meeting Prep Brief service", () => {
         expect.objectContaining({
           label: expect.stringContaining("Exact Email"),
           state: "matched_contact",
+          actions: expect.arrayContaining([
+            expect.objectContaining({ href: `/contacts/${exactPerson.id}`, label: "Open matched contact" }),
+            expect.objectContaining({ href: `/contacts?q=Exact+Email${suffix}`, label: "Search contacts" }),
+            expect.objectContaining({ href: "/organizations?q=example.test", label: "Search organizations" }),
+            expect.objectContaining({ href: expect.stringContaining(`/deals?q=Attendee+Confidence+Review+${suffix}`), label: "Search deals" }),
+            expect.objectContaining({ href: `/activities/${meeting.id}/edit`, label: "Open activity" })
+          ]),
           evidence: expect.arrayContaining([expect.objectContaining({ label: "Exact email match", detail: exactEmail })]),
-          confirmedLinks: expect.arrayContaining([expect.objectContaining({ href: `/contacts/${exactPerson.id}` })])
+          confirmedLinks: expect.arrayContaining([expect.objectContaining({ detail: exactEmail, href: `/contacts/${exactPerson.id}` })])
         }),
         expect.objectContaining({
           label: duplicateEmail,
           state: "multiple_contact_candidates",
+          actions: expect.arrayContaining([
+            expect.objectContaining({ href: `/contacts?q=${encodeURIComponent(duplicateEmail)}`, label: "Search contacts" }),
+            expect.objectContaining({ href: "/organizations?q=example.test", label: "Search organizations" }),
+            expect.objectContaining({ href: expect.stringContaining(`/deals?q=Attendee+Confidence+Review+${suffix}`), label: "Search deals" })
+          ]),
           suggestedCandidates: expect.arrayContaining([
-            expect.objectContaining({ label: expect.stringContaining("Jordan Duplicate") })
+            expect.objectContaining({ detail: duplicateEmail, label: expect.stringContaining("Jordan Duplicate") })
           ])
         }),
         expect.objectContaining({
@@ -430,6 +442,8 @@ describe("Meeting Prep Brief service", () => {
       ])
     );
     expect(JSON.stringify(attendees)).toContain(`/contacts?q=${encodeURIComponent(deletedEmail)}`);
+    expect(JSON.stringify(attendees)).toContain("/organizations?q=example.test");
+    expect(JSON.stringify(attendees)).toContain(`/deals?q=Attendee+Confidence+Review+${suffix}`);
     expect(JSON.stringify(attendees)).toContain(`/activities/${meeting.id}/edit`);
     expect(JSON.stringify(brief)).not.toContain("RAW TRANSCRIPT");
   });

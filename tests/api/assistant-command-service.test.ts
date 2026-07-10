@@ -21,8 +21,10 @@ import type {
 
 const assistantPage = readFileSync(join(process.cwd(), "app/assistant/page.tsx"), "utf8");
 const assistantActions = readFileSync(join(process.cwd(), "app/assistant/actions.ts"), "utf8");
+const assistantCommandForm = readFileSync(join(process.cwd(), "components/assistant-command-form.tsx"), "utf8");
 const assistantConsole = readFileSync(join(process.cwd(), "components/assistant-console.tsx"), "utf8");
 const assistantDraftCard = readFileSync(join(process.cwd(), "components/assistant-draft-action-card.tsx"), "utf8");
+const assistantIcon = readFileSync(join(process.cwd(), "components/assistant-icon.tsx"), "utf8");
 const assistantReviewQueue = readFileSync(join(process.cwd(), "components/assistant-action-review-queue.tsx"), "utf8");
 const assistantTodayCommandCenter = readFileSync(join(process.cwd(), "components/assistant-today-command-center.tsx"), "utf8");
 const actionRequestService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-action-request-service.ts"), "utf8");
@@ -145,12 +147,20 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
   it("wires the route, nav, console, queue, and styles", () => {
     expect(navigation).toContain('href: "/assistant" as Route');
     expect(navigation).toContain('label: "Assistant"');
+    expect(navigation).toContain('icon: "NorthstarAssistant"');
     expect(navigation).toContain('helper: "Review-first AI"');
     expect(primaryNav).toContain("appShellNavigationManifest");
+    expect(primaryNav).toContain("AssistantIcon");
+    expect(primaryNav).toContain("data-testid");
+    expect(assistantIcon).toContain("export const AssistantIcon");
+    expect(assistantIcon).not.toContain("Sparkles");
+    expect(assistantIcon).not.toContain("BrainCircuit");
     expect(assistantPage).toContain("export default async function AssistantPage");
     expect(assistantPage).toContain("answerAssistantCommand(actor, command)");
     expect(assistantPage).toContain("listAssistantActionRequests(actor)");
     expect(assistantPage).toContain("buildAssistantTodayCommandCenter(actor, new Date(), { showHidden: showHiddenTodayItems })");
+    expect(assistantPage).toContain("getAiPreferences(actor)");
+    expect(assistantPage).toContain("assistantDisplayName");
     expect(assistantPage).toContain("showHiddenTodayItems");
     expect(assistantPage).toContain("todayCommandCenterStatus={todayCommandCenterStatus}");
     expect(assistantPage).toContain("actionRequestQueue={actionRequestQueue}");
@@ -161,10 +171,21 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantConsole).toContain("AssistantDraftActionCard");
     expect(assistantConsole).toContain("AssistantActionReviewQueue");
     expect(assistantConsole).toContain("AssistantTodayCommandCenter");
+    expect(assistantConsole).toContain("AssistantCommandForm");
+    expect(assistantConsole).toContain("AssistantIcon");
+    expect(assistantConsole.indexOf("assistant-command-panel")).toBeLessThan(assistantConsole.indexOf("<AssistantTodayCommandCenter"));
     expect(assistantConsole).toContain("AssistantPermissionSummary");
     expect(assistantConsole).toContain("Available now");
     expect(assistantConsole).toContain("Review-only for now");
-    expect(assistantConsole).toContain('action="/assistant"');
+    expect(assistantConsole).toContain("Ask {assistantName}");
+    expect(assistantConsole).toContain("assistantToneLabel");
+    expect(assistantCommandForm).toContain('action="/assistant"');
+    expect(assistantCommandForm).toContain("Question or command");
+    expect(assistantCommandForm).toContain("Ready for a review-first CRM question.");
+    expect(assistantCommandForm).toContain("is building a review-first answer");
+    expect(assistantCommandForm).toContain("Enter a question or command before asking.");
+    expect(assistantCommandForm).toContain("aria-live");
+    expect(assistantCommandForm).toContain("required");
     expect(assistantConsole).toContain("Context-only");
     expect(assistantConsole).toContain("Draft only");
     expect(assistantActions).toContain("saveAssistantDraftActionRequest");
@@ -211,6 +232,9 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantTodayCommandCenter).toContain("Draft follow-up");
     expect(assistantTodayCommandCenter).toContain("Review activities");
     expect(globalStyles).toContain(".assistant-console");
+    expect(globalStyles).toContain(".assistant-command-panel-primary");
+    expect(globalStyles).toContain(".assistant-command-icon");
+    expect(globalStyles).toContain(".assistant-command-status");
     expect(globalStyles).toContain(".assistant-today-command-center");
     expect(globalStyles).toContain(".assistant-today-item");
     expect(globalStyles).toContain(".assistant-today-explanation");

@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   Building2,
   CalendarCheck,
+  CalendarPlus,
   CircleDollarSign,
   Contact,
   FileText,
@@ -20,6 +21,7 @@ import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { AssistantIcon } from "@/components/assistant-icon";
 import { appNavigationGroups, appShellNavigationManifest, type AppNavigationIconName } from "@/lib/navigation";
 
 const navigationIcons: Record<AppNavigationIconName, LucideIcon> = {
@@ -27,11 +29,13 @@ const navigationIcons: Record<AppNavigationIconName, LucideIcon> = {
   BrainCircuit,
   Building2,
   CalendarCheck,
+  CalendarPlus,
   CircleDollarSign,
   Contact,
   FileText,
   Inbox,
   LayoutDashboard,
+  NorthstarAssistant: AssistantIcon,
   Package,
   PanelsTopLeft,
   Search,
@@ -69,7 +73,7 @@ export function PrimaryNav() {
                     prefetch={true}
                     title={navItemLabel}
                   >
-                    <Icon size={17} aria-hidden="true" />
+                    <Icon aria-hidden="true" data-testid={item.icon === "NorthstarAssistant" ? "assistant-icon" : undefined} size={17} />
                     <span className="nav-item-label">{item.label}</span>
                   </Link>
                 </li>

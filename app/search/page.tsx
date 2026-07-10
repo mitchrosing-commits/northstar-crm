@@ -22,6 +22,7 @@ import { useId } from "react";
 
 import { ActionGroup } from "@/components/action-group";
 import { AppShell } from "@/components/app-shell";
+import { AssistantIcon } from "@/components/assistant-icon";
 import { formatActivityDueBadgeLabel } from "@/components/activity-due-badge";
 import { EmptyState } from "@/components/empty-state";
 import { formatActivityType, formatDate, formatMoney } from "@/components/format";
@@ -56,11 +57,13 @@ const searchNavigationIcons: Record<AppNavigationIconName, LucideIcon> = {
   BrainCircuit,
   Building2,
   CalendarCheck,
+  CalendarPlus,
   CircleDollarSign,
   Contact,
   FileText,
   Inbox,
   LayoutDashboard,
+  NorthstarAssistant: AssistantIcon,
   Package,
   PanelsTopLeft,
   Search,

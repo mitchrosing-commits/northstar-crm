@@ -28,6 +28,7 @@ model User {
   createdEmailLogs         EmailLog[]              @relation("EmailLogCreator")
   createdEmailConnections  EmailConnection[]       @relation("EmailConnectionCreator")
   createdMeetingIntakes    MeetingIntake[]         @relation("MeetingIntakeCreator")
+  createdSchedulerLinks    SchedulerLink[]         @relation("SchedulerLinkCreator")
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
   aiPreferences            AiPreference[]
   assistantActionRequests  AssistantActionRequest[] @relation("AssistantActionRequestCreator")
@@ -100,6 +101,8 @@ model Workspace {
   jobs                        Job[]
   meetingIntakes              MeetingIntake[]
   meetingActivityAssociations MeetingActivityAssociation[]
+  schedulerLinks              SchedulerLink[]
+  schedulerBookings           SchedulerBooking[]
   aiPreferences               AiPreference[]
   assistantActionRequests     AssistantActionRequest[]
   assistantTodayItemHides     AssistantTodayItemHide[]
@@ -418,6 +421,54 @@ model WebFormSubmission {
   @@index([leadId])
 }
 
+model SchedulerLink {
+  id                   String             @id @default(cuid())
+  workspaceId          String
+  createdById          String?
+  name                 String
+  meetingTitle         String
+  description          String?
+  token                String             @unique
+  isEnabled            Boolean            @default(true)
+  durationMinutes      Int
+  timezone             String
+  minimumNoticeMinutes Int                @default(0)
+  availability         Json
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id])
+  createdBy            User?              @relation("SchedulerLinkCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  bookings             SchedulerBooking[]
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  deletedAt            DateTime?
+
+  @@index([workspaceId])
+  @@index([workspaceId, isEnabled])
+  @@index([token, isEnabled])
+}
+
+model SchedulerBooking {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  schedulerLinkId String
+  activityId      String?
+  fingerprint     String
+  attendeeName    String
+  attendeeEmail   String
+  attendeeCompany String?
+  attendeeNote    String?
+  startAt         DateTime
+  endAt           DateTime
+  timezone        String
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id])
+  schedulerLink   SchedulerLink @relation(fields: [schedulerLinkId], references: [id], onDelete: Cascade)
+  activity        Activity?     @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  requestedAt     DateTime      @default(now())
+
+  @@index([workspaceId, schedulerLinkId, requestedAt])
+  @@index([workspaceId, fingerprint, requestedAt])
+  @@index([activityId])
+}
+
 model Person {
   id                             String                       @id @default(cuid())
   workspaceId                    String
@@ -493,6 +544,7 @@ model Activity {
   person              Person?                      @relation(fields: [personId], references: [id])
   organization        Organization?                @relation(fields: [organizationId], references: [id])
   meetingAssociations MeetingActivityAssociation[]
+  schedulerBookings   SchedulerBooking[]
   emailLogLinks       EmailLogActivityLink[]
   createdAt           DateTime                     @default(now())
   updatedAt           DateTime                     @updatedAt

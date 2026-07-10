@@ -23,6 +23,8 @@ export function redactSensitiveText(value: string | undefined) {
     .replace(/(^|[\s"'])\/f\/[A-Za-z0-9_-]{32,128}\b/g, "$1/f/[redacted]")
     .replace(/\b(https?:\/\/[^\s"]+\/q\/)[A-Za-z0-9_-]{32,128}\b/gi, "$1[redacted]")
     .replace(/(^|[\s"'])\/q\/[A-Za-z0-9_-]{32,128}\b/g, "$1/q/[redacted]")
+    .replace(/\b(https?:\/\/[^\s"]+\/s\/)[A-Za-z0-9_-]{32,128}\b/gi, "$1[redacted]")
+    .replace(/(^|[\s"'])\/s\/[A-Za-z0-9_-]{32,128}\b/g, "$1/s/[redacted]")
     .replace(/\b((?:cookie|set-cookie)\s*:\s*)[^\r\n"]+/gi, "$1[redacted]")
     .replace(/\b(authorization\s*[:=]\s*)(?:[^\s,:;&"]+[ \t]+)?[^\s,:;&"]+/gi, "$1[redacted]")
     .replace(/\b((?:x-api-key|api-key)\s*[:=]\s*)[^\s,:;&"]+/gi, "$1[redacted]")

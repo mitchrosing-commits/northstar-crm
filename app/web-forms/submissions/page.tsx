@@ -143,7 +143,7 @@ export default async function WebFormSubmissionsPage({ searchParams }: PageProps
       </section>
 
       {review.submissions.length > 0 ? (
-        <section className="panel" id="accepted-submissions" tabIndex={-1}>
+        <section className="panel" id="accepted-submissions" aria-labelledby="accepted-submissions-title" tabIndex={-1}>
           <PanelTitleRow
             actions={
               <Badge label={`${showingCount} visible of ${review.filteredSubmissionCount} matching submissions`}>
@@ -152,6 +152,7 @@ export default async function WebFormSubmissionsPage({ searchParams }: PageProps
             }
             description={`Newest accepted submissions first. Results are capped at ${review.submissionLimit}.`}
             title="Accepted Submissions"
+            titleId="accepted-submissions-title"
           />
           <TableScroll aria-label="All accepted web form submissions">
             <table className="table crm-list-table">

@@ -82,9 +82,11 @@ export type EmailReplyThreadMessageContext = {
   toText: string | null;
 };
 
-const defaultEmailReplyModel = "gpt-5.5";
+const defaultEmailReplyModel = "gpt-5.6-terra";
+const emailReplyModelEnvName = "EMAIL_REPLY_OPENAI_MODEL";
 const maxEmailBodyChars = 3000;
 const maxContextItemChars = 500;
+const openAIEmailReplyTimeoutMs = 30_000;
 const playwrightEmailReplyTestProviderFlag = "PLAYWRIGHT_EMAIL_REPLY_TEST_PROVIDER";
 const defaultWarnings = [
   "Review and edit before using. Northstar never sends AI-generated replies automatically.",
@@ -333,32 +335,150 @@ export function createOpenAIEmailReplyProvider(env: EnvInput = process.env, fetc
     id: "openai",
     name: "OpenAI",
     async generate(input) {
-      const response = await fetchImpl("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          input: [
-            { role: "system", content: input.prompt.system },
-            { role: "user", content: input.prompt.user }
-          ],
-          max_output_tokens: 1200,
-          model: defaultEmailReplyModel
-        })
-      });
+      let response: Response;
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), openAIEmailReplyTimeoutMs);
+      try {
+        response = await fetchImpl("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(buildOpenAIEmailReplyRequestPayload(input, env)),
+          signal: abortController.signal
+        });
+      } catch (error) {
+        throw openAIEmailReplyTransportError(error);
+      } finally {
+        clearTimeout(timeout);
+      }
       const body = (await response.json().catch(() => null)) as OpenAIResponseBody | null;
       if (!response.ok) {
-        throw new ApiError("AI_EMAIL_REPLY_PROVIDER_FAILED", "AI email reply provider request failed.", 502);
+        throw openAIEmailReplyProviderError(response.status, body);
       }
       const outputText = readNonEmpty(body?.output_text) ?? extractResponsesOutputText(body?.output) ?? readNonEmpty(body?.text);
       if (!outputText) {
-        throw new ApiError("AI_EMAIL_REPLY_EMPTY_RESULT", "AI email reply provider returned no draft.", 502);
+        throw new ApiError(
+          "AI_EMAIL_REPLY_PROVIDER_INVALID_RESPONSE",
+          "AI email reply provider returned an invalid draft response.",
+          502,
+          {
+            category: "invalid_response",
+            providerStatus: response.status
+          }
+        );
       }
       return parseProviderJson(outputText);
     }
   };
+}
+
+export function selectOpenAIEmailReplyModel(env: EnvInput = process.env) {
+  return readNonEmpty(env[emailReplyModelEnvName]) ?? defaultEmailReplyModel;
+}
+
+export function buildOpenAIEmailReplyRequestPayload(input: EmailReplyProviderInput, env: EnvInput = process.env) {
+  return {
+    input: [
+      {
+        role: "system",
+        content: [{ type: "input_text", text: input.prompt.system }]
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: input.prompt.user }]
+      }
+    ],
+    max_output_tokens: 1200,
+    model: selectOpenAIEmailReplyModel(env),
+    text: {
+      format: {
+        type: "json_schema",
+        name: "email_reply_draft",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["subjectSuggestion", "body", "contextUsed", "warnings", "suggestedNextAction"],
+          properties: {
+            subjectSuggestion: { type: "string" },
+            body: { type: "string" },
+            contextUsed: { type: "array", items: { type: "string" } },
+            warnings: { type: "array", items: { type: "string" } },
+            suggestedNextAction: { type: "string" }
+          }
+        }
+      }
+    }
+  };
+}
+
+function openAIEmailReplyTransportError(error: unknown) {
+  const category = error instanceof Error && error.name === "AbortError" ? "timeout" : "network";
+  return new ApiError(
+    "AI_EMAIL_REPLY_PROVIDER_UNAVAILABLE",
+    category === "timeout"
+      ? "AI email reply provider timed out. Retry shortly."
+      : "AI email reply provider could not be reached. Retry shortly.",
+    503,
+    { category }
+  );
+}
+
+function openAIEmailReplyProviderError(status: number, body: OpenAIResponseBody | null) {
+  const providerError = safeOpenAIProviderError(body);
+  const category = classifyOpenAIEmailReplyProviderError(status, providerError);
+  const details = {
+    category,
+    providerCode: providerError.code,
+    providerMessage: safeOpenAIProviderDiagnosticMessage(category),
+    providerStatus: status,
+    providerType: providerError.type
+  };
+
+  if (category === "authentication") {
+    return new ApiError(
+      "AI_EMAIL_REPLY_PROVIDER_AUTHENTICATION_FAILED",
+      "AI email reply provider authentication failed. Check OPENAI_API_KEY and retry.",
+      502,
+      details
+    );
+  }
+
+  if (category === "unsupported_model") {
+    return new ApiError(
+      "AI_EMAIL_REPLY_MODEL_UNAVAILABLE",
+      `AI email reply model is not available. Check ${emailReplyModelEnvName} or use the default supported model.`,
+      502,
+      details
+    );
+  }
+
+  if (category === "rate_limited") {
+    return new ApiError(
+      "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
+      "AI email reply provider is rate limited. Retry shortly.",
+      503,
+      details
+    );
+  }
+
+  if (category === "temporary_provider_failure") {
+    return new ApiError(
+      "AI_EMAIL_REPLY_PROVIDER_UNAVAILABLE",
+      "AI email reply provider is temporarily unavailable. Retry shortly.",
+      503,
+      details
+    );
+  }
+
+  return new ApiError(
+    "AI_EMAIL_REPLY_PROVIDER_REQUEST_FAILED",
+    "AI email reply provider rejected the draft request.",
+    502,
+    details
+  );
 }
 
 function createPlaywrightEmailReplyTestProvider(env: EnvInput = process.env): EmailReplyProvider | null {
@@ -397,10 +517,76 @@ function createPlaywrightEmailReplyTestProvider(env: EnvInput = process.env): Em
 }
 
 type OpenAIResponseBody = {
+  error?: unknown;
   output?: unknown;
   output_text?: unknown;
   text?: unknown;
 };
+
+type SafeOpenAIProviderError = {
+  code?: string;
+  message?: string;
+  status?: string;
+  type?: string;
+};
+
+export function classifyOpenAIEmailReplyProviderError(
+  status: number,
+  error: SafeOpenAIProviderError = {}
+):
+  | "authentication"
+  | "rate_limited"
+  | "temporary_provider_failure"
+  | "unsupported_model"
+  | "provider_request_rejected" {
+  const searchable = compactLine([error.code, error.message, error.status, error.type].filter(Boolean).join(" ")).toLowerCase();
+
+  if (status === 401 || status === 403 || /invalid[_ -]?api[_ -]?key|incorrect api key|unauthorized|authentication|permission/.test(searchable)) {
+    return "authentication";
+  }
+
+  if (status === 429 || /rate[_ -]?limit|too many requests/.test(searchable)) {
+    return "rate_limited";
+  }
+
+  if (/model.*(not found|does not exist|unavailable|unsupported|invalid)|unsupported[_ -]?model|model_not_found|invalid_model/.test(searchable)) {
+    return "unsupported_model";
+  }
+
+  if (status >= 500 || /server_error|temporarily unavailable|timeout|overloaded/.test(searchable)) {
+    return "temporary_provider_failure";
+  }
+
+  return "provider_request_rejected";
+}
+
+function safeOpenAIProviderError(body: OpenAIResponseBody | null): SafeOpenAIProviderError {
+  if (!body?.error || typeof body.error !== "object") return {};
+  const error = body.error as Record<string, unknown>;
+  return {
+    code: sanitizeProviderDiagnosticText(error.code),
+    message: sanitizeProviderDiagnosticText(error.message),
+    status: sanitizeProviderDiagnosticText(error.status),
+    type: sanitizeProviderDiagnosticText(error.type)
+  };
+}
+
+function safeOpenAIProviderDiagnosticMessage(category: ReturnType<typeof classifyOpenAIEmailReplyProviderError>) {
+  if (category === "authentication") return "Provider authentication failed.";
+  if (category === "unsupported_model") return "Configured provider model is unavailable.";
+  if (category === "rate_limited") return "Provider rate limit was reached.";
+  if (category === "temporary_provider_failure") return "Provider is temporarily unavailable.";
+  return "Provider rejected the draft request.";
+}
+
+function sanitizeProviderDiagnosticText(value: unknown) {
+  const text = readNonEmpty(value);
+  if (!text) return undefined;
+  const redacted = compactLine(text)
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/-]+=*/gi, "$1 [redacted]");
+  return redacted.length > 240 ? `${redacted.slice(0, 237)}...` : redacted;
+}
 
 function parseProviderJson(value: string): EmailReplyProviderOutput {
   const normalized = normalizeProviderJsonText(value);

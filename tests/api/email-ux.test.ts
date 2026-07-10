@@ -1100,6 +1100,6 @@ describe("Email UX v1 discoverability", () => {
     expect(globalCss).toContain("overflow-wrap: anywhere");
     expect(globalCss).toContain(".provider-card .button-primary");
     expect(globalCss).toContain(".provider-card .button-secondary");
-    expect(globalCss).toContain("word-break: break-word");
+    expect(globalCss).toContain("word-break: normal");
   });
 });

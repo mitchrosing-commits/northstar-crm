@@ -43,6 +43,12 @@ test.describe("Assistant review-first browser workflow", () => {
     const errors = watchBrowserErrors(page);
 
     await expectAssistantPageReady(page);
+    await expect(page.getByTestId("assistant-icon")).toHaveCount(2);
+    const commandPanelBox = await page.locator(".assistant-command-panel").boundingBox();
+    const todayPanelBox = await page.locator(".assistant-today-command-center").boundingBox();
+    expect(commandPanelBox?.y ?? 0).toBeLessThan(todayPanelBox?.y ?? 0);
+    await expect(commandInput(page)).toHaveAttribute("aria-describedby", /description/);
+    await expect(page.getByRole("status")).toContainText("Ready for a review-first CRM question.");
     const todayPanel = page.locator(".assistant-today-command-center");
     const commandCenter = page.getByLabel("Prioritized Assistant Command Center items");
     await expect(page.getByRole("heading", { name: "Command Center" })).toBeVisible();
@@ -85,8 +91,30 @@ test.describe("Assistant review-first browser workflow", () => {
     await commandInput(page).fill("Tell me what I have to do today.");
     await page.getByRole("button", { name: "Ask" }).click();
     await expect(page.getByRole("heading", { name: "Today's Assistant agenda" })).toBeVisible();
+    const commandResultUrl = new URL(page.url());
+    expect(commandResultUrl.pathname).toBe("/assistant");
+    expect(commandResultUrl.searchParams.get("command")).toBe("Tell me what I have to do today.");
+    expect(commandResultUrl.hash).toBe("");
     await expect(page.getByLabel("Assistant answer")).toContainText("Context-only");
     await expect(page.getByLabel("Assistant answer")).toContainText("Draft only");
+    await expect(page.getByRole("status")).toContainText("Answer ready below.");
+
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("keeps the top command form accessible with empty and loading states", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await expectAssistantPageReady(page);
+    await commandInput(page).focus();
+    await expect(commandInput(page)).toBeFocused();
+    await commandInput(page).fill("");
+    await page.getByRole("button", { name: "Ask" }).click();
+    await expect(page.getByRole("status")).toContainText("Enter a question or command before asking.");
+
+    await commandInput(page).fill("Tell me what I have to do today.");
+    await page.locator(".assistant-command-form").dispatchEvent("submit");
+    await expect(page.getByRole("status")).toContainText("is building a review-first answer");
 
     expect(errors.current()).toEqual([]);
   });
@@ -124,6 +152,16 @@ test.describe("Assistant review-first browser workflow", () => {
     await page.setViewportSize({ width: 360, height: 900 });
 
     await expectAssistantPageReady(page);
+    const commandBoxes = await page.locator(".assistant-command-form input, .assistant-command-form button, .assistant-suggestion").evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: rect.height, text: element.textContent ?? element.getAttribute("placeholder") ?? "", width: rect.width };
+      })
+    );
+    for (const box of commandBoxes) {
+      expect.soft(box.width, `${box.text} should not collapse in the command area`).toBeGreaterThan(88);
+      expect.soft(box.height, `${box.text} should stay readable in the command area`).toBeLessThan(120);
+    }
     const item = page.getByLabel("Prioritized Assistant Command Center items").locator(".assistant-today-item").filter({ hasText: "Deal needs next activity" }).first();
     await expect(item).toBeVisible();
     await item.locator("summary", { hasText: "Why this is here" }).click();
@@ -416,7 +454,7 @@ async function expectAssistantPageReady(page: Page) {
   await page.goto("/assistant");
   await expect(page.locator("#main-content")).toBeVisible();
   await expect(page.getByRole("heading", { exact: true, name: "Assistant" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Ask Northstar" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ask Stella" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
 }
 
@@ -428,7 +466,7 @@ async function draftCommand(page: Page, command: string) {
 }
 
 function commandInput(page: Page) {
-  return page.getByRole("textbox", { name: /^Command\b/ });
+  return page.getByRole("textbox", { name: /^Question or command\b/ });
 }
 
 function reviewRequest(page: Page, text: string) {

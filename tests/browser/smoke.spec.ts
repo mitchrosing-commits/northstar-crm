@@ -8,6 +8,7 @@ import { hashPasswordResetToken } from "@/lib/auth/password-reset";
 import { localSessionCookieName, serializeLocalSessionCookieValue } from "@/lib/auth/session";
 import { createMeetingIntake } from "@/lib/services/meeting-intelligence-service";
 import { generatePublicQuoteToken } from "@/lib/services/quote-service";
+import { generatePublicSchedulerToken } from "@/lib/services/scheduler-service";
 import { generatePublicWebFormToken } from "@/lib/services/web-form-service";
 
 const prisma = new PrismaClient();
@@ -19,6 +20,8 @@ const smokeIds = {
   publicLinkId: "",
   quoteId: "",
   quoteItemId: "",
+  schedulerActivityId: "",
+  schedulerLinkId: "",
   webFormId: "",
   webFormLeadId: ""
 };
@@ -46,6 +49,7 @@ test.describe("Northstar CRM browser smoke", () => {
 
   test.afterAll(async () => {
     if (smokeAuth?.token) await revokeLocalSessionToken(smokeAuth.token);
+    await cleanupSmokeScheduler();
     await cleanupSmokeWebForm();
     await cleanupSmokeQuote();
     await cleanupBrowserMeetingIntakes();
@@ -171,9 +175,9 @@ test.describe("Northstar CRM browser smoke", () => {
       if (path === "/assistant") {
         await expect(page.getByRole("link", { name: "Current section: Assistant" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Assistant" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Ask Northstar" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Ask Stella" })).toBeVisible();
         await expect(page.getByLabel("Suggested Assistant prompts")).toBeVisible();
-        await expect(page.getByRole("textbox", { name: /^Command\b/ })).toBeVisible();
+        await expect(page.getByRole("textbox", { name: /^Question or command\b/ })).toBeVisible();
         await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
         await expect(page.getByText("draft a CRM action for review")).toBeVisible();
       }
@@ -472,6 +476,8 @@ test.describe("Northstar CRM browser smoke", () => {
     if (linkedContact.email) await expect(activityBrief.getByText("Exact email match")).toBeVisible();
     await expect(activityBrief.getByRole("link", { name: "Open matched contact" }).first()).toBeVisible();
     await expect(activityBrief.getByRole("link", { name: "Search contacts" }).first()).toHaveAttribute("href", /\/contacts\?q=/);
+    await expect(activityBrief.getByRole("link", { name: "Search organizations" }).first()).toHaveAttribute("href", /\/organizations\?q=/);
+    await expect(activityBrief.getByRole("link", { name: "Search deals" }).first()).toHaveAttribute("href", /\/deals\?q=/);
     await expect(activityBrief.getByRole("link", { name: "Open activity" }).first()).toHaveAttribute("href", `/activities/${meeting.id}/edit`);
     await expect(activityBrief.getByRole("heading", { name: "Active Deal Context" })).toBeVisible();
     await expect(activityBrief.getByRole("heading", { name: "Prior Meeting Intelligence" })).toBeVisible();
@@ -838,6 +844,7 @@ test.describe("Northstar CRM browser smoke", () => {
   });
 
   test("renders a small mobile viewport subset", async ({ page }) => {
+    test.setTimeout(240_000);
     await page.setViewportSize({ width: 390, height: 844 });
     const dealHref = await firstDetailHref(page, "/deals", "/deals/");
     const leadHref = await firstDetailHref(page, "/leads", "/leads/");
@@ -859,8 +866,10 @@ test.describe("Northstar CRM browser smoke", () => {
       "/activities",
       "/email",
       "/products",
+      "/quotes",
       "/reports",
       "/meeting-intelligence",
+      "/web-forms",
       "/search?q=orbit",
       "/settings",
       "/settings/import-export",
@@ -869,6 +878,7 @@ test.describe("Northstar CRM browser smoke", () => {
     ]) {
       await expectPageReady(page, path);
       await expectNoPageHorizontalOverflow(page, path);
+      await expectNoOneCharacterTextStacking(page, path);
       if (path === "/dashboard") await expectSidebarLabelsReadable(page, path);
     }
   });
@@ -1108,6 +1118,8 @@ test.describe("Northstar CRM browser smoke", () => {
     await page.getByRole("link", { name: "Back to Review" }).click();
     await page.waitForURL(new RegExp(`/web-forms/${webForm.id}#accepted-submissions$`));
     await expect(page.locator("#accepted-submissions")).toBeVisible();
+    await expect(page.locator("#accepted-submissions")).toHaveAttribute("aria-labelledby", "accepted-submissions-title");
+    await expect(page.locator("#accepted-submissions-title")).toBeVisible();
     await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
 
     const submissionFilterPanel = page.locator("section", { has: page.getByRole("heading", { name: "Filter Submissions" }) });
@@ -1173,6 +1185,8 @@ test.describe("Northstar CRM browser smoke", () => {
     await page.getByRole("link", { name: "Back to Review" }).click();
     await expect(page).toHaveURL(new RegExp(`/web-forms/submissions\\?.*q=.*#accepted-submissions$`));
     await expect(page.locator("#accepted-submissions")).toBeVisible();
+    await expect(page.locator("#accepted-submissions")).toHaveAttribute("aria-labelledby", "accepted-submissions-title");
+    await expect(page.locator("#accepted-submissions-title")).toBeVisible();
     await expect(page.getByText(`Source form: ${formName}`)).toBeVisible();
 
     await page.reload();
@@ -1223,6 +1237,128 @@ test.describe("Northstar CRM browser smoke", () => {
 
     await expectPageReady(page, `/f/${generatePublicWebFormToken()}`, { requireAppShell: false });
     await expect(page.getByRole("heading", { name: "Form unavailable" })).toBeVisible();
+  });
+
+  test("creates and submits a public scheduler booking flow", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const suffix = uniqueSmokeSuffix();
+    const schedulerName = `Browser scheduler ${suffix}`;
+    const meetingTitle = `Browser discovery ${suffix}`;
+    const attendeeEmail = `browser-scheduler-${suffix}@example.test`;
+
+    await expectPageReady(page, "/scheduler");
+    await expect(page.getByRole("link", { exact: true, name: "Current section: Scheduler" })).toBeVisible();
+    await expect(page.getByRole("heading", { exact: true, name: "Scheduler" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create Scheduling Link" })).toBeVisible();
+
+    await page.getByLabel("Internal name").fill(schedulerName);
+    await page.getByLabel("Meeting title").fill(meetingTitle);
+    await page.getByLabel("Duration").selectOption("30");
+    await page.getByLabel("Timezone").fill("UTC");
+    await page.getByLabel("Minimum notice").selectOption("0");
+    await page.getByLabel("Description").fill("Browser smoke scheduler description.");
+    await page.getByRole("button", { name: "Create scheduling link" }).click();
+    await page.waitForURL(/\/scheduler\?created=1$/);
+    await expect(page.getByText("Scheduling link created.")).toBeVisible();
+    await expect(page.getByText(schedulerName)).toBeVisible();
+    await expect(page.getByText(meetingTitle)).toBeVisible();
+
+    const schedulerLink = await prisma.schedulerLink.findFirstOrThrow({
+      where: { workspaceId: smokeAuth.workspaceId, name: schedulerName, deletedAt: null },
+      select: { id: true, token: true }
+    });
+    smokeIds.schedulerLinkId = schedulerLink.id;
+    const publicPath = `/s/${schedulerLink.token}`;
+    const schedulerRow = page.locator("tr", { hasText: schedulerName });
+    await expect(schedulerRow.getByLabel(`Public scheduler URL for ${schedulerName}. Enabled`)).toHaveValue(publicPath);
+    await expect(schedulerRow.getByRole("button", { name: `Copy public scheduler link for ${schedulerName}` })).toBeVisible();
+    await expect(schedulerRow.getByRole("link", { name: "View", exact: true })).toBeVisible();
+
+    await schedulerRow.getByRole("link", { name: "View", exact: true }).click();
+    await page.waitForURL(new RegExp(`/scheduler/${schedulerLink.id}$`));
+    await expect(page.getByRole("heading", { name: schedulerName })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recent Booking Requests" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No booking requests yet" })).toBeVisible();
+    await expect(page.getByText(schedulerLink.token)).toHaveCount(0);
+
+    await expectPageReady(page, publicPath, { requireAppShell: false });
+    await expect(page.locator("main.public-form-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: meetingTitle })).toBeVisible();
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+    await expect(page.getByText("Northstar-configured availability")).toBeVisible();
+    await expect.poll(() => page.locator('input[name="startAt"]').count()).toBeGreaterThan(0);
+
+    await page.getByLabel("Your name").fill("Browser Scheduler Guest");
+    await page.getByLabel("Email").fill(attendeeEmail);
+    await page.locator('input[name="attendeeCompany"]').fill("Browser Scheduler Co");
+    await page.getByLabel("Note").fill("This should create one meeting activity.");
+    await page.getByRole("button", { name: "Request booking" }).click();
+    await page.waitForURL(new RegExp(`/s/${schedulerLink.token}\\?booked=1$`));
+    await expect(page.getByText("Your booking request was received.")).toBeVisible();
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+
+    const booking = await prisma.schedulerBooking.findFirstOrThrow({
+      where: { workspaceId: smokeAuth.workspaceId, schedulerLinkId: schedulerLink.id, attendeeEmail },
+      select: { activityId: true, id: true }
+    });
+    smokeIds.schedulerActivityId = booking.activityId ?? "";
+    const activity = await prisma.activity.findUniqueOrThrow({ where: { id: booking.activityId ?? "" } });
+    expect(activity.workspaceId).toBe(smokeAuth.workspaceId);
+    expect(activity.type).toBe(ActivityType.MEETING);
+    expect(activity.description).toContain("This should create one meeting activity.");
+    expect(activity.personId).toBeNull();
+    await expect(
+      prisma.person.count({
+        where: { workspaceId: smokeAuth.workspaceId, email: attendeeEmail }
+      })
+    ).resolves.toBe(0);
+
+    await page.goto(publicPath);
+    await page.getByLabel("Your name").fill("Browser Scheduler Guest");
+    await page.getByLabel("Email").fill(attendeeEmail);
+    await page.locator('input[name="attendeeCompany"]').fill("Browser Scheduler Co");
+    await page.getByLabel("Note").fill("This should create one meeting activity.");
+    await page.getByRole("button", { name: "Request booking" }).click();
+    await page.waitForURL(new RegExp(`/s/${schedulerLink.token}\\?booked=1$`));
+    await expect
+      .poll(() => prisma.schedulerBooking.count({ where: { workspaceId: smokeAuth.workspaceId, schedulerLinkId: schedulerLink.id } }))
+      .toBe(1);
+
+    await page.goto(publicPath);
+    await page.locator('input[name="website"]').fill("https://spam.example.test", { force: true });
+    await page.getByLabel("Your name").fill("Scheduler Spam");
+    await page.getByLabel("Email").fill(`honeypot-${attendeeEmail}`);
+    await page.getByRole("button", { name: "Request booking" }).click();
+    await page.waitForURL(new RegExp(`/s/${schedulerLink.token}\\?booked=1$`));
+    await expect
+      .poll(() => prisma.schedulerBooking.count({ where: { workspaceId: smokeAuth.workspaceId, schedulerLinkId: schedulerLink.id } }))
+      .toBe(1);
+
+    await expectPageReady(page, `/scheduler/${schedulerLink.id}`);
+    await expect(page.getByRole("heading", { name: "Recent Booking Requests" })).toBeVisible();
+    const bookingRow = page.locator("tbody tr", { hasText: attendeeEmail });
+    await expect(bookingRow.getByText("Browser Scheduler Guest", { exact: true })).toBeVisible();
+    await expect(bookingRow.getByText(attendeeEmail)).toBeVisible();
+    await expect(bookingRow.getByText("Browser Scheduler Co")).toBeVisible();
+    await expect(bookingRow.getByText("This should create one meeting activity.")).toBeVisible();
+    await expect(page.getByText(schedulerLink.token)).toHaveCount(0);
+    await expect(page.getByText(`honeypot-${attendeeEmail}`)).toHaveCount(0);
+    await page.getByRole("link", { name: activity.title }).click();
+    await page.waitForURL(new RegExp(`/activities/${activity.id}/edit$`));
+    await expect(page.getByRole("heading", { name: "Edit activity" })).toBeVisible();
+
+    await expectPageReady(page, "/scheduler");
+    const formRow = page.locator("tr", { hasText: schedulerName });
+    await formRow.getByRole("button", { name: "Disable" }).click();
+    await page.waitForURL(/\/scheduler\?disabled=1$/);
+    await expect(page.getByText("Scheduling link disabled.")).toBeVisible();
+
+    await expectPageReady(page, publicPath, { requireAppShell: false });
+    await expect(page.getByRole("heading", { name: "Scheduling unavailable" })).toBeVisible();
+    await expect(page.getByText("Northstar CRM")).toHaveCount(0);
+
+    await expectPageReady(page, `/s/${generatePublicSchedulerToken()}`, { requireAppShell: false });
+    await expect(page.getByRole("heading", { name: "Scheduling unavailable" })).toBeVisible();
   });
 });
 
@@ -1468,6 +1604,67 @@ async function expectNoPageHorizontalOverflow(page: Page, path: string) {
   ).toBeLessThanOrEqual(2);
 }
 
+async function expectNoOneCharacterTextStacking(page: Page, path: string) {
+  const offenders = await page.evaluate(() => {
+    const selectors = [
+      ".badge",
+      ".count-badge",
+      ".attention-kind",
+      ".deal-attention-badge",
+      ".button-primary",
+      ".button-secondary",
+      ".button-danger",
+      ".button-compact",
+      ".nav-item-label",
+      ".page-subtitle",
+      ".field-label",
+      ".field-value",
+      ".field-link",
+      ".search-action-link strong",
+      ".search-result-main > strong",
+      ".search-result-meta span",
+      ".table-primary-cell strong",
+      ".table-secondary-text",
+      ".settings-member-action-status",
+      ".record-summary-value",
+      ".record-panel-jump-nav",
+      ".compact-title",
+      ".email-reader-participants",
+      ".meeting-prep-attendee",
+      ".meeting-prep-action-links"
+    ].join(",");
+
+    return Array.from(document.querySelectorAll<HTMLElement>(selectors))
+      .filter((element) => {
+        const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (text.length < 4 || text.length > 80) return false;
+        if (!/[A-Za-z]/.test(text)) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        if (rect.width <= 0 || rect.height <= 0 || style.visibility === "hidden" || style.display === "none") return false;
+        const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.3 || 16;
+        const hasUnsafeWrap = style.wordBreak === "break-all" || style.overflowWrap === "anywhere";
+        const likelyCharacterStack = rect.width < 28 && rect.height > lineHeight * 2.4;
+        return hasUnsafeWrap || likelyCharacterStack;
+      })
+      .slice(0, 8)
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return {
+          className: element.className.toString(),
+          height: Math.round(rect.height),
+          overflowWrap: style.overflowWrap,
+          text: (element.textContent ?? "").replace(/\s+/g, " ").trim(),
+          width: Math.round(rect.width),
+          wordBreak: style.wordBreak
+        };
+      });
+  });
+
+  expect(offenders, `Expected protected UI labels not to stack one character per line on ${path}`).toEqual([]);
+}
+
 async function expectSidebarLabelsReadable(page: Page, path: string) {
   const truncated = await page.evaluate(() => {
     const navLabels = Array.from(document.querySelectorAll(".nav-item-label"))
@@ -1561,8 +1758,12 @@ function isNavigationAbortedError(error: unknown) {
   return error instanceof Error && error.message.includes("net::ERR_ABORTED");
 }
 
+function isEmptyResponseError(error: unknown) {
+  return error instanceof Error && error.message.includes("ERR_EMPTY_RESPONSE");
+}
+
 function isRetriableNavigationError(error: unknown) {
-  return isConnectionRefusedError(error) || isNavigationAbortedError(error);
+  return isConnectionRefusedError(error) || isNavigationAbortedError(error) || isEmptyResponseError(error);
 }
 
 function isChunkLoadError(message: string) {
@@ -1803,6 +2004,32 @@ async function cleanupSmokeWebForm() {
     });
     await prisma.webFormSubmission.deleteMany({ where: { webFormId: smokeIds.webFormId, workspaceId: smokeAuth.workspaceId } });
     await prisma.webForm.deleteMany({ where: { id: smokeIds.webFormId, workspaceId: smokeAuth.workspaceId } });
+  }
+}
+
+async function cleanupSmokeScheduler() {
+  if (smokeIds.schedulerLinkId) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        entityId: smokeIds.schedulerLinkId,
+        entityType: "SchedulerLink",
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    await prisma.schedulerBooking.deleteMany({
+      where: { schedulerLinkId: smokeIds.schedulerLinkId, workspaceId: smokeAuth.workspaceId }
+    });
+    await prisma.schedulerLink.deleteMany({ where: { id: smokeIds.schedulerLinkId, workspaceId: smokeAuth.workspaceId } });
+  }
+  if (smokeIds.schedulerActivityId) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        entityId: smokeIds.schedulerActivityId,
+        entityType: "Activity",
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    await prisma.activity.deleteMany({ where: { id: smokeIds.schedulerActivityId, workspaceId: smokeAuth.workspaceId } });
   }
 }
 

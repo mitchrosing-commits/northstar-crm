@@ -72,6 +72,8 @@ export async function cleanupIntegrationFixture({
   await prisma.emailTemplate.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.emailConnectionSecret.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.emailConnection.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
+  await prisma.schedulerBooking.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
+  await prisma.schedulerLink.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.webFormSubmission.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.webForm.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.note.deleteMany({ where: { workspaceId: { in: workspaceIds } } });

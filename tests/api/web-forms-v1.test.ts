@@ -102,6 +102,8 @@ describe("web forms lead capture v1", () => {
     expect(reviewPage).toContain('href={`/leads/${submission.lead.id}` as Route}');
     expect(reviewPage).toContain('href={submissionDetailHref(submission.id, webForm)}');
     expect(reviewPage).toContain('id="accepted-submissions"');
+    expect(reviewPage).toContain('aria-labelledby="accepted-submissions-title"');
+    expect(reviewPage).toContain('titleId="accepted-submissions-title"');
     expect(reviewPage).toContain("tabIndex={-1}");
     expect(reviewPage).toContain("returnTo");
     expect(reviewPage).toContain("notFound()");
@@ -127,6 +129,8 @@ describe("web forms lead capture v1", () => {
     expect(allSubmissionsPage).toContain("buildAllSubmissionsReturnHref");
     expect(allSubmissionsPage).toContain('href={submissionDetailHref(submission.id, review.filters)}');
     expect(allSubmissionsPage).toContain('id="accepted-submissions"');
+    expect(allSubmissionsPage).toContain('aria-labelledby="accepted-submissions-title"');
+    expect(allSubmissionsPage).toContain('titleId="accepted-submissions-title"');
     expect(allSubmissionsPage).toContain("tabIndex={-1}");
     expect(allSubmissionsPage).toContain("returnTo");
     expect(allSubmissionsPage).not.toContain(".token");
@@ -145,8 +149,10 @@ describe("web forms lead capture v1", () => {
     expect(submissionDetailPage).toContain("Unavailable in this historical submission.");
     expect(submissionDetailPage).toContain("safeReturnTo");
     expect(submissionDetailPage).toContain("normalizedReturnParams");
+    expect(submissionDetailPage).toContain('value.startsWith("//")');
     expect(submissionDetailPage).toContain('url.pathname === "/web-forms/submissions"');
     expect(submissionDetailPage).toContain('url.pathname === `/web-forms/${webFormId}`');
+    expect(submissionDetailPage).toContain("catch");
     expect(submissionDetailPage).toContain("RETURN_FOCUS_TARGET");
     expect(submissionDetailPage).toContain('href={`/leads/${submission.lead.id}` as Route}');
     expect(submissionDetailPage).toContain('href={`/web-forms/${submission.webForm.id}` as Route}');
@@ -157,6 +163,7 @@ describe("web forms lead capture v1", () => {
     expect(submissionDetailPage).not.toContain("form action");
     expect(submissionDetailPage).not.toContain("submitPublicWebForm");
     expect(submissionCopyControl).toContain('"use client"');
+    expect(submissionCopyControl).toContain("FormErrorMessage");
     expect(submissionCopyControl).toContain("navigator.clipboard.writeText(value)");
     expect(submissionCopyControl).toContain("Copy submitted");
     expect(submissionCopyControl).toContain("Submitted ${label} copied.");

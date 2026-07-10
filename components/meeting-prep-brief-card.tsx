@@ -5,6 +5,7 @@ import { Badge } from "@/components/badge";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import type {
+  MeetingPrepAttendeeCandidate,
   MeetingPrepAttendeeConfidence,
   MeetingPrepBrief,
   MeetingPrepBriefItem,
@@ -149,21 +150,13 @@ function MeetingPrepAttendeeConfidenceSection({ attendees }: { attendees: Meetin
               {attendee.confirmedLinks.length > 0 ? (
                 <div className="meeting-prep-attendee-links" aria-label={`${attendee.label} confirmed CRM links`}>
                   <span>Confirmed</span>
-                  {attendee.confirmedLinks.map((candidate) => (
-                    <Link className="inline-link" href={candidate.href as Route} key={candidate.recordId}>
-                      {candidate.label}
-                    </Link>
-                  ))}
+                  <MeetingPrepCandidateLinks candidates={attendee.confirmedLinks} />
                 </div>
               ) : null}
               {attendee.suggestedCandidates.length > 0 ? (
                 <div className="meeting-prep-attendee-links" aria-label={`${attendee.label} suggested CRM candidates`}>
                   <span>Suggested</span>
-                  {attendee.suggestedCandidates.map((candidate) => (
-                    <Link className="inline-link" href={candidate.href as Route} key={candidate.recordId}>
-                      {candidate.label}
-                    </Link>
-                  ))}
+                  <MeetingPrepCandidateLinks candidates={attendee.suggestedCandidates} />
                 </div>
               ) : null}
               <MeetingPrepActionLinks actions={attendee.actions} />
@@ -174,6 +167,21 @@ function MeetingPrepAttendeeConfidenceSection({ attendees }: { attendees: Meetin
         <InlineEmptyStateText>No attendee evidence is available.</InlineEmptyStateText>
       )}
     </section>
+  );
+}
+
+function MeetingPrepCandidateLinks({ candidates }: { candidates: MeetingPrepAttendeeCandidate[] }) {
+  return (
+    <>
+      {candidates.map((candidate) => (
+        <span className="meeting-prep-candidate-link" key={candidate.recordId}>
+          <Link className="inline-link" href={candidate.href as Route}>
+            {candidate.label}
+          </Link>
+          {candidate.detail ? <small>{candidate.detail}</small> : null}
+        </span>
+      ))}
+    </>
   );
 }
 

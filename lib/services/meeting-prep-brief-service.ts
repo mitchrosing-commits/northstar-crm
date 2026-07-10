@@ -405,11 +405,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
     }
     const candidate = attendeeCandidate(person);
     const item: MeetingPrepAttendeeConfidence = {
-      actions: [
-        { href: candidate.href, label: "Open matched contact" },
-        { href: contactsSearchHref(candidate.label), label: "Search contacts" },
-        { href: activityHref(context.activity.id), label: "Open activity" }
-      ],
+      actions: attendeeManualActions(context, candidate.label, candidate.href, "Open matched contact"),
       confirmedLinks: [candidate],
       detail: person.email ? person.email : "Linked CRM contact",
       evidence: [evidence],
@@ -455,6 +451,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
       looseItems.push(candidateAmbiguityItem({
         activityId: context.activity.id,
         candidates,
+        context,
         detail: email,
         evidenceLabel: "Exact email matched multiple contacts",
         id: `email:${normalizeEmail(email)}`,
@@ -462,10 +459,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
       }));
     } else {
       looseItems.push({
-        actions: [
-          { href: contactsSearchHref(email), label: "Search contacts" },
-          { href: activityHref(context.activity.id), label: "Open activity" }
-        ],
+        actions: attendeeManualActions(context, email),
         confirmedLinks: [],
         detail: "Email appears in meeting context, but no workspace contact has this exact email.",
         evidence: [{ detail: email, label: "Email in meeting details" }],
@@ -492,6 +486,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
       looseItems.push(candidateAmbiguityItem({
         activityId: context.activity.id,
         candidates,
+        context,
         detail: name,
         evidenceLabel: "Name-only candidate",
         id: `name:${normalizedName}`,
@@ -500,11 +495,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
     } else if (candidates.length === 1) {
       const candidate = attendeeCandidate(candidates[0]);
       looseItems.push({
-        actions: [
-          { href: candidate.href, label: "Open candidate contact" },
-          { href: contactsSearchHref(name), label: "Search contacts" },
-          { href: activityHref(context.activity.id), label: "Open activity" }
-        ],
+        actions: attendeeManualActions(context, name, candidate.href, "Open candidate contact"),
         confirmedLinks: [],
         detail: "One contact has this name, but name-only evidence is not treated as a confirmed attendee link.",
         evidence: [{ detail: name, label: "Name-only candidate" }],
@@ -517,10 +508,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
       });
     } else {
       looseItems.push({
-        actions: [
-          { href: contactsSearchHref(name), label: "Search contacts" },
-          { href: activityHref(context.activity.id), label: "Open activity" }
-        ],
+        actions: attendeeManualActions(context, name),
         confirmedLinks: [],
         detail: "Name appears in meeting context without an exact CRM contact match.",
         evidence: [{ detail: name, label: "Attendee name only" }],
@@ -537,10 +525,7 @@ async function attendeeConfidenceItems(actor: WorkspaceActor, context: BriefCont
   const items = [...itemsByPersonId.values(), ...dedupeLooseAttendeeItems(looseItems)];
   if (items.length === 0) {
     items.push({
-      actions: [
-        { href: contactsSearchHref(context.activity.title), label: "Search contacts" },
-        { href: activityHref(context.activity.id), label: "Open activity" }
-      ],
+      actions: attendeeManualActions(context, context.activity.title),
       confirmedLinks: [],
       detail: "No linked contact, attendee email, attendee name, or reviewed Meeting Intelligence association is available.",
       evidence: [{ label: "No attendee metadata found" }],
@@ -652,6 +637,7 @@ function peopleByName(people: PersonCandidateRecord[]) {
 function candidateAmbiguityItem({
   activityId,
   candidates,
+  context,
   detail,
   evidenceLabel,
   id,
@@ -659,16 +645,14 @@ function candidateAmbiguityItem({
 }: {
   activityId: string;
   candidates: PersonCandidateRecord[];
+  context: BriefContext;
   detail: string;
   evidenceLabel: string;
   id: string;
   label: string;
 }): MeetingPrepAttendeeConfidence {
   return {
-    actions: [
-      { href: contactsSearchHref(detail), label: "Search contacts" },
-      { href: activityHref(activityId), label: "Open activity" }
-    ],
+    actions: attendeeManualActions(context, detail),
     confirmedLinks: [],
     detail: "Multiple contacts could match this attendee. Review the candidates before linking anything manually.",
     evidence: [{ detail, label: evidenceLabel }],
@@ -679,6 +663,33 @@ function candidateAmbiguityItem({
     stateLabel: "Matched to multiple possible contacts",
     suggestedCandidates: candidates.map(attendeeCandidate)
   };
+}
+
+function attendeeManualActions(
+  context: BriefContext,
+  query: string,
+  primaryHref?: string,
+  primaryLabel?: string
+): MeetingPrepManualAction[] {
+  const actions: MeetingPrepManualAction[] = [];
+  if (primaryHref && primaryLabel) actions.push({ href: primaryHref, label: primaryLabel });
+  actions.push(
+    { href: contactsSearchHref(query), label: "Search contacts" },
+    { href: organizationsSearchHref(organizationSearchQuery(context)), label: "Search organizations" },
+    { href: dealsSearchHref(dealSearchQuery(context)), label: "Search deals" },
+    { href: activityHref(context.activity.id), label: "Open activity" }
+  );
+  return dedupeManualActions(actions);
+}
+
+function dedupeManualActions(actions: MeetingPrepManualAction[]) {
+  const seen = new Set<string>();
+  return actions.filter((action) => {
+    const key = `${action.label}:${action.href}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function internalAttendeeItem(email: string, member: WorkspaceMemberRecord, activityId: string): MeetingPrepAttendeeConfidence {

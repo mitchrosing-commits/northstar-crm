@@ -41,6 +41,7 @@ export * from "./pipeline-service";
 export * from "./product-service";
 export * from "./quote-service";
 export * from "./saved-view-service";
+export * from "./scheduler-service";
 export * from "./search-service";
 export * from "./supply-chain-vertical-service";
 export * from "./timeline-service";

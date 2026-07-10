@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   Building2,
   CalendarCheck,
+  CalendarPlus,
   CircleDollarSign,
   Contact,
   FileText,
@@ -23,6 +24,7 @@ import Link from "next/link";
 import { useId } from "react";
 
 import { ActionGroup } from "@/components/action-group";
+import { AssistantIcon } from "@/components/assistant-icon";
 import { queryListHref } from "@/lib/search-create-actions";
 import { SidebarSearchShortcut } from "@/components/sidebar-search-shortcut";
 import { searchListNavigationItems, type AppNavigationIconName } from "@/lib/navigation";
@@ -43,11 +45,13 @@ const sidebarSearchActionIcons: Record<AppNavigationIconName, LucideIcon> = {
   BrainCircuit,
   Building2,
   CalendarCheck,
+  CalendarPlus,
   CircleDollarSign,
   Contact,
   FileText,
   Inbox,
   LayoutDashboard,
+  NorthstarAssistant: AssistantIcon,
   Package,
   PanelsTopLeft,
   Search,

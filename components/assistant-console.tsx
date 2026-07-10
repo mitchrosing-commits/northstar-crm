@@ -3,10 +3,12 @@ import type { Route } from "next";
 
 import { AssistantActionReviewQueue } from "@/components/assistant-action-review-queue";
 import { Badge } from "@/components/badge";
+import { AssistantCommandForm } from "@/components/assistant-command-form";
 import { AssistantDraftActionCard } from "@/components/assistant-draft-action-card";
+import { AssistantIcon } from "@/components/assistant-icon";
 import { AssistantTodayCommandCenter } from "@/components/assistant-today-command-center";
-import { FormFieldLabel } from "@/components/form-field-label";
 import { PanelTitleRow } from "@/components/panel-title-row";
+import type { AssistantTonePreset } from "@/lib/services/ai-preferences-service";
 import type { AssistantCommandResult } from "@/lib/services/assistant/assistant-command-service";
 import { assistantSuggestedCommands } from "@/lib/services/assistant/assistant-command-service";
 import type { AssistantActionRequestView } from "@/lib/services/assistant/assistant-action-request-service";
@@ -16,6 +18,8 @@ type AssistantConsoleProps = {
   actionRequestQueue: "all" | "applied" | "pending" | "rejected";
   actionRequestStatus: string;
   answer: AssistantCommandResult | null;
+  assistantName: string;
+  assistantTone: AssistantTonePreset;
   command: string;
   pendingActionRequests: AssistantActionRequestView[];
   todayCommandCenter: AssistantTodayCommandCenterView;
@@ -26,6 +30,8 @@ export function AssistantConsole({
   actionRequestQueue,
   actionRequestStatus,
   answer,
+  assistantName,
+  assistantTone,
   command,
   pendingActionRequests,
   todayCommandCenter,
@@ -33,14 +39,24 @@ export function AssistantConsole({
 }: AssistantConsoleProps) {
   return (
     <section className="assistant-console" aria-label="Northstar Assistant console">
-      <AssistantTodayCommandCenter commandCenter={todayCommandCenter} status={todayCommandCenterStatus} />
-      <section className="panel assistant-command-panel" aria-labelledby="assistant-command-title">
-        <PanelTitleRow
-          actions={<Badge>Review-first</Badge>}
-          description="Ask a focused CRM question or draft a CRM action for review. Northstar applies only explicitly confirmed low-risk activity or note drafts; it does not save settings, send email, sync, or mutate provider mail from this page."
-          title="Ask Northstar"
-          titleId="assistant-command-title"
-        />
+      <section className="panel assistant-command-panel assistant-command-panel-primary" aria-labelledby="assistant-command-title">
+        <div className="assistant-command-head">
+          <span className="assistant-command-icon" aria-hidden="true">
+            <AssistantIcon data-testid="assistant-icon" size={24} />
+          </span>
+          <div className="assistant-command-copy">
+            <p className="assistant-command-kicker">Review-first Assistant</p>
+            <h2 id="assistant-command-title">Ask {assistantName}</h2>
+            <p>
+              Ask a focused CRM question or draft a CRM action for review. {assistantName} is using a {assistantToneLabel(assistantTone)} tone and
+              applies only explicitly confirmed low-risk activity or note drafts.
+            </p>
+          </div>
+          <div className="assistant-command-head-actions">
+            <Badge>Review-first</Badge>
+          </div>
+        </div>
+        <AssistantCommandForm assistantName={assistantName} command={command} hasAnswer={Boolean(answer)} />
         <div className="assistant-suggestion-grid" aria-label="Suggested Assistant prompts">
           {assistantSuggestedCommands.map((suggestion) => (
             <Link
@@ -53,27 +69,18 @@ export function AssistantConsole({
           ))}
         </div>
         <AssistantPermissionSummary />
-        <form action="/assistant" className="assistant-command-form">
-          <label className="form-field assistant-command-input">
-            <FormFieldLabel>Command</FormFieldLabel>
-            <input
-              autoComplete="off"
-              defaultValue={command}
-              maxLength={640}
-              name="command"
-              placeholder="Tell me what I have to do today."
-            />
-          </label>
-          <button className="button-primary" type="submit">
-            Ask
-          </button>
-        </form>
       </section>
 
       {answer ? <AssistantAnswerCard answer={answer} /> : <AssistantEmptyState />}
+      <AssistantTodayCommandCenter commandCenter={todayCommandCenter} status={todayCommandCenterStatus} />
       <AssistantActionReviewQueue queue={actionRequestQueue} requests={pendingActionRequests} status={actionRequestStatus} />
     </section>
   );
+}
+
+function assistantToneLabel(tone: AssistantTonePreset) {
+  if (tone === "custom_later") return "custom";
+  return tone.replaceAll("_", " ");
 }
 
 function AssistantAnswerCard({ answer }: { answer: AssistantCommandResult }) {

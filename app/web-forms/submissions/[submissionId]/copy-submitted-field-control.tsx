@@ -2,24 +2,29 @@
 
 import { useState } from "react";
 
+import { FormErrorMessage } from "@/components/form-error-message";
 import { FormSuccessMessage } from "@/components/form-success-message";
 
 type CopySubmittedFieldControlProps = {
   label: "email" | "phone";
   value: string;
 };
+type CopyNotice = {
+  message: string;
+  tone: "error" | "success";
+};
 
 export function CopySubmittedFieldControl({ label, value }: CopySubmittedFieldControlProps) {
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<CopyNotice | null>(null);
   const accessibleLabel = `Copy submitted ${label}`;
 
   async function copyValue() {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard unavailable");
       await navigator.clipboard.writeText(value);
-      setNotice(`Submitted ${label} copied.`);
+      setNotice({ message: `Submitted ${label} copied.`, tone: "success" });
     } catch {
-      setNotice(`Submitted ${label} could not be copied.`);
+      setNotice({ message: `Submitted ${label} could not be copied.`, tone: "error" });
     }
   }
 
@@ -34,11 +39,8 @@ export function CopySubmittedFieldControl({ label, value }: CopySubmittedFieldCo
       >
         Copy
       </button>
-      {notice ? (
-        <FormSuccessMessage compact>
-          <span aria-live="polite">{notice}</span>
-        </FormSuccessMessage>
-      ) : null}
+      {notice?.tone === "success" ? <FormSuccessMessage compact>{notice.message}</FormSuccessMessage> : null}
+      {notice?.tone === "error" ? <FormErrorMessage compact>{notice.message}</FormErrorMessage> : null}
     </span>
   );
 }

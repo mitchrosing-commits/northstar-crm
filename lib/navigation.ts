@@ -7,6 +7,7 @@ export type AppNavigationIconName =
   | "BrainCircuit"
   | "Building2"
   | "CalendarCheck"
+  | "CalendarPlus"
   | "CircleDollarSign"
   | "Contact"
   | "FileText"
@@ -16,6 +17,7 @@ export type AppNavigationIconName =
   | "PanelsTopLeft"
   | "Search"
   | "Settings"
+  | "NorthstarAssistant"
   | "SlidersHorizontal";
 
 export type AppNavigationItem = {
@@ -47,7 +49,7 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
   {
     href: "/assistant" as Route,
     label: "Assistant",
-    icon: "BrainCircuit",
+    icon: "NorthstarAssistant",
     group: "Work",
     helper: "Review-first AI",
     commandJump: true,
@@ -126,6 +128,16 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     helper: "Lead capture",
     commandJump: true,
     searchDescription: "Create and manage public lead capture forms.",
+    searchJump: true
+  },
+  {
+    href: "/scheduler" as Route,
+    label: "Scheduler",
+    icon: "CalendarPlus",
+    group: "Work",
+    helper: "Booking links",
+    commandJump: true,
+    searchDescription: "Create and manage public scheduling links.",
     searchJump: true
   },
   {

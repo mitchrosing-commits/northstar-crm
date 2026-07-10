@@ -16,8 +16,16 @@ export function buildPublicWebFormUrl(
   return buildPublicTokenUrl("/f", token, appBaseUrl, env);
 }
 
+export function buildPublicSchedulerUrl(
+  token: unknown,
+  appBaseUrl = process.env.APP_BASE_URL,
+  env: { NODE_ENV?: string } = process.env
+) {
+  return buildPublicTokenUrl("/s", token, appBaseUrl, env);
+}
+
 function buildPublicTokenUrl(
-  routePrefix: "/f" | "/q",
+  routePrefix: "/f" | "/q" | "/s",
   token: unknown,
   appBaseUrl = process.env.APP_BASE_URL,
   env: { NODE_ENV?: string } = process.env

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import "./globals.css";
 
-const appIconVersion = "northstar-brand-20260707";
+const appIconVersion = "northstar-favicon-20260710";
 
 export const metadata: Metadata = {
   applicationName: "Northstar CRM",

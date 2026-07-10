@@ -4,9 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildOpenAIEmailReplyRequestPayload,
+  classifyOpenAIEmailReplyProviderError,
   buildEmailReplyPrompt,
   createOpenAIEmailReplyProvider,
   emailReplyAssistantReadiness,
+  selectOpenAIEmailReplyModel,
   type EmailReplyContext
 } from "@/lib/services/email-reply-assistant-service";
 
@@ -34,6 +37,39 @@ describe("AI email reply assistant", () => {
     });
   });
 
+  it("builds a real Responses API payload with a configurable current model and structured output", () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "professional" });
+    const defaultPayload = buildOpenAIEmailReplyRequestPayload({ context, prompt, tone: "professional" }, { OPENAI_API_KEY: "test-key" });
+    const overridePayload = buildOpenAIEmailReplyRequestPayload(
+      { context, prompt, tone: "professional" },
+      { EMAIL_REPLY_OPENAI_MODEL: "gpt-5.6-luna", OPENAI_API_KEY: "test-key" }
+    );
+
+    expect(selectOpenAIEmailReplyModel({ OPENAI_API_KEY: "test-key" })).toBe("gpt-5.6-terra");
+    expect(selectOpenAIEmailReplyModel({ EMAIL_REPLY_OPENAI_MODEL: "gpt-5.6-luna", OPENAI_API_KEY: "test-key" })).toBe("gpt-5.6-luna");
+    expect(defaultPayload).toMatchObject({
+      max_output_tokens: 1200,
+      model: "gpt-5.6-terra",
+      text: {
+        format: {
+          name: "email_reply_draft",
+          strict: true,
+          type: "json_schema"
+        }
+      }
+    });
+    expect(overridePayload.model).toBe("gpt-5.6-luna");
+    expect(defaultPayload.input[0]).toEqual({
+      role: "system",
+      content: [{ type: "input_text", text: prompt.system }]
+    });
+    expect(defaultPayload.input[1]).toEqual({
+      role: "user",
+      content: [{ type: "input_text", text: prompt.user }]
+    });
+  });
+
   it("builds a guarded prompt from CRM context and relationship profile facts", () => {
     const prompt = buildEmailReplyPrompt({ context: sampleContext(), tone: "pricing_quote" });
 
@@ -56,11 +92,13 @@ describe("AI email reply assistant", () => {
 
   it("parses OpenAI Responses JSON output without logging or sending email", async () => {
     const provider = createOpenAIEmailReplyProvider(
-      { OPENAI_API_KEY: "openai-test-key" },
+      { EMAIL_REPLY_OPENAI_MODEL: "gpt-5.6-luna", OPENAI_API_KEY: "openai-test-key" },
       (async (_url, init) => {
         const body = JSON.parse(String(init?.body));
-        expect(body.input[0].content).toContain("Never auto-send");
-        expect(body.input[1].content).toContain("Email to reply to");
+        expect(body.model).toBe("gpt-5.6-luna");
+        expect(body.input[0].content[0].text).toContain("Never auto-send");
+        expect(body.input[1].content[0].text).toContain("Email to reply to");
+        expect(body.text.format.type).toBe("json_schema");
         return Response.json({
           output_text: JSON.stringify({
             body: "Hi Maya,\n\nThanks for the note. I will confirm pricing details before sharing specifics.",
@@ -80,6 +118,129 @@ describe("AI email reply assistant", () => {
     });
     expect(assistantService).not.toContain("sendMail");
     expect(assistantService).not.toContain("smtp");
+  });
+
+  it("classifies OpenAI provider failures without leaking secrets or raw request context", async () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "concise" });
+    const cases = [
+      {
+        body: { error: { code: "invalid_api_key", message: "Incorrect API key provided: sk-live-secret.", type: "invalid_request_error" } },
+        code: "AI_EMAIL_REPLY_PROVIDER_AUTHENTICATION_FAILED",
+        message: "AI email reply provider authentication failed. Check OPENAI_API_KEY and retry.",
+        status: 401
+      },
+      {
+        body: { error: { code: "model_not_found", message: "The model `gpt-5.5` does not exist or you do not have access to it.", type: "invalid_request_error" } },
+        code: "AI_EMAIL_REPLY_MODEL_UNAVAILABLE",
+        message: "AI email reply model is not available. Check EMAIL_REPLY_OPENAI_MODEL or use the default supported model.",
+        status: 400
+      },
+      {
+        body: { error: { code: "rate_limit_exceeded", message: "Too many requests.", type: "rate_limit_error" } },
+        code: "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
+        message: "AI email reply provider is rate limited. Retry shortly.",
+        status: 429
+      },
+      {
+        body: { error: { code: "server_error", message: "Provider overloaded.", type: "server_error" } },
+        code: "AI_EMAIL_REPLY_PROVIDER_UNAVAILABLE",
+        message: "AI email reply provider is temporarily unavailable. Retry shortly.",
+        status: 500
+      }
+    ];
+
+    for (const providerCase of cases) {
+      const provider = createOpenAIEmailReplyProvider(
+        { OPENAI_API_KEY: "openai-test-key" },
+        (async () => Response.json(providerCase.body, { status: providerCase.status })) as typeof fetch
+      );
+
+      await expect(provider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+        code: providerCase.code,
+        message: providerCase.message,
+        status: providerCase.status >= 500 || providerCase.status === 429 ? 503 : 502
+      });
+    }
+
+    expect(classifyOpenAIEmailReplyProviderError(400, { message: "The model `gpt-5.5` does not exist." })).toBe("unsupported_model");
+    expect(assistantService).not.toContain("console.error");
+    expect(assistantService).not.toContain("console.log");
+  });
+
+  it("does not expose provider-echoed prompt or email body text in error details", async () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "concise" });
+    const provider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () =>
+        Response.json(
+          {
+            error: {
+              code: "invalid_request_error",
+              message: "Invalid request near customer text: Can you send pricing and next steps? sk-should-not-leak",
+              type: "invalid_request_error"
+            }
+          },
+          { status: 400 }
+        )) as typeof fetch
+    );
+
+    await expect(provider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+      code: "AI_EMAIL_REPLY_PROVIDER_REQUEST_FAILED",
+      details: {
+        category: "provider_request_rejected",
+        providerCode: "invalid_request_error",
+        providerMessage: "Provider rejected the draft request.",
+        providerStatus: 400,
+        providerType: "invalid_request_error"
+      },
+      message: "AI email reply provider rejected the draft request.",
+      status: 502
+    });
+    await provider?.generate({ context, prompt, tone: "concise" }).catch((error) => {
+      const serialized = JSON.stringify(error);
+      expect(serialized).not.toContain("Can you send pricing");
+      expect(serialized).not.toContain("sk-should-not-leak");
+      expect(serialized).not.toContain(prompt.user);
+    });
+  });
+
+  it("surfaces network, timeout, and invalid provider response states distinctly", async () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "concise" });
+    const networkProvider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () => {
+        throw new TypeError("fetch failed with sk-should-not-leak");
+      }) as typeof fetch
+    );
+    const timeoutProvider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () => {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }) as typeof fetch
+    );
+    const invalidProvider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () => Response.json({ id: "resp_without_text", output: [] })) as typeof fetch
+    );
+
+    await expect(networkProvider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+      code: "AI_EMAIL_REPLY_PROVIDER_UNAVAILABLE",
+      message: "AI email reply provider could not be reached. Retry shortly.",
+      status: 503
+    });
+    await expect(timeoutProvider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+      code: "AI_EMAIL_REPLY_PROVIDER_UNAVAILABLE",
+      message: "AI email reply provider timed out. Retry shortly.",
+      status: 503
+    });
+    await expect(invalidProvider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+      code: "AI_EMAIL_REPLY_PROVIDER_INVALID_RESPONSE",
+      message: "AI email reply provider returned an invalid draft response.",
+      status: 502
+    });
   });
 
   it("parses fenced and aliased provider JSON without surfacing a generic draft failure", async () => {
