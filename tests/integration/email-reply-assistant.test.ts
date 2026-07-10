@@ -126,9 +126,128 @@ describe("AI email reply assistant service", () => {
     });
     await expect(fx.prisma.emailLog.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeCount);
   });
+
+  it("includes same-workspace stored thread context without provider or CRM mutation", async () => {
+    const fx = currentFixture();
+    const connection = await fx.prisma.emailConnection.create({
+      data: {
+        accountEmail: "sales@example.test",
+        createdById: fx.userA.id,
+        provider: "GOOGLE_WORKSPACE",
+        scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+        status: "CONNECTED",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const otherWorkspaceConnection = await fx.prisma.emailConnection.create({
+      data: {
+        accountEmail: "sales@example.test",
+        createdById: fx.userB.id,
+        provider: "GOOGLE_WORKSPACE",
+        scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+        status: "CONNECTED",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const threadId = "thread-ai-reply-context-1";
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Earlier customer question from another workspace must not be visible.",
+        direction: "INBOUND",
+        emailConnectionId: otherWorkspaceConnection.id,
+        fromText: "Beta Contact <beta@example.test>",
+        occurredAt: new Date("2030-01-02T09:00:00.000Z"),
+        provider: "GOOGLE_WORKSPACE",
+        providerMessageId: "beta-thread-message-1",
+        providerThreadId: threadId,
+        subject: "Shared thread id",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Can you confirm the implementation timeline?",
+        direction: "INBOUND",
+        emailConnectionId: connection.id,
+        fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
+        occurredAt: new Date("2030-01-02T10:00:00.000Z"),
+        personId: fx.recordsA.person.id,
+        provider: "GOOGLE_WORKSPACE",
+        providerMessageId: "alpha-thread-message-1",
+        providerThreadId: threadId,
+        subject: "Implementation timeline",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const targetEmail = await fx.prisma.emailLog.create({
+      data: {
+        body: "Thanks. What are the next steps after legal review?",
+        dealId: fx.recordsA.deal.id,
+        direction: "INBOUND",
+        emailConnectionId: connection.id,
+        fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
+        occurredAt: new Date("2030-01-03T10:00:00.000Z"),
+        personId: fx.recordsA.person.id,
+        provider: "GOOGLE_WORKSPACE",
+        providerMessageId: "alpha-thread-message-2",
+        providerThreadId: threadId,
+        subject: "Re: Implementation timeline",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    let observed: Awaited<ReturnType<typeof crm.buildEmailReplyContext>> | undefined;
+    const beforeCounts = await readMutationGuardCounts(fx);
+
+    const draft = await crm.generateEmailReplyDraft(
+      fx.actorA,
+      { emailLogId: targetEmail.id, tone: "follow_up" },
+      {
+        provider: {
+          id: "test-provider",
+          name: "Test provider",
+          async generate(input) {
+            observed = input.context;
+            return {
+              body: "Hi Alpha,\n\nThanks. I will confirm the next steps after legal review.",
+              subjectSuggestion: "Re: Implementation timeline"
+            };
+          }
+        }
+      }
+    );
+
+    expect(draft.body).toContain("next steps");
+    expect(observed?.email.body).toContain("What are the next steps");
+    expect(observed?.threadMessages).toHaveLength(1);
+    expect(observed?.threadMessages[0]).toMatchObject({
+      body: "Can you confirm the implementation timeline?",
+      direction: "INBOUND",
+      subject: "Implementation timeline"
+    });
+    expect(JSON.stringify(observed?.threadMessages)).not.toContain("another workspace");
+    await expect(readMutationGuardCounts(fx)).resolves.toEqual(beforeCounts);
+  });
 });
 
 function currentFixture() {
   if (!fixture) throw new Error("Integration fixture was not initialized.");
   return fixture;
+}
+
+async function readMutationGuardCounts(fx: Fixture) {
+  const where = { workspaceId: fx.workspaceA.id };
+  const [emailLogs, activities, notes, people, organizations, leads, deals] = await Promise.all([
+    fx.prisma.emailLog.count({ where }),
+    fx.prisma.activity.count({ where }),
+    fx.prisma.note.count({ where }),
+    fx.prisma.person.count({ where }),
+    fx.prisma.organization.count({ where }),
+    fx.prisma.lead.count({ where }),
+    fx.prisma.deal.count({ where })
+  ]);
+
+  return { activities, deals, emailLogs, leads, notes, organizations, people };
 }

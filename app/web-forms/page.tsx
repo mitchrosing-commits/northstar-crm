@@ -1,3 +1,6 @@
+import Link from "next/link";
+import type { Route } from "next";
+
 import { Badge } from "@/components/badge";
 import { EmptyState } from "@/components/empty-state";
 import { FormFieldLabel } from "@/components/form-field-label";
@@ -27,6 +30,11 @@ export default async function WebFormsPage({ searchParams }: PageProps) {
   return (
     <AppShell workspace={workspace}>
       <PageHeader
+        actions={
+          <Link className="button-secondary" href="/web-forms/submissions">
+            Review all submissions
+          </Link>
+        }
         eyebrow="Lead capture"
         subtitle="Create public forms that capture website inquiries into the Leads Inbox without deals, email sending, or provider automation."
         title="Web Forms"
@@ -96,6 +104,7 @@ export default async function WebFormsPage({ searchParams }: PageProps) {
                   <th>Status</th>
                   <th>Lead source</th>
                   <th>Submissions</th>
+                  <th>Latest activity</th>
                   <th>Updated</th>
                   <th>Public link</th>
                   <th>Actions</th>
@@ -119,6 +128,9 @@ export default async function WebFormsPage({ searchParams }: PageProps) {
                       </td>
                       <td data-label="Lead source">{webForm.sourceLabel}</td>
                       <td data-label="Submissions">{webForm._count.submissions}</td>
+                      <td data-label="Latest activity">
+                        {webForm.submissions[0]?.submittedAt ? formatDate(webForm.submissions[0].submittedAt) : "No submissions"}
+                      </td>
                       <td data-label="Updated">{formatDate(webForm.updatedAt)}</td>
                       <td data-label="Public link">
                         <WebFormPublicLinkControls
@@ -131,6 +143,9 @@ export default async function WebFormsPage({ searchParams }: PageProps) {
                         <a className="button-secondary button-compact" href={publicUrl} rel="noreferrer" target="_blank">
                           Open
                         </a>
+                        <Link className="button-secondary button-compact" href={`/web-forms/${webForm.id}` as Route}>
+                          Review
+                        </Link>
                         <form action={setWebFormEnabledAction}>
                           <input name="webFormId" type="hidden" value={webForm.id} />
                           <input name="enabled" type="hidden" value={webForm.isEnabled ? "false" : "true"} />

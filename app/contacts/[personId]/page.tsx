@@ -10,6 +10,7 @@ import { RecordCustomFieldsPanel } from "@/components/record-custom-fields-panel
 import { DetailFieldGrid } from "@/components/detail-field-grid";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
+import { MeetingPrepBriefCard } from "@/components/meeting-prep-brief-card";
 import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
@@ -31,6 +32,7 @@ import { recordSubtitle } from "@/lib/record-subtitle";
 import {
   buildAiRecordBrief,
   buildContactAssistantContext,
+  buildMeetingPrepBriefForRecord,
   buildNorthstarAssistantInsight,
   getAiPreferences,
   getPerson,
@@ -74,13 +76,14 @@ export default async function ContactDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext, aiPreferences] = await Promise.all([
+  const [workspaceDetail, timelineItems, customFields, emailTemplates, northstarContext, aiPreferences, meetingPrepBrief] = await Promise.all([
     getWorkspace(actor),
     getRecordTimeline(actor, { type: "PERSON", id: person.id }),
     listPersonCustomFields(actor, person.id),
     listEmailTemplates(actor, { activeOnly: true }),
     buildContactAssistantContext(actor, person.id),
-    getAiPreferences(actor)
+    getAiPreferences(actor),
+    buildMeetingPrepBriefForRecord(actor, { type: "person", id: person.id })
   ]);
   const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
   const aiRecordBrief = buildAiRecordBrief(northstarContext, northstarInsight, aiPreferences);
@@ -143,6 +146,14 @@ export default async function ContactDetailPage({ params }: PageProps) {
                 count: 4,
                 countLabel: { singular: "profile field", plural: "profile fields" }
               },
+              ...(meetingPrepBrief
+                ? [{
+                    href: "#meeting-prep-brief" as Route,
+                    label: "Meeting prep",
+                    count: 1,
+                    countLabel: { singular: "upcoming meeting", plural: "upcoming meetings" }
+                  }]
+                : []),
               {
                 href: "#ai-record-brief" as Route,
                 label: "AI brief",
@@ -285,6 +296,8 @@ export default async function ContactDetailPage({ params }: PageProps) {
           </div>
         </div>
       </section>
+
+      {meetingPrepBrief ? <MeetingPrepBriefCard brief={meetingPrepBrief} /> : null}
 
       <AiRecordBriefCard brief={aiRecordBrief} />
       <NorthstarAssistantPanel insight={northstarInsight} />

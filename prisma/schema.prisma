@@ -31,6 +31,7 @@ model User {
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
   aiPreferences            AiPreference[]
   assistantActionRequests  AssistantActionRequest[] @relation("AssistantActionRequestCreator")
+  assistantTodayItemHides  AssistantTodayItemHide[]
   auditLogs                AuditLog[]
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
@@ -101,6 +102,7 @@ model Workspace {
   meetingActivityAssociations MeetingActivityAssociation[]
   aiPreferences               AiPreference[]
   assistantActionRequests     AssistantActionRequest[]
+  assistantTodayItemHides     AssistantTodayItemHide[]
   auditLogs                   AuditLog[]
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
@@ -395,15 +397,21 @@ model WebForm {
 }
 
 model WebFormSubmission {
-  id          String    @id @default(cuid())
-  workspaceId String
-  webFormId   String
-  leadId      String?
-  fingerprint String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id])
-  webForm     WebForm   @relation(fields: [webFormId], references: [id], onDelete: Cascade)
-  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  submittedAt DateTime  @default(now())
+  id               String    @id @default(cuid())
+  workspaceId      String
+  webFormId        String
+  leadId           String?
+  fingerprint      String
+  leadTitle        String?
+  personName       String?
+  email            String?
+  phone            String?
+  organizationName String?
+  message          String?
+  workspace        Workspace @relation(fields: [workspaceId], references: [id])
+  webForm          WebForm   @relation(fields: [webFormId], references: [id], onDelete: Cascade)
+  lead             Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  submittedAt      DateTime  @default(now())
 
   @@index([workspaceId, webFormId, submittedAt])
   @@index([workspaceId, fingerprint, submittedAt])
@@ -855,6 +863,22 @@ model AssistantActionRequest {
   @@index([workspaceId, status, createdAt])
   @@index([workspaceId, createdById, status])
   @@index([createdById, status])
+}
+
+model AssistantTodayItemHide {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  userId       String
+  itemKey      String
+  localDateKey String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([workspaceId, userId, itemKey, localDateKey])
+  @@index([workspaceId, userId, localDateKey])
+  @@index([userId, localDateKey])
 }
 
 enum AssistantActionRequestStatus {

@@ -16,6 +16,7 @@ export const workInboxTabs = [
   { id: "priority", label: "Priority" },
   { id: "work", label: "Work" },
   { id: "needs-reply", label: "Needs Reply" },
+  { id: "waiting-on-customer", label: "Waiting on Customer" },
   { id: "follow-ups", label: "Follow-ups" },
   { id: "crm-linked", label: "CRM Linked" },
   { id: "leads-opportunities", label: "Leads / Opportunities" },
@@ -35,6 +36,7 @@ export const workInboxPriorityShortcuts = [
   { id: "all", label: "All", priorityFilter: "all", tabId: "all" },
   { id: "high", label: "High priority", priorityFilter: "high", tabId: "all" },
   { id: "needs-reply", label: "Needs reply", priorityFilter: "all", tabId: "needs-reply" },
+  { id: "waiting-on-customer", label: "Waiting on customer", priorityFilter: "all", tabId: "waiting-on-customer" },
   { id: "follow-ups", label: "Follow-up", priorityFilter: "all", tabId: "follow-ups" },
   { id: "pricing-quote", label: "Pricing / quote", priorityFilter: "all", tabId: "pricing-quote" },
   { id: "contract-legal", label: "Contract / legal", priorityFilter: "all", tabId: "contract-legal" },
@@ -74,7 +76,19 @@ export type WorkInboxItem = {
   unimportantReasons: string[];
   unansweredQuestions: string[];
   urgencyRisk: string | null;
+  waitingOnCustomer: WorkInboxWaitingOnCustomerState | null;
   whyItMatters: string;
+};
+
+export type WorkInboxWaitingOnCustomerState = {
+  accountState: "connected" | "disconnected";
+  bucket: "one-to-three-days" | "over-three-days" | "under-24h";
+  bucketLabel: string;
+  latestOutboundAt: Date;
+  latestOutboundMessageId: string;
+  reason: string;
+  waitLabel: string;
+  waitingMs: number;
 };
 
 export type WorkInboxAlertEligibility = {
@@ -148,6 +162,7 @@ export function buildWorkInbox({
   selectedTab = "all",
   sort = "newest",
   threads,
+  now = new Date(),
 }: {
   crmFilter?: WorkInboxCrmFilter;
   followUpDetails?: Map<string, EmailPriorityFollowUpDetail>;
@@ -158,11 +173,17 @@ export function buildWorkInbox({
   selectedTab?: WorkInboxCategoryId;
   sort?: WorkInboxSort;
   threads: EmailInboxThreadSummary[];
+  now?: Date;
 }) {
   const normalizedQuery = normalizeWorkInboxSearch(query).toLowerCase();
   const items = threads
     .map((thread) => {
-      const item = buildWorkInboxItem({ followUpDetails, preferences, thread });
+      const item = buildWorkInboxItem({
+        followUpDetails,
+        now,
+        preferences,
+        thread,
+      });
       return {
         ...item,
         href: workInboxThreadHref(thread.id, {
@@ -214,6 +235,9 @@ export function buildWorkInbox({
     if (!normalizedQuery) return true;
     return searchableThreadText(item).toLowerCase().includes(normalizedQuery);
   });
+  if (selectedTab === "waiting-on-customer") {
+    visibleItems.sort(compareWaitingOnCustomerItems);
+  }
   return { items, priorityShortcuts, tabs, visibleItems };
 }
 
@@ -283,10 +307,12 @@ function workInboxItemMatchesShortcut(
 
 function buildWorkInboxItem({
   followUpDetails,
+  now,
   preferences,
   thread,
 }: {
   followUpDetails: Map<string, EmailPriorityFollowUpDetail>;
+  now: Date;
   preferences?: AiPreferences;
   thread: EmailInboxThreadSummary;
 }): WorkInboxItem {
@@ -302,6 +328,11 @@ function buildWorkInboxItem({
   );
   const linkedRecordLabel =
     thread.linkedRecordLabel ?? linkedRecordLabelForMessage(primaryMessage);
+  const waitingOnCustomer = buildWaitingOnCustomerState({
+    linkedRecordLabel,
+    now,
+    thread,
+  });
   const followUpDetail = firstFollowUpDetail(thread, followUpDetails);
   const isInbound = primaryMessage.direction === "INBOUND";
   const isAutomated =
@@ -525,6 +556,7 @@ function buildWorkInboxItem({
     categories.add("work");
   if (isAutomated && automatedPromotionSignal) categories.add("work");
   if (actionableNeedsReply) categories.add("needs-reply");
+  if (waitingOnCustomer) categories.add("waiting-on-customer");
   if (actionableFollowUpSignal) categories.add("follow-ups");
   if (linkedRecordLabel) categories.add("crm-linked");
   if (actionableOpportunitySignal) {
@@ -565,6 +597,7 @@ function buildWorkInboxItem({
     }
   }
   if (actionableNeedsReply) tags.add("Needs reply");
+  if (waitingOnCustomer) tags.add("Waiting on customer");
   if (actionableFollowUpSignal) tags.add("Follow-up");
   if (actionableCustomerSignal)
     tags.add(
@@ -602,6 +635,7 @@ function buildWorkInboxItem({
     needsReply: actionableNeedsReply,
     opportunitySignal: actionableOpportunitySignal,
     priorityLevel,
+    waitingOnCustomer: Boolean(waitingOnCustomer),
   });
   const triageActions = buildTriageActions({
     actionableFollowUpSignal,
@@ -613,6 +647,7 @@ function buildWorkInboxItem({
     linkedRecordLabel,
     opportunityTag: actionableOpportunitySignal ? opportunityTag(lower) : null,
     priorityLevel,
+    waitingOnCustomer: Boolean(waitingOnCustomer),
   });
   const alertEligibility = buildAlertEligibility({
     actionableFollowUpSignal,
@@ -667,6 +702,7 @@ function buildWorkInboxItem({
       actionableUrgencySignal || actionableRiskSignal
         ? "Review timing, risk language, and customer impact before replying."
         : null,
+    waitingOnCustomer,
     whyItMatters: whyItMatters({
       automatedPromotionSignal,
       isAutomated,
@@ -675,6 +711,7 @@ function buildWorkInboxItem({
       needsReply: actionableNeedsReply,
       opportunitySignal: actionableOpportunitySignal,
       priorityLevel,
+      waitingOnCustomer: Boolean(waitingOnCustomer),
     }),
   };
 
@@ -714,6 +751,132 @@ function compareWorkInboxItems(
     return right.thread.latestAt.getTime() - left.thread.latestAt.getTime();
   }
   return right.thread.latestAt.getTime() - left.thread.latestAt.getTime();
+}
+
+function compareWaitingOnCustomerItems(
+  left: WorkInboxItem,
+  right: WorkInboxItem,
+) {
+  const leftWaiting = left.waitingOnCustomer?.waitingMs ?? 0;
+  const rightWaiting = right.waitingOnCustomer?.waitingMs ?? 0;
+  if (rightWaiting !== leftWaiting) return rightWaiting - leftWaiting;
+  const leftOutbound =
+    left.waitingOnCustomer?.latestOutboundAt.getTime() ??
+    left.thread.latestAt.getTime();
+  const rightOutbound =
+    right.waitingOnCustomer?.latestOutboundAt.getTime() ??
+    right.thread.latestAt.getTime();
+  if (leftOutbound !== rightOutbound) return leftOutbound - rightOutbound;
+  return left.thread.id.localeCompare(right.thread.id);
+}
+
+function buildWaitingOnCustomerState({
+  linkedRecordLabel,
+  now,
+  thread,
+}: {
+  linkedRecordLabel: string | null;
+  now: Date;
+  thread: EmailInboxThreadSummary;
+}): WorkInboxWaitingOnCustomerState | null {
+  const meaningfulMessages = thread.messages.filter((message) =>
+    isMeaningfulCustomerConversationMessage(message),
+  );
+  if (meaningfulMessages.length === 0) return null;
+
+  const latestMeaningful = meaningfulMessages[meaningfulMessages.length - 1];
+  if (!latestMeaningful || latestMeaningful.direction !== "OUTBOUND")
+    return null;
+
+  const latestOutboundAt = latestMeaningful.occurredAt;
+  const waitingMs = Math.max(0, now.getTime() - latestOutboundAt.getTime());
+  const bucket = waitingOnCustomerBucket(waitingMs);
+  const accountState = thread.emailConnectionId ? "connected" : "disconnected";
+  const crmContext = linkedRecordLabel
+    ? ` linked to ${linkedRecordLabel}`
+    : " without a linked CRM record";
+  const accountContext =
+    accountState === "connected"
+      ? "from a connected inbox"
+      : "from stored email without an active inbox connection";
+
+  return {
+    accountState,
+    bucket,
+    bucketLabel: waitingOnCustomerBucketLabel(bucket),
+    latestOutboundAt,
+    latestOutboundMessageId: latestMeaningful.id,
+    reason: `Latest meaningful message is an outbound reply ${accountContext}${crmContext}; no newer meaningful inbound customer response is stored.`,
+    waitLabel: formatWaitingOnCustomerDuration(waitingMs),
+    waitingMs,
+  };
+}
+
+function isMeaningfulCustomerConversationMessage(
+  message: EmailInboxThreadSummary["messages"][number],
+) {
+  if (message.direction !== "INBOUND" && message.direction !== "OUTBOUND")
+    return false;
+  const text = searchableEmailText(message).toLowerCase();
+  const labels = normalizedProviderLabels(message.providerLabels);
+  const addressText = [message.fromText, message.toText]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (/\b(no-?reply|donotreply|do-not-reply)\b/i.test(addressText))
+    return false;
+  if (
+    labels.some((label) =>
+      ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"].includes(label),
+    )
+  )
+    return false;
+  return !hasAny(text, [
+    "unsubscribe",
+    "newsletter",
+    "view in browser",
+    "marketing",
+    "promotion",
+    "promotional",
+    "webinar",
+    "digest",
+    "receipt",
+    "order confirmation",
+    "status update",
+    "delivery update",
+    "your statement is ready",
+    "password changed",
+    "security alert",
+    "login alert",
+    "payment received",
+  ]);
+}
+
+function waitingOnCustomerBucket(waitingMs: number) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (waitingMs < dayMs) return "under-24h";
+  if (waitingMs < 3 * dayMs) return "one-to-three-days";
+  return "over-three-days";
+}
+
+function waitingOnCustomerBucketLabel(
+  bucket: WorkInboxWaitingOnCustomerState["bucket"],
+) {
+  if (bucket === "under-24h") return "Under 24h";
+  if (bucket === "one-to-three-days") return "1-3 days";
+  return "Over 3 days";
+}
+
+function formatWaitingOnCustomerDuration(waitingMs: number) {
+  const hourMs = 60 * 60 * 1000;
+  const dayMs = 24 * hourMs;
+  if (waitingMs < hourMs) return "Waiting less than 1 hour";
+  if (waitingMs < dayMs) {
+    const hours = Math.max(1, Math.floor(waitingMs / hourMs));
+    return hours === 1 ? "Waiting 1 hour" : `Waiting ${hours} hours`;
+  }
+  const days = Math.max(1, Math.floor(waitingMs / dayMs));
+  return days === 1 ? "Waiting 1 day" : `Waiting ${days} days`;
 }
 
 function buildUnimportantReasons(input: {
@@ -774,6 +937,9 @@ function searchableThreadText(item: WorkInboxItem) {
     item.crmLinkLabel,
     item.detectedIntent,
     item.summary.summary,
+    item.waitingOnCustomer?.waitLabel,
+    item.waitingOnCustomer?.bucketLabel,
+    item.waitingOnCustomer?.reason,
     item.tags.join(" "),
     item.reasonList.join(" "),
     ...item.thread.messages.map(searchableEmailText),
@@ -880,9 +1046,12 @@ function nextAction(input: {
   needsReply: boolean;
   opportunitySignal: boolean;
   priorityLevel: WorkInboxPriorityLevel;
+  waitingOnCustomer: boolean;
 }) {
   if (input.isUnimportant)
     return "Leave for later or hide with the unimportant filter.";
+  if (input.waitingOnCustomer)
+    return "Draft a follow-up reply or review the linked CRM record before nudging the customer.";
   if (input.needsReply) return "Draft a reply and answer the open question.";
   if (input.followUpState === "created")
     return "Open or complete the linked follow-up.";
@@ -903,6 +1072,7 @@ function buildTriageActions(input: {
   linkedRecordLabel: string | null;
   opportunityTag: string | null;
   priorityLevel: WorkInboxPriorityLevel;
+  waitingOnCustomer: boolean;
 }): WorkInboxTriageAction[] {
   const actions: WorkInboxTriageAction[] = [];
 
@@ -914,6 +1084,15 @@ function buildTriageActions(input: {
       label: "No action needed",
     });
     return actions;
+  }
+
+  if (input.waitingOnCustomer) {
+    actions.push({
+      detail:
+        "Draft a manual follow-up from the existing AI Reply Assistant; Northstar does not send automatically.",
+      id: "draft-reply",
+      label: "Draft follow-up",
+    });
   }
 
   if (input.actionableNeedsReply) {
@@ -1050,9 +1229,14 @@ function whyItMatters(input: {
   needsReply: boolean;
   opportunitySignal: boolean;
   priorityLevel: WorkInboxPriorityLevel;
+  waitingOnCustomer: boolean;
 }) {
   if (input.isUnimportant)
     return "Automation, marketing, or status-update signals make this lower priority unless a clear CRM action appears.";
+  if (input.waitingOnCustomer && input.linkedRecordLabel)
+    return "Northstar sent the latest meaningful message and the linked CRM relationship has no newer stored customer response.";
+  if (input.waitingOnCustomer)
+    return "Northstar sent the latest meaningful message and no newer stored customer response is available.";
   if (input.isAutomated && input.automatedPromotionSignal)
     return "This automated message was promoted because it includes required action, deadline, risk, or deal-blocking language.";
   if (input.needsReply && input.linkedRecordLabel)

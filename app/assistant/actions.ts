@@ -6,7 +6,7 @@ import type { Route } from "next";
 
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
-import { applyAssistantActionRequest, createAssistantActionRequest, rejectAssistantActionRequest } from "@/lib/services/crm";
+import { applyAssistantActionRequest, createAssistantActionRequest, hideAssistantTodayCommandCenterItem, rejectAssistantActionRequest } from "@/lib/services/crm";
 
 export async function saveAssistantDraftActionRequest(formData: FormData) {
   const draftAction = parseDraftAction(formData.get("draftAction"));
@@ -52,6 +52,20 @@ export async function applyAssistantActionRequestAction(formData: FormData) {
   redirect(assistantRedirect("applied", "", "applied"));
 }
 
+export async function hideAssistantTodayCommandCenterItemAction(formData: FormData) {
+  const itemKey = stringValue(formData.get("itemKey"));
+  const { actor } = await getCurrentWorkspaceContext();
+
+  try {
+    await hideAssistantTodayCommandCenterItem(actor, { itemKey });
+  } catch {
+    redirect(todayCommandCenterRedirect("hide-error"));
+  }
+
+  revalidatePath("/assistant");
+  redirect(todayCommandCenterRedirect("hidden"));
+}
+
 function parseDraftAction(value: FormDataEntryValue | null): AssistantDraftAction {
   if (typeof value !== "string" || value.length > 20_000) throw new Error("Invalid draft action.");
   const parsed = JSON.parse(value) as Partial<AssistantDraftAction>;
@@ -74,4 +88,9 @@ function assistantRedirect(status: string, command = "", queue?: string) {
   if (command) params.set("command", command);
   if (queue) params.set("queue", queue);
   return `/assistant?${params.toString()}#assistant-review-queue` as Route;
+}
+
+function todayCommandCenterRedirect(status: string) {
+  const params = new URLSearchParams({ todayCommandCenter: status });
+  return `/assistant?${params.toString()}#assistant-today-command-center-title` as Route;
 }

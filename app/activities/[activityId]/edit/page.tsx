@@ -9,6 +9,7 @@ import { FormHeaderActions } from "@/components/form-header-actions";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { formatActivityType, formatDate } from "@/components/format";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
+import { MeetingPrepBriefCard } from "@/components/meeting-prep-brief-card";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { RecordLockedNotice } from "@/components/record-locked-notice";
@@ -18,7 +19,7 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { activityRecordContext, getActivityDueBucket } from "@/lib/activity-workflow";
 import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { parseReturnToHref, returnToLabel } from "@/lib/return-to";
-import { getActivity, getWorkspace } from "@/lib/services/crm";
+import { buildMeetingPrepBrief, getActivity, getWorkspace } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +33,13 @@ export default async function ActivityEditPage({ params, searchParams }: PagePro
   const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
-  const [activity, workspaceDetail] = await Promise.all([
+  const [activity, workspaceDetail, meetingPrepBrief] = await Promise.all([
     getActivity(actor, activityId).catch((error: unknown) => {
       if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
       throw error;
     }),
-    getWorkspace(actor)
+    getWorkspace(actor),
+    buildMeetingPrepBrief(actor, activityId)
   ]);
   const owners = workspaceDetail.memberships.map((membership) => ({
     id: membership.user.id,
@@ -123,6 +125,8 @@ export default async function ActivityEditPage({ params, searchParams }: PagePro
         ]}
         title="Activity workspace"
       />
+
+      {meetingPrepBrief ? <MeetingPrepBriefCard brief={meetingPrepBrief} /> : null}
 
       <section className="data-card">
         <PanelTitleRow title={activity.title} />

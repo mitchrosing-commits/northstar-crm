@@ -301,6 +301,7 @@ function sampleContext(): EmailReplyContext {
     notes: ["2030-01-01: Procurement needs careful review."],
     organization: "Acme (acme.example)",
     productsAndQuotes: ["Quote Q-100: SENT, total $12,000.00, 2 items"],
-    relationshipProfileFacts: ["Communication style: Prefers concise morning emails"]
+    relationshipProfileFacts: ["Communication style: Prefers concise morning emails"],
+    threadMessages: []
   };
 }

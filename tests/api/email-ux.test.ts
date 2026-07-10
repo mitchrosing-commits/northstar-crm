@@ -965,7 +965,10 @@ describe("Email UX v1 discoverability", () => {
         : "";
 
     expect(emailPage).toContain('className="inbox-thread-list"');
-    expect(emailPage).toContain('className="inbox-thread-row"');
+    expect(emailPage).toContain(
+      'className={`inbox-thread-row${item.waitingOnCustomer ? " inbox-thread-row-waiting" : ""}`}',
+    );
+    expect(emailPage).toContain("inbox-thread-row-waiting");
     expect(emailPage).not.toContain(
       '"inbox-thread-row inbox-thread-row-selected"',
     );

@@ -4,9 +4,12 @@ import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
 
 type CrmServices = typeof import("@/lib/services/crm");
 type Fixture = Awaited<ReturnType<typeof createIntegrationFixture>>;
+type TodayCommandCenter = Awaited<ReturnType<CrmServices["buildAssistantTodayCommandCenter"]>>;
+type TodayCommandCenterItem = TodayCommandCenter["items"][number];
 
 let crm: CrmServices;
 let fixture: Fixture | undefined;
+const secretOrRawProviderTerms = /\b(OAuth|refresh token|access token|auth header|raw provider|raw Gmail|provider payload|provider error|gmail\.metadata|secret|providerMessageId|providerThreadId)\b/i;
 
 beforeAll(async () => {
   crm = await import("@/lib/services/crm");
@@ -26,6 +29,643 @@ afterAll(async () => {
 });
 
 describe("read-only Assistant command service integration", () => {
+  it("builds a deterministic Today Command Center with workspace-scoped links and no view-time mutations", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    await fx.prisma.activity.createMany({
+      data: [
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          dealId: fx.recordsA.deal.id,
+          type: "TASK",
+          title: "Center overdue renewal task",
+          dueAt: new Date("2030-01-01T15:00:00.000Z")
+        },
+        {
+          workspaceId: fx.workspaceB.id,
+          ownerId: fx.userB.id,
+          dealId: fx.recordsB.deal.id,
+          type: "TASK",
+          title: "Center hidden workspace task",
+          dueAt: new Date("2030-01-01T15:00:00.000Z")
+        }
+      ]
+    });
+    const closeDateDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        organizationId: fx.recordsA.organization.id,
+        title: "Center close-date deal",
+        expectedCloseAt: new Date("2030-01-05T00:00:00.000Z"),
+        updatedAt: new Date("2030-01-01T00:00:00.000Z"),
+        valueCents: 250000
+      }
+    });
+    const noActivityDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        personId: fx.recordsA.person.id,
+        title: "Center no-activity deal",
+        expectedCloseAt: new Date("2030-02-15T00:00:00.000Z"),
+        updatedAt: new Date("2030-01-01T00:00:00.000Z")
+      }
+    });
+    const staleDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        title: "Center stale deal",
+        expectedCloseAt: new Date("2030-03-01T00:00:00.000Z"),
+        updatedAt: new Date("2029-12-01T00:00:00.000Z")
+      }
+    });
+    const quoteDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageTwo.id,
+        ownerId: fx.userA.id,
+        organizationId: fx.recordsA.organization.id,
+        title: "Center quoted deal",
+        expectedCloseAt: new Date("2030-03-15T00:00:00.000Z"),
+        updatedAt: new Date("2030-01-01T00:00:00.000Z")
+      }
+    });
+    const quote = await fx.prisma.quote.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        dealId: quoteDeal.id,
+        number: `CMD-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 50000,
+        totalCents: 50000,
+        updatedAt: new Date("2029-12-26T00:00:00.000Z")
+      }
+    });
+    await fx.prisma.activity.createMany({
+      data: [
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          dealId: closeDateDeal.id,
+          type: "TASK",
+          title: "Center close-date next step",
+          dueAt: new Date("2030-01-03T15:00:00.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          dealId: staleDeal.id,
+          type: "TASK",
+          title: "Center stale deal scheduled step",
+          dueAt: new Date("2030-03-10T15:00:00.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          dealId: quoteDeal.id,
+          type: "TASK",
+          title: "Center quote scheduled step",
+          dueAt: new Date("2030-03-11T15:00:00.000Z")
+        }
+      ]
+    });
+    await fx.prisma.lead.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        ownerId: fx.userA.id,
+        title: "Center web lead",
+        source: "Web",
+        createdAt: new Date("2030-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2030-01-01T00:00:00.000Z")
+      }
+    });
+    const draftAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} tomorrow.`,
+      { now }
+    );
+    const draft = draftAnswer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a draft action.");
+    await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: draftAnswer.query });
+    const before = await readOnlyCounts(fx);
+
+    const commandCenter = await crm.buildAssistantTodayCommandCenter(fx.actorA, now);
+    const serialized = JSON.stringify(commandCenter);
+
+    expect(commandCenter.reviewFirstNotice).toContain("Review-first suggestions only");
+    expect(commandCenter.items.map((item) => item.priority)).toEqual(
+      [...commandCenter.items.map((item) => item.priority)].sort((a, b) => a - b)
+    );
+    expect(serialized).toContain("Center overdue renewal task");
+    expect(serialized).toContain("Center close-date deal");
+    expect(serialized).toContain("Center no-activity deal");
+    expect(serialized).toContain("Center stale deal");
+    expect(serialized).toContain("Quote");
+    expect(serialized).toContain("Center web lead");
+    expect(serialized).toContain("Pending Assistant request");
+    expect(serialized).not.toContain("Center hidden workspace task");
+    const overdueItem = itemForLabel(commandCenter, "Center overdue renewal task");
+    const closeDateItem = itemForLabel(commandCenter, "Center close-date deal");
+    const noActivityItem = itemForLabel(commandCenter, "Center no-activity deal");
+    const staleItem = itemForLabel(commandCenter, "Center stale deal");
+    const quoteItem = itemForLabel(commandCenter, `Quote ${quote.number}`);
+    const leadItem = itemForLabel(commandCenter, "Center web lead");
+    const pendingItem = commandCenter.items.find((item) => item.recordType === "Assistant request");
+    if (!pendingItem) throw new Error("Expected pending Assistant request item.");
+
+    expect(closeDateItem).toMatchObject({
+      draftHref: expect.stringContaining("/assistant?command="),
+      href: `/deals/${closeDateDeal.id}`,
+      kind: "deal_close_date",
+      recordType: "Deal"
+    });
+    expect(noActivityItem).toMatchObject({
+      href: `/deals/${noActivityDeal.id}`,
+      kind: "deal_no_activity"
+    });
+    expect(staleItem).toMatchObject({
+      href: `/deals/${staleDeal.id}`,
+      kind: "deal_stale"
+    });
+    expect(quoteItem).toMatchObject({
+      href: `/deals/${quoteDeal.id}/quotes/${quote.id}`,
+      kind: "quote_follow_up"
+    });
+    expect(pendingItem).toMatchObject({
+      href: "/assistant?queue=pending#assistant-review-queue",
+      safeNextAction: expect.stringContaining("explicitly apply eligible activity or note drafts")
+    });
+    expect(overdueItem.explanation).toMatchObject({
+      rule: "Incomplete activity due before the current UTC day.",
+      threshold: expect.stringContaining("Due before Jan 3, 2030 UTC"),
+      calculation: expect.stringContaining("1 day overdue"),
+      result: "Shown as an overdue activity."
+    });
+    expect(explanationValue(overdueItem, "Due date/time")).toContain("Jan 1, 2030");
+    expect(explanationValue(overdueItem, "Related record")).toBe(fx.recordsA.deal.title);
+    expect(closeDateItem.explanation).toMatchObject({
+      rule: expect.stringContaining("seven-day UTC lookahead"),
+      threshold: expect.stringContaining("7-day window"),
+      calculation: expect.stringContaining("3 days from Jan 2, 2030"),
+      result: "Shown as a deal approaching expected close."
+    });
+    expect(explanationValue(closeDateItem, "Expected close")).toBe("Jan 5, 2030");
+    expect(noActivityItem.explanation).toMatchObject({
+      rule: "Open deal has no upcoming open activity.",
+      calculation: expect.stringContaining("no open activity with a due date today or later"),
+      result: "Shown because the deal has no qualifying upcoming activity."
+    });
+    expect(explanationValue(noActivityItem, "Nearest open activity")).toBe("No open activity found");
+    expect(staleItem.explanation).toMatchObject({
+      rule: expect.stringContaining("at least 14 UTC days"),
+      threshold: "14 days without a visible deal update.",
+      calculation: expect.stringContaining("32 days before Jan 2, 2030"),
+      result: "Shown as a stale open deal."
+    });
+    expect(explanationValue(staleItem, "Deal last updated")).toContain("Dec 1, 2029");
+    expect(quoteItem.explanation).toMatchObject({
+      rule: expect.stringContaining("Sent quote"),
+      threshold: "3 days since the sent quote follow-up date basis.",
+      calculation: expect.stringContaining("7 days before Jan 2, 2030"),
+      result: "Shown as a sent quote awaiting follow-up."
+    });
+    expect(explanationValue(quoteItem, "Quote status")).toBe("SENT");
+    expect(explanationValue(quoteItem, "Follow-up date basis")).toContain("Dec 26, 2029");
+    expect(leadItem.explanation).toMatchObject({
+      rule: "New lead was created inside the seven-day review window.",
+      threshold: "Created within the last 7 UTC days.",
+      result: "Shown as a recently created lead needing review."
+    });
+    expect(explanationValue(leadItem, "Source")).toBe("Web");
+    expect(pendingItem.explanation).toMatchObject({
+      rule: "Assistant action request created by you is still pending.",
+      threshold: "Pending requests remain visible until applied or rejected.",
+      calculation: expect.stringContaining("PENDING"),
+      result: "Shown as a pending Assistant review item."
+    });
+    expect(explanationValue(pendingItem, "Status")).toBe("PENDING");
+    expect(commandCenter.items.every((item) => item.explanation.sourceRecord.href === item.href)).toBe(true);
+    expect(commandCenter.items.every((item) => !item.href.startsWith("/api/") && !item.draftHref?.startsWith("/api/"))).toBe(true);
+    expect(commandCenter.items.every((item) => item.reason.length > 0 && item.safeNextAction.length > 0)).toBe(true);
+    expect(serialized).not.toMatch(secretOrRawProviderTerms);
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("returns a helpful empty Today Command Center state without creating records", async () => {
+    const fx = currentFixture();
+    await clearCommandCenterRecords(fx);
+    const before = await readOnlyCounts(fx);
+
+    const commandCenter = await crm.buildAssistantTodayCommandCenter(fx.actorA, new Date("2030-01-02T12:00:00.000Z"));
+
+    expect(commandCenter.items).toEqual([]);
+    expect(commandCenter.emptyState.title).toBe("No Command Center items for today");
+    expect(commandCenter.emptyState.description).toContain("Overdue or due-today activities");
+    expect(commandCenter.emptyState.description).toContain("pending Assistant action requests");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("uses deterministic UTC thresholds for Today Command Center date boundaries", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-15T12:00:00.000Z");
+    await clearCommandCenterRecords(fx);
+    await fx.prisma.activity.createMany({
+      data: [
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          type: "TASK",
+          title: "Boundary overdue activity",
+          dueAt: new Date("2030-01-14T23:59:59.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          type: "TASK",
+          title: "Boundary due today early",
+          dueAt: new Date("2030-01-15T00:00:00.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          type: "TASK",
+          title: "Boundary due today late",
+          dueAt: new Date("2030-01-15T23:59:59.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          type: "TASK",
+          title: "Boundary future activity excluded",
+          dueAt: new Date("2030-01-16T00:00:00.000Z")
+        }
+      ]
+    });
+    const pastCloseDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-01-14T23:59:59.000Z"),
+      title: "Boundary past close deal"
+    });
+    const exactCloseDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-01-22T23:59:59.000Z"),
+      title: "Boundary exact seven-day close deal"
+    });
+    const outsideCloseDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-01-23T00:00:00.000Z"),
+      title: "Boundary eight-day close excluded"
+    });
+    const noActivityDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-03-01T00:00:00.000Z"),
+      title: "Boundary no activity deal"
+    });
+    const staleDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-03-02T00:00:00.000Z"),
+      title: "Boundary stale exact deal",
+      updatedAt: new Date("2030-01-01T00:00:00.000Z")
+    });
+    const quoteDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-03-03T00:00:00.000Z"),
+      title: "Boundary quoted deal"
+    });
+    await fx.prisma.activity.createMany({
+      data: [
+        futureDealActivity(fx, pastCloseDeal.id, "Boundary past close future step"),
+        futureDealActivity(fx, exactCloseDeal.id, "Boundary exact close future step"),
+        futureDealActivity(fx, outsideCloseDeal.id, "Boundary outside close future step"),
+        futureDealActivity(fx, staleDeal.id, "Boundary stale future step"),
+        futureDealActivity(fx, quoteDeal.id, "Boundary quote future step")
+      ]
+    });
+    const quote = await fx.prisma.quote.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        dealId: quoteDeal.id,
+        number: `UTC-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 10000,
+        totalCents: 10000,
+        updatedAt: new Date("2030-01-12T00:00:00.000Z")
+      }
+    });
+    const youngQuoteDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-03-04T00:00:00.000Z"),
+      title: "Boundary young quote deal"
+    });
+    await fx.prisma.activity.create({ data: futureDealActivity(fx, youngQuoteDeal.id, "Boundary young quote future step") });
+    await fx.prisma.quote.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        dealId: youngQuoteDeal.id,
+        number: `YOUNG-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 10000,
+        totalCents: 10000,
+        updatedAt: new Date("2030-01-13T00:00:00.000Z")
+      }
+    });
+    await fx.prisma.lead.createMany({
+      data: [
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          title: "Boundary recent lead",
+          createdAt: new Date("2030-01-08T00:00:00.000Z"),
+          updatedAt: new Date("2030-01-08T00:00:00.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          title: "Boundary old lead excluded",
+          createdAt: new Date("2030-01-07T23:59:59.000Z"),
+          updatedAt: new Date("2030-01-07T23:59:59.000Z")
+        }
+      ]
+    });
+    await fx.prisma.assistantActionRequest.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        createdById: fx.userA.id,
+        actionType: "activity",
+        confidence: "high",
+        objectType: "Person",
+        proposedPayload: { fields: [], targetHref: `/contacts/${fx.recordsA.person.id}` },
+        riskLevel: "low",
+        status: "PENDING",
+        targetHref: `/contacts/${fx.recordsA.person.id}`,
+        targetLabel: "Boundary contact",
+        title: "Boundary pending request"
+      }
+    });
+    const before = await readOnlyCounts(fx);
+
+    const commandCenter = await crm.buildAssistantTodayCommandCenter(fx.actorA, now);
+    const byLabel = new Map(commandCenter.items.map((item) => [item.recordLabel, item]));
+    const serialized = JSON.stringify(commandCenter);
+
+    expect(commandCenter.items).toHaveLength(10);
+    expect(byLabel.get("Boundary overdue activity")).toMatchObject({ priority: 10, reason: expect.stringContaining("Overdue since Jan 14, 2030") });
+    expect(byLabel.get("Boundary due today early")).toMatchObject({ priority: 20, reason: expect.stringContaining("Due today (Jan 15, 2030)") });
+    expect(byLabel.get("Boundary due today late")).toMatchObject({ priority: 20, reason: expect.stringContaining("Due today (Jan 15, 2030)") });
+    expect(byLabel.get("Boundary pending request")).toMatchObject({ priority: 30, recordType: "Assistant request" });
+    expect(commandCenter.items.find((item) => item.recordLabel.includes("Boundary past close deal"))).toMatchObject({ priority: 40 });
+    expect(commandCenter.items.find((item) => item.recordLabel.includes("Boundary exact seven-day close deal"))).toMatchObject({
+      priority: 45,
+      reason: expect.stringContaining("Expected close is in 7 days")
+    });
+    expect(commandCenter.items.find((item) => item.recordLabel.includes("Boundary no activity deal"))).toMatchObject({
+      href: `/deals/${noActivityDeal.id}`,
+      priority: 50
+    });
+    expect(commandCenter.items.find((item) => item.recordLabel.includes("Boundary stale exact deal"))).toMatchObject({
+      priority: 60,
+      reason: expect.stringContaining("14 days")
+    });
+    expect(byLabel.get(`Quote ${quote.number}`)).toMatchObject({
+      priority: 70,
+      reason: expect.stringContaining("3 days")
+    });
+    expect(byLabel.get("Boundary recent lead")).toMatchObject({
+      priority: 80,
+      reason: expect.stringContaining("Jan 8, 2030")
+    });
+    expect(byLabel.get("Boundary overdue activity")?.explanation.calculation).toContain("1 day overdue");
+    expect(byLabel.get("Boundary due today early")?.explanation.calculation).toContain("on or after Jan 15, 2030");
+    expect(byLabel.get("Boundary due today late")?.explanation.calculation).toContain("before Jan 16, 2030");
+    expect(explanationValue(requiredItem(byLabel.get("Boundary due today early")), "Related record")).toBe("No linked record");
+    expect(commandCenter.items.find((item) => item.recordLabel.includes("Boundary exact seven-day close deal"))?.explanation.calculation).toContain(
+      "7 days from Jan 15, 2030"
+    );
+    expect(commandCenter.items.find((item) => item.recordLabel.includes("Boundary stale exact deal"))?.explanation.calculation).toContain(
+      "14 days before Jan 15, 2030"
+    );
+    expect(byLabel.get(`Quote ${quote.number}`)?.explanation.calculation).toContain("3 days before Jan 15, 2030");
+    expect(serialized).not.toContain("Boundary future activity excluded");
+    expect(serialized).not.toContain("Boundary eight-day close excluded");
+    expect(serialized).not.toContain("YOUNG-");
+    expect(serialized).not.toContain("Boundary old lead excluded");
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("caps Today Command Center items at 10 and sorts ties by record type then label", async () => {
+    const fx = currentFixture();
+    await clearCommandCenterRecords(fx);
+    await fx.prisma.activity.createMany({
+      data: Array.from({ length: 12 }, (_, index) => ({
+        workspaceId: fx.workspaceA.id,
+        ownerId: fx.userA.id,
+        type: "TASK" as const,
+        title: `Sort ${String(12 - index).padStart(2, "0")} activity`,
+        dueAt: new Date("2030-01-15T12:00:00.000Z")
+      }))
+    });
+
+    const commandCenter = await crm.buildAssistantTodayCommandCenter(fx.actorA, new Date("2030-01-15T12:00:00.000Z"));
+
+    expect(commandCenter.items).toHaveLength(10);
+    expect(commandCenter.items.map((item) => item.recordLabel)).toEqual([
+      "Sort 01 activity",
+      "Sort 02 activity",
+      "Sort 03 activity",
+      "Sort 04 activity",
+      "Sort 05 activity",
+      "Sort 06 activity",
+      "Sort 07 activity",
+      "Sort 08 activity",
+      "Sort 09 activity",
+      "Sort 10 activity"
+    ]);
+  });
+
+  it("hides visible Today Command Center items for one user and reveals them without CRM mutation", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-15T12:00:00.000Z");
+    await clearCommandCenterRecords(fx);
+    await fx.prisma.activity.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        ownerId: fx.userA.id,
+        type: "TASK",
+        title: "Hideable overdue activity",
+        dueAt: new Date("2030-01-14T12:00:00.000Z")
+      }
+    });
+    const draftAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Remind me to follow up with ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName} tomorrow.`,
+      { now }
+    );
+    const draft = draftAnswer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a draft action.");
+    const request = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: draftAnswer.query });
+    const beforeCrm = await readOnlyCounts(fx);
+    const beforeReviewQueue = await crm.listAssistantActionRequests(fx.actorA);
+    const initial = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { timeZone: "America/New_York" });
+    const target = initial.items.find((item) => item.recordLabel === "Hideable overdue activity");
+    if (!target) throw new Error("Expected hideable item.");
+
+    const hidden = await crm.hideAssistantTodayCommandCenterItem(fx.actorA, { itemKey: target.itemKey }, now, { timeZone: "America/New_York" });
+    const afterHide = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { timeZone: "America/New_York" });
+    const revealed = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { showHidden: true, timeZone: "America/New_York" });
+
+    expect(hidden).toMatchObject({ hiddenItem: { itemKey: target.itemKey }, localDateKey: "2030-01-15" });
+    expect(afterHide.items.map((item) => item.itemKey)).not.toContain(target.itemKey);
+    expect(afterHide.hiddenCount).toBe(1);
+    expect(revealed.hiddenItems).toHaveLength(1);
+    expect(revealed.hiddenItems[0]).toMatchObject({
+      hiddenAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      itemKey: target.itemKey,
+      priority: target.priority,
+      recordLabel: target.recordLabel,
+      explanation: target.explanation
+    });
+    await expect(fx.prisma.assistantTodayItemHide.count({ where: { workspaceId: fx.workspaceA.id, userId: fx.userA.id } })).resolves.toBe(1);
+    await expect(readOnlyCounts(fx)).resolves.toEqual(beforeCrm);
+    await expect(crm.listAssistantActionRequests(fx.actorA)).resolves.toEqual(beforeReviewQueue);
+    await expect(fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: request.id } })).resolves.toMatchObject({ status: "PENDING" });
+  });
+
+  it("isolates hidden Today Command Center state by user, workspace, and condition key", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-15T12:00:00.000Z");
+    await clearCommandCenterRecords(fx);
+    await fx.prisma.workspaceMembership.create({
+      data: {
+        role: "MEMBER",
+        userId: fx.userB.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const actorA2 = { actorUserId: fx.userB.id, workspaceId: fx.workspaceA.id };
+    const staleDeal = await createCommandCenterDeal(fx, {
+      expectedCloseAt: new Date("2030-03-01T00:00:00.000Z"),
+      title: "Independent stale no-activity deal",
+      updatedAt: new Date("2030-01-01T00:00:00.000Z")
+    });
+    await fx.prisma.assistantTodayItemHide.create({
+      data: {
+        itemKey: `deal-no-activity-${staleDeal.id}`,
+        localDateKey: "2030-01-15",
+        userId: fx.userB.id,
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const initial = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { timeZone: "America/New_York" });
+    const noActivity = initial.items.find((item) => item.itemKey === `deal-no-activity-${staleDeal.id}`);
+    const stale = initial.items.find((item) => item.itemKey === `deal-stale-${staleDeal.id}`);
+    if (!noActivity || !stale) throw new Error("Expected same deal to surface as two independent conditions.");
+
+    await crm.hideAssistantTodayCommandCenterItem(fx.actorA, { itemKey: noActivity.itemKey }, now, { timeZone: "America/New_York" });
+    const hiddenForA = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { showHidden: true, timeZone: "America/New_York" });
+    const visibleForA2 = await crm.buildAssistantTodayCommandCenter(actorA2, now, { timeZone: "America/New_York" });
+    const visibleForWorkspaceB = await crm.buildAssistantTodayCommandCenter(fx.actorB, now, { timeZone: "America/New_York" });
+
+    expect(hiddenForA.items.map((item) => item.itemKey)).not.toContain(noActivity.itemKey);
+    expect(hiddenForA.items.map((item) => item.itemKey)).toContain(stale.itemKey);
+    expect(hiddenForA.hiddenItems.map((item) => item.itemKey)).toContain(noActivity.itemKey);
+    expect(visibleForA2.items.map((item) => item.itemKey)).toContain(noActivity.itemKey);
+    expect(JSON.stringify(visibleForWorkspaceB)).not.toContain("Independent stale no-activity deal");
+  });
+
+  it("returns hidden Today Command Center items on the next local day and ignores stale or malformed rows", async () => {
+    const fx = currentFixture();
+    const hideNow = new Date("2030-01-16T04:30:00.000Z");
+    const nextLocalDay = new Date("2030-01-16T05:30:00.000Z");
+    await clearCommandCenterRecords(fx);
+    await fx.prisma.activity.createMany({
+      data: [
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          type: "TASK",
+          title: "Local day rollover activity",
+          dueAt: new Date("2030-01-15T12:00:00.000Z")
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          ownerId: fx.userA.id,
+          type: "TASK",
+          title: "Malformed hide should not apply",
+          dueAt: new Date("2030-01-15T12:00:00.000Z")
+        }
+      ]
+    });
+    const initial = await crm.buildAssistantTodayCommandCenter(fx.actorA, hideNow, { timeZone: "America/New_York" });
+    const rollover = initial.items.find((item) => item.recordLabel === "Local day rollover activity");
+    if (!rollover) throw new Error("Expected rollover item.");
+
+    await fx.prisma.assistantTodayItemHide.createMany({
+      data: [
+        {
+          itemKey: rollover.itemKey,
+          localDateKey: "2030-01-14",
+          userId: fx.userA.id,
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          itemKey: "bad key with spaces",
+          localDateKey: "2030-01-15",
+          userId: fx.userA.id,
+          workspaceId: fx.workspaceA.id
+        }
+      ]
+    });
+    const staleAndMalformedIgnored = await crm.buildAssistantTodayCommandCenter(fx.actorA, hideNow, { timeZone: "America/New_York" });
+    await crm.hideAssistantTodayCommandCenterItem(fx.actorA, { itemKey: rollover.itemKey }, hideNow, { timeZone: "America/New_York" });
+    const hiddenToday = await crm.buildAssistantTodayCommandCenter(fx.actorA, hideNow, { timeZone: "America/New_York" });
+    const returnedTomorrow = await crm.buildAssistantTodayCommandCenter(fx.actorA, nextLocalDay, { timeZone: "America/New_York" });
+
+    expect(crm.assistantTodayLocalDateKey(hideNow, "America/New_York")).toBe("2030-01-15");
+    expect(crm.assistantTodayLocalDateKey(nextLocalDay, "America/New_York")).toBe("2030-01-16");
+    expect(staleAndMalformedIgnored.items.map((item) => item.itemKey)).toContain(rollover.itemKey);
+    expect(staleAndMalformedIgnored.items.map((item) => item.recordLabel)).toContain("Malformed hide should not apply");
+    expect(hiddenToday.items.map((item) => item.itemKey)).not.toContain(rollover.itemKey);
+    expect(returnedTomorrow.items.map((item) => item.itemKey)).toContain(rollover.itemKey);
+  });
+
+  it("applies the visible Today Command Center cap after hidden exclusions", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-15T12:00:00.000Z");
+    await clearCommandCenterRecords(fx);
+    await fx.prisma.activity.createMany({
+      data: Array.from({ length: 12 }, (_, index) => ({
+        workspaceId: fx.workspaceA.id,
+        ownerId: fx.userA.id,
+        type: "TASK" as const,
+        title: `Hide cap ${String(index + 1).padStart(2, "0")} activity`,
+        dueAt: new Date("2030-01-15T12:00:00.000Z")
+      }))
+    });
+    const initial = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { timeZone: "America/New_York" });
+    await crm.hideAssistantTodayCommandCenterItem(fx.actorA, { itemKey: initial.items[0].itemKey }, now, { timeZone: "America/New_York" });
+    await crm.hideAssistantTodayCommandCenterItem(fx.actorA, { itemKey: initial.items[1].itemKey }, now, { timeZone: "America/New_York" });
+
+    const afterHide = await crm.buildAssistantTodayCommandCenter(fx.actorA, now, { timeZone: "America/New_York" });
+
+    expect(afterHide.items).toHaveLength(10);
+    expect(afterHide.items.map((item) => item.recordLabel)).toEqual([
+      "Hide cap 03 activity",
+      "Hide cap 04 activity",
+      "Hide cap 05 activity",
+      "Hide cap 06 activity",
+      "Hide cap 07 activity",
+      "Hide cap 08 activity",
+      "Hide cap 09 activity",
+      "Hide cap 10 activity",
+      "Hide cap 11 activity",
+      "Hide cap 12 activity"
+    ]);
+    expect(afterHide.hiddenCount).toBe(2);
+  });
+
   it("answers today and deal-risk commands from current-workspace data without mutations", async () => {
     const fx = currentFixture();
     const now = new Date("2030-01-02T12:00:00.000Z");
@@ -692,4 +1332,64 @@ async function crmRecordCounts(fx: Fixture) {
 function currentFixture() {
   if (!fixture) throw new Error("Integration fixture was not initialized.");
   return fixture;
+}
+
+async function clearCommandCenterRecords(fx: Fixture) {
+  await fx.prisma.$transaction([
+    fx.prisma.assistantTodayItemHide.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.assistantActionRequest.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.note.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.activity.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.quoteItem.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.quote.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.dealLineItem.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.deal.deleteMany({ where: { workspaceId: fx.workspaceA.id } }),
+    fx.prisma.lead.deleteMany({ where: { workspaceId: fx.workspaceA.id } })
+  ]);
+}
+
+async function createCommandCenterDeal(
+  fx: Fixture,
+  input: { expectedCloseAt: Date; title: string; updatedAt?: Date }
+) {
+  return fx.prisma.deal.create({
+    data: {
+      workspaceId: fx.workspaceA.id,
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      ownerId: fx.userA.id,
+      organizationId: fx.recordsA.organization.id,
+      title: input.title,
+      expectedCloseAt: input.expectedCloseAt,
+      updatedAt: input.updatedAt ?? new Date("2030-01-15T12:00:00.000Z")
+    }
+  });
+}
+
+function futureDealActivity(fx: Fixture, dealId: string, title: string) {
+  return {
+    workspaceId: fx.workspaceA.id,
+    ownerId: fx.userA.id,
+    dealId,
+    type: "TASK" as const,
+    title,
+    dueAt: new Date("2030-02-01T12:00:00.000Z")
+  };
+}
+
+function itemForLabel(commandCenter: TodayCommandCenter, label: string) {
+  const item = commandCenter.items.find((candidate) => candidate.recordLabel.includes(label));
+  if (!item) throw new Error(`Expected Command Center item for ${label}.`);
+  return item;
+}
+
+function requiredItem(item: TodayCommandCenterItem | undefined) {
+  if (!item) throw new Error("Expected Command Center item.");
+  return item;
+}
+
+function explanationValue(item: TodayCommandCenterItem, label: string) {
+  const row = item.explanation.storedValues.find((value) => value.label === label);
+  if (!row) throw new Error(`Expected explanation value ${label}.`);
+  return row.value;
 }

@@ -21,6 +21,7 @@ import { FormIntroCallout } from "@/components/form-intro-callout";
 import { formatActivityType, formatDate, formatMoney } from "@/components/format";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { ManualEmailLogPanel } from "@/components/manual-email-log-panel";
+import { MeetingPrepBriefCard } from "@/components/meeting-prep-brief-card";
 import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
@@ -47,6 +48,7 @@ import { buildDealAttentionBadges, type DealAttentionBadge } from "@/lib/sales-a
 import {
   buildAiRecordBrief,
   buildDealAssistantContext,
+  buildMeetingPrepBriefForRecord,
   buildNorthstarAssistantInsight,
   getAiPreferences,
   getDeal,
@@ -75,7 +77,19 @@ export default async function DealDetailPage({ params }: PageProps) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
   });
-  const [stages, workspaceDetail, customFields, contractSteps, timelineItems, products, emailTemplates, emailLogs, northstarContext, aiPreferences] = await Promise.all([
+  const [
+    stages,
+    workspaceDetail,
+    customFields,
+    contractSteps,
+    timelineItems,
+    products,
+    emailTemplates,
+    emailLogs,
+    northstarContext,
+    aiPreferences,
+    meetingPrepBrief
+  ] = await Promise.all([
     listStages(actor, deal.pipelineId),
     getWorkspace(actor),
     listDealCustomFields(actor, deal.id),
@@ -85,7 +99,8 @@ export default async function DealDetailPage({ params }: PageProps) {
     listEmailTemplates(actor, { activeOnly: true }),
     listEmailLogsForRecord(actor, { type: "DEAL", id: deal.id }),
     buildDealAssistantContext(actor, deal.id),
-    getAiPreferences(actor)
+    getAiPreferences(actor),
+    buildMeetingPrepBriefForRecord(actor, { type: "deal", id: deal.id })
   ]);
   const northstarInsight = await buildNorthstarAssistantInsight(northstarContext, { preferences: aiPreferences });
   const aiRecordBrief = buildAiRecordBrief(northstarContext, northstarInsight, aiPreferences);
@@ -177,6 +192,14 @@ export default async function DealDetailPage({ params }: PageProps) {
             ariaLabel={`${deal.title} deal sections`}
             jumps={[
               { href: "#overview" as Route, label: "Overview" },
+              ...(meetingPrepBrief
+                ? [{
+                    href: "#meeting-prep-brief" as Route,
+                    label: "Meeting prep",
+                    count: 1,
+                    countLabel: { singular: "upcoming meeting", plural: "upcoming meetings" }
+                  }]
+                : []),
               {
                 href: "#ai-record-brief" as Route,
                 label: "AI brief",
@@ -273,6 +296,8 @@ export default async function DealDetailPage({ params }: PageProps) {
         ]}
         title="Deal workspace"
       />
+
+      {meetingPrepBrief ? <MeetingPrepBriefCard brief={meetingPrepBrief} /> : null}
 
       <AiRecordBriefCard brief={aiRecordBrief} />
       <NorthstarAssistantPanel insight={northstarInsight} />

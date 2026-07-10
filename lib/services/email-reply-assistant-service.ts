@@ -1,3 +1,5 @@
+import type { EmailConnectionProvider } from "@prisma/client";
+
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { formatPersonName } from "@/lib/person-name";
@@ -15,7 +17,7 @@ export type EmailReplyAssistantReadiness = {
   configured: boolean;
   message: string;
   missingEnvNames: string[];
-  providerId: "openai" | "none";
+  providerId: "openai" | "playwright_test" | "none";
   providerName: string;
 };
 
@@ -39,6 +41,7 @@ export type EmailReplyContext = {
   organization?: string;
   productsAndQuotes: string[];
   relationshipProfileFacts: string[];
+  threadMessages: EmailReplyThreadMessageContext[];
 };
 
 export type EmailReplyProviderInput = {
@@ -70,15 +73,36 @@ type GenerateEmailReplyDraftOptions = {
   provider?: EmailReplyProvider | null;
 };
 
+export type EmailReplyThreadMessageContext = {
+  body: string;
+  direction: "INBOUND" | "OUTBOUND";
+  fromText: string | null;
+  occurredAt: Date;
+  subject: string;
+  toText: string | null;
+};
+
 const defaultEmailReplyModel = "gpt-5.5";
 const maxEmailBodyChars = 3000;
 const maxContextItemChars = 500;
+const playwrightEmailReplyTestProviderFlag = "PLAYWRIGHT_EMAIL_REPLY_TEST_PROVIDER";
 const defaultWarnings = [
   "Review and edit before using. Northstar never sends AI-generated replies automatically.",
   "Do not add pricing, discounts, legal terms, dates, or promises unless you verify them first."
 ];
 
 export function emailReplyAssistantReadiness(env: EnvInput = process.env): EmailReplyAssistantReadiness {
+  const testProvider = createPlaywrightEmailReplyTestProvider(env);
+  if (testProvider) {
+    return {
+      configured: true,
+      message: "AI reply drafting is configured through the deterministic browser test provider.",
+      missingEnvNames: [],
+      providerId: "playwright_test",
+      providerName: testProvider.name
+    };
+  }
+
   if (!readNonEmpty(env.OPENAI_API_KEY)) {
     return {
       configured: false,
@@ -111,7 +135,7 @@ export async function generateEmailReplyDraft(
     throw new ApiError("AI_EMAIL_REPLY_NOT_CONFIGURED", readiness.message, 503);
   }
 
-  const provider = options.provider ?? createOpenAIEmailReplyProvider(options.env, options.fetchImpl);
+  const provider = options.provider ?? createPlaywrightEmailReplyTestProvider(options.env) ?? createOpenAIEmailReplyProvider(options.env, options.fetchImpl);
   if (!provider) {
     throw new ApiError("AI_EMAIL_REPLY_NOT_CONFIGURED", readiness.message, 503);
   }
@@ -173,8 +197,8 @@ export async function buildEmailReplyContext(actor: WorkspaceActor, emailLogId: 
     personId: emailLog.personId ?? emailLog.deal?.personId ?? emailLog.lead?.personId
   };
   const relatedWhere = relatedRecordWhere(linkedIds);
-  const [notes, activities, meetingAssociations] = relatedWhere.length
-    ? await Promise.all([
+  const relatedContextPromise = relatedWhere.length
+    ? Promise.all([
         prisma.note.findMany({
           where: { workspaceId: actor.workspaceId, deletedAt: null, OR: relatedWhere },
           orderBy: { createdAt: "desc" },
@@ -208,8 +232,12 @@ export async function buildEmailReplyContext(actor: WorkspaceActor, emailLogId: 
           orderBy: { createdAt: "desc" },
           take: 3
         })
-      ])
-    : [[], [], []];
+      ] as const)
+    : Promise.resolve([[], [], []] as const);
+  const [[notes, activities, meetingAssociations], threadMessages] = await Promise.all([
+    relatedContextPromise,
+    listEmailReplyThreadMessages(actor, emailLog)
+  ]);
 
   return {
     activities: activities.map((activity) =>
@@ -258,7 +286,8 @@ export async function buildEmailReplyContext(actor: WorkspaceActor, emailLogId: 
         )
       )
     ],
-    relationshipProfileFacts: await getRelationshipProfileFacts(actor, linkedIds)
+    relationshipProfileFacts: await getRelationshipProfileFacts(actor, linkedIds),
+    threadMessages
   };
 }
 
@@ -285,6 +314,9 @@ export function buildEmailReplyPrompt({ context, tone }: { context: EmailReplyCo
     `Occurred: ${context.email.occurredAt.toISOString()}`,
     "Body:",
     context.email.body,
+    "",
+    "Latest stored thread context:",
+    formatThreadMessagesForPrompt(context),
     "",
     "CRM context:",
     formatContextForPrompt(context)
@@ -329,6 +361,41 @@ export function createOpenAIEmailReplyProvider(env: EnvInput = process.env, fetc
   };
 }
 
+function createPlaywrightEmailReplyTestProvider(env: EnvInput = process.env): EmailReplyProvider | null {
+  if (env[playwrightEmailReplyTestProviderFlag] !== "1" || env.AUTH_MODE !== "local") return null;
+
+  return {
+    id: "playwright_test",
+    name: "Deterministic browser test provider",
+    async generate(input) {
+      if (/empty provider/i.test(input.context.email.subject)) {
+        return parseProviderJson('```json\n{"replyBody":"","subject":"Re: Empty provider output","nextAction":"Review the provider configuration."}\n```');
+      }
+
+      const threadBodies = input.context.threadMessages.map((message) => message.body);
+      const leakedContext = threadBodies.find((body) => /cross-workspace|unrelated-thread/i.test(body));
+      if (leakedContext) {
+        throw new ApiError("AI_EMAIL_REPLY_CONTEXT_LEAK", "AI reply context included unrelated email thread context.", 500);
+      }
+
+      return parseProviderJson(
+        `\`\`\`json\n${JSON.stringify({
+          replyBody: [
+            "Hi Browser Buyer,",
+            "",
+            "Thanks for the note. I can help with next steps after reviewing the latest context.",
+            `Thread context order: ${threadBodies.length ? threadBodies.join(" -> ") : "none"}.`,
+            `Primary reply target: ${input.context.email.body}`
+          ].join("\n"),
+          subject: defaultReplySubject(input.context.email.subject),
+          nextAction: "Review this draft before using it.",
+          warnings: ["Deterministic browser test draft. Northstar still does not send automatically."]
+        })}\n\`\`\``
+      );
+    }
+  };
+}
+
 type OpenAIResponseBody = {
   output?: unknown;
   output_text?: unknown;
@@ -336,13 +403,14 @@ type OpenAIResponseBody = {
 };
 
 function parseProviderJson(value: string): EmailReplyProviderOutput {
+  const normalized = normalizeProviderJsonText(value);
   try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const parsed = JSON.parse(normalized) as Record<string, unknown>;
     return {
-      body: readNonEmpty(parsed.body) ?? "",
+      body: readFirstNonEmpty(parsed.body, parsed.replyBody, parsed.draftBody, parsed.emailBody, parsed.reply, parsed.draft, parsed.message) ?? "",
       contextUsed: readStringArray(parsed.contextUsed),
-      subjectSuggestion: readNonEmpty(parsed.subjectSuggestion),
-      suggestedNextAction: readNonEmpty(parsed.suggestedNextAction),
+      subjectSuggestion: readFirstNonEmpty(parsed.subjectSuggestion, parsed.subject),
+      suggestedNextAction: readFirstNonEmpty(parsed.suggestedNextAction, parsed.nextAction),
       warnings: readStringArray(parsed.warnings)
     };
   } catch {
@@ -386,6 +454,24 @@ function formatContextForPrompt(context: EmailReplyContext) {
     .join("\n\n");
 }
 
+function formatThreadMessagesForPrompt(context: EmailReplyContext) {
+  if (context.threadMessages.length === 0) {
+    return "No additional stored thread messages are available.";
+  }
+
+  return context.threadMessages
+    .map((message) =>
+      [
+        `- ${message.occurredAt.toISOString()} ${message.direction}`,
+        `  Subject: ${truncate(message.subject, 160)}`,
+        `  From: ${message.fromText ?? "Not recorded"}`,
+        `  To: ${message.toText ?? "Not recorded"}`,
+        `  Body: ${truncate(message.body, 800)}`
+      ].join("\n")
+    )
+    .join("\n");
+}
+
 function summarizeContextUsed(context: EmailReplyContext) {
   return [
     "Email subject and body",
@@ -395,10 +481,55 @@ function summarizeContextUsed(context: EmailReplyContext) {
     context.lead ? "Lead status" : null,
     context.notes.length ? "Recent notes" : null,
     context.activities.length ? "Recent activities/follow-ups" : null,
+    context.threadMessages.length ? "Stored thread context" : null,
     context.productsAndQuotes.length || context.contractSteps.length ? "Quotes/contracts/products" : null,
     context.meetingSummaries.length ? "Meeting Intelligence summaries" : null,
     context.relationshipProfileFacts.length ? "Approved relationship profile facts" : null
   ].filter((value): value is string => Boolean(value));
+}
+
+async function listEmailReplyThreadMessages(
+  actor: WorkspaceActor,
+  emailLog: {
+    emailConnectionId: string | null;
+    id: string;
+    provider: EmailConnectionProvider | null;
+    providerThreadId: string | null;
+    workspaceId: string;
+  }
+): Promise<EmailReplyThreadMessageContext[]> {
+  if (!emailLog.provider || !emailLog.providerThreadId) return [];
+  const threadLogs = await prisma.emailLog.findMany({
+    where: {
+      emailConnectionId: emailLog.emailConnectionId,
+      provider: emailLog.provider,
+      providerThreadId: emailLog.providerThreadId,
+      workspaceId: actor.workspaceId
+    },
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+    select: {
+      body: true,
+      direction: true,
+      fromText: true,
+      id: true,
+      occurredAt: true,
+      subject: true,
+      toText: true
+    },
+    take: 6
+  });
+
+  return threadLogs
+    .reverse()
+    .filter((threadLog) => threadLog.id !== emailLog.id)
+    .map((threadLog) => ({
+      body: truncate(threadLog.body, maxEmailBodyChars),
+      direction: threadLog.direction,
+      fromText: threadLog.fromText,
+      occurredAt: threadLog.occurredAt,
+      subject: threadLog.subject,
+      toText: threadLog.toText
+    }));
 }
 
 function summarizePerson(person: { email: string | null; firstName: string; lastName: string | null } | null) {
@@ -523,6 +654,24 @@ function readStringArray(value: unknown) {
     const text = readNonEmpty(item);
     return text ? [text] : [];
   });
+}
+
+function normalizeProviderJsonText(value: string) {
+  const trimmed = value.trim();
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const unfenced = fenceMatch?.[1]?.trim() ?? trimmed;
+  if (unfenced.startsWith("{") && unfenced.endsWith("}")) return unfenced;
+  const start = unfenced.indexOf("{");
+  const end = unfenced.lastIndexOf("}");
+  return start >= 0 && end > start ? unfenced.slice(start, end + 1) : unfenced;
+}
+
+function readFirstNonEmpty(...values: unknown[]) {
+  for (const value of values) {
+    const text = readNonEmpty(value);
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function dedupeWarnings(warnings: string[]) {

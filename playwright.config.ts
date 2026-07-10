@@ -14,6 +14,10 @@ export default defineConfig({
   },
   webServer: {
     command: process.env.PLAYWRIGHT_WEB_SERVER_COMMAND ?? "npm run start -- --hostname 127.0.0.1 --port 3100",
+    env: {
+      ...process.env,
+      PLAYWRIGHT_EMAIL_REPLY_TEST_PROVIDER: process.env.PLAYWRIGHT_EMAIL_REPLY_TEST_PROVIDER ?? "1"
+    },
     reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === "1",
     timeout: 180_000,
     url: "http://127.0.0.1:3100/api/health"

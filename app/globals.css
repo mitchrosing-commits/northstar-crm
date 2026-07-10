@@ -1746,6 +1746,117 @@ textarea {
   min-width: min(100%, 280px);
 }
 
+.web-form-review-summary,
+.web-form-submission-fields {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.web-form-review-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.web-form-review-summary div,
+.web-form-submission-fields div {
+  min-width: 0;
+}
+
+.web-form-review-summary dt,
+.web-form-submission-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.web-form-review-summary dd,
+.web-form-submission-fields dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.web-form-review-summary dd {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.web-form-submission-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 0;
+}
+
+.web-form-submission-detail-grid div {
+  min-width: 0;
+}
+
+.web-form-submission-detail-grid dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.web-form-submission-detail-grid dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+#accepted-submissions:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 4px;
+}
+
+.web-form-detail-wide {
+  grid-column: 1 / -1;
+}
+
+.web-form-filter-grid {
+  grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(150px, 1fr)) auto;
+}
+
+.web-form-all-submissions-filter-grid {
+  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1.2fr) repeat(3, minmax(140px, 1fr)) auto;
+}
+
+.web-form-filter-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.web-form-submission-message {
+  max-width: 360px;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.web-form-submission-note {
+  max-width: 760px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.web-form-submitted-copy-value,
+.web-form-copy-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.web-form-submitted-copy-value {
+  min-width: 0;
+}
+
+.web-form-copy-control .form-success-message {
+  margin: 0;
+}
+
 .public-form-page {
   min-height: 100vh;
   display: grid;
@@ -3670,6 +3781,15 @@ textarea {
   overflow: hidden;
 }
 
+.inbox-thread-row-waiting {
+  height: 58px;
+  min-height: 58px;
+  max-height: 68px;
+  grid-template-rows: minmax(28px, auto) auto;
+  row-gap: 2px;
+  align-items: center;
+}
+
 .inbox-thread-row:hover {
   background: var(--surface-muted);
 }
@@ -3681,6 +3801,7 @@ textarea {
 }
 
 .inbox-thread-status {
+  grid-column: 1;
   display: flex;
   justify-content: center;
   width: 16px;
@@ -3704,12 +3825,14 @@ textarea {
 }
 
 .inbox-thread-sender {
+  grid-column: 2;
   color: var(--ink);
   font-size: 12px;
   font-weight: 750;
 }
 
 .inbox-thread-tags {
+  grid-column: 3;
   display: flex;
   gap: 4px;
   align-items: center;
@@ -3737,6 +3860,7 @@ textarea {
 }
 
 .inbox-thread-subject-line {
+  grid-column: 4;
   display: flex;
   gap: 5px;
   align-items: baseline;
@@ -3763,12 +3887,39 @@ textarea {
 }
 
 .inbox-thread-meta {
+  grid-column: 5;
   display: flex;
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
   color: var(--muted);
   font-size: 11px;
+}
+
+.inbox-thread-waiting {
+  grid-column: 2 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.inbox-thread-waiting span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inbox-thread-waiting-badge {
+  flex: 0 0 auto;
+  min-height: 18px;
+  padding: 1px 6px;
+  font-size: 10px;
 }
 
 .inbox-thread-priority {
@@ -4056,7 +4207,8 @@ textarea {
 .work-inbox-low-importance,
 .work-inbox-priority-reasons,
 .work-inbox-triage-actions,
-.work-inbox-question-list {
+.work-inbox-question-list,
+.work-inbox-waiting-summary {
   display: grid;
   gap: 4px;
   border: 1px solid var(--line);
@@ -4069,7 +4221,8 @@ textarea {
 .work-inbox-low-importance strong,
 .work-inbox-priority-reasons strong,
 .work-inbox-triage-actions strong,
-.work-inbox-question-list strong {
+.work-inbox-question-list strong,
+.work-inbox-waiting-summary strong {
   color: var(--ink);
   font-size: 12px;
 }
@@ -4077,7 +4230,8 @@ textarea {
 .work-inbox-insight-grid span,
 .work-inbox-priority-reasons p,
 .work-inbox-triage-actions span,
-.work-inbox-question-list span {
+.work-inbox-question-list span,
+.work-inbox-waiting-summary span {
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
@@ -6816,6 +6970,7 @@ textarea {
   }
 
   .stat-grid,
+  .web-form-review-summary,
   .search-action-panel {
     grid-template-columns: 1fr;
   }
@@ -7198,6 +7353,194 @@ textarea {
   padding-top: 10px;
 }
 
+.meeting-prep-brief-card {
+  display: grid;
+  gap: 12px;
+}
+
+.meeting-prep-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meeting-prep-summary-grid > div,
+.meeting-prep-section {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.meeting-prep-summary-grid span,
+.meeting-prep-section small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.meeting-prep-summary-grid span {
+  display: block;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.meeting-prep-summary-grid strong,
+.meeting-prep-section strong,
+.meeting-prep-section span {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.meeting-prep-linked-records {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meeting-prep-attendee-confidence {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  padding: 12px;
+}
+
+.meeting-prep-section-heading,
+.meeting-prep-attendee-main,
+.meeting-prep-attendee-links,
+.meeting-prep-action-links {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.meeting-prep-section-heading,
+.meeting-prep-attendee-main {
+  justify-content: space-between;
+}
+
+.meeting-prep-section-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.meeting-prep-attendee-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.meeting-prep-attendee {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.meeting-prep-attendee-internal {
+  background: color-mix(in srgb, var(--muted) 8%, var(--surface));
+}
+
+.meeting-prep-attendee-main > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.meeting-prep-attendee strong,
+.meeting-prep-attendee span,
+.meeting-prep-attendee small,
+.meeting-prep-action-links a {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.meeting-prep-attendee-main span,
+.meeting-prep-attendee-evidence,
+.meeting-prep-attendee-links span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.meeting-prep-attendee-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.meeting-prep-attendee-links,
+.meeting-prep-action-links {
+  flex-wrap: wrap;
+}
+
+.meeting-prep-attendee-links span {
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.meeting-prep-section-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meeting-prep-section h3 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.meeting-prep-section ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.meeting-prep-section li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.meeting-prep-section li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.meeting-prep-suggestions {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.meeting-prep-missing {
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+}
+
+.meeting-prep-source-ref,
+.meeting-prep-footnote {
+  color: var(--muted-strong);
+}
+
+.meeting-prep-footnote {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  font-size: 13px;
+}
+
 .crm-ai-insight-card {
   display: grid;
   gap: 12px;
@@ -7296,6 +7639,192 @@ textarea {
 .assistant-answer-card {
   display: grid;
   gap: 14px;
+}
+
+.assistant-today-command-center,
+.assistant-today-list,
+.assistant-today-copy {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.assistant-today-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistant-today-item {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.assistant-today-rank {
+  display: flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.assistant-today-item-header,
+.assistant-today-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.assistant-today-item-header > *,
+.assistant-today-actions > *,
+.assistant-today-copy {
+  min-width: 0;
+}
+
+.assistant-today-actions > a,
+.assistant-today-actions button {
+  min-width: min(100%, 86px);
+  max-width: 100%;
+  white-space: normal;
+  word-break: normal;
+}
+
+.assistant-today-copy h3 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.assistant-today-copy p,
+.assistant-today-empty p,
+.assistant-today-hidden-controls span {
+  margin: 0;
+  color: var(--muted-strong);
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.assistant-today-actions {
+  padding-top: 2px;
+}
+
+.assistant-today-empty {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.assistant-today-empty strong {
+  color: var(--text);
+}
+
+.assistant-today-hidden-controls,
+.assistant-today-hidden-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.assistant-today-hidden-controls {
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+}
+
+.assistant-today-hidden-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.assistant-today-item-hidden {
+  opacity: 0.78;
+}
+
+.assistant-today-actions form {
+  margin: 0;
+}
+
+.assistant-today-explanation {
+  min-width: 0;
+}
+
+.assistant-today-explanation summary {
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.assistant-today-explanation summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.assistant-today-explanation-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-today-explanation-panel > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--surface-strong);
+}
+
+.assistant-today-explanation-panel span,
+.assistant-today-explanation-values dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.assistant-today-explanation-panel p {
+  margin-top: 4px;
+}
+
+.assistant-today-explanation-values {
+  grid-column: 1 / -1;
+}
+
+.assistant-today-explanation-values dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 8px;
+  margin: 6px 0 0;
+}
+
+.assistant-today-explanation-values div {
+  min-width: 0;
+}
+
+.assistant-today-explanation-values dd {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-weight: 750;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .assistant-suggestion-grid {
@@ -7777,7 +8306,12 @@ textarea {
   .assistant-permission-summary,
   .assistant-review-request-header,
   .assistant-suggestion-grid,
+  .assistant-today-item,
   .crm-ai-insight-list,
+  .meeting-prep-linked-records,
+  .meeting-prep-section-grid,
+  .meeting-prep-summary-grid,
+  .meeting-prep-attendee-main,
   .northstar-assistant-grid,
   .northstar-assistant-reviewed,
   .northstar-assistant-footer,

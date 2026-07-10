@@ -1,5 +1,5 @@
 import { expect, type BrowserContext, type Locator, type Page, test } from "@playwright/test";
-import { PrismaClient } from "@prisma/client";
+import { ActivityType, MeetingIntakeSourceType, MeetingIntakeStatus, PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
 import { createLocalSession, revokeLocalSessionToken } from "@/lib/auth/local-auth";
@@ -173,7 +173,7 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Assistant" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Ask Northstar" })).toBeVisible();
         await expect(page.getByLabel("Suggested Assistant prompts")).toBeVisible();
-        await expect(page.getByLabel("Command")).toBeVisible();
+        await expect(page.getByRole("textbox", { name: /^Command\b/ })).toBeVisible();
         await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
         await expect(page.getByText("draft a CRM action for review")).toBeVisible();
       }
@@ -391,6 +391,114 @@ test.describe("Northstar CRM browser smoke", () => {
       where: { action: "person.updated", entityId: contact.id, entityType: "Person", workspaceId: smokeAuth.workspaceId }
     });
     expect(auditCountAfter, "Opening Relationship Memory guidance and source details should not mutate CRM history").toBe(auditCountBefore);
+  });
+
+  test("renders a read-only Meeting Prep Brief from activity and linked record detail pages", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const suffix = registerBrowserFlowSuffix();
+    const activityTitle = `Browser Flow Meeting Prep ${suffix}`;
+    const priorTitle = `Browser Flow Prior Meeting ${suffix}`;
+    const noteBody = `Browser Flow Meeting Prep note ${suffix}: customer wants quote timing and implementation risks covered.`;
+    const linkedRecords = await meetingPrepSmokeLinkedRecords(suffix);
+    const linkedContact = await prisma.person.findUniqueOrThrow({
+      where: { id: linkedRecords.personId },
+      select: { email: true }
+    });
+    const meeting = await prisma.activity.create({
+      data: {
+        description: linkedContact.email ? `Attendees: ${linkedContact.email}` : "Attendees: Browser Meeting Prep contact",
+        dealId: smokeQuote.dealId,
+        dueAt: new Date("2030-08-15T16:00:00.000Z"),
+        ownerId: smokeAuth.actorUserId,
+        organizationId: linkedRecords.organizationId,
+        personId: linkedRecords.personId,
+        title: activityTitle,
+        type: ActivityType.MEETING,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    await prisma.note.create({
+      data: {
+        authorId: smokeAuth.actorUserId,
+        body: noteBody,
+        dealId: smokeQuote.dealId,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    const priorMeeting = await prisma.activity.create({
+      data: {
+        completedAt: new Date("2030-07-01T16:00:00.000Z"),
+        dealId: smokeQuote.dealId,
+        ownerId: smokeAuth.actorUserId,
+        title: priorTitle,
+        type: ActivityType.MEETING,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    const intake = await prisma.meetingIntake.create({
+      data: {
+        proposedChangesJson: {
+          markdown: "RAW TRANSCRIPT should stay out of the prep card.",
+          matchedObjects: [],
+          meetingActivity: null,
+          nextStepActivities: [],
+          notes: [],
+          relationshipBriefUpdates: [],
+          summary: `Prior Meeting Intelligence ${suffix} confirmed implementation timing is the main discussion point.`,
+          unmatchedEntities: [],
+          warnings: []
+        },
+        sourceType: MeetingIntakeSourceType.TEXT_FILE,
+        status: MeetingIntakeStatus.APPLIED,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    browserMeetingIntakeIds.add(intake.id);
+    await prisma.meetingActivityAssociation.create({
+      data: {
+        activityId: priorMeeting.id,
+        dealId: smokeQuote.dealId,
+        meetingIntakeId: intake.id,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+
+    await expectPageReady(page, `/activities/${meeting.id}/edit`);
+    const activityBrief = page.locator("#meeting-prep-brief");
+    await expect(activityBrief.getByRole("heading", { name: activityTitle })).toBeVisible();
+    await expect(activityBrief.getByRole("heading", { name: "Attendee Confidence" })).toBeVisible();
+    await expect(activityBrief.getByText("Matched to one CRM contact").first()).toBeVisible();
+    await expect(activityBrief.getByText("Linked activity person")).toBeVisible();
+    if (linkedContact.email) await expect(activityBrief.getByText("Exact email match")).toBeVisible();
+    await expect(activityBrief.getByRole("link", { name: "Open matched contact" }).first()).toBeVisible();
+    await expect(activityBrief.getByRole("link", { name: "Search contacts" }).first()).toHaveAttribute("href", /\/contacts\?q=/);
+    await expect(activityBrief.getByRole("link", { name: "Open activity" }).first()).toHaveAttribute("href", `/activities/${meeting.id}/edit`);
+    await expect(activityBrief.getByRole("heading", { name: "Active Deal Context" })).toBeVisible();
+    await expect(activityBrief.getByRole("heading", { name: "Prior Meeting Intelligence" })).toBeVisible();
+    await expect(activityBrief.getByText(`Prior Meeting Intelligence ${suffix}`)).toBeVisible();
+    await expect(activityBrief.getByRole("heading", { name: "Suggested Topics" })).toBeVisible();
+    await expect(activityBrief.getByText("This brief does not create notes, activities, associations, quotes, or Relationship Memory updates.")).toBeVisible();
+    await expect(activityBrief.getByText("RAW TRANSCRIPT")).toHaveCount(0);
+
+    for (const recordPath of [
+      `/contacts/${linkedRecords.personId}`,
+      `/organizations/${linkedRecords.organizationId}`,
+      `/deals/${smokeQuote.dealId}`
+    ]) {
+      await expectPageReady(page, recordPath);
+      await expect(page.locator('a[href="#meeting-prep-brief"]')).toBeVisible();
+      await expect(page.locator("#meeting-prep-brief").getByRole("heading", { name: activityTitle })).toBeVisible();
+    }
+
+    await page.setViewportSize({ width: 390, height: 860 });
+    await expectPageReady(page, `/activities/${meeting.id}/edit`);
+    const attendeeNameBox = await page.locator(".meeting-prep-attendee-main strong").first().boundingBox();
+    expect(attendeeNameBox?.width ?? 0).toBeGreaterThan(80);
+    const attendeeWordBreak = await page.locator(".meeting-prep-attendee-main strong").first().evaluate((node) => {
+      const styles = window.getComputedStyle(node);
+      return { overflowWrap: styles.overflowWrap, wordBreak: styles.wordBreak };
+    });
+    expect(attendeeWordBreak.wordBreak).not.toBe("break-all");
   });
 
   test("creates linked CRM records and completes a follow-up from the UI", async ({ page }) => {
@@ -853,6 +961,15 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(createdFormRow.getByLabel(`Public web form URL for ${formName}. Enabled`)).toHaveValue(publicPath);
     await expect(createdFormRow.getByRole("button", { name: `Copy public web form link for ${formName}` })).toBeVisible();
     await expect(createdFormRow.getByRole("link", { name: "Open", exact: true })).toBeVisible();
+    await expect(createdFormRow.getByRole("link", { name: "Review", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Review all submissions" })).toBeVisible();
+
+    await createdFormRow.getByRole("link", { name: "Review", exact: true }).click();
+    await page.waitForURL(new RegExp(`/web-forms/${webForm.id}$`));
+    await expect(page.getByRole("heading", { name: formName })).toBeVisible();
+    await expect(page.getByText("Accepted submissions", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No submissions yet" })).toBeVisible();
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
 
     await expectPageReady(page, publicPath, { requireAppShell: false });
     await expect(page.locator("main.public-form-page")).toBeVisible();
@@ -883,6 +1000,10 @@ test.describe("Northstar CRM browser smoke", () => {
     expect(lead.organizationId).toBeNull();
     expect(lead.notes).toHaveLength(1);
     expect(lead.notes[0]?.body).toContain("This should create one lead and one note.");
+    const acceptedSubmission = await prisma.webFormSubmission.findFirstOrThrow({
+      where: { workspaceId: smokeAuth.workspaceId, webFormId: webForm.id, leadId: lead.id },
+      select: { id: true }
+    });
 
     await page.goto(publicPath);
     await page.getByLabel("What should we call this?").fill("Browser web form inquiry");
@@ -913,6 +1034,182 @@ test.describe("Northstar CRM browser smoke", () => {
         })
       )
       .toBe(1);
+
+    await expectPageReady(page, `/web-forms/${webForm.id}`);
+    await expect(page.getByRole("heading", { name: "Recent Accepted Submissions" })).toBeVisible();
+    await expect(page.getByText("Browser Form Contact")).toBeVisible();
+    await expect(page.getByText(leadEmail)).toBeVisible();
+    await expect(page.getByText("Browser Forms Co")).toBeVisible();
+    await expect(page.getByText("This should create one lead and one note.")).toBeVisible();
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
+    await expect(page.getByText(`honeypot-${leadEmail}`)).toHaveCount(0);
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+
+    const perFormSubmissionRow = page.locator("tbody tr", { hasText: "Browser web form inquiry" });
+    await perFormSubmissionRow.getByRole("link", { name: "Review" }).click();
+    await page.waitForURL(/\/web-forms\/submissions\/[^/?]+/);
+    await expect(page.getByRole("heading", { name: "Browser web form inquiry" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Submitted Values" })).toBeVisible();
+    const submittedValuesPanel = page.locator("section", { has: page.getByRole("heading", { name: "Submitted Values" }) });
+    await expect(submittedValuesPanel.getByText("Browser Form Contact")).toBeVisible();
+    await expect(submittedValuesPanel.getByText(leadEmail)).toBeVisible();
+    await expect(submittedValuesPanel.getByText("+1 555 0133")).toBeVisible();
+    await expect(submittedValuesPanel.getByText("Browser Forms Co")).toBeVisible();
+    await expect(submittedValuesPanel.getByText("This should create one lead and one note.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Source Context" })).toBeVisible();
+    await expect(page.getByText(`Web Form / Browser smoke ${suffix}`)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Linked CRM Records" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Browser web form inquiry" })).toBeVisible();
+    await expect(page.getByText("Lead Note context")).toBeVisible();
+    await expect(page.getByText("Web form submission:", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy submitted email" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy submitted phone" })).toBeVisible();
+    await page.evaluate(() => {
+      const pageWindow = window as Window & { __webFormCopiedValue?: string };
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (value: string) => {
+            pageWindow.__webFormCopiedValue = value;
+          }
+        }
+      });
+    });
+    const beforeCopyCounts = {
+      leads: await prisma.lead.count({ where: { workspaceId: smokeAuth.workspaceId, source: `Web Form / Browser smoke ${suffix}` } }),
+      notes: await prisma.note.count({ where: { leadId: lead.id, workspaceId: smokeAuth.workspaceId } }),
+      submissions: await prisma.webFormSubmission.count({ where: { webFormId: webForm.id, workspaceId: smokeAuth.workspaceId } })
+    };
+    await page.getByRole("button", { name: "Copy submitted email" }).click();
+    await expect(page.getByText("Submitted email copied.")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (window as Window & { __webFormCopiedValue?: string }).__webFormCopiedValue)).toBe(leadEmail);
+    await page.getByRole("button", { name: "Copy submitted phone" }).click();
+    await expect(page.getByText("Submitted phone copied.")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (window as Window & { __webFormCopiedValue?: string }).__webFormCopiedValue)).toBe("+1 555 0133");
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error("Clipboard blocked in test")) }
+      });
+    });
+    await page.getByRole("button", { name: "Copy submitted phone" }).click();
+    await expect(page.getByText("Submitted phone could not be copied.")).toBeVisible();
+    await expect
+      .poll(() =>
+        prisma.lead.count({ where: { workspaceId: smokeAuth.workspaceId, source: `Web Form / Browser smoke ${suffix}` } })
+      )
+      .toBe(beforeCopyCounts.leads);
+    await expect.poll(() => prisma.note.count({ where: { leadId: lead.id, workspaceId: smokeAuth.workspaceId } })).toBe(beforeCopyCounts.notes);
+    await expect
+      .poll(() => prisma.webFormSubmission.count({ where: { webFormId: webForm.id, workspaceId: smokeAuth.workspaceId } }))
+      .toBe(beforeCopyCounts.submissions);
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
+    await expect(page.getByText(`honeypot-${leadEmail}`)).toHaveCount(0);
+    await page.getByRole("link", { name: "Back to Review" }).click();
+    await page.waitForURL(new RegExp(`/web-forms/${webForm.id}#accepted-submissions$`));
+    await expect(page.locator("#accepted-submissions")).toBeVisible();
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+
+    const submissionFilterPanel = page.locator("section", { has: page.getByRole("heading", { name: "Filter Submissions" }) });
+    await submissionFilterPanel.getByLabel("Search", { exact: true }).fill(leadEmail.toUpperCase());
+    await submissionFilterPanel.getByLabel("Lead status").selectOption("NEW");
+    await submissionFilterPanel.getByRole("button", { name: "Apply filters" }).click();
+    await expect(page).toHaveURL(new RegExp(`/web-forms/${webForm.id}\\?.*q=`));
+    await expect(page.getByText(`Search: ${leadEmail.toUpperCase()}`)).toBeVisible();
+    await expect(page.getByText("Lead status: New")).toBeVisible();
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
+
+    await page.locator("tbody tr", { hasText: "Browser web form inquiry" }).getByRole("link", { name: "Review" }).click();
+    await page.waitForURL(/\/web-forms\/submissions\/[^/?]+\?returnTo=/);
+    await expect(page.getByRole("heading", { name: "Submitted Values" })).toBeVisible();
+    await page.getByRole("link", { name: "Back to Review" }).click();
+    await expect(page).toHaveURL(new RegExp(`/web-forms/${webForm.id}\\?.*q=.*#accepted-submissions$`));
+    await expect(page.locator("#accepted-submissions")).toBeVisible();
+    await expect(page.getByText(`Search: ${leadEmail.toUpperCase()}`)).toBeVisible();
+    await expect(page.getByText("Lead status: New")).toBeVisible();
+
+    await page.reload();
+    await expect(submissionFilterPanel.getByLabel("Search", { exact: true })).toHaveValue(leadEmail.toUpperCase());
+    await expect(submissionFilterPanel.getByLabel("Lead status")).toHaveValue("NEW");
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+
+    await submissionFilterPanel.getByLabel("Search", { exact: true }).fill("definitely no matching web form submission");
+    await submissionFilterPanel.getByRole("button", { name: "Apply filters" }).click();
+    await expect(page.getByRole("heading", { name: "No submissions match these filters" })).toBeVisible();
+    await page.getByRole("link", { name: "Clear filters" }).click();
+    await page.waitForURL(new RegExp(`/web-forms/${webForm.id}$`));
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+
+    await expectPageReady(page, "/web-forms/submissions");
+    await expect(page.getByRole("heading", { name: "Web Form Submissions" })).toBeVisible();
+    await expect(page.getByText("Accepted submissions", { exact: true })).toBeVisible();
+    const allSubmissionsRow = page.locator("tbody tr", { hasText: "Browser web form inquiry" });
+    await expect(allSubmissionsRow).toHaveCount(1);
+    await expect(allSubmissionsRow.getByRole("link", { name: formName })).toBeVisible();
+    await expect(allSubmissionsRow.getByText("Browser Form Contact")).toBeVisible();
+    await expect(allSubmissionsRow.getByText(leadEmail)).toBeVisible();
+    await expect(allSubmissionsRow.getByText("Browser Forms Co")).toBeVisible();
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
+    await expect(page.getByText(`honeypot-${leadEmail}`)).toHaveCount(0);
+
+    const allSubmissionsFilterPanel = page.locator("section", { has: page.getByRole("heading", { name: "Filter Submissions" }) });
+    await allSubmissionsFilterPanel.getByLabel("Search", { exact: true }).fill(leadEmail.toUpperCase());
+    await allSubmissionsFilterPanel.getByLabel("Source form").selectOption(webForm.id);
+    await allSubmissionsFilterPanel.getByLabel("Lead status").selectOption("NEW");
+    await allSubmissionsFilterPanel.getByRole("button", { name: "Apply filters" }).click();
+    await expect(page).toHaveURL(new RegExp(`/web-forms/submissions\\?.*q=`));
+    await expect(page.getByText(`Search: ${leadEmail.toUpperCase()}`)).toBeVisible();
+    await expect(page.getByText(`Source form: ${formName}`)).toBeVisible();
+    await expect(page.getByText("Lead status: New")).toBeVisible();
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+
+    await page.locator("tbody tr", { hasText: "Browser web form inquiry" }).getByRole("link", { name: "Review" }).click();
+    await page.waitForURL(/\/web-forms\/submissions\/[^/?]+\?returnTo=/);
+    await expect(page.getByRole("heading", { name: "Browser web form inquiry" })).toBeVisible();
+    await expect(page.locator("section", { has: page.getByRole("heading", { name: "Submitted Values" }) }).getByText("Browser Form Contact")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open Lead" })).toBeVisible();
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
+    await page.getByRole("link", { name: "Back to Review" }).click();
+    await expect(page).toHaveURL(new RegExp(`/web-forms/submissions\\?.*q=.*#accepted-submissions$`));
+    await expect(page.locator("#accepted-submissions")).toBeVisible();
+    await expect(page.getByText(`Source form: ${formName}`)).toBeVisible();
+
+    await page.reload();
+    await expect(allSubmissionsFilterPanel.getByLabel("Search", { exact: true })).toHaveValue(leadEmail.toUpperCase());
+    await expect(allSubmissionsFilterPanel.getByLabel("Source form")).toHaveValue(webForm.id);
+    await expect(allSubmissionsFilterPanel.getByLabel("Lead status")).toHaveValue("NEW");
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+
+    await allSubmissionsFilterPanel.getByLabel("Search", { exact: true }).fill("definitely no all-form submission match");
+    await allSubmissionsFilterPanel.getByRole("button", { name: "Apply filters" }).click();
+    await expect(page.getByRole("heading", { name: "No submissions match these filters" })).toBeVisible();
+    await page.getByRole("link", { name: "Clear filters" }).click();
+    await page.waitForURL(/\/web-forms\/submissions$/);
+    await expect(page.locator("tbody tr", { hasText: "Browser web form inquiry" })).toHaveCount(1);
+    await page.locator("tbody tr", { hasText: "Browser web form inquiry" }).getByRole("link", { name: formName }).click();
+    await page.waitForURL(new RegExp(`/web-forms/${webForm.id}$`));
+    await expect(page.getByRole("heading", { name: formName })).toBeVisible();
+
+    await page.getByRole("link", { name: "Browser web form inquiry" }).click();
+    await page.waitForURL(new RegExp(`/leads/${lead.id}$`));
+    await expect(page.locator("h1", { hasText: "Browser web form inquiry" })).toBeVisible();
+
+    await prisma.webFormSubmission.update({
+      where: { id: acceptedSubmission.id },
+      data: { email: null, phone: null, message: null, organizationName: null, personName: null }
+    });
+    await expectPageReady(
+      page,
+      `/web-forms/submissions/${acceptedSubmission.id}?returnTo=${encodeURIComponent("https://evil.example.test/web-forms/submissions?q=bad")}`
+    );
+    await expect(page.getByRole("heading", { name: "Submitted Values" })).toBeVisible();
+    await expect(page.getByText("Unavailable in this historical submission.").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy submitted email" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Copy submitted phone" })).toHaveCount(0);
+    await expect(page.getByText(webForm.token)).toHaveCount(0);
+    await page.getByRole("link", { name: "Back to Review" }).click();
+    await page.waitForURL(new RegExp(`/web-forms/${webForm.id}#accepted-submissions$`));
 
     await expectPageReady(page, "/web-forms");
     const formRow = page.locator("tr", { hasText: formName });
@@ -1424,6 +1721,49 @@ async function createRelationshipBriefSmokeContact(suffix: string) {
   };
 }
 
+async function meetingPrepSmokeLinkedRecords(suffix: string) {
+  const deal = await prisma.deal.findUniqueOrThrow({
+    where: { id: smokeQuote.dealId },
+    select: {
+      organizationId: true,
+      personId: true,
+      pipelineId: true,
+      stageId: true
+    }
+  });
+  let organizationId = deal.organizationId;
+  if (!organizationId) {
+    const organization = await prisma.organization.create({
+      data: {
+        domain: `meeting-prep-${suffix}.example`,
+        name: `Browser Flow Meeting Prep Organization ${suffix}`,
+        ownerId: smokeAuth.actorUserId,
+        workspaceId: smokeAuth.workspaceId
+      },
+      select: { id: true }
+    });
+    organizationId = organization.id;
+  }
+
+  let personId = deal.personId;
+  if (!personId) {
+    const person = await prisma.person.create({
+      data: {
+        email: `browser-flow-meeting-prep-${suffix}@example.test`,
+        firstName: "Browser",
+        lastName: `Meeting Prep ${suffix}`,
+        organizationId,
+        ownerId: smokeAuth.actorUserId,
+        workspaceId: smokeAuth.workspaceId
+      },
+      select: { id: true }
+    });
+    personId = person.id;
+  }
+
+  return { organizationId, personId };
+}
+
 async function demoWorkspaceId() {
   const workspace = await prisma.workspace.findUniqueOrThrow({
     where: { slug: "northstar-revenue" },
@@ -1500,7 +1840,10 @@ async function cleanupBrowserFlowRecords() {
     prisma.person.findMany({
       where: {
         workspaceId: workspace.id,
-        OR: suffixFilters.map((suffix) => ({ email: `browser-flow-${suffix}@example.test` }))
+        OR: suffixFilters.flatMap((suffix) => [
+          { email: `browser-flow-${suffix}@example.test` },
+          { email: `browser-flow-meeting-prep-${suffix}@example.test` }
+        ])
       },
       select: { id: true }
     }),

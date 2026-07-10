@@ -1702,7 +1702,7 @@ function WorkInboxThreadList({
         return (
           <Link
             aria-label={`Open inbox thread ${thread.subject}. ${priorityLevelLabel(item.priorityLevel)}. ${item.detectedIntent}. ${item.whyItMatters}`}
-            className="inbox-thread-row"
+            className={`inbox-thread-row${item.waitingOnCustomer ? " inbox-thread-row-waiting" : ""}`}
             href={emailInboxThreadHref(thread.id, {
               account: selectedAccount,
               activeTab: tab,
@@ -1769,6 +1769,24 @@ function WorkInboxThreadList({
                 {formatInboxThreadDate(thread.latestAt)}
               </time>
             </span>
+            {item.waitingOnCustomer ? (
+              <span
+                aria-label={`${item.waitingOnCustomer.waitLabel}. Latest outbound ${formatDate(item.waitingOnCustomer.latestOutboundAt)}. ${item.waitingOnCustomer.reason}`}
+                className="inbox-thread-waiting"
+              >
+                <Badge className="badge inbox-thread-waiting-badge">
+                  Waiting on customer
+                </Badge>
+                <span>{item.waitingOnCustomer.waitLabel}</span>
+                <span>
+                  Latest outbound{" "}
+                  {formatInboxThreadDate(item.waitingOnCustomer.latestOutboundAt)}
+                </span>
+                <span>
+                  {item.relatedRecordLabel ?? "No linked CRM record"}
+                </span>
+              </span>
+            ) : null}
           </Link>
         );
       })}
@@ -1929,6 +1947,26 @@ function WorkInboxInsightPanel({ item }: { item: WorkInboxItem }) {
           <span>{item.crmLinkLabel}</span>
         </div>
       </div>
+      {item.waitingOnCustomer ? (
+        <div
+          className="work-inbox-waiting-summary"
+          aria-label="Waiting on customer details"
+        >
+          <strong>Waiting on customer</strong>
+          <span>
+            {item.waitingOnCustomer.waitLabel} · Latest outbound{" "}
+            {formatDate(item.waitingOnCustomer.latestOutboundAt)} ·{" "}
+            {item.waitingOnCustomer.bucketLabel}
+          </span>
+          <span>{item.waitingOnCustomer.reason}</span>
+          {item.waitingOnCustomer.accountState === "disconnected" ? (
+            <span>
+              Stored email is still reviewable, but the source inbox connection
+              is not available for fresh sync context.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <WorkInboxTriageActions item={item} />
       {item.reasonList.length > 0 ? (
         <div className="work-inbox-priority-reasons">
@@ -3572,6 +3610,13 @@ function workInboxFilterGuidance(
       title: "No reply-needed messages",
     };
   }
+  if (activeTab === "waiting-on-customer") {
+    return {
+      description:
+        "Waiting on Customer is for stored threads where the latest meaningful message was sent by Northstar and no newer meaningful inbound customer response is stored. Automated, marketing, receipt, status-only, and no-reply traffic is excluded.",
+      title: "No waiting customer responses",
+    };
+  }
   if (activeTab === "follow-ups") {
     return {
       description:
@@ -3629,6 +3674,7 @@ function workInboxTabLabel(tab: string) {
     "pricing-quote": "Pricing / Quote",
     priority: "Priority",
     "relationship-risk": "Relationship Risk",
+    "waiting-on-customer": "Waiting on Customer",
     work: "Work",
   };
   return labels[tab] ?? tab;

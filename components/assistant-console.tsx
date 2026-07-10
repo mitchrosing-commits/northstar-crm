@@ -4,11 +4,13 @@ import type { Route } from "next";
 import { AssistantActionReviewQueue } from "@/components/assistant-action-review-queue";
 import { Badge } from "@/components/badge";
 import { AssistantDraftActionCard } from "@/components/assistant-draft-action-card";
+import { AssistantTodayCommandCenter } from "@/components/assistant-today-command-center";
 import { FormFieldLabel } from "@/components/form-field-label";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import type { AssistantCommandResult } from "@/lib/services/assistant/assistant-command-service";
 import { assistantSuggestedCommands } from "@/lib/services/assistant/assistant-command-service";
 import type { AssistantActionRequestView } from "@/lib/services/assistant/assistant-action-request-service";
+import type { AssistantTodayCommandCenter as AssistantTodayCommandCenterView } from "@/lib/services/assistant/assistant-today-command-center-service";
 
 type AssistantConsoleProps = {
   actionRequestQueue: "all" | "applied" | "pending" | "rejected";
@@ -16,11 +18,22 @@ type AssistantConsoleProps = {
   answer: AssistantCommandResult | null;
   command: string;
   pendingActionRequests: AssistantActionRequestView[];
+  todayCommandCenter: AssistantTodayCommandCenterView;
+  todayCommandCenterStatus: string;
 };
 
-export function AssistantConsole({ actionRequestQueue, actionRequestStatus, answer, command, pendingActionRequests }: AssistantConsoleProps) {
+export function AssistantConsole({
+  actionRequestQueue,
+  actionRequestStatus,
+  answer,
+  command,
+  pendingActionRequests,
+  todayCommandCenter,
+  todayCommandCenterStatus
+}: AssistantConsoleProps) {
   return (
     <section className="assistant-console" aria-label="Northstar Assistant console">
+      <AssistantTodayCommandCenter commandCenter={todayCommandCenter} status={todayCommandCenterStatus} />
       <section className="panel assistant-command-panel" aria-labelledby="assistant-command-title">
         <PanelTitleRow
           actions={<Badge>Review-first</Badge>}

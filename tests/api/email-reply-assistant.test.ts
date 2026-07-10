@@ -44,6 +44,8 @@ describe("AI email reply assistant", () => {
     expect(prompt.user).toContain("Tone option: answer pricing or quote questions carefully.");
     expect(prompt.user).toContain("Acme Expansion (OPEN, Proposal stage");
     expect(prompt.user).toContain("Quote Q-100: SENT");
+    expect(prompt.user).toContain("Latest stored thread context:");
+    expect(prompt.user).toContain("Yesterday we discussed budget approval.");
     expect(prompt.user).toContain("Meeting Intelligence:");
     expect(prompt.user).toContain("Decision: Maya wants a proposal this week");
     expect(prompt.user).toContain("Personal context (May inform warm personalization");
@@ -78,6 +80,30 @@ describe("AI email reply assistant", () => {
     });
     expect(assistantService).not.toContain("sendMail");
     expect(assistantService).not.toContain("smtp");
+  });
+
+  it("parses fenced and aliased provider JSON without surfacing a generic draft failure", async () => {
+    const provider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () =>
+        Response.json({
+          output_text:
+            '```json\n{"replyBody":"Hi Maya,\\n\\nThanks for checking in. I will confirm the proposal details before sending them over.","subject":"Re: Pricing question","nextAction":"Review quote details before sending.","warnings":["Verify pricing."]}\n```'
+        })) as typeof fetch
+    );
+
+    await expect(
+      provider?.generate({
+        context: sampleContext(),
+        prompt: buildEmailReplyPrompt({ context: sampleContext(), tone: "concise" }),
+        tone: "concise"
+      })
+    ).resolves.toMatchObject({
+      body: "Hi Maya,\n\nThanks for checking in. I will confirm the proposal details before sending them over.",
+      subjectSuggestion: "Re: Pricing question",
+      suggestedNextAction: "Review quote details before sending.",
+      warnings: ["Verify pricing."]
+    });
   });
 
   it("renders a review-first AI panel on stored email logs only", () => {
@@ -136,6 +162,16 @@ function sampleContext(): EmailReplyContext {
       "Personal context (May inform warm personalization when voluntarily shared, but avoid protected traits or overly sensitive details.): Rockies fan",
       "Communication style (Use for tone, cadence, and level of detail. Usually adapt the reply rather than quoting the preference.): Prefers concise morning emails",
       "Internal guidance: present but withheld from customer-facing AI context. Internal-only handling guidance. Do not include the stored text in customer-facing AI drafts."
+    ],
+    threadMessages: [
+      {
+        body: "Yesterday we discussed budget approval.",
+        direction: "OUTBOUND",
+        fromText: "sales@example.test",
+        occurredAt: new Date("2030-01-01T12:00:00.000Z"),
+        subject: "Re: Pricing question",
+        toText: "Maya Buyer <maya@example.test>"
+      }
     ]
   };
 }

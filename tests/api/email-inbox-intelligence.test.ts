@@ -652,6 +652,204 @@ describe("work inbox intelligence", () => {
     ).toEqual(["Pricing question"]);
   });
 
+  it("tracks waiting-on-customer threads from latest meaningful outbound messages", () => {
+    const now = new Date("2030-01-06T12:00:00.000Z");
+    const longWait = threadFromMessages({
+      id: "gmail_thread_long_wait",
+      linkedRecordLabel: "Deal: Acme",
+      messages: [
+        {
+          body: "Can you send final procurement notes?",
+          direction: "INBOUND",
+          fromText: "Buyer <buyer@acme.example>",
+          occurredAt: new Date("2030-01-01T09:00:00.000Z"),
+          subject: "Procurement notes",
+        },
+        {
+          body: "We sent the notes and are waiting on your procurement response.",
+          direction: "OUTBOUND",
+          fromText: "Sales <sales@northstar.example>",
+          occurredAt: new Date("2030-01-02T09:00:00.000Z"),
+          subject: "Re: Procurement notes",
+          toText: "Buyer <buyer@acme.example>",
+        },
+      ],
+      subject: "Procurement notes",
+    });
+    const shortWait = threadFromMessages({
+      id: "gmail_thread_short_wait",
+      messages: [
+        {
+          body: "I sent the proposal this morning for your review.",
+          direction: "OUTBOUND",
+          fromText: "Sales <sales@northstar.example>",
+          occurredAt: new Date("2030-01-06T08:00:00.000Z"),
+          subject: "Proposal review",
+          toText: "Prospect <prospect@example.test>",
+        },
+      ],
+      subject: "Proposal review",
+    });
+
+    const inbox = buildWorkInbox({
+      now,
+      selectedTab: "waiting-on-customer",
+      threads: [shortWait, longWait],
+    });
+
+    expect(inbox.tabs.find((tab) => tab.id === "waiting-on-customer")).toMatchObject({
+      count: 2,
+      label: "Waiting on Customer",
+    });
+    expect(
+      inbox.priorityShortcuts.find(
+        (shortcut) => shortcut.id === "waiting-on-customer",
+      ),
+    ).toMatchObject({ count: 2, label: "Waiting on customer" });
+    expect(inbox.visibleItems.map((item) => item.thread.subject)).toEqual([
+      "Procurement notes",
+      "Proposal review",
+    ]);
+    expect(inbox.visibleItems[0]).toMatchObject({
+      categories: expect.arrayContaining(["waiting-on-customer"]),
+      relatedRecordLabel: "Deal: Acme",
+      suggestedNextAction:
+        "Draft a follow-up reply or review the linked CRM record before nudging the customer.",
+      tags: expect.arrayContaining(["Waiting on customer", "CRM linked"]),
+      waitingOnCustomer: expect.objectContaining({
+        accountState: "connected",
+        bucket: "over-three-days",
+        bucketLabel: "Over 3 days",
+        waitLabel: "Waiting 4 days",
+      }),
+    });
+    expect(inbox.visibleItems[0].waitingOnCustomer?.reason).toContain(
+      "no newer meaningful inbound customer response is stored",
+    );
+    expect(inbox.visibleItems[0].triageActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "draft-reply", label: "Draft follow-up" }),
+        expect.objectContaining({ id: "review-crm-record" }),
+      ]),
+    );
+    expect(inbox.visibleItems[1].waitingOnCustomer).toMatchObject({
+      bucket: "under-24h",
+      waitLabel: "Waiting 4 hours",
+    });
+  });
+
+  it("removes waiting state after a newer inbound customer response arrives", () => {
+    const responded = threadFromMessages({
+      id: "gmail_thread_responded",
+      messages: [
+        {
+          body: "Checking whether you received the proposal.",
+          direction: "OUTBOUND",
+          fromText: "Sales <sales@northstar.example>",
+          occurredAt: new Date("2030-01-02T09:00:00.000Z"),
+          subject: "Proposal check-in",
+          toText: "Buyer <buyer@example.test>",
+        },
+        {
+          body: "Yes, we received it and will review tomorrow.",
+          direction: "INBOUND",
+          fromText: "Buyer <buyer@example.test>",
+          occurredAt: new Date("2030-01-03T09:00:00.000Z"),
+          subject: "Re: Proposal check-in",
+        },
+      ],
+      subject: "Proposal check-in",
+    });
+
+    const inbox = buildWorkInbox({
+      now: new Date("2030-01-06T12:00:00.000Z"),
+      selectedTab: "waiting-on-customer",
+      threads: [responded],
+    });
+
+    expect(inbox.items[0].waitingOnCustomer).toBeNull();
+    expect(inbox.items[0].categories).not.toContain("waiting-on-customer");
+    expect(inbox.visibleItems).toEqual([]);
+  });
+
+  it("excludes automated, no-reply, and ambiguous-direction traffic from waiting state", () => {
+    const automatedOutbound = threadFromMessages({
+      id: "gmail_thread_automated_wait",
+      messages: [
+        {
+          body: "Receipt for your subscription. Status update only.",
+          direction: "OUTBOUND",
+          fromText: "No Reply <no-reply@northstar.example>",
+          occurredAt: new Date("2030-01-02T09:00:00.000Z"),
+          providerLabels: ["CATEGORY_PROMOTIONS"],
+          subject: "Receipt and status update",
+          toText: "Customer <customer@example.test>",
+        },
+      ],
+      subject: "Receipt and status update",
+    });
+    const ambiguousDirection = threadFromMessages({
+      id: "gmail_thread_ambiguous_wait",
+      messages: [
+        {
+          body: "Follow-up without a trusted direction should not enter the queue.",
+          direction: "UNKNOWN" as never,
+          fromText: "Sales <sales@northstar.example>",
+          occurredAt: new Date("2030-01-02T10:00:00.000Z"),
+          subject: "Ambiguous direction",
+          toText: "Customer <customer@example.test>",
+        },
+      ],
+      subject: "Ambiguous direction",
+    });
+
+    const inbox = buildWorkInbox({
+      now: new Date("2030-01-06T12:00:00.000Z"),
+      selectedTab: "waiting-on-customer",
+      threads: [automatedOutbound, ambiguousDirection],
+    });
+
+    expect(inbox.items.map((item) => item.waitingOnCustomer)).toEqual([
+      null,
+      null,
+    ]);
+    expect(inbox.visibleItems).toEqual([]);
+  });
+
+  it("marks stored disconnected-account threads conservatively when the latest meaningful message is outbound", () => {
+    const inbox = buildWorkInbox({
+      now: new Date("2030-01-04T12:00:00.000Z"),
+      selectedTab: "waiting-on-customer",
+      threads: [
+        threadFromMessages({
+          accountEmail: null,
+          emailConnectionId: null,
+          id: "gmail_thread_disconnected_wait",
+          messages: [
+            {
+              body: "We sent the updated terms and are waiting on your signature.",
+              direction: "OUTBOUND",
+              fromText: "Sales <sales@northstar.example>",
+              occurredAt: new Date("2030-01-02T12:00:00.000Z"),
+              subject: "Updated terms",
+              toText: "Buyer <buyer@example.test>",
+            },
+          ],
+          subject: "Updated terms",
+        }),
+      ],
+    });
+
+    expect(inbox.visibleItems[0].waitingOnCustomer).toMatchObject({
+      accountState: "disconnected",
+      bucket: "one-to-three-days",
+      waitLabel: "Waiting 2 days",
+    });
+    expect(inbox.visibleItems[0].waitingOnCustomer?.reason).toContain(
+      "without an active inbox connection",
+    );
+  });
+
   it("keeps row tags compact and deterministic when a saved smart-label snapshot exists", () => {
     const inbox = buildWorkInbox({
       threads: [
@@ -811,6 +1009,91 @@ function thread({
     linkedRecordLabel,
     messageCount: 1,
     messages: [message],
+    provider: "GOOGLE_WORKSPACE",
+    subject,
+  };
+}
+
+type ThreadMessageInput = {
+  body: string;
+  direction: EmailInboxThreadSummary["messages"][number]["direction"];
+  fromText?: string;
+  occurredAt: Date;
+  providerLabels?: string[];
+  subject: string;
+  toText?: string;
+};
+
+function threadFromMessages({
+  accountEmail = "me@example.test",
+  emailConnectionId = "email_connection_1",
+  id,
+  linkedRecordLabel = null,
+  messages,
+  subject,
+}: {
+  accountEmail?: string | null;
+  emailConnectionId?: string | null;
+  id: string;
+  linkedRecordLabel?: string | null;
+  messages: ThreadMessageInput[];
+  subject: string;
+}): EmailInboxThreadSummary {
+  const emailMessages = messages.map((source, index) => {
+    const occurredAt = source.occurredAt;
+    return {
+      body: source.body,
+      createdAt: occurredAt,
+      createdBy: null,
+      createdById: null,
+      deal: linkedRecordLabel?.startsWith("Deal:")
+        ? { id: "deal_1", title: linkedRecordLabel.replace("Deal: ", "") }
+        : null,
+      dealId: linkedRecordLabel?.startsWith("Deal:") ? "deal_1" : null,
+      direction: source.direction,
+      fromText: source.fromText ?? "sender@example.test",
+      id: `${id}_email_${index + 1}`,
+      lead: null,
+      leadId: null,
+      occurredAt,
+      organization: null,
+      organizationId: null,
+      person: linkedRecordLabel?.startsWith("Contact:")
+        ? {
+            email: "alex@example.test",
+            firstName: "Alex",
+            id: "person_1",
+            lastName: null,
+          }
+        : null,
+      personId: linkedRecordLabel?.startsWith("Contact:") ? "person_1" : null,
+      provider: "GOOGLE_WORKSPACE",
+      providerLabels: source.providerLabels ?? [],
+      providerMessageId: `${id}_message_${index + 1}`,
+      providerSnippet: source.body.slice(0, 120),
+      providerThreadId: id,
+      smartLabelGeneratedAt: null,
+      smartLabelJson: null,
+      smartLabelProvider: null,
+      subject: source.subject,
+      toText: source.toText ?? "me@example.test",
+      updatedAt: occurredAt,
+      workspaceId: "workspace_1",
+    } as EmailInboxThreadSummary["messages"][number];
+  });
+  const latestMessage = emailMessages[emailMessages.length - 1];
+
+  return {
+    accountEmail,
+    emailConnectionId,
+    emailConnectionRef: emailConnectionId ? "nection_1" : null,
+    id,
+    isUnread: false,
+    latestAt: latestMessage.occurredAt,
+    latestMessage,
+    linkedRecordLabel,
+    messageCount: emailMessages.length,
+    messages: emailMessages,
     provider: "GOOGLE_WORKSPACE",
     subject,
   };

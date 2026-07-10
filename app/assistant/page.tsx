@@ -4,11 +4,12 @@ import { PageHeader } from "@/components/page-header";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { listAssistantActionRequests } from "@/lib/services/assistant/assistant-action-request-service";
 import { answerAssistantCommand } from "@/lib/services/assistant/assistant-command-service";
+import { buildAssistantTodayCommandCenter } from "@/lib/services/assistant/assistant-today-command-center-service";
 
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams: Promise<{ actionRequest?: string; command?: string; queue?: string }>;
+  searchParams: Promise<{ actionRequest?: string; command?: string; queue?: string; today?: string; todayCommandCenter?: string }>;
 };
 
 export default async function AssistantPage({ searchParams }: PageProps) {
@@ -16,10 +17,13 @@ export default async function AssistantPage({ searchParams }: PageProps) {
   const command = normalizeCommandParam(resolvedSearchParams.command);
   const actionRequestStatus = normalizeActionRequestStatus(resolvedSearchParams.actionRequest);
   const actionRequestQueue = normalizeActionRequestQueue(resolvedSearchParams.queue);
+  const todayCommandCenterStatus = normalizeTodayCommandCenterStatus(resolvedSearchParams.todayCommandCenter);
+  const showHiddenTodayItems = resolvedSearchParams.today === "hidden";
   const { actor, workspace } = await getCurrentWorkspaceContext();
-  const [answer, pendingActionRequests] = await Promise.all([
+  const [answer, pendingActionRequests, todayCommandCenter] = await Promise.all([
     command ? answerAssistantCommand(actor, command) : Promise.resolve(null),
-    listAssistantActionRequests(actor)
+    listAssistantActionRequests(actor),
+    buildAssistantTodayCommandCenter(actor, new Date(), { showHidden: showHiddenTodayItems })
   ]);
 
   return (
@@ -35,6 +39,8 @@ export default async function AssistantPage({ searchParams }: PageProps) {
         answer={answer}
         command={command}
         pendingActionRequests={pendingActionRequests}
+        todayCommandCenter={todayCommandCenter}
+        todayCommandCenterStatus={todayCommandCenterStatus}
       />
     </AppShell>
   );
@@ -56,4 +62,9 @@ function normalizeActionRequestQueue(value: string | undefined) {
     return value;
   }
   return "pending";
+}
+
+function normalizeTodayCommandCenterStatus(value: string | undefined) {
+  if (value === "hidden" || value === "hide-error") return value;
+  return "";
 }

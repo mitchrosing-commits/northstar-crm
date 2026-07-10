@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { Prisma } from "@prisma/client";
+import { LeadStatus, Prisma } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
@@ -26,19 +26,229 @@ type PublicSubmissionInput = {
   message?: unknown;
   website?: unknown;
 };
+type WebFormReviewFiltersInput = {
+  q?: unknown;
+  from?: unknown;
+  form?: unknown;
+  to?: unknown;
+  status?: unknown;
+};
+type WebFormReviewFilters = {
+  query: string | null;
+  from: string | null;
+  webFormId: string | null;
+  to: string | null;
+  status: LeadStatus | null;
+};
 
 const WEB_FORM_TOKEN_ATTEMPTS = 3;
 const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
+const WEB_FORM_REVIEW_SUBMISSION_LIMIT = 25;
+const LEAD_STATUS_FILTERS = new Set<string>(Object.values(LeadStatus));
 
 export async function listWebForms(actor: WorkspaceActor) {
   await ensureWorkspaceAccess(actor);
   return prisma.webForm.findMany({
     where: { workspaceId: actor.workspaceId, deletedAt: null },
     include: {
-      _count: { select: { submissions: true } }
+      _count: { select: { submissions: true } },
+      submissions: {
+        orderBy: { submittedAt: "desc" },
+        select: { submittedAt: true },
+        take: 1
+      }
     },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }]
   });
+}
+
+export async function getWebFormReview(actor: WorkspaceActor, webFormId: string, filtersInput: WebFormReviewFiltersInput = {}) {
+  await ensureWorkspaceAccess(actor);
+  const filters = normalizeWebFormReviewFilters(filtersInput);
+  const webForm = await prisma.webForm.findFirst({
+    where: { id: webFormId, workspaceId: actor.workspaceId, deletedAt: null },
+    select: {
+      id: true,
+      name: true,
+      publicTitle: true,
+      publicDescription: true,
+      sourceLabel: true,
+      isEnabled: true,
+      requireLeadTitle: true,
+      createdAt: true,
+      updatedAt: true,
+      _count: { select: { submissions: true } }
+    }
+  });
+
+  if (!webForm) throw new ApiError("NOT_FOUND", "Web form was not found.", 404);
+
+  const submissionWhere = buildWebFormReviewSubmissionWhere(actor.workspaceId, filters, { webFormId: webForm.id });
+  const [filteredSubmissionCount, latestSubmission, submissions] = await prisma.$transaction([
+    prisma.webFormSubmission.count({ where: submissionWhere }),
+    prisma.webFormSubmission.findFirst({
+      where: { workspaceId: actor.workspaceId, webFormId: webForm.id },
+      orderBy: [{ submittedAt: "desc" }, { id: "desc" }],
+      select: { submittedAt: true }
+    }),
+    prisma.webFormSubmission.findMany({
+      where: submissionWhere,
+      orderBy: [{ submittedAt: "desc" }, { id: "desc" }],
+      take: WEB_FORM_REVIEW_SUBMISSION_LIMIT,
+      select: {
+        id: true,
+        submittedAt: true,
+        leadTitle: true,
+        personName: true,
+        email: true,
+        phone: true,
+        organizationName: true,
+        message: true,
+        lead: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            deletedAt: true
+          }
+        }
+      }
+    })
+  ]);
+
+  return {
+    ...webForm,
+    filters,
+    filteredSubmissionCount,
+    hasActiveFilters: hasActiveWebFormReviewFilters(filters),
+    latestSubmissionAt: latestSubmission?.submittedAt ?? null,
+    submissionLimit: WEB_FORM_REVIEW_SUBMISSION_LIMIT,
+    submissions
+  };
+}
+
+export async function getWebFormSubmissionReview(actor: WorkspaceActor, filtersInput: WebFormReviewFiltersInput = {}) {
+  await ensureWorkspaceAccess(actor);
+  const webForms = await prisma.webForm.findMany({
+    where: { workspaceId: actor.workspaceId, deletedAt: null },
+    orderBy: [{ name: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      sourceLabel: true
+    }
+  });
+  const filters = normalizeWebFormReviewFilters(filtersInput, {
+    allowedWebFormIds: new Set(webForms.map((webForm) => webForm.id))
+  });
+  const allAcceptedWhere = buildWebFormReviewSubmissionWhere(actor.workspaceId, {
+    from: null,
+    query: null,
+    status: null,
+    to: null,
+    webFormId: null
+  });
+  const filteredWhere = buildWebFormReviewSubmissionWhere(actor.workspaceId, filters);
+  const [acceptedSubmissionCount, filteredSubmissionCount, submissions] = await prisma.$transaction([
+    prisma.webFormSubmission.count({ where: allAcceptedWhere }),
+    prisma.webFormSubmission.count({ where: filteredWhere }),
+    prisma.webFormSubmission.findMany({
+      where: filteredWhere,
+      orderBy: [{ submittedAt: "desc" }, { id: "desc" }],
+      take: WEB_FORM_REVIEW_SUBMISSION_LIMIT,
+      select: {
+        id: true,
+        submittedAt: true,
+        leadTitle: true,
+        personName: true,
+        email: true,
+        phone: true,
+        organizationName: true,
+        message: true,
+        webForm: {
+          select: {
+            id: true,
+            name: true,
+            sourceLabel: true
+          }
+        },
+        lead: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            deletedAt: true
+          }
+        }
+      }
+    })
+  ]);
+
+  return {
+    acceptedSubmissionCount,
+    filteredSubmissionCount,
+    filters,
+    hasActiveFilters: hasActiveWebFormReviewFilters(filters),
+    submissionLimit: WEB_FORM_REVIEW_SUBMISSION_LIMIT,
+    submissions,
+    webForms
+  };
+}
+
+export async function getWebFormSubmissionDetail(actor: WorkspaceActor, submissionId: string) {
+  await ensureWorkspaceAccess(actor);
+  const submission = await prisma.webFormSubmission.findFirst({
+    where: {
+      id: submissionId,
+      workspaceId: actor.workspaceId,
+      webForm: { is: { workspaceId: actor.workspaceId, deletedAt: null } },
+      lead: { is: { workspaceId: actor.workspaceId, deletedAt: null } }
+    },
+    select: {
+      id: true,
+      submittedAt: true,
+      leadTitle: true,
+      personName: true,
+      email: true,
+      phone: true,
+      organizationName: true,
+      message: true,
+      webForm: {
+        select: {
+          id: true,
+          name: true,
+          sourceLabel: true
+        }
+      },
+      lead: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          deletedAt: true,
+          notes: {
+            where: { workspaceId: actor.workspaceId, deletedAt: null },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            select: {
+              id: true,
+              body: true,
+              createdAt: true
+            },
+            take: 2
+          }
+        }
+      }
+    }
+  });
+
+  if (!submission || !submission.lead) throw new ApiError("NOT_FOUND", "Web form submission was not found.", 404);
+
+  const { notes, ...lead } = submission.lead;
+  return {
+    ...submission,
+    lead,
+    leadNote: notes.length === 1 ? notes[0] : null
+  };
 }
 
 export async function createWebForm(actor: WorkspaceActor, data: CreateWebFormInput) {
@@ -172,7 +382,13 @@ export async function submitPublicWebForm(token: string, data: PublicSubmissionI
         workspaceId: webForm.workspaceId,
         webFormId: webForm.id,
         leadId: lead.id,
-        fingerprint
+        fingerprint,
+        leadTitle,
+        personName: normalized.personName,
+        email: normalized.email,
+        phone: normalized.phone,
+        organizationName: normalized.organizationName,
+        message: normalized.message
       }
     });
 
@@ -315,6 +531,107 @@ function normalizePublicSubmissionInput(data: unknown, requireLeadTitle: boolean
   }
 
   return normalized;
+}
+
+function normalizeWebFormReviewFilters(
+  input: WebFormReviewFiltersInput,
+  options: { allowedWebFormIds?: Set<string> } = {}
+): WebFormReviewFilters {
+  const query = normalizeReviewQuery(input.q);
+  const from = normalizeDateFilter(input.from);
+  const webFormId = normalizeSourceWebFormFilter(input.form, options.allowedWebFormIds);
+  const to = normalizeDateFilter(input.to);
+  const status = normalizeLeadStatusFilter(input.status);
+
+  if (from && to && dateFilterStart(from).getTime() > dateFilterEnd(to).getTime()) {
+    return { query, from: null, to: null, status, webFormId };
+  }
+
+  return { query, from, to, status, webFormId };
+}
+
+function buildWebFormReviewSubmissionWhere(
+  workspaceId: string,
+  filters: WebFormReviewFilters,
+  options: { webFormId?: string } = {}
+): Prisma.WebFormSubmissionWhereInput {
+  const webFormId = options.webFormId ?? filters.webFormId;
+  const and: Prisma.WebFormSubmissionWhereInput[] = [
+    { webForm: { is: { workspaceId, deletedAt: null } } },
+    { lead: { is: { workspaceId, deletedAt: null } } }
+  ];
+  if (webFormId) and.push({ webFormId });
+
+  if (filters.query) {
+    const queryFilter = { contains: filters.query, mode: Prisma.QueryMode.insensitive };
+    and.push({
+      OR: [
+        { leadTitle: queryFilter },
+        { personName: queryFilter },
+        { email: queryFilter },
+        { phone: queryFilter },
+        { organizationName: queryFilter },
+        { webForm: { is: { name: queryFilter } } },
+        { lead: { is: { title: queryFilter } } }
+      ]
+    });
+  }
+
+  const submittedAt: Prisma.DateTimeFilter = {};
+  if (filters.from) submittedAt.gte = dateFilterStart(filters.from);
+  if (filters.to) submittedAt.lte = dateFilterEnd(filters.to);
+  if (submittedAt.gte || submittedAt.lte) and.push({ submittedAt });
+  if (filters.status) and.push({ lead: { is: { status: filters.status } } });
+
+  return { workspaceId, AND: and };
+}
+
+function hasActiveWebFormReviewFilters(filters: WebFormReviewFilters) {
+  return Boolean(filters.query || filters.from || filters.to || filters.status || filters.webFormId);
+}
+
+function normalizeReviewQuery(value: unknown) {
+  const raw = firstString(value);
+  if (!raw) return null;
+  return truncateSingleLine(raw, 120) || null;
+}
+
+function normalizeLeadStatusFilter(value: unknown) {
+  const raw = firstString(value);
+  if (!raw || !LEAD_STATUS_FILTERS.has(raw)) return null;
+  return raw as LeadStatus;
+}
+
+function normalizeSourceWebFormFilter(value: unknown, allowedWebFormIds: Set<string> | undefined) {
+  if (!allowedWebFormIds) return null;
+  const raw = firstString(value);
+  if (!raw) return null;
+  const normalized = truncateSingleLine(raw, 120);
+  if (!normalized) return null;
+  if (allowedWebFormIds && !allowedWebFormIds.has(normalized)) return null;
+  return normalized;
+}
+
+function normalizeDateFilter(value: unknown) {
+  const raw = firstString(value);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [year, month, day] = raw.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return raw;
+}
+
+function dateFilterStart(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function dateFilterEnd(value: string) {
+  return new Date(`${value}T23:59:59.999Z`);
+}
+
+function firstString(value: unknown) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === "string" ? candidate : null;
 }
 
 function hasSubmissionDetails(input: {

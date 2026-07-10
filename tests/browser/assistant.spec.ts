@@ -43,6 +43,29 @@ test.describe("Assistant review-first browser workflow", () => {
     const errors = watchBrowserErrors(page);
 
     await expectAssistantPageReady(page);
+    const todayPanel = page.locator(".assistant-today-command-center");
+    const commandCenter = page.getByLabel("Prioritized Assistant Command Center items");
+    await expect(page.getByRole("heading", { name: "Command Center" })).toBeVisible();
+    await expect(todayPanel).toContainText("Review-first suggestions only");
+    await expect(commandCenter).toContainText("Deal needs next activity");
+    await expect(commandCenter).toContainText("Quote awaiting follow-up");
+    await expect(commandCenter).toContainText("New lead needs review");
+    await expect(commandCenter).toContainText("Draft follow-up");
+    await expect(commandCenter).toContainText("Why this is here");
+    await expect(commandCenter.getByRole("button", { name: /Apply/i })).toHaveCount(0);
+    await expect(commandCenter).not.toContainText(/refresh_token|provider payload|access token/i);
+    const dealItem = commandCenter.locator(".assistant-today-item").filter({ hasText: "Deal needs next activity" }).first();
+    const explanation = dealItem.locator("details.assistant-today-explanation");
+    await expect(explanation).not.toHaveAttribute("open", "");
+    await explanation.locator("summary").click();
+    await expect(explanation).toHaveAttribute("open", "");
+    await expect(explanation).toContainText("Rule");
+    await expect(explanation).toContainText("Open deal has no upcoming open activity.");
+    await expect(explanation).toContainText("Stored values");
+    await expect(explanation).toContainText("Threshold");
+    await expect(explanation).toContainText("Calculation");
+    await expect(explanation).toContainText("Source record");
+    await expect(explanation).not.toContainText(/provider payload|providerMessageId|providerThreadId|access token|refresh_token/i);
     const permissionSummary = page.getByLabel("Assistant permissions and limits");
     await expect(permissionSummary).toContainText("Available now");
     await expect(permissionSummary).toContainText("Read-only answers");
@@ -59,11 +82,66 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(suggestions).not.toContainText(/create (?:a )?(?:deal|quote|organization)/i);
     await expect(suggestions).not.toContainText(/send|sync|convert|delete|autonomous/i);
 
-    await page.getByLabel("Command").fill("Tell me what I have to do today.");
+    await commandInput(page).fill("Tell me what I have to do today.");
     await page.getByRole("button", { name: "Ask" }).click();
     await expect(page.getByRole("heading", { name: "Today's Assistant agenda" })).toBeVisible();
     await expect(page.getByLabel("Assistant answer")).toContainText("Context-only");
     await expect(page.getByLabel("Assistant answer")).toContainText("Draft only");
+
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("hides a Today Command Center item for today and reveals it across refresh", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await expectAssistantPageReady(page);
+    const commandCenter = page.getByLabel("Prioritized Assistant Command Center items");
+    const targetItem = commandCenter.locator(".assistant-today-item").filter({ hasText: "Deal needs next activity" }).first();
+    await expect(targetItem).toContainText("Assistant command deal");
+    await targetItem.getByRole("button", { name: "Hide for today" }).click();
+    await expect(page.locator(".assistant-today-command-center")).toContainText("Command Center item hidden for today.");
+    await expect(commandCenter).not.toContainText("Deal needs next activity");
+
+    await page.reload();
+    await expectAssistantPageReady(page);
+    await expect(page.getByLabel("Prioritized Assistant Command Center items")).not.toContainText("Deal needs next activity");
+    await page.getByRole("link", { name: /Show hidden \(1\)/ }).click();
+    const hiddenItems = page.getByLabel("Hidden Assistant Command Center items");
+    await expect(hiddenItems).toContainText("Deal needs next activity");
+    await expect(hiddenItems).toContainText("Hidden today");
+    await expect(hiddenItems.getByRole("button", { name: "Hide for today" })).toHaveCount(0);
+    const hiddenExplanation = hiddenItems.locator("details.assistant-today-explanation").first();
+    await hiddenExplanation.locator("summary").click();
+    await expect(hiddenExplanation).toHaveAttribute("open", "");
+    await expect(hiddenExplanation).toContainText("Open deal has no upcoming open activity.");
+    await expect(hiddenExplanation).toContainText("no qualifying upcoming activity");
+
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("keeps Today Command Center explanation controls readable on a narrow viewport", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+    await page.setViewportSize({ width: 360, height: 900 });
+
+    await expectAssistantPageReady(page);
+    const item = page.getByLabel("Prioritized Assistant Command Center items").locator(".assistant-today-item").filter({ hasText: "Deal needs next activity" }).first();
+    await expect(item).toBeVisible();
+    await item.locator("summary", { hasText: "Why this is here" }).click();
+    await expect(item.locator("details.assistant-today-explanation")).toHaveAttribute("open", "");
+    await expect(item).toContainText("Stored values");
+
+    const boxes = await item.locator("summary, .assistant-today-actions .button-compact").evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: rect.height, text: element.textContent ?? "", width: rect.width };
+      })
+    );
+    expect(boxes.length).toBeGreaterThanOrEqual(3);
+    for (const box of boxes) {
+      expect.soft(box.width, `${box.text} should not collapse into stacked letters`).toBeGreaterThan(72);
+      expect.soft(box.height, `${box.text} should stay compact while wrapping`).toBeLessThan(78);
+    }
+    await expect(item).not.toContainText(/provider payload|refresh_token|access token/i);
 
     expect(errors.current()).toEqual([]);
   });
@@ -232,6 +310,45 @@ async function createAssistantBrowserFixture(): Promise<AssistantBrowserFixture>
     ],
     select: { id: true }
   });
+  const pipeline = await prisma.pipeline.create({
+    data: { name: `Assistant Pipeline ${nameSuffix}`, sortOrder: 1, workspaceId: workspace.id }
+  });
+  const stage = await prisma.pipelineStage.create({
+    data: { name: "Review", pipelineId: pipeline.id, sortOrder: 1, workspaceId: workspace.id }
+  });
+  const organization = await prisma.organization.create({
+    data: { name: `Assistant Org ${nameSuffix}`, ownerId: user.id, workspaceId: workspace.id }
+  });
+  const deal = await prisma.deal.create({
+    data: {
+      organizationId: organization.id,
+      ownerId: user.id,
+      pipelineId: pipeline.id,
+      stageId: stage.id,
+      title: `Assistant command deal ${nameSuffix}`,
+      updatedAt: new Date("2026-07-09T12:00:00.000Z"),
+      workspaceId: workspace.id
+    }
+  });
+  await prisma.quote.create({
+    data: {
+      dealId: deal.id,
+      number: `BROWSER-${nameSuffix}`,
+      status: "SENT",
+      subtotalCents: 25000,
+      totalCents: 25000,
+      updatedAt: new Date("2026-07-01T12:00:00.000Z"),
+      workspaceId: workspace.id
+    }
+  });
+  await prisma.lead.create({
+    data: {
+      ownerId: user.id,
+      source: "Assistant browser fixture",
+      title: `Assistant browser lead ${nameSuffix}`,
+      workspaceId: workspace.id
+    }
+  });
   const session = await createLocalSession(user.id);
   return {
     ambiguousContactName,
@@ -246,6 +363,7 @@ async function createAssistantBrowserFixture(): Promise<AssistantBrowserFixture>
 }
 
 async function resetAssistantBrowserWorkspace() {
+  await prisma.assistantTodayItemHide.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantActionRequest.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.activity.deleteMany({ where: { workspaceId: fixture.workspaceId } });
@@ -255,11 +373,18 @@ async function resetAssistantBrowserWorkspace() {
 async function cleanupAssistantBrowserFixture() {
   if (!fixture) return;
   if (fixture.token) await revokeLocalSessionToken(fixture.token);
+  await prisma.assistantTodayItemHide.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantActionRequest.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.activity.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.note.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.quote.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.deal.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.lead.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.person.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.organization.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.pipelineStage.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.pipeline.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.workspaceMembership.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.workspace.deleteMany({ where: { id: fixture.workspaceId } });
   await prisma.session.deleteMany({ where: { userId: fixture.userId } });
@@ -290,16 +415,20 @@ async function authenticateAssistantBrowserContext(context: BrowserContext) {
 async function expectAssistantPageReady(page: Page) {
   await page.goto("/assistant");
   await expect(page.locator("#main-content")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Assistant" })).toBeVisible();
+  await expect(page.getByRole("heading", { exact: true, name: "Assistant" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ask Northstar" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
 }
 
 async function draftCommand(page: Page, command: string) {
   await expectAssistantPageReady(page);
-  await page.getByLabel("Command").fill(command);
+  await commandInput(page).fill(command);
   await page.getByRole("button", { name: "Ask" }).click();
   await expect(page.getByRole("heading", { name: "Draft action for review" })).toBeVisible();
+}
+
+function commandInput(page: Page) {
+  return page.getByRole("textbox", { name: /^Command\b/ });
 }
 
 function reviewRequest(page: Page, text: string) {
