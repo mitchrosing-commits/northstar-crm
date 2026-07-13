@@ -97,6 +97,18 @@ Assistant actions are typed as proposals:
 
 Every `NorthstarAssistantSuggestedAction` has `reviewFirst: true`. Viewing an insight panel does not write CRM data, send email, retry jobs, reconnect providers, classify email, or apply Meeting Intelligence changes.
 
+The `/assistant` conversational console uses the same review-first boundary. It can draft activity and note requests into the Assistant review queue, and it can route supported contact and organization record improvements into reusable CRM Change Proposals:
+
+- propose creating a contact
+- propose updating supported contact fields
+- propose creating an organization
+- propose updating supported organization fields
+- propose linking a contact to an organization
+
+Supported examples include "Create a contact for Jane Doe at Acme", "Update Jane's phone", "Create an organization for Northwind", and "Link Sarah to Northwind". The Assistant does not accept arbitrary model-generated field names, does not invent contact details, and treats unsupported fields such as contact title/custom fields as warnings or missing information.
+
+Entity resolution is workspace-scoped and conservative. Explicit record context and exact identifiers are preferred; multiple plausible contacts or organizations produce clarification candidates instead of a guessed target. Saving a supported contact/organization draft opens the CRM Change Proposal review page where users can inspect rationale, evidence, current values, proposed values, permission state, duplicate warnings, and stale/failed states. Apply is server-side, permission-checked, editable, audited, and links back to the final CRM record after success.
+
 ## UI Entry Point
 
 `components/northstar-assistant-panel.tsx` renders the first reusable assistant surface. It shows:

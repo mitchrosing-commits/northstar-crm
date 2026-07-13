@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { createLocalSession, revokeLocalSessionToken } from "@/lib/auth/local-auth";
 import { localSessionCookieName, serializeLocalSessionCookieValue } from "@/lib/auth/session";
+import { defaultAiActionPermissions } from "@/lib/services/ai-action-permissions";
 
 const prisma = new PrismaClient();
 const browserBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3100";
@@ -75,9 +76,9 @@ test.describe("Assistant review-first browser workflow", () => {
     const permissionSummary = page.getByLabel("Assistant permissions and limits");
     await expect(permissionSummary).toContainText("Available now");
     await expect(permissionSummary).toContainText("Read-only answers");
-    await expect(permissionSummary).toContainText("permission-checked confirmed activity or note apply");
+    await expect(permissionSummary).toContainText("confirmed activity or note apply, and contact or organization CRM Change Proposals");
     await expect(permissionSummary).toContainText("Settings-only for now");
-    await expect(permissionSummary).toContainText("email send, sync, and unsupported automatic actions");
+    await expect(permissionSummary).toContainText("email send, sync, provider mutation, destructive actions, and unsupported automatic actions");
 
     const suggestions = page.getByLabel("Suggested Assistant prompts");
     await expect(suggestions).toContainText("Help me plan my day.");
@@ -210,7 +211,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await activityDraft.getByRole("button", { name: "Save to review queue" }).click();
 
     const activityRequest = reviewRequest(page, "Draft activity");
-    await expect(activityRequest).toContainText("Review-first activity creation");
+    await expect(activityRequest).toContainText("Review-first activity");
     await expect(activityRequest).toContainText("AI Preferences require confirmation");
     await expect(activityRequest.getByRole("button", { name: "Apply activity" })).toBeVisible();
     await activityRequest.getByRole("button", { name: "Apply activity" }).click();
@@ -225,7 +226,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await noteDraft.getByRole("button", { name: "Save to review queue" }).click();
 
     const noteRequest = reviewRequest(page, "Draft note");
-    await expect(noteRequest).toContainText("Review-first note creation");
+    await expect(noteRequest).toContainText("Review-first note");
     await expect(noteRequest).toContainText("AI Preferences require confirmation");
     await expect(noteRequest.getByRole("button", { name: "Apply note" })).toBeVisible();
     await noteRequest.getByRole("button", { name: "Apply note" }).click();
@@ -234,6 +235,51 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(noteRequest).toHaveClass(/assistant-review-request-applied/);
     await expect(noteRequest.getByRole("button", { name: /Apply note/i })).toHaveCount(0);
 
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("routes supported contact drafts into CRM change proposals before applying", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+    const email = `proposal-${fixture.workspaceId.slice(0, 8)}@example.test`;
+
+    await prisma.workspace.update({
+      data: {
+        aiActionPermissionDefaults: {
+          ...defaultAiActionPermissions,
+          create_contact: "require_confirmation"
+        }
+      },
+      where: { id: fixture.workspaceId }
+    });
+
+    await draftCommand(page, `Create a contact for Browser Proposal with email ${email} and phone 555-0177.`);
+    const contactDraft = page.getByLabel("Assistant draft actions").locator(".assistant-draft-card").filter({ hasText: "Propose creating contact" });
+    await expect(contactDraft).toContainText("Save, then review");
+    await expect(contactDraft).toContainText("Email");
+    await expect(contactDraft).toContainText(email);
+    await expect(contactDraft).toContainText("[redacted email]");
+    await expect(contactDraft).toContainText("Phone");
+
+    await Promise.all([
+      page.waitForURL(/\/crm-change-proposals\/[^/]+\?source=assistant$/),
+      contactDraft.getByRole("button", { name: "Save to review queue" }).click()
+    ]);
+
+    await expect(page.getByRole("heading", { level: 1, name: /Create contact: Browser/i })).toBeVisible();
+    await expect(page.getByLabel("CRM change proposal summary")).toContainText("Assistant conversation");
+    await expect(page.getByText("Current vs Proposed")).toBeVisible();
+    await expect(page.getByLabel("CRM change proposal summary")).toContainText("Create contacts");
+    await page.locator('input[name="field.firstName"]').fill("Browser Reviewed");
+    await page.getByRole("button", { name: "Apply reviewed change" }).click();
+    await expect(page).toHaveURL(/status=applied/);
+    await expect(page.getByText("CRM change proposal applied after review.")).toBeVisible();
+    await expect(page.getByLabel("CRM change proposal summary").getByRole("link", { name: "Applied contact" })).toBeVisible();
+
+    const created = await prisma.person.findFirst({
+      where: { email, workspaceId: fixture.workspaceId },
+      select: { firstName: true, lastName: true, phone: true }
+    });
+    expect(created).toEqual({ firstName: "Browser Reviewed", lastName: "Proposal", phone: "555-0177" });
     expect(errors.current()).toEqual([]);
   });
 
@@ -260,7 +306,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await ambiguousDraft.getByRole("button", { name: "Save to review queue" }).click();
 
     const ambiguousRequest = reviewRequest(page, `Follow up with ${fixture.ambiguousContactName}`);
-    await expect(ambiguousRequest).toContainText("Apply is only available for low-risk pending activity or note requests with a clear target.");
+    await expect(ambiguousRequest).toContainText("Apply is only available for pending supported requests with clear targets, supported fields, and explicit review.");
     await expect(ambiguousRequest.getByRole("button", { name: /Apply/i })).toHaveCount(0);
     await expect(ambiguousRequest.getByRole("button", { name: "Reject request" })).toBeVisible();
 
@@ -454,6 +500,11 @@ async function createAssistantBrowserFixture(): Promise<AssistantBrowserFixture>
 
 async function resetAssistantBrowserWorkspace() {
   await prisma.aiPreference.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.workspace.update({
+    data: { aiActionPermissionDefaults: defaultAiActionPermissions },
+    where: { id: fixture.workspaceId }
+  });
+  await prisma.crmChangeProposal.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantTodayItemHide.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantConversationMessage.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantConversation.deleteMany({ where: { workspaceId: fixture.workspaceId } });
@@ -470,6 +521,7 @@ async function cleanupAssistantBrowserFixture() {
   await prisma.assistantConversationMessage.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantConversation.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantActionRequest.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.crmChangeProposal.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.aiPreference.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.activity.deleteMany({ where: { workspaceId: fixture.workspaceId } });

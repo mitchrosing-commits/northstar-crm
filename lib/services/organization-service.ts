@@ -19,6 +19,9 @@ type CreateOrganizationInput = {
   domain?: unknown;
 };
 type UpdateOrganizationInput = Partial<CreateOrganizationInput>;
+type UpdateOrganizationOptions = {
+  auditMetadata?: unknown;
+};
 export type OrganizationListFilters = CustomFieldListFilters & {
   q?: string;
   ownerId?: string;
@@ -147,7 +150,7 @@ export async function createOrganization(actor: WorkspaceActor, data: unknown) {
   return organization;
 }
 
-export async function updateOrganization(actor: WorkspaceActor, organizationId: string, data: unknown) {
+export async function updateOrganization(actor: WorkspaceActor, organizationId: string, data: unknown, options: UpdateOrganizationOptions = {}) {
   await ensureWorkspaceAccess(actor);
   await assertRecordInWorkspace("organization", actor.workspaceId, organizationId);
   const normalized = normalizeUpdateOrganizationInput(data);
@@ -160,7 +163,7 @@ export async function updateOrganization(actor: WorkspaceActor, organizationId: 
   }
 
   const organization = await prisma.organization.update({ where: { id: organizationId }, data: normalized });
-  await writeAuditLog(actor, "organization.updated", "Organization", organization.id);
+  await writeAuditLog(actor, "organization.updated", "Organization", organization.id, options.auditMetadata);
   return organization;
 }
 

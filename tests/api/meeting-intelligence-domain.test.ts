@@ -396,8 +396,20 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.meetingActivity).toMatchObject({ include: true, target: { id: "deal-1", type: "deal" } });
     expect(draft.meetingActivity?.associatedTargets).toEqual([{ id: "deal-1", label: "Alpha Needle Deal", type: "deal" }]);
     expect(draft.meetingActivity?.description).toContain("Associated CRM records:");
+    expect(draft.meetingActivity?.description).toContain("Structured meeting summary:");
+    expect(draft.meetingActivity?.description).toContain("Source attribution: Meeting Intelligence reviewed intake.");
+    expect(draft.meetingActivity?.description).not.toContain("Source meeting markdown:");
+    expect(draft.summarySections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "meeting_overview", title: "Meeting overview" }),
+        expect.objectContaining({ key: "commercial_details", title: "Commercial details" }),
+        expect.objectContaining({ key: "next_steps", title: "Next steps" })
+      ])
+    );
     expect(draft.notes[0]).toMatchObject({ include: true, target: { id: "deal-1", type: "deal" } });
     expect(draft.notes[0].body).toContain("Target: Deal - Alpha Needle Deal");
+    expect(draft.notes[0].body).toContain("Source: Meeting Intelligence reviewed intake (2030-04-01).");
+    expect(draft.notes[0].body).toContain("Evidence:");
     expect(draft.nextStepActivities[0]).toMatchObject({
       dueAt: "2030-04-05T00:00:00.000Z",
       include: true,
@@ -891,6 +903,37 @@ describe("meeting intelligence markdown and proposals", () => {
 
     expect(draft.nextStepActivities).toHaveLength(6);
     expect(draft.notes.length).toBeLessThanOrEqual(8);
+  });
+
+  it("deduplicates repeated next steps and avoids vague suggestions as activities", () => {
+    const draft = analyzeMeetingIntelligence({
+      contextText: "Meeting date: 2030-04-01",
+      markdown: [
+        "# Meeting Intake",
+        "Action: Owner: Sam. send SOW by 2030-04-05.",
+        "Action: Owner: Sam. send SOW by 2030-04-05.",
+        "Action: maybe consider pricing options.",
+        "Action: schedule UAT workshop by next week."
+      ].join("\n"),
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Alpha Needle Deal",
+          evidenceExcerpt: "Alpha Needle Deal",
+          id: "deal-1",
+          matchedReason: "Context hint match",
+          objectType: "deal",
+          status: "OPEN"
+        }
+      ],
+      unmatchedEntities: []
+    });
+
+    expect(draft.nextStepActivities.map((activity) => activity.title)).toEqual([
+      "Owner: Sam. send SOW by 2030-04-05.",
+      "schedule UAT workshop by next week."
+    ]);
+    expect(draft.nextStepActivities[1]?.dueAt).toBe("2030-04-08T00:00:00.000Z");
   });
 });
 

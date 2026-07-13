@@ -4,6 +4,7 @@ import type {
   MatchedCrmObject,
   MeetingProposalFactCategory,
   MeetingIntelligenceDraft,
+  MeetingSummarySection,
   MeetingSourceMetadata,
   RelationshipBriefFields,
   UnmatchedEntity
@@ -54,8 +55,11 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
   const text = input.markdown;
   const lines = meaningfulLines(text);
   const sections = extractSections(`${input.contextText ?? ""}\n${text}`);
-  const summary = buildSummary(lines);
-  const warnings = buildWarnings(input.matchedObjects, input.unmatchedEntities, sections.actionItems, lines);
+  const meetingDate = parseMeetingDate(input.contextText ?? text);
+  const participants = parseParticipants(`${input.contextText ?? ""}\n${text}`);
+  const summarySections = buildStructuredSummary(lines, sections, { meetingDate, participants });
+  const summary = buildSummary(summarySections, lines);
+  const warnings = buildWarnings(input.matchedObjects, input.unmatchedEntities, sections.actionItems, lines, meetingDate);
   const primaryTarget = pickPrimaryTarget(input.matchedObjects);
   const primaryMatch = primaryTarget ? input.matchedObjects.find((match) => match.id === primaryTarget.id && match.objectType === primaryTarget.type) : undefined;
   const associatedTargets = buildAssociatedTargets(input.matchedObjects);
@@ -63,15 +67,18 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     ? {
         associatedTargets,
         confidence: primaryMatch?.confidence,
-        completedAt: parseMeetingDate(input.contextText ?? text)?.toISOString() ?? new Date().toISOString(),
+        completedAt: meetingDate?.toISOString() ?? new Date().toISOString(),
         description: [
-          `Summary: ${summary}`,
+          "Structured meeting summary:",
+          ...summarySections.flatMap((section) => [
+            `${section.title}:`,
+            ...section.items.map((item) => `- ${item}`)
+          ]),
           "",
           "Associated CRM records:",
           ...associatedTargets.map((target) => `- ${targetTypeLabel(target.type)}: ${target.label ?? target.id}`),
           "",
-          "Source meeting markdown:",
-          text
+          "Source attribution: Meeting Intelligence reviewed intake."
         ].join("\n"),
         evidence: lines.slice(0, 3),
         include: true,
@@ -86,11 +93,12 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     markdown: text,
     matchedObjects: input.matchedObjects,
     meetingActivity,
-    notes: buildNotes(input.matchedObjects, primaryTarget, summary, lines),
-    nextStepActivities: buildNextSteps(input.matchedObjects, sections.actionItems),
+    notes: buildNotes(input.matchedObjects, primaryTarget, summary, lines, { meetingDate, participants }),
+    nextStepActivities: buildNextSteps(input.matchedObjects, sections.actionItems, meetingDate),
     relationshipBriefUpdates: buildRelationshipBriefUpdates(input.matchedObjects, lines),
     sourceMetadata: input.sourceMetadata,
     summary,
+    summarySections,
     unmatchedEntities: input.unmatchedEntities,
     warnings
   };
@@ -262,7 +270,13 @@ function uniqueNormalizedLines(lines: string[]) {
   return unique;
 }
 
-function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeof pickPrimaryTarget>, summary: string, lines: string[]) {
+function buildNotes(
+  matches: MatchedCrmObject[],
+  primaryTarget: ReturnType<typeof pickPrimaryTarget>,
+  summary: string,
+  lines: string[],
+  context: { meetingDate?: Date; participants: string[] }
+) {
   const notes = [];
   const usableMatches = matches.filter((match) => match.confidence !== "ambiguous");
   const objectCounts = objectTypeCounts(usableMatches);
@@ -281,12 +295,17 @@ function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeo
       noteTitle(kind, target.label ?? match.displayName),
       "",
       `Target: ${targetTypeLabel(target.type)} - ${target.label ?? target.id}`,
+      `Source: Meeting Intelligence reviewed intake${context.meetingDate ? ` (${context.meetingDate.toISOString().slice(0, 10)})` : ""}.`,
+      context.participants.length > 0 ? `Participants: ${context.participants.join(", ")}` : null,
       "",
       "Summary:",
       noteSummary,
       factLines.length > 0 ? "" : null,
       factLines.length > 0 ? "Facts to save:" : null,
-      ...factLines.map((line) => `- ${line}`)
+      ...factLines.map((line) => `- ${line}`),
+      "",
+      "Evidence:",
+      ...uniqueNormalizedLines([match.evidenceExcerpt, ...factLines]).slice(0, 3).map((line) => `- ${line}`)
     ]
       .filter((line): line is string => line !== null)
       .join("\n")
@@ -308,13 +327,14 @@ function buildNotes(matches: MatchedCrmObject[], primaryTarget: ReturnType<typeo
   return notes;
 }
 
-function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[]) {
+function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[], meetingDate?: Date) {
   const target = pickPrimaryTarget(matches);
   if (!target) return [];
   const match = matches.find((candidate) => candidate.id === target.id && candidate.objectType === target.type);
   const associatedTargets = buildAssociatedTargets(matches);
-  return actionItems.slice(0, 6).map((item, index) => {
-    const dueAt = parseDueDate(item);
+  const deduped = dedupeActionItems(actionItems.filter(isActionableNextStep)).slice(0, 6);
+  return deduped.map((item, index) => {
+    const dueAt = parseDueDate(item, meetingDate);
     const ownerHint = parseOwnerHint(item);
     return {
       category: "followUpAction" as const,
@@ -342,7 +362,13 @@ function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[]) {
   });
 }
 
-function buildWarnings(matches: MatchedCrmObject[], unmatched: UnmatchedEntity[], actionItems: string[], lines: string[]) {
+function buildWarnings(
+  matches: MatchedCrmObject[],
+  unmatched: UnmatchedEntity[],
+  actionItems: string[],
+  lines: string[],
+  meetingDate?: Date
+) {
   const warnings = new Set<string>();
   if (!matches.some((match) => match.objectType === "organization")) warnings.add("No organization was confidently matched.");
   if (!matches.some((match) => match.objectType === "deal" || match.objectType === "lead")) {
@@ -353,7 +379,7 @@ function buildWarnings(matches: MatchedCrmObject[], unmatched: UnmatchedEntity[]
     if (match.confidence === "ambiguous") warnings.add(`Ambiguous ${match.objectType} match: ${match.displayName}.`);
   }
   if (unmatched.length > 0) warnings.add("Some mentioned entities were not matched to CRM records.");
-  if (actionItems.some((item) => !parseDueDate(item))) warnings.add("Some next steps do not include a clear due date.");
+  if (actionItems.some((item) => !parseDueDate(item, meetingDate))) warnings.add("Some next steps do not include a clear due date.");
   if (matches.length > 0 && lines.some((line) => protectedTraitPattern.test(line))) {
     warnings.add("Protected or sensitive trait details were excluded from curated Relationship Brief and fact-note suggestions.");
   }
@@ -587,13 +613,102 @@ function targetTypeLabel(type: MatchedCrmObject["objectType"]) {
   return "Organization";
 }
 
-function buildSummary(lines: string[]) {
+function buildSummary(summarySections: MeetingSummarySection[], lines: string[]) {
+  const overview = summarySections.find((section) => section.key === "meeting_overview");
+  if (overview?.items.length) return overview.items.join(" ").slice(0, 700);
   const candidates = lines
-    .filter((line) => !/^#|^- source type:|^- original file:/i.test(line))
+    .filter((line) => !isMeetingMetadataLine(line))
+    .filter((line) => !isStructuralMeetingLine(line))
     .filter((line) => !protectedTraitPattern.test(line))
     .slice(0, 4);
   if (candidates.length === 0) return "Meeting notes were captured for CRM review.";
   return candidates.join(" ").slice(0, 700);
+}
+
+function buildStructuredSummary(
+  lines: string[],
+  sections: ReturnType<typeof extractSections>,
+  context: { meetingDate?: Date; participants: string[] }
+): MeetingSummarySection[] {
+  const safeLines = uniqueNormalizedLines(lines)
+    .filter((line) => !isMeetingMetadataLine(line))
+    .filter((line) => !protectedTraitPattern.test(line));
+  const nextSteps = dedupeActionItems(sections.actionItems.filter(isActionableNextStep)).map(cleanSummaryItem).slice(0, 5);
+  const decisions = uniqueNormalizedLines(sections.decisions.map(cleanSummaryItem)).slice(0, 5);
+  const risks = uniqueNormalizedLines([...sections.risks, ...safeLines.filter((line) => businessConcernPattern.test(line))].map(cleanSummaryItem)).slice(0, 5);
+  const openQuestions = uniqueNormalizedLines(sections.openQuestions.map(cleanSummaryItem)).slice(0, 5);
+  const objectives = summaryLinesMatching(safeLines, /\b(objective|goal|agenda|purpose|wanted to|looking to|trying to)\b/i);
+  const commercial = summaryLinesMatching(safeLines, /\b(budget|pricing|price|quote|proposal|sow|commercial|legal|procurement|approval|renewal|expansion|pilot)\b/i);
+  const needs = summaryLinesMatching(safeLines, /\b(needs?|pain|concern|worried|blocker|risk|challenge|problem|looking for|requires?)\b/i);
+  const commitments = summaryLinesMatching(safeLines, /\b(committed|commitment|agreed|will|promised|confirmed)\b/i);
+  const discussion = safeLines
+    .filter((line) => !isStructuralMeetingLine(line))
+    .filter((line) => !lineLooksLikeAction(line))
+    .filter((line) => !decisions.includes(cleanSummaryItem(line)))
+    .filter((line) => !risks.includes(cleanSummaryItem(line)))
+    .map(cleanSummaryItem)
+    .filter(Boolean)
+    .slice(0, 5);
+  const overview = buildOverviewItems(safeLines, context);
+  return [
+    summarySection("meeting_overview", "Meeting overview", overview, "inferred"),
+    summarySection("participants", "Participants", context.participants, "explicit"),
+    summarySection("objectives", "Objectives", objectives, "explicit"),
+    summarySection("key_discussion_points", "Key discussion points", discussion, "explicit"),
+    summarySection("decisions", "Decisions", decisions, "explicit"),
+    summarySection("customer_needs_or_concerns", "Customer needs or concerns", needs, "explicit"),
+    summarySection("commercial_details", "Commercial details", commercial, "explicit"),
+    summarySection("risks_or_blockers", "Risks or blockers", risks, "explicit"),
+    summarySection("commitments", "Commitments", commitments, "explicit"),
+    summarySection("open_questions", "Open questions", openQuestions, "explicit"),
+    summarySection("next_steps", "Next steps", nextSteps, "explicit")
+  ].filter((section) => section.items.length > 0);
+}
+
+function summarySection(
+  key: MeetingSummarySection["key"],
+  title: string,
+  items: string[],
+  evidenceType: MeetingSummarySection["evidenceType"]
+): MeetingSummarySection {
+  return {
+    evidenceType,
+    items: uniqueNormalizedLines(items.map(cleanSummaryItem)).filter(Boolean).slice(0, 5),
+    key,
+    title
+  };
+}
+
+function buildOverviewItems(lines: string[], context: { meetingDate?: Date; participants: string[] }) {
+  const first = lines
+    .filter((line) => !isStructuralMeetingLine(line))
+    .filter((line) => !lineLooksLikeAction(line))
+    .map(cleanSummaryItem)
+    .find(Boolean);
+  const pieces = [
+    context.meetingDate ? `Meeting date: ${context.meetingDate.toISOString().slice(0, 10)}.` : "",
+    context.participants.length > 0 ? `Participants: ${context.participants.join(", ")}.` : "",
+    first ?? "Meeting notes were captured for CRM review."
+  ].filter(Boolean);
+  return [pieces.join(" ")];
+}
+
+function summaryLinesMatching(lines: string[], pattern: RegExp) {
+  return uniqueNormalizedLines(
+    lines
+      .filter((line) => pattern.test(line))
+      .filter((line) => !lineLooksLikeAction(line))
+      .map(cleanSummaryItem)
+  ).slice(0, 5);
+}
+
+function cleanSummaryItem(value: string) {
+  return value
+    .replace(/^[-*]\s*/, "")
+    .replace(/^(decision|risk|open question|question|objective|goal|summary|note|action item|action|next step|follow[- ]?up)\s*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 260);
 }
 
 function buildMeetingTitle(text: string, targetLabel: string) {
@@ -610,18 +725,69 @@ function actionTitle(item: string) {
     .slice(0, 160) || "Follow up from meeting";
 }
 
-function parseDueDate(text: string): Date | undefined {
+function parseDueDate(text: string, meetingDate?: Date): Date | undefined {
   const iso = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
   if (iso) return safeDate(`${iso[1]}T00:00:00.000Z`);
   const slash = text.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
   if (slash) return safeDate(`${slash[3]}-${slash[1].padStart(2, "0")}-${slash[2].padStart(2, "0")}T00:00:00.000Z`);
-  const meetingDate: Date | undefined = parseMeetingDate(text);
-  const baseDate: Date = meetingDate ?? new Date();
+  const baseDate: Date | undefined = meetingDate ?? parseMeetingDate(text);
+  if (!baseDate) return undefined;
   if (/\bby tomorrow\b/i.test(text)) return addDays(baseDate, 1);
   if (/\bby next week\b/i.test(text)) return addDays(baseDate, 7);
   const weekday = text.match(/\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
   if (weekday) return nextWeekday(baseDate, weekday[1]);
   return undefined;
+}
+
+function parseParticipants(text: string) {
+  const line = text.split("\n").find((candidate) => /^(attendees|participants)\s*:/i.test(candidate.trim()));
+  if (!line) return [];
+  return uniqueNormalizedLines(
+    line
+      .replace(/^(attendees|participants)\s*:\s*/i, "")
+      .split(/[,;]|\band\b/i)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  ).slice(0, 12);
+}
+
+function dedupeActionItems(items: string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const item of items) {
+    const key = actionDedupeKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
+function actionDedupeKey(item: string) {
+  return actionTitle(item)
+    .replace(/\b(20\d{2}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/20\d{2})\b/g, "")
+    .replace(/\bby\s+(tomorrow|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, "")
+    .replace(/\bowner\s*:\s*[^.;\n]+[.;]?\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isActionableNextStep(item: string) {
+  const cleaned = actionTitle(item);
+  if (!cleaned) return false;
+  if (/\b(maybe|possibly|consider|think about|explore whether|discuss options|nice to have)\b/i.test(cleaned)) return false;
+  return /\b(send|schedule|share|follow up|follow-up|call|email|review|prepare|confirm|update|create|draft|provide|book|set up|assign)\b/i.test(cleaned);
+}
+
+function lineLooksLikeAction(line: string) {
+  return actionLinePattern.test(line) || /^next step\s*:/i.test(line);
+}
+
+function isStructuralMeetingLine(line: string) {
+  return /^#|^(attendees|participants|meeting date|date|source type|original file|mime type|extracted words|extraction method|conversion|processor|provider|warning):/i.test(
+    line.replace(/^[-*]\s*/, "").trim()
+  );
 }
 
 function parseMeetingDate(text: string): Date | undefined {

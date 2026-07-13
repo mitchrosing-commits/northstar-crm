@@ -51,6 +51,11 @@ export async function createAssistantActionRequest(
 ): Promise<AssistantActionRequestView> {
   await ensureWorkspaceAccess(actor);
   const normalized = normalizeDraftActionRequest(input.draftAction, input.sourceCommand);
+  const existing = await findDuplicatePendingRequest(actor, normalized);
+  if (existing) {
+    const preferences = await getAiPreferences(actor);
+    return assistantActionRequestView(existing, preferences.assistantActionPermissions);
+  }
   const request = await prisma.assistantActionRequest.create({
     data: {
       ...normalized,
@@ -148,8 +153,8 @@ export async function rejectAssistantActionRequest(
 export async function applyAssistantActionRequest(
   actor: WorkspaceActor,
   requestId: string,
-  options: { automatic?: boolean } = {}
-): Promise<{ activityId?: string; noteId?: string; request: AssistantActionRequestView }> {
+  options: { automatic?: boolean; reviewedFields?: Record<string, string> } = {}
+): Promise<{ activityId?: string; noteId?: string; organizationId?: string; personId?: string; request: AssistantActionRequestView }> {
   await ensureWorkspaceAccess(actor);
   const id = normalizeId(requestId);
   const existing = await prisma.assistantActionRequest.findFirst({
@@ -178,7 +183,7 @@ export async function applyAssistantActionRequest(
 
   let applyPlan: ApplyPlan;
   try {
-    applyPlan = applyPlanFromRequest(existing);
+    applyPlan = applyPlanFromRequest(existing, options.reviewedFields);
   } catch (error) {
     await writeAuditLog(actor, "assistant_action_request.apply_rejected", "AssistantActionRequest", existing.id, {
       actionType: existing.actionType,
@@ -208,7 +213,12 @@ export async function applyAssistantActionRequest(
 
   try {
     const appliedRecord = await applyPlan.apply(actor);
-    const request = await prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: existing.id } });
+    const request = appliedRecord.requestUpdate
+      ? await prisma.assistantActionRequest.update({
+          data: appliedRecord.requestUpdate,
+          where: { id: existing.id }
+        })
+      : await prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: existing.id } });
     await writeAuditLog(actor, "assistant_action_request.applied", "AssistantActionRequest", request.id, {
       actionType: request.actionType,
       ...appliedRecord.auditMetadata,
@@ -276,12 +286,23 @@ function applyAvailabilityLabel(
 ) {
   if (request.status === AssistantActionRequestStatus.APPLIED) return "Applied";
   if (request.status === AssistantActionRequestStatus.REJECTED) return "Rejected";
-  const noun = request.actionType === "note" ? "note" : "activity";
-  if (decision.state === "requires_confirmation") return `Review-first ${noun} creation: confirmation required`;
-  if (decision.state === "allowed_automatically") return `Automatic ${noun} creation enabled for new eligible requests`;
+  const noun = actionNoun(request.actionType);
+  if (decision.state === "requires_confirmation") return `Review-first ${noun}: confirmation required`;
+  if (decision.state === "allowed_automatically") return `Automatic ${noun} enabled for new eligible requests`;
   if (decision.state === "settings_only") return `Settings-only boundary: ${permissionLevelLabel(decision.level)}`;
   if (decision.level === "require_confirmation") return "Blocked pending review";
   return `Blocked by AI Preferences: ${permissionLevelLabel(decision.level)}`;
+}
+
+function actionNoun(actionType: string) {
+  if (actionType === "note") return "note";
+  if (actionType === "activity") return "activity";
+  if (actionType === "contact_create") return "contact";
+  if (actionType === "contact_update") return "contact update";
+  if (actionType === "contact_organization_link") return "contact link";
+  if (actionType === "organization_create") return "organization";
+  if (actionType === "organization_update") return "organization update";
+  return "request";
 }
 
 function normalizeDraftActionRequest(draft: AssistantDraftAction, sourceCommand: string | undefined) {
@@ -300,6 +321,7 @@ function normalizeDraftActionRequest(draft: AssistantDraftAction, sourceCommand:
     label: safeText(candidate.label),
     type: safeText(candidate.type)
   }));
+  const proposal = normalizeDraftProposal(draft);
   return {
     actionType: draft.kind,
     confidence: draft.confidence,
@@ -310,6 +332,7 @@ function normalizeDraftActionRequest(draft: AssistantDraftAction, sourceCommand:
       applyState: "disabled",
       candidates,
       fields,
+      ...(proposal ? { proposal } : {}),
       targetHref: draft.targetHref ? safeHref(draft.targetHref) : null,
       targetKind: safeText(draft.targetKind),
       targetLabel: safeText(draft.targetLabel)
@@ -321,6 +344,54 @@ function normalizeDraftActionRequest(draft: AssistantDraftAction, sourceCommand:
     title: safeText(draft.title),
     warnings: jsonOrNull(warnings)
   };
+}
+
+async function findDuplicatePendingRequest(
+  actor: WorkspaceActor,
+  normalized: ReturnType<typeof normalizeDraftActionRequest>
+) {
+  const candidates = await prisma.assistantActionRequest.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 12,
+    where: {
+      actionType: normalized.actionType,
+      createdById: actor.actorUserId,
+      status: AssistantActionRequestStatus.PENDING,
+      targetHref: normalized.targetHref,
+      title: normalized.title,
+      workspaceId: actor.workspaceId
+    }
+  });
+  return candidates.find((request) => stableJson(request.proposedPayload) === stableJson(normalized.proposedPayload)) ?? null;
+}
+
+function normalizeDraftProposal(draft: AssistantDraftAction): Prisma.InputJsonObject | null {
+  if (!draft.proposal) return null;
+  const fields: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(draft.proposal.fields)) {
+    if (!allowedProposalFieldKeys(draft.kind).includes(key)) continue;
+    fields[key] = value === null ? null : safeText(String(value), key.endsWith("Id") ? 120 : maxStoredTextLength);
+  }
+  if (Object.keys(fields).length === 0) return null;
+  const expectedCurrentValues: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(draft.proposal.expectedCurrentValues ?? {})) {
+    if (!allowedExpectedValueKeys.has(key)) continue;
+    expectedCurrentValues[key] = value === null ? null : safeText(String(value), key.endsWith("Id") ? 120 : maxStoredTextLength);
+  }
+  return {
+    expectedCurrentValues,
+    fields,
+    operation: draft.proposal.operation,
+    ...(draft.proposal.secondaryRecordId ? { secondaryRecordId: safeText(draft.proposal.secondaryRecordId, 120) } : {}),
+    ...(draft.proposal.targetRecordId ? { targetRecordId: safeText(draft.proposal.targetRecordId, 120) } : {})
+  };
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`).join(",")}}`;
 }
 
 function assistantActionRequestView<T extends {
@@ -387,8 +458,9 @@ type ApplyNoteInput = {
 
 type ApplyPlan = {
   apply: (actor: WorkspaceActor) => Promise<{
-    auditMetadata: { activityId?: string; noteId?: string };
-    result: { activityId?: string; noteId?: string };
+    auditMetadata: { activityId?: string; noteId?: string; organizationId?: string; personId?: string };
+    requestUpdate?: { targetHref?: string; targetLabel?: string };
+    result: { activityId?: string; noteId?: string; organizationId?: string; personId?: string };
   }>;
 };
 
@@ -399,9 +471,9 @@ function applyPlanFromRequest(request: {
   riskLevel: string;
   status: AssistantActionRequestStatus;
   targetHref: string | null;
-}): ApplyPlan {
+}, reviewedFields: Record<string, string> = {}): ApplyPlan {
   if (request.actionType === "activity") {
-    const activityInput = activityInputFromRequest(request);
+    const activityInput = activityInputFromRequest(request, reviewedFields);
     return {
       apply: async (actor) => {
         const activity = await createActivity(actor, activityInput);
@@ -413,7 +485,7 @@ function applyPlanFromRequest(request: {
     };
   }
   if (request.actionType === "note") {
-    const noteInput = noteInputFromRequest(request);
+    const noteInput = noteInputFromRequest(request, reviewedFields);
     return {
       apply: async (actor) => {
         const note = await createNote(actor, noteInput);
@@ -434,12 +506,12 @@ function activityInputFromRequest(request: {
   riskLevel: string;
   status: AssistantActionRequestStatus;
   targetHref: string | null;
-}): ApplyActivityInput {
+}, reviewedFields: Record<string, string> = {}): ApplyActivityInput {
   if (!isSupportedAssistantActionApply(request)) {
     throw new ApiError("VALIDATION_ERROR", "Apply is only available for low-risk pending activity requests with a clear target.", 422);
   }
   const payload = proposedPayloadObject(request.proposedPayload);
-  const fields = proposedPayloadFields(payload.fields);
+  const fields = mergeReviewedFields(proposedPayloadFields(payload.fields), reviewedFields);
   const title = fieldValue(fields, "Title");
   const type = normalizeApplyActivityType(fieldValue(fields, "Type"));
   const dueAt = normalizeApplyDueDate(fieldValue(fields, "Due date"));
@@ -465,12 +537,12 @@ function noteInputFromRequest(request: {
   riskLevel: string;
   status: AssistantActionRequestStatus;
   targetHref: string | null;
-}): ApplyNoteInput {
+}, reviewedFields: Record<string, string> = {}): ApplyNoteInput {
   if (!isSupportedAssistantActionApply(request)) {
     throw new ApiError("VALIDATION_ERROR", "Apply is only available for low-risk pending note requests with a clear target.", 422);
   }
   const payload = proposedPayloadObject(request.proposedPayload);
-  const fields = proposedPayloadFields(payload.fields);
+  const fields = mergeReviewedFields(proposedPayloadFields(payload.fields), reviewedFields);
   const body = fieldValue(fields, "Body");
   const relation = crmRelationFromHref(targetHrefForRequest(request));
   if (!body || !relation) {
@@ -496,6 +568,42 @@ function crmRelationFromHref(href: string) {
   if (match[1] === "deals") return { dealId: id };
   if (match[1] === "leads") return { leadId: id };
   return { organizationId: id };
+}
+
+function allowedProposalFieldKeys(actionType: string) {
+  if (actionType === "contact_create") return ["email", "firstName", "lastName", "organizationId", "phone"];
+  if (actionType === "contact_update") return ["email", "firstName", "lastName", "phone"];
+  if (actionType === "contact_organization_link") return ["organizationId"];
+  if (actionType === "organization_create") return ["domain", "linkPersonId", "name"];
+  if (actionType === "organization_update") return ["domain", "name"];
+  return [];
+}
+
+const allowedExpectedValueKeys = new Set([
+  "domain",
+  "email",
+  "firstName",
+  "lastName",
+  "linkedContactOrganizationId",
+  "name",
+  "organizationId",
+  "phone"
+]);
+
+function mergeReviewedFields(
+  fields: AssistantActionRequestView["proposedFields"],
+  reviewedFields: Record<string, string>
+): AssistantActionRequestView["proposedFields"] {
+  return fields.map((field) => ({
+    ...field,
+    value: reviewedFields[field.label] !== undefined ? safeText(reviewedFields[field.label]) : field.value
+  }));
+}
+
+function requiredProposalId(value: string | undefined | null, message: string) {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!id || id.length > 120) throw new ApiError("VALIDATION_ERROR", message, 422);
+  return id;
 }
 
 function fieldValue(fields: AssistantActionRequestView["proposedFields"], label: string) {
@@ -542,6 +650,15 @@ function proposedPayloadFields(value: unknown): AssistantActionRequestView["prop
 }
 
 function riskLevelForDraft(draft: AssistantDraftAction) {
+  if (
+    draft.kind === "contact_create" ||
+    draft.kind === "contact_organization_link" ||
+    draft.kind === "contact_update" ||
+    draft.kind === "organization_create" ||
+    draft.kind === "organization_update"
+  ) {
+    return "medium";
+  }
   if (draft.kind === "organization_contact_creation") return "high";
   if (draft.kind === "contact_relationship_update") return "medium";
   if (draft.confidence === "needs_clarification" || draft.missingInfo.length > 0 || draft.warnings.length > 1) return "medium";

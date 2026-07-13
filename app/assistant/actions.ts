@@ -8,8 +8,10 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
 import {
   applyAssistantActionRequest,
+  createCrmChangeProposalFromAssistantDraft,
   createAssistantActionRequest,
   hideAssistantTodayCommandCenterItem,
+  isAssistantCrmChangeProposalDraft,
   rejectAssistantActionRequest,
   sendAssistantConversationMessage
 } from "@/lib/services/crm";
@@ -35,12 +37,22 @@ export async function saveAssistantDraftActionRequest(formData: FormData) {
   const sourceCommand = stringValue(formData.get("sourceCommand"));
   const returnCommand = stringValue(formData.get("returnCommand"));
   const { actor } = await getCurrentWorkspaceContext();
+  let crmProposalHref = "";
 
   try {
-    await createAssistantActionRequest(actor, { draftAction, sourceCommand });
+    if (isAssistantCrmChangeProposalDraft(draftAction)) {
+      const proposal = await createCrmChangeProposalFromAssistantDraft(actor, { draftAction, sourceCommand });
+      revalidatePath("/crm-change-proposals");
+      revalidatePath("/assistant");
+      crmProposalHref = proposal.href;
+    } else {
+      await createAssistantActionRequest(actor, { draftAction, sourceCommand });
+    }
   } catch {
     redirect(assistantRedirect("error", returnCommand));
   }
+
+  if (crmProposalHref) redirect(`${crmProposalHref}?source=assistant` as Route);
 
   revalidatePath("/assistant");
   redirect(assistantRedirect("saved", returnCommand, "pending"));
@@ -62,10 +74,11 @@ export async function rejectAssistantActionRequestAction(formData: FormData) {
 
 export async function applyAssistantActionRequestAction(formData: FormData) {
   const requestId = stringValue(formData.get("requestId"));
+  const reviewedFields = reviewedFieldValues(formData);
   const { actor } = await getCurrentWorkspaceContext();
 
   try {
-    await applyAssistantActionRequest(actor, requestId);
+    await applyAssistantActionRequest(actor, requestId, { reviewedFields });
   } catch {
     redirect(assistantRedirect("apply-error"));
   }
@@ -103,6 +116,17 @@ function parseDraftAction(value: FormDataEntryValue | null): AssistantDraftActio
 
 function stringValue(value: FormDataEntryValue | null, maxLength = 640) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function reviewedFieldValues(formData: FormData) {
+  const fields: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (!key.startsWith("field:") || typeof value !== "string") continue;
+    const label = key.slice("field:".length).trim().slice(0, 120);
+    if (!label) continue;
+    fields[label] = value.trim().slice(0, 600);
+  }
+  return fields;
 }
 
 function assistantChatRedirect(status: string, conversationId = "") {

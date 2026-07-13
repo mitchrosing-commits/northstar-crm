@@ -32,6 +32,7 @@ const assistantIcon = readFileSync(join(process.cwd(), "components/assistant-ico
 const assistantReviewQueue = readFileSync(join(process.cwd(), "components/assistant-action-review-queue.tsx"), "utf8");
 const assistantTodayCommandCenter = readFileSync(join(process.cwd(), "components/assistant-today-command-center.tsx"), "utf8");
 const actionRequestService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-action-request-service.ts"), "utf8");
+const assistantCrmProposalService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-crm-change-proposal-service.ts"), "utf8");
 const commandService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-command-service.ts"), "utf8");
 const conversationService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-conversation-service.ts"), "utf8");
 const contextService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-context-service.ts"), "utf8");
@@ -58,7 +59,10 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(parseAssistantCommand("Remind me to follow up with Jane Doe next Tuesday.")).toEqual({ kind: "draft_activity" });
     expect(parseAssistantCommand("Add a note for Jane Doe: Prefers Monday morning check-ins.")).toEqual({ kind: "draft_note" });
     expect(parseAssistantCommand("Update Jane Doe's profile to include that she is going on vacation.")).toEqual({ kind: "draft_contact_relationship" });
-    expect(parseAssistantCommand("Create an organization for Acme and add Mike Fox as CFO from this note: met at event.")).toEqual({ kind: "draft_record_creation" });
+    expect(parseAssistantCommand("Create an organization for Acme and add Mike Fox as CFO from this note: met at event.")).toEqual({ kind: "draft_crm_record_change" });
+    expect(parseAssistantCommand("Create a contact for Jane Doe at Acme.")).toEqual({ kind: "draft_crm_record_change" });
+    expect(parseAssistantCommand("Update Jane's phone to 555-0100.")).toEqual({ kind: "draft_crm_record_change" });
+    expect(parseAssistantCommand("Link Jane Doe to Acme.")).toEqual({ kind: "draft_crm_record_change" });
     expect(parseAssistantCommand("Make email replies more casual and concise.")).toEqual({ kind: "draft_ai_preferences" });
     expect(parseAssistantCommand("Create a deal and send a quote.")).toEqual({ kind: "unsupported" });
   });
@@ -200,7 +204,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantConsole).toContain("AssistantPermissionSummary");
     expect(assistantConsole).toContain("Available now");
     expect(assistantConsole).toContain("Settings-only for now");
-    expect(assistantConsole).toContain("permission-checked confirmed activity or note apply");
+    expect(assistantConsole).toContain("contact or organization CRM Change Proposals");
     expect(assistantConsole).toContain("Chat with {assistantName}");
     expect(assistantConsole).toContain("assistantToneLabel");
     expect(assistantCommandForm).toContain("sendAssistantConversationMessageAction");
@@ -216,6 +220,8 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantConsole).toContain("Context-only");
     expect(assistantConsole).toContain("Draft only");
     expect(assistantActions).toContain("saveAssistantDraftActionRequest");
+    expect(assistantActions).toContain("createCrmChangeProposalFromAssistantDraft");
+    expect(assistantActions).toContain("isAssistantCrmChangeProposalDraft");
     expect(assistantActions).toContain("applyAssistantActionRequestAction");
     expect(assistantActions).toContain("rejectAssistantActionRequestAction");
     expect(assistantActions).toContain("hideAssistantTodayCommandCenterItemAction");
@@ -281,6 +287,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(crmBarrel).toContain('export * from "./assistant/assistant-command-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-conversation-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-context-service"');
+    expect(crmBarrel).toContain('export * from "./assistant/assistant-crm-change-proposal-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-draft-action-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-action-request-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-today-command-center-service"');
@@ -335,6 +342,13 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(actionRequestService).toContain("createNote(actor, noteInput)");
     expect(actionRequestService).toContain("AssistantActionRequestStatus.APPLIED");
     expect(actionRequestService).toContain("assistant_action_request.applied");
+    expect(actionRequestService).not.toContain("createPerson(actor");
+    expect(actionRequestService).not.toContain("updateOrganization(actor");
+    expect(assistantCrmProposalService).toContain("createCrmChangeProposal(actor");
+    expect(assistantCrmProposalService).toContain("CrmChangeProposalType.CREATE_PERSON");
+    expect(assistantCrmProposalService).toContain("CrmChangeProposalType.LINK_PERSON_ORGANIZATION");
+    expect(assistantCrmProposalService).toContain("idempotencyKey");
+    expect(assistantCrmProposalService).toContain("createHash(\"sha256\")");
     expect(actionRequestService).not.toContain("updateAiPreferences");
     expect(commandService).not.toContain("sendGmailReplyFromEmailLog");
     expect(commandService).not.toContain("runGmailInboxSyncNow");

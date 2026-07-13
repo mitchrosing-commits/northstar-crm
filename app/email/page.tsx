@@ -762,7 +762,13 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
               <div className="relationship-inbox-signal-list">
                 {priorityQueueItems.map((item) => {
                   const emailLog = item.emailLog;
-                  const reviewHref = `#email-card-${emailLog.id}` as Route;
+                  const reviewHref = emailCardHref(emailLog.id);
+                  const draftHref = emailDraftReviewHref(emailLog.id);
+                  const followUpHref = emailFollowUpReviewHref(emailLog.id);
+                  const actionHref = relationshipInboxActionHref(
+                    item.nextBestAction,
+                    { draftHref, followUpHref, reviewHref },
+                  );
                   return (
                     <article
                       className="relationship-inbox-signal-row"
@@ -791,15 +797,22 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                           </Badge>
                         ) : null}
                       </ActionGroup>
-                      <div className="relationship-inbox-row-meta">
-                        <span>
-                          {item.linkedRecord
-                            ? `Linked: ${item.linkedRecord.label}`
-                            : "No linked CRM record"}
-                        </span>
-                        <span>
-                          {emailFollowUpStateLabel(item.followUpState)}
-                        </span>
+                      <div
+                        aria-label={`${emailLog.subject} queue state`}
+                        className="relationship-inbox-state-strip"
+                      >
+                        {item.linkedRecord ? (
+                          <Link
+                            className="relationship-inbox-state-link"
+                            href={item.linkedRecord.href}
+                          >
+                            Linked: {item.linkedRecord.label}
+                          </Link>
+                        ) : (
+                          <span>No linked CRM record</span>
+                        )}
+                        <span>{emailFollowUpStateLabel(item.followUpState)}</span>
+                        <span>Next: {item.nextBestAction.label}</span>
                         {item.followUps.length > 1 ? (
                           <span>{item.followUps.length} linked follow-ups</span>
                         ) : null}
@@ -817,6 +830,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                       <RelationshipInboxNextBestAction
                         action={item.nextBestAction}
                         actionExplanation={item.explainer.actionExplanation}
+                        actionHref={actionHref}
                         subject={emailLog.subject}
                         workspaceId={workspace.id}
                       />
@@ -847,7 +861,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                         <Link
                           aria-label={`Draft AI reply for email ${emailLog.subject}`}
                           className="button-secondary button-compact"
-                          href={reviewHref}
+                          href={draftHref}
                           title={`Draft AI reply for email ${emailLog.subject}`}
                         >
                           Draft reply
@@ -855,7 +869,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                         <Link
                           aria-label={`Create or review follow-up for email ${emailLog.subject}`}
                           className="button-secondary button-compact"
-                          href={item.followUps[0]?.href ?? reviewHref}
+                          href={item.followUps[0]?.href ?? followUpHref}
                           title={`Create or review follow-up for email ${emailLog.subject}`}
                         >
                           {item.followUps.length > 0
@@ -2345,14 +2359,34 @@ function RelationshipInboxQueueExplainer({
   );
 }
 
+function relationshipInboxActionHref(
+  action: EmailPriorityNextBestAction,
+  hrefs: { draftHref: Route; followUpHref: Route; reviewHref: Route },
+): Route {
+  if (action.action === "draft_reply") return hrefs.draftHref;
+  if (action.action === "review_follow_up") return hrefs.followUpHref;
+  if (
+    action.action === "classify_email" ||
+    action.action === "link_crm_record" ||
+    action.action === "no_action_needed" ||
+    action.action === "review_potential_lead" ||
+    action.action === "review_relationship_risk"
+  ) {
+    return hrefs.reviewHref;
+  }
+  return action.href;
+}
+
 function RelationshipInboxNextBestAction({
   action,
   actionExplanation,
+  actionHref,
   subject,
   workspaceId,
 }: {
   action: EmailPriorityNextBestAction;
   actionExplanation: EmailPriorityActionExplanation;
+  actionHref: Route;
   subject: string;
   workspaceId: string;
 }) {
@@ -2396,7 +2430,7 @@ function RelationshipInboxNextBestAction({
         <Link
           aria-label={`${primaryLabel} for ${subject}`}
           className="button-primary button-compact"
-          href={action.href}
+          href={actionHref}
           title={`${primaryLabel} for ${subject}`}
         >
           {primaryLabel}
@@ -3841,6 +3875,7 @@ function EmailLogCard({
           <Badge key={badge}>{badge}</Badge>
         ))}
       </ActionGroup>
+      <EmailSourceMessageFacts emailLog={emailLog} />
       <EmailSmartLabelPanel
         emailLogId={emailLog.id}
         initialClassification={smartClassification}
@@ -3863,7 +3898,12 @@ function EmailLogCard({
           }
         />
       ) : null}
-      <EmailFollowUpPanel draft={followUpDraft} subject={emailLog.subject} />
+      <div
+        className="email-action-anchor"
+        id={emailFollowUpReviewHref(emailLog.id).slice(1)}
+      >
+        <EmailFollowUpPanel draft={followUpDraft} subject={emailLog.subject} />
+      </div>
       <p className="email-preview">{formatEmailPreview(emailLog.body)}</p>
       <EmailLogLinks emailLog={emailLog} />
       <ActionGroup className="filter-actions" label={emailActionsLabel}>
@@ -3888,14 +3928,59 @@ function EmailLogCard({
           }))}
         />
       </ActionGroup>
-      <EmailAiReplyPanel
-        defaultTone={defaultAiReplyTone}
-        emailLogId={emailLog.id}
-        readiness={aiReplyReadiness}
-        recipientEmail={recipientEmail}
-        subject={emailLog.subject}
-      />
+      <div
+        className="email-action-anchor"
+        id={emailDraftReviewHref(emailLog.id).slice(1)}
+      >
+        <EmailAiReplyPanel
+          defaultTone={defaultAiReplyTone}
+          emailLogId={emailLog.id}
+          readiness={aiReplyReadiness}
+          recipientEmail={recipientEmail}
+          subject={emailLog.subject}
+        />
+      </div>
     </article>
+  );
+}
+
+function EmailSourceMessageFacts({ emailLog }: { emailLog: EmailLog }) {
+  const linkedRecord = firstEmailLogLinkedRecord(emailLog);
+  const sourceFacts = [
+    {
+      label: "Direction",
+      value: emailLog.direction === "INBOUND" ? "Inbound" : "Outbound",
+    },
+    { label: "From", value: emailLog.fromText ?? "Not recorded" },
+    { label: "To", value: emailLog.toText ?? "Not recorded" },
+    { label: "Date", value: formatDate(emailLog.occurredAt) },
+  ];
+  return (
+    <section
+      aria-label={`${emailLog.subject} source message context`}
+      className="email-source-facts"
+    >
+      <dl>
+        {sourceFacts.map((fact) => (
+          <div key={fact.label}>
+            <dt>{fact.label}</dt>
+            <dd>{fact.value}</dd>
+          </div>
+        ))}
+        <div>
+          <dt>CRM link</dt>
+          <dd>
+            {linkedRecord ? (
+              <Link className="inline-link" href={linkedRecord.href}>
+                {linkedRecord.label}
+              </Link>
+            ) : (
+              "No linked CRM record"
+            )}
+          </dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -4409,6 +4494,18 @@ function formatEmailPreview(body: string) {
   return stripped.length > 260 ? `${stripped.slice(0, 259)}...` : stripped;
 }
 
+function emailCardHref(emailLogId: string) {
+  return `#email-card-${emailLogId}` as Route;
+}
+
+function emailDraftReviewHref(emailLogId: string) {
+  return `#email-draft-review-${emailLogId}` as Route;
+}
+
+function emailFollowUpReviewHref(emailLogId: string) {
+  return `#email-follow-up-review-${emailLogId}` as Route;
+}
+
 function primaryEmailForDraft(
   direction: string,
   fromText: string | null,
@@ -4530,6 +4627,34 @@ function linkedRecordHrefForEmailMessage(
   if (message.organizationId)
     return `/organizations/${message.organizationId}` as Route;
   if (message.personId) return `/contacts/${message.personId}` as Route;
+  return null;
+}
+
+function firstEmailLogLinkedRecord(emailLog: EmailLog) {
+  if (emailLog.deal) {
+    return {
+      href: `/deals/${emailLog.deal.id}` as Route,
+      label: emailLog.deal.title,
+    };
+  }
+  if (emailLog.lead) {
+    return {
+      href: `/leads/${emailLog.lead.id}` as Route,
+      label: emailLog.lead.title,
+    };
+  }
+  if (emailLog.person) {
+    return {
+      href: `/contacts/${emailLog.person.id}` as Route,
+      label: formatPersonName(emailLog.person) ?? "Unnamed contact",
+    };
+  }
+  if (emailLog.organization) {
+    return {
+      href: `/organizations/${emailLog.organization.id}` as Route,
+      label: emailLog.organization.name,
+    };
+  }
   return null;
 }
 

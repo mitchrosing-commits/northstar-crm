@@ -32,6 +32,8 @@ model User {
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
   aiPreferences            AiPreference[]
   assistantActionRequests  AssistantActionRequest[] @relation("AssistantActionRequestCreator")
+  createdCrmChangeProposals CrmChangeProposal[]      @relation("CrmChangeProposalCreator")
+  appliedCrmChangeProposals CrmChangeProposal[]      @relation("CrmChangeProposalApplier")
   assistantConversations   AssistantConversation[] @relation("AssistantConversationUser")
   assistantTodayItemHides  AssistantTodayItemHide[]
   auditLogs                AuditLog[]
@@ -106,6 +108,7 @@ model Workspace {
   schedulerBookings           SchedulerBooking[]
   aiPreferences               AiPreference[]
   assistantActionRequests     AssistantActionRequest[]
+  crmChangeProposals          CrmChangeProposal[]
   assistantConversations      AssistantConversation[]
   assistantConversationMessages AssistantConversationMessage[]
   assistantTodayItemHides     AssistantTodayItemHide[]
@@ -921,6 +924,45 @@ model AssistantActionRequest {
   @@index([createdById, status])
 }
 
+model CrmChangeProposal {
+  id                  String                  @id @default(cuid())
+  workspaceId         String
+  createdById         String?
+  appliedById         String?
+  status              CrmChangeProposalStatus @default(PENDING)
+  proposalType        CrmChangeProposalType
+  targetEntityType    String?
+  targetEntityId      String?
+  appliedEntityType   String?
+  appliedEntityId     String?
+  idempotencyKey      String
+  sourceType          String
+  sourceId            String?
+  sourceLabel         String?
+  rationale           String?
+  confidence          String?
+  proposedPayload     Json
+  currentSnapshot     Json?
+  duplicateCandidates Json?
+  conflictInfo        Json?
+  evidence            Json?
+  warnings            Json?
+  workspace           Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy           User?                   @relation("CrmChangeProposalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  appliedBy           User?                   @relation("CrmChangeProposalApplier", fields: [appliedById], references: [id], onDelete: SetNull)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  appliedAt           DateTime?
+  rejectedAt          DateTime?
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, proposalType, status])
+  @@index([workspaceId, targetEntityType, targetEntityId])
+  @@index([createdById, status])
+  @@index([appliedById])
+}
+
 model AssistantConversation {
   id          String                         @id @default(cuid())
   workspaceId String
@@ -974,6 +1016,22 @@ enum AssistantActionRequestStatus {
   PENDING
   REJECTED
   APPLIED
+}
+
+enum CrmChangeProposalStatus {
+  PENDING
+  APPLIED
+  REJECTED
+  SUPERSEDED
+  FAILED
+}
+
+enum CrmChangeProposalType {
+  CREATE_PERSON
+  UPDATE_PERSON
+  CREATE_ORGANIZATION
+  UPDATE_ORGANIZATION
+  LINK_PERSON_ORGANIZATION
 }
 
 enum MembershipRole {

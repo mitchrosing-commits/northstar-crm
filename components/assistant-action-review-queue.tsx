@@ -100,7 +100,16 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
                   {request.proposedFields.map((field) => (
                     <div className="assistant-draft-field" key={`${request.id}-${field.label}`}>
                       <span>{field.label}</span>
-                      <strong>{field.value}</strong>
+                      {request.status === "PENDING" && request.canApply ? (
+                        <input
+                          aria-label={`${field.label} reviewed value`}
+                          defaultValue={field.value}
+                          form={applyFormId(request)}
+                          name={`field:${field.label}`}
+                        />
+                      ) : (
+                        <strong>{field.value}</strong>
+                      )}
                       {field.currentValue ? <small>Current: {field.currentValue}</small> : null}
                     </div>
                   ))}
@@ -119,7 +128,7 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
               {request.status === "PENDING" ? (
                 <div className="assistant-review-request-actions">
                   {request.canApply ? (
-                    <form action={applyAssistantActionRequestAction}>
+                    <form action={applyAssistantActionRequestAction} id={applyFormId(request)}>
                       <input name="requestId" type="hidden" value={request.id} />
                       <button className="button-primary" type="submit">
                         Apply {applyNoun(request)}
@@ -181,12 +190,24 @@ function statusMessage(status: string) {
 }
 
 function applyNoun(request: AssistantActionRequestView) {
-  return request.actionType === "note" ? "note" : "activity";
+  if (request.actionType === "note") return "note";
+  if (request.actionType === "activity") return "activity";
+  if (request.actionType === "contact_create") return "contact";
+  if (request.actionType === "contact_update") return "contact update";
+  if (request.actionType === "contact_organization_link") return "contact link";
+  if (request.actionType === "organization_create") return "organization";
+  if (request.actionType === "organization_update") return "organization update";
+  return "request";
 }
 
 function actionTypeLabel(request: AssistantActionRequestView) {
   if (request.actionType === "activity") return "Activity";
   if (request.actionType === "note") return "Note";
+  if (request.actionType === "contact_create") return "Contact creation";
+  if (request.actionType === "contact_update") return "Contact update";
+  if (request.actionType === "contact_organization_link") return "Contact organization link";
+  if (request.actionType === "organization_create") return "Organization creation";
+  if (request.actionType === "organization_update") return "Organization update";
   return "Review-only";
 }
 
@@ -205,7 +226,7 @@ function applyExplanation(request: AssistantActionRequestView) {
   if (request.canApply && request.permissionState === "allowed_automatically") {
     return `New eligible ${applyNoun(request)} requests can apply automatically under your current AI Preferences. This saved request still requires a current server-side eligibility check.`;
   }
-  if (request.canApply) return `Apply will create one ${applyNoun(request)} after this explicit review step because your AI Preferences require confirmation.`;
+  if (request.canApply) return `Apply will perform this ${applyNoun(request)} after this explicit review step because your AI Preferences require confirmation.`;
   if (request.permissionReason) return request.permissionReason;
   if (request.actionType === "activity" || request.actionType === "note") {
     if (request.missingInfo.length > 0) return "Apply is blocked until the missing information is resolved.";
@@ -222,7 +243,11 @@ function applyExplanation(request: AssistantActionRequestView) {
   if (request.actionType === "organization_contact_creation") {
     return "Contact and organization creation is review-only for now.";
   }
-  return "Apply is currently limited to low-risk activity and note requests.";
+  return "Apply is currently limited to eligible activity, note, contact, and organization requests.";
+}
+
+function applyFormId(request: AssistantActionRequestView) {
+  return `assistant-apply-${request.id}`;
 }
 
 function emptyQueueMessage(queue: AssistantReviewQueueFilter) {

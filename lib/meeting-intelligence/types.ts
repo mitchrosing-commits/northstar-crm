@@ -221,6 +221,26 @@ export type ProposedRelationshipBriefUpdate = {
   warnings?: string[];
 };
 
+export type MeetingSummarySectionKey =
+  | "commercial_details"
+  | "commitments"
+  | "customer_needs_or_concerns"
+  | "decisions"
+  | "key_discussion_points"
+  | "meeting_overview"
+  | "next_steps"
+  | "objectives"
+  | "open_questions"
+  | "participants"
+  | "risks_or_blockers";
+
+export type MeetingSummarySection = {
+  evidenceType: "explicit" | "inferred";
+  items: string[];
+  key: MeetingSummarySectionKey;
+  title: string;
+};
+
 export type MeetingIntelligenceDraft = {
   markdown: string;
   matchedObjects: MatchedCrmObject[];
@@ -230,6 +250,7 @@ export type MeetingIntelligenceDraft = {
   relationshipBriefUpdates?: ProposedRelationshipBriefUpdate[];
   sourceMetadata?: MeetingSourceMetadata;
   summary: string;
+  summarySections?: MeetingSummarySection[];
   unmatchedEntities: UnmatchedEntity[];
   warnings: string[];
 };

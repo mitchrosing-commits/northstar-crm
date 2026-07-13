@@ -22,6 +22,7 @@ import type {
   MeetingIntelligenceDraft,
   MeetingProposalFactCategory,
   MeetingSourceMetadata,
+  MeetingSummarySection,
   ProposedNextStepActivity,
   ProposedNote,
   ProposedRelationshipBriefFact,
@@ -275,6 +276,7 @@ export function MeetingIntelligenceReview({
             <MeetingSummaryBlock
               associatedTargets={draft.meetingActivity.associatedTargets ?? []}
               summary={draft.summary}
+              summarySections={draft.summarySections ?? []}
             />
             <div className="form-grid">
               <label className="form-field checkbox-field form-field-wide">
@@ -852,13 +854,35 @@ function ProposalCategoryOverview({ draft }: { draft: MeetingIntelligenceDraft }
   );
 }
 
-function MeetingSummaryBlock({ associatedTargets, summary }: { associatedTargets: CrmTarget[]; summary: string }) {
+function MeetingSummaryBlock({
+  associatedTargets,
+  summary,
+  summarySections
+}: {
+  associatedTargets: CrmTarget[];
+  summary: string;
+  summarySections: MeetingSummarySection[];
+}) {
   return (
     <CompactList className="meeting-proposal-evidence">
       <CompactListItem>
         <strong>Meeting summary</strong>
         <span className="muted">{summary}</span>
       </CompactListItem>
+      {summarySections.length > 0 ? (
+        <CompactListItem>
+          <strong>Structured summary</strong>
+          <CompactList>
+            {summarySections.map((section) => (
+              <CompactListItem key={section.key}>
+                <strong>{section.title}</strong>
+                <span className="muted">{section.items.join(" ")}</span>
+                <Badge>{section.evidenceType === "explicit" ? "Explicit" : "Inferred"}</Badge>
+              </CompactListItem>
+            ))}
+          </CompactList>
+        </CompactListItem>
+      ) : null}
       <CompactListItem>
         <strong>Associated records</strong>
         {associatedTargets.length > 0 ? (

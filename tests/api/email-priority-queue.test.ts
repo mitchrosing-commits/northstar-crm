@@ -644,6 +644,16 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailPage).toContain("Why this?");
     expect(emailPage).toContain("Why this action?");
     expect(emailPage).toContain("View evidence");
+    expect(emailPage).toContain("relationshipInboxActionHref");
+    expect(emailPage).toContain("emailDraftReviewHref");
+    expect(emailPage).toContain("emailFollowUpReviewHref");
+    expect(emailPage).toContain("relationship-inbox-state-strip");
+    expect(emailPage).toContain("Next: {item.nextBestAction.label}");
+    expect(emailPage).toContain("EmailSourceMessageFacts");
+    expect(emailPage).toContain("source message context");
+    expect(emailPage).toContain("CRM link");
+    expect(emailPage).toContain("email-source-facts");
+    expect(emailPage).toContain("email-action-anchor");
     expect(emailPage).toContain("priorityExplainersByEmailId");
     expect(emailPage).toContain("showEvidenceAnchor");
     expect(emailPage).toContain("email-evidence-${emailLog.id}");
@@ -655,6 +665,7 @@ describe("Relationship Inbox priority queue", () => {
     expect(emailPage).toContain("Follow-up state");
     expect(emailPage).toContain("Supporting excerpts");
     expect(emailPage).toContain("Exact source text offsets");
+    expect(emailPage.match(/Exact source text offsets/g)?.length).toBe(1);
     expect(emailPage).toContain("not stored");
     expect(emailPage).toContain("No signal-specific excerpt is saved");
     expect(emailPage).toContain("relationship-inbox-explainer");

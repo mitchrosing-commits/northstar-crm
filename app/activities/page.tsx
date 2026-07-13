@@ -25,7 +25,9 @@ import { enumSearchParam, getSearchParam, hasActiveListFilters, parsePagination,
 import { listResourceSearchPlaceholder } from "@/lib/list-resource-labels";
 import { formatPersonName } from "@/lib/person-name";
 import { prefillCreateHref } from "@/lib/search-create-actions";
-import { buildActivityQueueAiInsight, getActivityWorkQueueSummary, getWorkspace, listActivities, listActivitiesPage } from "@/lib/services/crm";
+import { buildActivityQueueAiInsight } from "@/lib/services/crm-ai-insight-service";
+import { getActivityWorkQueueSummary, listActivities, listActivitiesPage } from "@/lib/services/activity-service";
+import { getWorkspace } from "@/lib/services/workspace-service";
 
 export const dynamic = "force-dynamic";
 

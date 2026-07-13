@@ -107,6 +107,14 @@ function ActivityListItem({
         <ActivityRelatedLinks activity={activity} />
         {workspaceId ? (
           <ActionGroup className="activity-actions" label={activityActionsLabel}>
+            {showCompleteAction && !activity.completedAt ? (
+              <ActivityCompleteButton
+                activityId={activity.id}
+                ariaLabel={`Mark activity ${activity.title} complete`}
+                inline
+                workspaceId={workspaceId}
+              />
+            ) : null}
             {!activity.completedAt ? (
               <Link
                 aria-label={`Edit activity ${activity.title}`}
@@ -135,14 +143,6 @@ function ActivityListItem({
               >
                 Next follow-up
               </Link>
-            ) : null}
-            {showCompleteAction && !activity.completedAt ? (
-              <ActivityCompleteButton
-                activityId={activity.id}
-                ariaLabel={`Mark activity ${activity.title} complete`}
-                inline
-                workspaceId={workspaceId}
-              />
             ) : null}
             {!activity.completedAt ? (
               <ActivityDeleteButton

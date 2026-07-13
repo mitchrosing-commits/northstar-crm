@@ -79,7 +79,7 @@ const maxAssistantMessageLength = 4_000;
 const maxSourceCount = 12;
 const maxSourceTextLength = 260;
 const noMutationNotice =
-  "Permission-checked only: this conversation can read scoped CRM and stored Inbox context, but it does not send email, sync providers, change CRM records, or apply anything outside eligible activity or note drafts allowed by your AI Preferences.";
+  "Permission-checked only: this conversation can read scoped CRM and stored Inbox context, but it does not send email, sync providers, or apply anything outside eligible activity, note, contact, or organization proposals allowed by your AI Preferences.";
 
 export async function getAssistantConversation(
   actor: WorkspaceActor,
@@ -100,7 +100,8 @@ export async function sendAssistantConversationMessage(
   input: SendAssistantConversationMessageInput
 ): Promise<AssistantConversationView> {
   await ensureWorkspaceAccess(actor);
-  const message = sanitizeConversationText(input.message);
+  const rawMessage = normalizeConversationText(input.message);
+  const message = sanitizeConversationText(rawMessage);
   if (!message) throw new Error("Enter a question or command before asking.");
   const now = input.now ?? new Date();
   const existing = await getExistingConversation(actor, input.conversationId);
@@ -128,7 +129,7 @@ export async function sendAssistantConversationMessage(
     }
   });
 
-  const reply = await safeBuildConversationReply(actor, message, recentMessages.map(messageViewBase), now);
+  const reply = await safeBuildConversationReply(actor, rawMessage, recentMessages.map(messageViewBase), now);
   await prisma.assistantConversationMessage.create({
     data: {
       content: sanitizeAssistantText(reply.content),
@@ -839,6 +840,11 @@ function parseDraftActions(value: Prisma.JsonValue | null): AssistantDraftAction
 function sanitizeConversationText(value: unknown) {
   if (typeof value !== "string") return "";
   return safeText(value, maxStoredMessageLength);
+}
+
+function normalizeConversationText(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\s+/g, " ").slice(0, maxStoredMessageLength);
 }
 
 function sanitizeAssistantText(value: string) {

@@ -21,6 +21,7 @@ export type AssistantCommandKind =
   | "deal_risk"
   | "draft_activity"
   | "draft_ai_preferences"
+  | "draft_crm_record_change"
   | "draft_contact_relationship"
   | "draft_note"
   | "draft_record_creation"
@@ -70,7 +71,7 @@ export const assistantSuggestedCommands = [
 ] as const;
 
 const readOnlySafetyNotice =
-  "Context-only, draft-only, and review-first: this Assistant does not create, update, delete, link, convert, close, send, sync, archive, mark read, save settings, or mutate provider mail from suggestions. Only saved low-risk activity or note drafts can be applied after explicit review.";
+  "Context-only, draft-only, and review-first: this Assistant does not create, update, delete, link, convert, close, send, sync, archive, mark read, save settings, or mutate provider mail from suggestions. Only saved eligible activity, note, contact, or organization proposals can be applied after explicit review and permission checks.";
 
 export async function answerAssistantCommand(
   actor: WorkspaceActor,
@@ -116,11 +117,20 @@ export function parseAssistantCommand(query: string): ParsedAssistantCommand {
   if (/\bupdate\b/.test(normalized) && /\b(profile|relationship memory|relationship)\b/.test(normalized)) {
     return { kind: "draft_contact_relationship" };
   }
-  if (/\bcreate\b/.test(normalized) && /\borganization\b/.test(normalized) && /\b(add|contact|person)\b/.test(normalized)) {
-    return { kind: "draft_record_creation" };
-  }
   if (/\b(?:add|create|draft|log|save)\s+(?:a\s+|this\s+)?note\b/.test(normalized)) {
     return { kind: "draft_note" };
+  }
+  if (
+    /\b(create|update|set|change|add|link|attach|connect)\b/.test(normalized) &&
+    /\b(contact|organization|company|account|email|phone|domain|website|first name|last name|title|role)\b/.test(normalized)
+  ) {
+    return { kind: "draft_crm_record_change" };
+  }
+  if (/\b(link|attach|connect)\b/.test(normalized) && /\bto\b/.test(normalized)) {
+    return { kind: "draft_crm_record_change" };
+  }
+  if (/\bcreate\b/.test(normalized) && /\borganization\b/.test(normalized) && /\b(add|contact|person)\b/.test(normalized)) {
+    return { kind: "draft_record_creation" };
   }
   if (/\b(make|set|change|update)\b/.test(normalized) && /\b(email replies|reply|replies|ai preference|assistant|tone|concise|casual|diagnostics|summaries)\b/.test(normalized)) {
     return { kind: "draft_ai_preferences" };
@@ -283,7 +293,7 @@ export function buildUnsupportedAssistantAnswer(query: string, now = new Date())
     safetyNotice: readOnlySafetyNotice,
     sources: [{ label: "Supported commands", detail: "Today agenda, deal risk, stored-email reply checks, and draft-only CRM action previews." }],
     suggestions: [...assistantSuggestedCommands],
-    summary: "I can answer deterministic CRM questions and draft a small set of review-first actions. Only saved low-risk activity or note drafts can be applied after explicit review; settings, email, sync, provider mail, and other CRM changes stay review-only.",
+    summary: "I can answer deterministic CRM questions and draft a small set of review-first actions. Only saved eligible activity, note, contact, or organization proposals can be applied after explicit review; settings, email, sync, provider mail, and higher-risk CRM changes stay review-only.",
     title: "Try a supported Assistant command"
   };
 }
@@ -315,7 +325,7 @@ export function buildDraftActionAssistantAnswer(
     reviewFirst: true,
     safetyNotice: readOnlySafetyNotice,
     sources: [
-      { label: "Draft status", detail: "Preview only. Save to the review queue before applying eligible activity or note drafts." },
+      { label: "Draft status", detail: "Preview only. Save to the review queue before applying eligible activity, note, contact, or organization proposals." },
       { label: "Draft basis", detail: "Deterministic parsing plus bounded workspace record matching. No external AI provider was called." }
     ],
     suggestions: [...assistantSuggestedCommands],
@@ -417,6 +427,7 @@ function participantSummary(message: AssistantEmailReplyMessage) {
 function isDraftCommandKind(kind: AssistantCommandKind): kind is AssistantDraftCommandKind {
   return kind === "draft_activity" ||
     kind === "draft_ai_preferences" ||
+    kind === "draft_crm_record_change" ||
     kind === "draft_contact_relationship" ||
     kind === "draft_note" ||
     kind === "draft_record_creation";
@@ -426,8 +437,13 @@ function draftSummaryNoun(draft: AssistantDraftAction | undefined) {
   if (!draft) return "a CRM action";
   if (draft.kind === "activity") return "an activity";
   if (draft.kind === "ai_preference_update") return "an AI preference change";
+  if (draft.kind === "contact_create") return "a contact creation proposal";
+  if (draft.kind === "contact_organization_link") return "a contact organization link";
   if (draft.kind === "contact_relationship_update") return "a contact relationship update";
+  if (draft.kind === "contact_update") return "a contact update";
   if (draft.kind === "note") return "a note";
+  if (draft.kind === "organization_create") return "an organization creation proposal";
+  if (draft.kind === "organization_update") return "an organization update";
   return "an organization/contact creation preview";
 }
 

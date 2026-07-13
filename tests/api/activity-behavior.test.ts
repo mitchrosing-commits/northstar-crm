@@ -449,6 +449,7 @@ describe("activity create and completion behavior", () => {
     expect(activityList).toContain("const activityActionsLabel = `${activity.title} activity actions`");
     expect(activityList).toContain("import { ActionGroup }");
     expect(activityList).toContain('<ActionGroup className="activity-actions" label={activityActionsLabel}>');
+    expect(activityList.indexOf("showCompleteAction && !activity.completedAt")).toBeLessThan(activityList.indexOf("aria-label={`Edit activity ${activity.title}`}"));
     expect(activityList).toContain("aria-label={`Edit activity ${activity.title}`}");
     expect(activityList).toContain("aria-label={`View completed activity ${activity.title}`}");
     expect(activityList).toContain("aria-label={`Create next follow-up after ${activity.title}`}");
@@ -485,6 +486,15 @@ describe("activity create and completion behavior", () => {
     expect(globalStyles).toContain(".activity-related-empty");
     expect(globalStyles).toContain("min-width: min(100%, 180px)");
     expect(globalStyles).toContain("display: block;");
+    expect(completeButton).toContain("const [isComplete, setIsComplete] = useState(false)");
+    expect(completeButton).toContain("if (isSaving || isComplete) return");
+    expect(completeButton).toContain("setIsComplete(true)");
+    expect(completeButton).toContain("disabled={isSaving || isComplete}");
+    expect(completeButton).toContain('isComplete ? "Completed" : isSaving ? "Saving..." : "Complete"');
+    expect(activitiesPage).not.toContain('from "@/lib/services/crm"');
+    expect(activitiesPage).toContain('from "@/lib/services/activity-service"');
+    expect(activitiesPage).toContain('from "@/lib/services/workspace-service"');
+    expect(activitiesPage).toContain('from "@/lib/services/crm-ai-insight-service"');
   });
 
   it("builds activity quick links from existing URL filters while resetting page number", () => {

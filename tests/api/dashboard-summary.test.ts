@@ -69,6 +69,13 @@ describe("dashboard summary behavior", () => {
     expect(crmBarrel).toContain('export * from "./dashboard-service"');
   });
 
+  it("keeps dashboard route imports narrow for faster first dev compile", () => {
+    expect(dashboardPage).not.toContain('from "@/lib/services/crm"');
+    expect(dashboardPage).toContain('from "@/lib/services/dashboard-service"');
+    expect(dashboardPage).toContain('from "@/lib/services/crm-ai-insight-service"');
+    expect(dashboardPage).toContain('from "@/lib/sales-assistant"');
+  });
+
   it("calculates the requested dashboard buckets", () => {
     expect(dashboardService).toContain("openPipelineValueCents");
     expect(dashboardService).toContain("openDealsCount");

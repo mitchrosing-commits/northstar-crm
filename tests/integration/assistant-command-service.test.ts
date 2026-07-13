@@ -940,11 +940,10 @@ describe("read-only Assistant command service integration", () => {
     );
     const creationJson = JSON.stringify(creation);
 
-    expect(creation.command).toBe("draft_record_creation");
+    expect(creation.command).toBe("draft_crm_record_change");
     expect(creationJson).toContain("Acme Draft Co");
-    expect(creationJson).toContain("Mike Fox");
-    expect(creationJson).toContain("CFO");
-    expect(creationJson).toContain("No records will be created");
+    expect(creationJson).toContain("Propose creating organization");
+    expect(creationJson).toContain("Link the contact with a separate reviewed proposal");
     await expect(readOnlyCounts(fx)).resolves.toEqual(beforeCreation);
 
     const beforePreferences = await readOnlyCounts(fx);
@@ -956,6 +955,83 @@ describe("read-only Assistant command service integration", () => {
     expect(preferencesJson).toContain("concise");
     expect(preferencesJson).toContain("Email replies should be casual and concise");
     await expect(readOnlyCounts(fx)).resolves.toEqual(beforePreferences);
+  });
+
+  it("turns supported contact and organization Assistant drafts into reusable CRM change proposals", async () => {
+    const fx = currentFixture();
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_contact: "require_confirmation",
+        link_contact_organization: "require_confirmation",
+        update_contact: "require_confirmation",
+        update_organization: "require_confirmation"
+      })
+    });
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    const before = await crmRecordCounts(fx);
+
+    const createAnswer = await crm.answerAssistantCommand(fx.actorA, "Create a contact for Jane Proposal with email jane.proposal@example.test and phone 555-0199.");
+    const createDraft = createAnswer.draftActions?.[0];
+    if (!createDraft) throw new Error("Expected contact create draft.");
+    const proposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: createDraft,
+      sourceCommand: createAnswer.query
+    });
+    const sameProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: createDraft,
+      sourceCommand: createAnswer.query
+    });
+    const storedProposal = await crm.getCrmChangeProposal(fx.actorA, proposal.id);
+
+    expect(createAnswer.command).toBe("draft_crm_record_change");
+    expect(sameProposal.id).toBe(proposal.id);
+    expect(storedProposal).toMatchObject({
+      canApply: true,
+      permissionActionKey: "create_contact",
+      proposalType: "CREATE_PERSON",
+      sourceType: "assistant",
+      status: "PENDING"
+    });
+    await expect(crmRecordCounts(fx)).resolves.toEqual(before);
+
+    const applied = await crm.applyCrmChangeProposal(fx.actorA, proposal.id, {
+      fields: {
+        email: "jane.reviewed@example.test",
+        firstName: "Jane",
+        lastName: "Reviewed",
+        phone: "555-0188"
+      }
+    });
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: applied.appliedEntityId ?? "" } })).resolves.toMatchObject({
+      email: "jane.reviewed@example.test",
+      firstName: "Jane",
+      lastName: "Reviewed",
+      workspaceId: fx.workspaceA.id
+    });
+
+    const updateAnswer = await crm.answerAssistantCommand(fx.actorA, `Update ${contactName}'s phone to 555-0133.`);
+    const updateDraft = updateAnswer.draftActions?.[0];
+    if (!updateDraft) throw new Error("Expected contact update draft.");
+    const updateProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: updateDraft,
+      sourceCommand: updateAnswer.query
+    });
+    await crm.applyCrmChangeProposal(fx.actorA, updateProposal.id);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      phone: "555-0133"
+    });
+
+    const orgUpdateAnswer = await crm.answerAssistantCommand(fx.actorA, `Update ${fx.recordsA.organization.name}'s domain to assistant-proposal.example.`);
+    const orgUpdateDraft = orgUpdateAnswer.draftActions?.[0];
+    if (!orgUpdateDraft) throw new Error("Expected organization update draft.");
+    const orgUpdateProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: orgUpdateDraft,
+      sourceCommand: orgUpdateAnswer.query
+    });
+    await crm.applyCrmChangeProposal(fx.actorA, orgUpdateProposal.id);
+    await expect(fx.prisma.organization.findUniqueOrThrow({ where: { id: fx.recordsA.organization.id } })).resolves.toMatchObject({
+      domain: "assistant-proposal.example"
+    });
   });
 
   it("returns candidates and requires review when draft record matches are ambiguous", async () => {
@@ -988,6 +1064,47 @@ describe("read-only Assistant command service integration", () => {
     expect(answer.draftActions?.[0]?.candidates.map((candidate) => candidate.label)).toEqual(["Jane Doe", "Jane Doe"]);
     expect(answer.summary).toContain("needs clarification");
     await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("does not guess ambiguous contact updates or invent unsupported contact title fields", async () => {
+    const fx = currentFixture();
+    await fx.prisma.person.createMany({
+      data: [
+        {
+          email: "jordan.crm.one@example.test",
+          firstName: "Jordan",
+          lastName: "Smith",
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          email: "jordan.crm.two@example.test",
+          firstName: "Jordan",
+          lastName: "Smith",
+          workspaceId: fx.workspaceA.id
+        }
+      ]
+    });
+    const before = await crmRecordCounts(fx);
+
+    const ambiguous = await crm.answerAssistantCommand(fx.actorA, "Update Jordan Smith's phone to 555-0111.");
+    const ambiguousDraft = ambiguous.draftActions?.[0];
+    if (!ambiguousDraft) throw new Error("Expected ambiguous contact update draft.");
+    expect(ambiguousDraft).toMatchObject({
+      confidence: "needs_clarification",
+      kind: "contact_update"
+    });
+    expect(ambiguousDraft.candidates).toHaveLength(2);
+    await expect(crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: ambiguousDraft,
+      sourceCommand: ambiguous.query
+    })).rejects.toThrow(/not a supported CRM change proposal|must include at least one supported field|Target record id|required/i);
+
+    const unsupported = await crm.answerAssistantCommand(fx.actorA, `Update ${fx.recordsA.person.firstName}'s title to VP of Sales.`);
+    const unsupportedDraft = unsupported.draftActions?.[0];
+    if (!unsupportedDraft) throw new Error("Expected unsupported field draft.");
+    expect(JSON.stringify(unsupportedDraft)).toContain("Unsupported contact field ignored: title");
+    expect(unsupportedDraft.missingInfo).toContain("No supported contact field change was detected.");
+    await expect(crmRecordCounts(fx)).resolves.toEqual(before);
   });
 
   it("saves draft actions as user-scoped pending requests without touching CRM records", async () => {

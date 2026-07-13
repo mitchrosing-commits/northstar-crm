@@ -33,12 +33,9 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
 import { formatPersonName } from "@/lib/person-name";
 import { recordOwnerLabel } from "@/lib/record-owner-label";
-import {
-  buildDashboardAiInsight,
-  getDashboardSummary,
-  getNeedsAttentionSummary,
-  type NeedsAttentionItem,
-} from "@/lib/services/crm";
+import { getNeedsAttentionSummary, type NeedsAttentionItem } from "@/lib/sales-assistant";
+import { buildDashboardAiInsight } from "@/lib/services/crm-ai-insight-service";
+import { getDashboardSummary } from "@/lib/services/dashboard-service";
 
 export const dynamic = "force-dynamic";
 

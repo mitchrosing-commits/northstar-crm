@@ -205,6 +205,10 @@ describe("Email UX v1 discoverability", () => {
     expect(globalCss).toContain(".inbox-workflow-map");
     expect(globalCss).toContain(".inbox-workflow-grid");
     expect(globalCss).toContain(".inbox-workflow-item");
+    expect(globalCss).toContain(".email-source-facts");
+    expect(globalCss).toContain(".email-action-anchor:target");
+    expect(globalCss).toContain(".relationship-inbox-state-strip");
+    expect(globalCss).toContain(".relationship-inbox-state-link");
     expect(emailPage).toContain("You can connect your login email");
     expect(emailPage).toContain("choose a different Google");
     expect(emailPage).toContain("Northstar asks for read access");

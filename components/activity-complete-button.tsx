@@ -16,10 +16,13 @@ type ActivityCompleteButtonProps = {
 export function ActivityCompleteButton({ workspaceId, activityId, inline = false, ariaLabel }: ActivityCompleteButtonProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const [isComplete, setIsComplete] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const actionsLabel = "Complete activity actions";
 
   async function completeActivity() {
+    if (isSaving || isComplete) return;
+
     setError(null);
     setIsSaving(true);
 
@@ -36,7 +39,7 @@ export function ActivityCompleteButton({ workspaceId, activityId, inline = false
       return;
     }
 
-    setIsSaving(false);
+    setIsComplete(true);
     router.refresh();
   }
 
@@ -45,12 +48,12 @@ export function ActivityCompleteButton({ workspaceId, activityId, inline = false
       <button
         aria-label={ariaLabel}
         className="button-secondary button-compact"
-        disabled={isSaving}
+        disabled={isSaving || isComplete}
         onClick={completeActivity}
         title={ariaLabel}
         type="button"
       >
-        {isSaving ? "Saving..." : "Mark complete"}
+        {isComplete ? "Completed" : isSaving ? "Saving..." : "Complete"}
       </button>
       {error ? <FormErrorMessage compact>{error}</FormErrorMessage> : null}
     </>

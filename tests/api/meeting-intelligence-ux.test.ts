@@ -152,6 +152,8 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("for unmatched meeting mention");
     expect(globalStyles).toContain(".meeting-unmatched-actions");
     expect(meetingIntelligenceReview).toContain("meeting-proposal-evidence");
+    expect(meetingIntelligenceReview).toContain("Structured summary");
+    expect(meetingIntelligenceReview).toContain("section.evidenceType === \"explicit\"");
     expect(meetingIntelligenceReview).toContain("{selectedUpdateCount} selected");
     expect(meetingIntelligenceReview).toContain("Review-first safety");
     expect(meetingIntelligenceReview).toContain("Nothing is written to notes, activities, associations, or Relationship Memory fields");

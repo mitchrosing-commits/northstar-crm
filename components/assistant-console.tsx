@@ -58,7 +58,7 @@ export function AssistantConsole({
             <p className="assistant-command-kicker">Review-first Assistant</p>
             <h2 id="assistant-command-title">Chat with {assistantName}</h2>
             <p>
-              Ask open-ended CRM and Inbox questions, keep follow-up context in this conversation, and draft safe actions for review. {assistantName} is using a {assistantToneLabel(assistantTone)} tone and applies only scoped low-risk activity or note drafts allowed by your AI Preferences.
+              Ask open-ended CRM and Inbox questions, keep follow-up context in this conversation, and draft safe actions for review. {assistantName} is using a {assistantToneLabel(assistantTone)} tone; eligible contact and organization changes go through CRM Change Proposals before anything mutates.
             </p>
           </div>
           <div className="assistant-command-head-actions">
@@ -330,11 +330,11 @@ function AssistantPermissionSummary() {
     <div className="assistant-permission-summary" aria-label="Assistant permissions and limits">
       <div>
         <strong>Available now</strong>
-        <span>Read-only answers, draft actions, save to review, and permission-checked confirmed activity or note apply.</span>
+        <span>Read-only answers, draft actions, save to review, confirmed activity or note apply, and contact or organization CRM Change Proposals.</span>
       </div>
       <div>
         <strong>Settings-only for now</strong>
-        <span>Contact, organization, deal, quote, relationship memory, AI preference, email send, sync, and unsupported automatic actions.</span>
+        <span>Deal, quote, relationship memory, AI preference, email send, sync, provider mutation, destructive actions, and unsupported automatic actions.</span>
       </div>
     </div>
   );

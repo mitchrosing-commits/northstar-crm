@@ -88,6 +88,13 @@ describe("deal note creation behavior", () => {
     expect(notesPanel).toContain("items={[\"Internal note\", noteDate]}");
     expect(notesPanel).toContain("const noteActionsLabel = `Note by ${authorName} from ${noteDate} actions`");
     expect(notesPanel).toContain('<ActionGroup className="activity-actions" label={noteActionsLabel}>');
+    expect(notesPanel).toContain("NOTE_PREVIEW_CHARACTER_LIMIT");
+    expect(notesPanel).toContain("NOTE_PREVIEW_LINE_LIMIT");
+    expect(notesPanel).toContain("notePreview(note.body)");
+    expect(notesPanel).toContain("note-body-preview");
+    expect(notesPanel).toContain("note-body-details");
+    expect(notesPanel).toContain("Show full note");
+    expect(notesPanel).toContain("export function notePreview");
     expect(timelineMetaRow).toContain("timeline-meta");
     expect(detailPage).toContain("No notes have been added to this deal.");
     expect(detailPage).toContain("RecordPanelJumpNav");

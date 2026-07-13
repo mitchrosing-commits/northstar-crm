@@ -16,6 +16,7 @@ import {
   createPerson,
   createPipeline,
   createProduct,
+  createCrmChangeProposal,
   createQuotePublicLink,
   createQuoteFromDeal,
   createDealLineItem,
@@ -24,11 +25,13 @@ import {
   closeDeal,
   convertLeadToDeal,
   getDeal,
+  getCrmChangeProposal,
   getLead,
   getOrganization,
   getPerson,
   listActivities,
   listAuditLogs,
+  listCrmChangeProposals,
   listCustomFields,
   listDealContractSteps,
   listDeals,
@@ -43,8 +46,10 @@ import {
   listProducts,
   listStages,
   removeDealLineItem,
+  rejectCrmChangeProposal,
   reopenDeal,
   revokeQuotePublicLink,
+  applyCrmChangeProposal,
   applyMeetingIntake,
   abortMeetingIntakeMultipartUploadSession,
   completeMeetingIntakeMultipartUploadSession,
@@ -310,6 +315,23 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
         await softDeleteOrganization(actor, idOrNested);
         return noContent();
       }
+    }
+
+    if (resource === "crm-change-proposals" && !idOrNested) {
+      if (method === "GET") return json(await listCrmChangeProposals(actor, Object.fromEntries(new URL(request.url).searchParams)));
+      if (method === "POST") return created(await createCrmChangeProposal(actor, await body(request)));
+    }
+
+    if (resource === "crm-change-proposals" && idOrNested && !nestedResource) {
+      if (method === "GET") return json(await getCrmChangeProposal(actor, idOrNested));
+    }
+
+    if (resource === "crm-change-proposals" && idOrNested && nestedResource === "apply" && !extraSegment) {
+      if (method === "POST") return json(await applyCrmChangeProposal(actor, idOrNested, await body(request)));
+    }
+
+    if (resource === "crm-change-proposals" && idOrNested && nestedResource === "reject" && !extraSegment) {
+      if (method === "POST") return json(await rejectCrmChangeProposal(actor, idOrNested));
     }
 
     if (resource === "activities" && !idOrNested) {

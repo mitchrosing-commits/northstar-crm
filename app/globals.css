@@ -3909,6 +3909,52 @@ textarea {
   line-height: 1.55;
 }
 
+.email-source-facts {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+}
+
+.email-source-facts dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.email-source-facts div {
+  min-width: 0;
+}
+
+.email-source-facts dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.email-source-facts dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.email-action-anchor {
+  min-width: 0;
+  scroll-margin-top: 20px;
+}
+
+.email-action-anchor:target {
+  border-radius: 8px;
+  outline: 3px solid rgb(37 99 235 / 0.18);
+  outline-offset: 4px;
+}
+
 .email-inbox-layout {
   display: grid;
   grid-template-columns: minmax(520px, 0.52fr) minmax(0, 1fr);
@@ -4661,6 +4707,32 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.relationship-inbox-state-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.relationship-inbox-state-strip span,
+.relationship-inbox-state-link {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.relationship-inbox-state-link {
+  color: var(--accent);
+}
+
 .relationship-inbox-explainer {
   display: grid;
   gap: 6px;
@@ -4952,6 +5024,10 @@ textarea {
   }
 
   .email-inbox-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .email-source-facts dl {
     grid-template-columns: 1fr;
   }
 
@@ -5417,6 +5493,30 @@ textarea {
   color: var(--text);
   line-height: 1.55;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-body-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.note-body-preview p,
+.note-body-details p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.note-body-details {
+  color: var(--text);
+}
+
+.note-body-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .activity-actions {
@@ -8547,6 +8647,17 @@ textarea {
 .assistant-draft-field strong {
   color: var(--text);
   overflow-wrap: anywhere;
+}
+
+.assistant-draft-field input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
 }
 
 .assistant-draft-field small {

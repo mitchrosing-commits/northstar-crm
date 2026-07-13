@@ -14,6 +14,11 @@ export const aiActionPermissionKeys = [
   "create_note",
   "update_note_after_meeting",
   "update_relationship_memory",
+  "create_contact",
+  "update_contact",
+  "create_organization",
+  "update_organization",
+  "link_contact_organization",
   "update_contact_or_organization",
   "update_deal_fields",
   "change_deal_stage",
@@ -92,7 +97,52 @@ export const aiActionPermissionDefinitions: AiActionPermissionDefinition[] = [
     label: "Update contact or organization fields",
     supportsAutomatic: false,
     technicallySupported: false,
-    unavailableReason: "No Assistant apply handler updates contact or organization fields yet."
+    unavailableReason: "Use the granular contact and organization CRM change proposal permissions instead."
+  },
+  {
+    allowedLevels: ["never_allow", "suggest_only", "require_confirmation"],
+    description: "Create contact records from reviewed CRM change proposals.",
+    group: "crm_updates",
+    key: "create_contact",
+    label: "Create contacts",
+    supportsAutomatic: false,
+    technicallySupported: true
+  },
+  {
+    allowedLevels: ["never_allow", "suggest_only", "require_confirmation"],
+    description: "Update supported contact fields from reviewed CRM change proposals.",
+    group: "crm_updates",
+    key: "update_contact",
+    label: "Update contacts",
+    supportsAutomatic: false,
+    technicallySupported: true
+  },
+  {
+    allowedLevels: ["never_allow", "suggest_only", "require_confirmation"],
+    description: "Create organization records from reviewed CRM change proposals.",
+    group: "crm_updates",
+    key: "create_organization",
+    label: "Create organizations",
+    supportsAutomatic: false,
+    technicallySupported: true
+  },
+  {
+    allowedLevels: ["never_allow", "suggest_only", "require_confirmation"],
+    description: "Update supported organization fields from reviewed CRM change proposals.",
+    group: "crm_updates",
+    key: "update_organization",
+    label: "Update organizations",
+    supportsAutomatic: false,
+    technicallySupported: true
+  },
+  {
+    allowedLevels: ["never_allow", "suggest_only", "require_confirmation"],
+    description: "Link reviewed contacts to reviewed organizations.",
+    group: "crm_updates",
+    key: "link_contact_organization",
+    label: "Link contacts to organizations",
+    supportsAutomatic: false,
+    technicallySupported: true
   },
   {
     allowedLevels: ["never_allow", "suggest_only", "require_confirmation"],
@@ -156,14 +206,19 @@ export const aiActionPermissionGroups: Array<{ description: string; group: AiAct
 
 export const defaultAiActionPermissions: AiActionPermissionMap = {
   change_deal_stage: "suggest_only",
+  create_contact: "suggest_only",
   create_follow_up_activity: "require_confirmation",
+  create_organization: "suggest_only",
   create_lead_or_deal: "suggest_only",
   create_note: "require_confirmation",
   draft_email: "suggest_only",
+  link_contact_organization: "suggest_only",
   send_email: "require_confirmation",
+  update_contact: "suggest_only",
   update_contact_or_organization: "suggest_only",
   update_deal_fields: "suggest_only",
   update_note_after_meeting: "suggest_only",
+  update_organization: "suggest_only",
   update_relationship_memory: "suggest_only"
 };
 
@@ -221,7 +276,11 @@ export function assistantActionPermissionKeyForRequest(actionType: string): AiAc
   if (actionType === "activity") return "create_follow_up_activity";
   if (actionType === "note") return "create_note";
   if (actionType === "contact_relationship_update") return "update_relationship_memory";
-  if (actionType === "organization_contact_creation") return "update_contact_or_organization";
+  if (actionType === "contact_create" || actionType === "organization_contact_creation" || actionType === "crm_change_create_person") return "create_contact";
+  if (actionType === "contact_update" || actionType === "crm_change_update_person") return "update_contact";
+  if (actionType === "organization_create" || actionType === "crm_change_create_organization") return "create_organization";
+  if (actionType === "organization_update" || actionType === "crm_change_update_organization") return "update_organization";
+  if (actionType === "contact_organization_link" || actionType === "crm_change_link_person_organization") return "link_contact_organization";
   return null;
 }
 
@@ -258,7 +317,7 @@ export function decideAssistantActionPermission(input: {
       actionKey,
       canApply: false,
       level,
-      reason: "Apply is only available for low-risk pending activity or note requests with a clear target.",
+      reason: "Apply is only available for pending supported requests with clear targets, supported fields, and explicit review.",
       state: "blocked"
     };
   }

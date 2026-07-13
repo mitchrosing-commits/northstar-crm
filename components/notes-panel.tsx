@@ -34,6 +34,9 @@ type NotesPanelProps = {
   workspaceId: string;
 };
 
+const NOTE_PREVIEW_CHARACTER_LIMIT = 420;
+const NOTE_PREVIEW_LINE_LIMIT = 8;
+
 export function NotesPanel({
   attachment,
   description = "Plain-text internal notes for this record.",
@@ -70,6 +73,7 @@ export function NotesPanel({
             const authorName = note.author?.name ?? note.author?.email ?? "Unknown";
             const noteDate = formatDate(note.createdAt);
             const noteActionsLabel = `Note by ${authorName} from ${noteDate} actions`;
+            const preview = notePreview(note.body);
             return (
               <li className="activity-item note-item" key={note.id}>
                 <span className="activity-icon" aria-hidden="true">
@@ -82,7 +86,17 @@ export function NotesPanel({
                     className="notes-panel-meta"
                     items={["Internal note", noteDate]}
                   />
-                  <p className="note-body">{note.body}</p>
+                  {preview.isTruncated ? (
+                    <div className="note-body note-body-preview">
+                      <p>{preview.text}</p>
+                      <details className="note-body-details">
+                        <summary>Show full note</summary>
+                        <p>{note.body}</p>
+                      </details>
+                    </div>
+                  ) : (
+                    <p className="note-body">{note.body}</p>
+                  )}
                   {showDeleteActions ? (
                     <ActionGroup className="activity-actions" label={noteActionsLabel}>
                       <NoteDeleteButton
@@ -110,4 +124,17 @@ export function NotesPanel({
 function noteTime(note: Note) {
   const time = new Date(note.createdAt).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+export function notePreview(body: string) {
+  const lines = body.split(/\r?\n/);
+  const lineLimited = lines.length > NOTE_PREVIEW_LINE_LIMIT;
+  const firstLines = lineLimited ? lines.slice(0, NOTE_PREVIEW_LINE_LIMIT).join("\n") : body;
+  const characterLimited = firstLines.length > NOTE_PREVIEW_CHARACTER_LIMIT;
+  const text = characterLimited ? firstLines.slice(0, NOTE_PREVIEW_CHARACTER_LIMIT).trimEnd() : firstLines.trimEnd();
+
+  return {
+    isTruncated: lineLimited || characterLimited || text.length < body.trimEnd().length,
+    text: `${text}${lineLimited || characterLimited || text.length < body.trimEnd().length ? "..." : ""}`
+  };
 }

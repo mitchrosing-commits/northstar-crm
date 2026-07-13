@@ -116,7 +116,7 @@ function draftApplyLabel(draft: AssistantDraftAction) {
 
 function draftApplyHelp(draft: AssistantDraftAction) {
   if (isPotentiallyApplyableDraft(draft)) {
-    return "Saving does not apply changes. After review, this activity or note can be applied from the queue.";
+    return "Saving does not apply changes. After review, this eligible proposal can be applied from the queue.";
   }
   if (draft.kind === "activity" || draft.kind === "note") {
     return "Saving does not apply changes. Apply stays blocked until one clear target and all required information are present.";
@@ -125,8 +125,16 @@ function draftApplyHelp(draft: AssistantDraftAction) {
 }
 
 function isPotentiallyApplyableDraft(draft: AssistantDraftAction) {
-  return (draft.kind === "activity" || draft.kind === "note") &&
+  return (
+    draft.kind === "activity" ||
+    draft.kind === "contact_create" ||
+    draft.kind === "contact_organization_link" ||
+    draft.kind === "contact_update" ||
+    draft.kind === "note" ||
+    draft.kind === "organization_create" ||
+    draft.kind === "organization_update"
+  ) &&
     draft.confidence === "high" &&
-    Boolean(draft.targetHref) &&
+    (Boolean(draft.targetHref) || draft.kind === "contact_create" || draft.kind === "organization_create") &&
     draft.missingInfo.length === 0;
 }

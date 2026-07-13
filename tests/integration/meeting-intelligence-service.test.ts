@@ -223,8 +223,11 @@ describe("meeting intelligence service", () => {
       where: { dealId: fx.recordsA.deal.id, title: { contains: "Meeting:" }, type: "MEETING", workspaceId: fx.workspaceA.id }
     });
     expect(meeting.completedAt?.toISOString()).toBe("2030-04-10T00:00:00.000Z");
+    expect(meeting.description).toContain("Structured meeting summary:");
     expect(meeting.description).toContain("Associated CRM records:");
     expect(meeting.description).toContain(`Contact: ${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`);
+    expect(meeting.description).toContain("Source attribution: Meeting Intelligence reviewed intake.");
+    expect(meeting.description).not.toContain("Source meeting markdown:");
     const meetingAssociations = await fx.prisma.meetingActivityAssociation.findMany({
       where: { activityId: meeting.id, workspaceId: fx.workspaceA.id },
       orderBy: { createdAt: "asc" }
