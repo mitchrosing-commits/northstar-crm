@@ -6,7 +6,29 @@ import type { Route } from "next";
 
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
-import { applyAssistantActionRequest, createAssistantActionRequest, hideAssistantTodayCommandCenterItem, rejectAssistantActionRequest } from "@/lib/services/crm";
+import {
+  applyAssistantActionRequest,
+  createAssistantActionRequest,
+  hideAssistantTodayCommandCenterItem,
+  rejectAssistantActionRequest,
+  sendAssistantConversationMessage
+} from "@/lib/services/crm";
+
+export async function sendAssistantConversationMessageAction(formData: FormData) {
+  const message = stringValue(formData.get("message"), 2_000);
+  const conversationId = stringValue(formData.get("conversationId"), 160);
+  const { actor } = await getCurrentWorkspaceContext();
+
+  let conversation;
+  try {
+    conversation = await sendAssistantConversationMessage(actor, { conversationId, message });
+  } catch {
+    redirect(assistantChatRedirect("error", conversationId));
+  }
+
+  revalidatePath("/assistant");
+  redirect(assistantChatRedirect("sent", conversation.id));
+}
 
 export async function saveAssistantDraftActionRequest(formData: FormData) {
   const draftAction = parseDraftAction(formData.get("draftAction"));
@@ -79,8 +101,14 @@ function parseDraftAction(value: FormDataEntryValue | null): AssistantDraftActio
   return parsed as AssistantDraftAction;
 }
 
-function stringValue(value: FormDataEntryValue | null) {
-  return typeof value === "string" ? value.trim().slice(0, 640) : "";
+function stringValue(value: FormDataEntryValue | null, maxLength = 640) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function assistantChatRedirect(status: string, conversationId = "") {
+  const params = new URLSearchParams({ assistantChat: status });
+  if (conversationId) params.set("conversation", conversationId);
+  return `/assistant?${params.toString()}#assistant-chat-composer` as Route;
 }
 
 function assistantRedirect(status: string, command = "", queue?: string) {

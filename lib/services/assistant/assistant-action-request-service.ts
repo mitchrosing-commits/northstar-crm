@@ -4,6 +4,15 @@ import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { redactSensitiveText } from "@/lib/security/redaction";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
+import {
+  decideAssistantActionPermission,
+  permissionLevelLabel,
+  type AiActionPermissionKey,
+  type AiActionPermissionLevel,
+  type AiActionPermissionMap,
+  type AssistantActionPermissionDecision
+} from "@/lib/services/ai-action-permissions";
+import { getAiPreferences } from "@/lib/services/ai-preferences-service";
 import { createActivity } from "@/lib/services/activity-service";
 import { createNote } from "@/lib/services/note-service";
 import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "@/lib/services/workspace-access";
@@ -14,6 +23,7 @@ const maxStoredArrayItems = 12;
 
 export type AssistantActionRequestView = {
   actionType: string;
+  applyAvailability: string;
   canApply: boolean;
   confidence: string;
   createdAt: string;
@@ -21,6 +31,10 @@ export type AssistantActionRequestView = {
   id: string;
   missingInfo: string[];
   objectType: string;
+  permissionActionKey: AiActionPermissionKey | null;
+  permissionLevel: AiActionPermissionLevel;
+  permissionReason: string;
+  permissionState: AssistantActionPermissionDecision["state"];
   proposedFields: Array<{ currentValue?: string | null; label: string; value: string }>;
   riskLevel: string;
   sourceSummary: string | null;
@@ -52,34 +66,51 @@ export async function createAssistantActionRequest(
     riskLevel: request.riskLevel,
     status: request.status
   });
-  return assistantActionRequestView(request);
+  const preferences = await getAiPreferences(actor);
+  const view = assistantActionRequestView(request, preferences.assistantActionPermissions);
+  if (view.permissionState === "allowed_automatically") {
+    try {
+      const applied = await applyAssistantActionRequest(actor, request.id, { automatic: true });
+      return applied.request;
+    } catch {
+      const pending = await prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: request.id } });
+      return assistantActionRequestView(pending, preferences.assistantActionPermissions);
+    }
+  }
+  return view;
 }
 
 export async function listPendingAssistantActionRequests(actor: WorkspaceActor): Promise<AssistantActionRequestView[]> {
   await ensureWorkspaceAccess(actor);
-  const requests = await prisma.assistantActionRequest.findMany({
-    orderBy: [{ createdAt: "desc" }],
-    take: 25,
-    where: {
-      createdById: actor.actorUserId,
-      status: AssistantActionRequestStatus.PENDING,
-      workspaceId: actor.workspaceId
-    }
-  });
-  return requests.map(assistantActionRequestView);
+  const [preferences, requests] = await Promise.all([
+    getAiPreferences(actor),
+    prisma.assistantActionRequest.findMany({
+      orderBy: [{ createdAt: "desc" }],
+      take: 25,
+      where: {
+        createdById: actor.actorUserId,
+        status: AssistantActionRequestStatus.PENDING,
+        workspaceId: actor.workspaceId
+      }
+    })
+  ]);
+  return requests.map((request) => assistantActionRequestView(request, preferences.assistantActionPermissions));
 }
 
 export async function listAssistantActionRequests(actor: WorkspaceActor): Promise<AssistantActionRequestView[]> {
   await ensureWorkspaceAccess(actor);
-  const requests = await prisma.assistantActionRequest.findMany({
-    orderBy: [{ createdAt: "desc" }],
-    take: 25,
-    where: {
-      createdById: actor.actorUserId,
-      workspaceId: actor.workspaceId
-    }
-  });
-  return requests.map(assistantActionRequestView);
+  const [preferences, requests] = await Promise.all([
+    getAiPreferences(actor),
+    prisma.assistantActionRequest.findMany({
+      orderBy: [{ createdAt: "desc" }],
+      take: 25,
+      where: {
+        createdById: actor.actorUserId,
+        workspaceId: actor.workspaceId
+      }
+    })
+  ]);
+  return requests.map((request) => assistantActionRequestView(request, preferences.assistantActionPermissions));
 }
 
 export async function rejectAssistantActionRequest(
@@ -110,12 +141,14 @@ export async function rejectAssistantActionRequest(
     objectType: request.objectType,
     status: request.status
   });
-  return assistantActionRequestView(request);
+  const preferences = await getAiPreferences(actor);
+  return assistantActionRequestView(request, preferences.assistantActionPermissions);
 }
 
 export async function applyAssistantActionRequest(
   actor: WorkspaceActor,
-  requestId: string
+  requestId: string,
+  options: { automatic?: boolean } = {}
 ): Promise<{ activityId?: string; noteId?: string; request: AssistantActionRequestView }> {
   await ensureWorkspaceAccess(actor);
   const id = normalizeId(requestId);
@@ -128,6 +161,20 @@ export async function applyAssistantActionRequest(
     }
   });
   if (!existing) throw new ApiError("NOT_FOUND", "Assistant action request was not found or is no longer pending.", 404);
+
+  const preferences = await getAiPreferences(actor);
+  const permissionDecision = permissionDecisionFromRequest(existing, preferences.assistantActionPermissions);
+  if (!permissionDecision.canApply) {
+    await writeAuditLog(actor, "assistant_action_request.apply_rejected", "AssistantActionRequest", existing.id, {
+      actionType: existing.actionType,
+      objectType: existing.objectType,
+      permissionActionKey: permissionDecision.actionKey,
+      permissionLevel: permissionDecision.level,
+      reason: safeText(permissionDecision.reason, 160),
+      status: existing.status
+    });
+    throw new ApiError("VALIDATION_ERROR", permissionDecision.reason, 422);
+  }
 
   let applyPlan: ApplyPlan;
   try {
@@ -165,10 +212,13 @@ export async function applyAssistantActionRequest(
     await writeAuditLog(actor, "assistant_action_request.applied", "AssistantActionRequest", request.id, {
       actionType: request.actionType,
       ...appliedRecord.auditMetadata,
+      automatic: Boolean(options.automatic),
       objectType: request.objectType,
+      permissionActionKey: permissionDecision.actionKey,
+      permissionLevel: permissionDecision.level,
       status: request.status
     });
-    return { ...appliedRecord.result, request: assistantActionRequestView(request) };
+    return { ...appliedRecord.result, request: assistantActionRequestView(request, preferences.assistantActionPermissions) };
   } catch (error) {
     await prisma.assistantActionRequest.update({
       data: {
@@ -199,6 +249,39 @@ export function isSupportedAssistantActionApply(request: {
   if (request.confidence !== "high") return false;
   if ((request.actionType !== "activity" && request.actionType !== "note") || request.riskLevel !== "low") return false;
   return Boolean(crmRelationFromHref(targetHrefForRequest(request)));
+}
+
+function permissionDecisionFromRequest(
+  request: {
+    actionType: string;
+    confidence: string;
+    proposedPayload?: Prisma.JsonValue;
+    riskLevel: string;
+    status: AssistantActionRequestStatus | "APPLIED" | "PENDING" | "REJECTED";
+    targetHref: string | null;
+  },
+  permissions: AiActionPermissionMap
+) {
+  return decideAssistantActionPermission({
+    actionType: request.actionType,
+    permissions,
+    status: String(request.status),
+    technicallyCanApply: isSupportedAssistantActionApply(request)
+  });
+}
+
+function applyAvailabilityLabel(
+  request: { actionType: string; status: AssistantActionRequestStatus },
+  decision: AssistantActionPermissionDecision
+) {
+  if (request.status === AssistantActionRequestStatus.APPLIED) return "Applied";
+  if (request.status === AssistantActionRequestStatus.REJECTED) return "Rejected";
+  const noun = request.actionType === "note" ? "note" : "activity";
+  if (decision.state === "requires_confirmation") return `Review-first ${noun} creation: confirmation required`;
+  if (decision.state === "allowed_automatically") return `Automatic ${noun} creation enabled for new eligible requests`;
+  if (decision.state === "settings_only") return `Settings-only boundary: ${permissionLevelLabel(decision.level)}`;
+  if (decision.level === "require_confirmation") return "Blocked pending review";
+  return `Blocked by AI Preferences: ${permissionLevelLabel(decision.level)}`;
 }
 
 function normalizeDraftActionRequest(draft: AssistantDraftAction, sourceCommand: string | undefined) {
@@ -256,17 +339,23 @@ function assistantActionRequestView<T extends {
   targetLabel: string;
   title: string;
   warnings: Prisma.JsonValue | null;
-}>(request: T): AssistantActionRequestView {
+}>(request: T, permissions: AiActionPermissionMap): AssistantActionRequestView {
   const payload = proposedPayloadObject(request.proposedPayload);
+  const decision = permissionDecisionFromRequest(request, permissions);
   return {
     actionType: request.actionType,
-    canApply: isSupportedAssistantActionApply(request),
+    applyAvailability: applyAvailabilityLabel(request, decision),
+    canApply: decision.canApply,
     confidence: request.confidence,
     createdAt: request.createdAt.toISOString(),
     evidence: jsonStringArray(request.evidence),
     id: request.id,
     missingInfo: jsonStringArray(request.missingInfo),
     objectType: request.objectType,
+    permissionActionKey: decision.actionKey,
+    permissionLevel: decision.level,
+    permissionReason: decision.reason,
+    permissionState: decision.state,
     proposedFields: proposedPayloadFields(payload.fields),
     riskLevel: request.riskLevel,
     sourceSummary: request.sourceSummary,

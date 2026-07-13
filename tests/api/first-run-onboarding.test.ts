@@ -145,7 +145,7 @@ describe("first-run clean workspace experience", () => {
     expect(onboardingActions).toContain("assistantNamePreset");
     expect(onboardingActions).toContain("assistantTonePreset");
     expect(onboardingActions).toContain("assistantHelpAreas");
-    expect(onboardingActions).toContain("assistantPermissionMode: \"review_first\"");
+    expect(onboardingActions).not.toContain("assistantPermissionMode");
     expect(onboardingActions).toContain("redirect(\"/onboarding?saved=1\")");
     expect(aiPreferencesService).toContain("assistantNamePreset: [\"Stella\", \"Nova\", \"Lyra\", \"Astra\", \"Orion\", \"Maris\", \"Sage\", \"Custom\"]");
     expect(aiPreferencesService).toContain("assistantTonePreset");

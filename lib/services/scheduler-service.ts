@@ -34,6 +34,21 @@ type PublicBookingInput = {
   attendeeNote?: unknown;
   website?: unknown;
 };
+type SchedulerBookingReviewFiltersInput = {
+  activity?: unknown;
+  from?: unknown;
+  link?: unknown;
+  q?: unknown;
+  to?: unknown;
+};
+type SchedulerBookingActivityFilter = "completed" | "open" | "unavailable";
+type SchedulerBookingReviewFilters = {
+  activity: SchedulerBookingActivityFilter | null;
+  from: string | null;
+  query: string | null;
+  schedulerLinkId: string | null;
+  to: string | null;
+};
 
 type SchedulerChoice = {
   startAt: Date;
@@ -47,11 +62,41 @@ const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
 const PUBLIC_CHOICE_DAYS = 14;
 const PUBLIC_CHOICE_LIMIT = 24;
 const RECENT_BOOKING_LIMIT = 10;
+const BOOKING_REVIEW_LIMIT = 25;
+const BOOKING_ACTIVITY_FILTERS = new Set<string>(["completed", "open", "unavailable"]);
 const DEFAULT_AVAILABILITY: AvailabilityWindow[] = [1, 2, 3, 4, 5].map((weekday) => ({
   weekday,
   start: "09:00",
   end: "17:00"
 }));
+const schedulerBookingReviewSelect = {
+  id: true,
+  attendeeName: true,
+  attendeeEmail: true,
+  attendeeCompany: true,
+  attendeeNote: true,
+  startAt: true,
+  endAt: true,
+  timezone: true,
+  requestedAt: true,
+  activity: {
+    select: {
+      id: true,
+      title: true,
+      completedAt: true,
+      deletedAt: true
+    }
+  },
+  schedulerLink: {
+    select: {
+      id: true,
+      name: true,
+      meetingTitle: true,
+      isEnabled: true,
+      deletedAt: true
+    }
+  }
+} satisfies Prisma.SchedulerBookingSelect;
 
 export async function listSchedulerLinks(actor: WorkspaceActor) {
   await ensureWorkspaceAccess(actor);
@@ -136,6 +181,91 @@ export async function getSchedulerLinkReview(actor: WorkspaceActor, schedulerLin
     bookingLimit: RECENT_BOOKING_LIMIT,
     bookings
   };
+}
+
+export async function getSchedulerBookingReview(actor: WorkspaceActor, filtersInput: SchedulerBookingReviewFiltersInput = {}) {
+  await ensureWorkspaceAccess(actor);
+  const schedulerLinks = await prisma.schedulerLink.findMany({
+    where: { workspaceId: actor.workspaceId, deletedAt: null },
+    orderBy: [{ name: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      name: true
+    }
+  });
+  const filters = normalizeSchedulerBookingReviewFilters(filtersInput, {
+    allowedSchedulerLinkIds: new Set(schedulerLinks.map((schedulerLink) => schedulerLink.id))
+  });
+  const allAcceptedWhere = buildSchedulerBookingReviewWhere(actor.workspaceId, {
+    activity: null,
+    from: null,
+    query: null,
+    schedulerLinkId: null,
+    to: null
+  });
+  const filteredWhere = buildSchedulerBookingReviewWhere(actor.workspaceId, filters);
+  const [acceptedBookingCount, filteredBookingCount, bookings] = await prisma.$transaction([
+    prisma.schedulerBooking.count({ where: allAcceptedWhere }),
+    prisma.schedulerBooking.count({ where: filteredWhere }),
+    prisma.schedulerBooking.findMany({
+      where: filteredWhere,
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      take: BOOKING_REVIEW_LIMIT,
+      select: schedulerBookingReviewSelect
+    })
+  ]);
+
+  return {
+    acceptedBookingCount,
+    bookingLimit: BOOKING_REVIEW_LIMIT,
+    bookings,
+    filteredBookingCount,
+    filters,
+    hasActiveFilters: hasActiveSchedulerBookingFilters(filters),
+    schedulerLinks
+  };
+}
+
+export async function getSchedulerBookingDetail(actor: WorkspaceActor, bookingId: string) {
+  await ensureWorkspaceAccess(actor);
+  const booking = await prisma.schedulerBooking.findFirst({
+    where: { id: bookingId, workspaceId: actor.workspaceId },
+    select: {
+      id: true,
+      attendeeName: true,
+      attendeeEmail: true,
+      attendeeCompany: true,
+      attendeeNote: true,
+      startAt: true,
+      endAt: true,
+      timezone: true,
+      requestedAt: true,
+      activity: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          completedAt: true,
+          deletedAt: true
+        }
+      },
+      schedulerLink: {
+        select: {
+          id: true,
+          name: true,
+          meetingTitle: true,
+          durationMinutes: true,
+          timezone: true,
+          minimumNoticeMinutes: true,
+          isEnabled: true,
+          deletedAt: true
+        }
+      }
+    }
+  });
+
+  if (!booking) throw new ApiError("NOT_FOUND", "Scheduler booking was not found.", 404);
+  return booking;
 }
 
 export async function createSchedulerLink(actor: WorkspaceActor, data: SchedulerLinkInput) {
@@ -429,6 +559,109 @@ function normalizePublicBookingInput(data: unknown) {
   };
 
   return normalized;
+}
+
+function normalizeSchedulerBookingReviewFilters(
+  input: SchedulerBookingReviewFiltersInput,
+  options: { allowedSchedulerLinkIds?: Set<string> } = {}
+): SchedulerBookingReviewFilters {
+  const query = normalizeReviewQuery(input.q);
+  const from = normalizeDateFilter(input.from);
+  const schedulerLinkId = normalizeSchedulerLinkFilter(input.link, options.allowedSchedulerLinkIds);
+  const to = normalizeDateFilter(input.to);
+  const activity = normalizeBookingActivityFilter(input.activity);
+
+  if (from && to && dateFilterStart(from).getTime() > dateFilterEnd(to).getTime()) {
+    return { activity, from: null, query, schedulerLinkId, to: null };
+  }
+
+  return { activity, from, query, schedulerLinkId, to };
+}
+
+function buildSchedulerBookingReviewWhere(
+  workspaceId: string,
+  filters: SchedulerBookingReviewFilters
+): Prisma.SchedulerBookingWhereInput {
+  const and: Prisma.SchedulerBookingWhereInput[] = [];
+  if (filters.schedulerLinkId) and.push({ schedulerLinkId: filters.schedulerLinkId });
+
+  if (filters.query) {
+    const queryFilter = { contains: filters.query, mode: Prisma.QueryMode.insensitive };
+    and.push({
+      OR: [
+        { attendeeName: queryFilter },
+        { attendeeEmail: queryFilter },
+        { attendeeCompany: queryFilter },
+        { schedulerLink: { is: { workspaceId, name: queryFilter } } },
+        { schedulerLink: { is: { workspaceId, meetingTitle: queryFilter } } }
+      ]
+    });
+  }
+
+  const requestedAt: Prisma.DateTimeFilter = {};
+  if (filters.from) requestedAt.gte = dateFilterStart(filters.from);
+  if (filters.to) requestedAt.lte = dateFilterEnd(filters.to);
+  if (requestedAt.gte || requestedAt.lte) and.push({ requestedAt });
+
+  if (filters.activity === "open") and.push({ activity: { is: { workspaceId, deletedAt: null, completedAt: null } } });
+  if (filters.activity === "completed") and.push({ activity: { is: { workspaceId, deletedAt: null, completedAt: { not: null } } } });
+  if (filters.activity === "unavailable") {
+    and.push({
+      OR: [
+        { activityId: null },
+        { activity: { is: { workspaceId, deletedAt: { not: null } } } }
+      ]
+    });
+  }
+
+  return and.length > 0 ? { workspaceId, AND: and } : { workspaceId };
+}
+
+function hasActiveSchedulerBookingFilters(filters: SchedulerBookingReviewFilters) {
+  return Boolean(filters.activity || filters.from || filters.query || filters.schedulerLinkId || filters.to);
+}
+
+function normalizeReviewQuery(value: unknown) {
+  const raw = firstString(value);
+  if (!raw) return null;
+  return truncateSingleLine(raw, 120) || null;
+}
+
+function normalizeSchedulerLinkFilter(value: unknown, allowedSchedulerLinkIds: Set<string> | undefined) {
+  const raw = firstString(value);
+  if (!raw) return null;
+  const normalized = truncateSingleLine(raw, 120);
+  if (!normalized) return null;
+  if (allowedSchedulerLinkIds && !allowedSchedulerLinkIds.has(normalized)) return null;
+  return normalized;
+}
+
+function normalizeBookingActivityFilter(value: unknown): SchedulerBookingActivityFilter | null {
+  const raw = firstString(value);
+  if (!raw || !BOOKING_ACTIVITY_FILTERS.has(raw)) return null;
+  return raw as SchedulerBookingActivityFilter;
+}
+
+function normalizeDateFilter(value: unknown) {
+  const raw = firstString(value);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [year, month, day] = raw.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return raw;
+}
+
+function dateFilterStart(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function dateFilterEnd(value: string) {
+  return new Date(`${value}T23:59:59.999Z`);
+}
+
+function firstString(value: unknown) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === "string" ? candidate : null;
 }
 
 async function createUniqueSchedulerLink(data: {

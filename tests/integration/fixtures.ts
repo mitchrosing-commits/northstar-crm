@@ -61,6 +61,8 @@ export async function cleanupIntegrationFixture({
 }) {
   await prisma.job.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.meetingIntake.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
+  await prisma.assistantConversationMessage.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
+  await prisma.assistantConversation.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.assistantActionRequest.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: { in: workspaceIds } } });
   await prisma.workspaceInvitation.deleteMany({ where: { workspaceId: { in: workspaceIds } } });

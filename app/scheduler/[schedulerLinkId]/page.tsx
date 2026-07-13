@@ -49,9 +49,14 @@ export default async function SchedulerLinkReviewPage({ params, searchParams }: 
     <AppShell workspace={workspace}>
       <PageHeader
         actions={
-          <Link className="button-secondary" href="/scheduler">
-            Back to Scheduler
-          </Link>
+          <div className="filter-actions">
+            <Link className="button-secondary" href="/scheduler">
+              Back to Scheduler
+            </Link>
+            <Link className="button-primary" href={`/scheduler/bookings?link=${schedulerLink.id}` as Route}>
+              Review bookings
+            </Link>
+          </div>
         }
         eyebrow="Scheduling link review"
         subtitle="Review booking activity and keep this public scheduling link aligned with Northstar-configured availability."
@@ -189,6 +194,7 @@ export default async function SchedulerLinkReviewPage({ params, searchParams }: 
                   <th>Submitter fields</th>
                   <th>Source link</th>
                   <th>Linked activity</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -223,6 +229,11 @@ export default async function SchedulerLinkReviewPage({ params, searchParams }: 
                         "Activity unavailable"
                       )}
                     </td>
+                    <td className="table-actions-cell" data-label="Actions">
+                      <Link className="button-secondary button-compact" href={bookingDetailHref(booking.id, schedulerLink.id)}>
+                        Review
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -239,6 +250,11 @@ export default async function SchedulerLinkReviewPage({ params, searchParams }: 
       </section>
     </AppShell>
   );
+}
+
+function bookingDetailHref(bookingId: string, schedulerLinkId: string) {
+  const returnTo = `/scheduler/${schedulerLinkId}#recent-bookings`;
+  return `/scheduler/bookings/${bookingId}?returnTo=${encodeURIComponent(returnTo)}` as Route;
 }
 
 function formatDateTime(value: Date, timezone: string) {

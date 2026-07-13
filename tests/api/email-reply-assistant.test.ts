@@ -9,6 +9,8 @@ import {
   buildEmailReplyPrompt,
   createOpenAIEmailReplyProvider,
   emailReplyAssistantReadiness,
+  openAIEmailReplyRateLimitRetryDelayMs,
+  parseOpenAIEmailReplyRetryAfterMs,
   selectOpenAIEmailReplyModel,
   type EmailReplyContext
 } from "@/lib/services/email-reply-assistant-service";
@@ -139,7 +141,7 @@ describe("AI email reply assistant", () => {
       {
         body: { error: { code: "rate_limit_exceeded", message: "Too many requests.", type: "rate_limit_error" } },
         code: "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
-        message: "AI email reply provider is rate limited. Retry shortly.",
+        message: "AI email reply provider is still rate limited after retrying. Try again shortly.",
         status: 429
       },
       {
@@ -153,7 +155,8 @@ describe("AI email reply assistant", () => {
     for (const providerCase of cases) {
       const provider = createOpenAIEmailReplyProvider(
         { OPENAI_API_KEY: "openai-test-key" },
-        (async () => Response.json(providerCase.body, { status: providerCase.status })) as typeof fetch
+        (async () => Response.json(providerCase.body, { status: providerCase.status })) as typeof fetch,
+        { sleep: async () => undefined }
       );
 
       await expect(provider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
@@ -166,6 +169,134 @@ describe("AI email reply assistant", () => {
     expect(classifyOpenAIEmailReplyProviderError(400, { message: "The model `gpt-5.5` does not exist." })).toBe("unsupported_model");
     expect(assistantService).not.toContain("console.error");
     expect(assistantService).not.toContain("console.log");
+  });
+
+  it("retries one OpenAI rate limit with Retry-After before returning a draft", async () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "concise" });
+    const delays: number[] = [];
+    const provider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () => {
+        if (delays.length === 0) {
+          return Response.json(
+            { error: { code: "rate_limit_exceeded", message: "Too many requests.", type: "rate_limit_error" } },
+            { headers: { "Retry-After": "2" }, status: 429 }
+          );
+        }
+        return Response.json({
+          output_text: JSON.stringify({
+            body: "Hi Maya,\n\nThanks for the note. I will follow up after reviewing the quote.",
+            contextUsed: ["Email subject and body"],
+            subjectSuggestion: "Re: Pricing question",
+            suggestedNextAction: "Review before sending.",
+            warnings: []
+          })
+        });
+      }) as typeof fetch,
+      {
+        random: () => 0.5,
+        sleep: async (ms) => {
+          delays.push(ms);
+        }
+      }
+    );
+
+    await expect(provider?.generate({ context, prompt, tone: "concise" })).resolves.toMatchObject({
+      body: expect.stringContaining("follow up"),
+      warnings: ["Provider was busy; Northstar generated this draft after 1 retry."]
+    });
+    expect(delays).toEqual([2000]);
+  });
+
+  it("stops bounded OpenAI rate-limit retries with sanitized retry metadata", async () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "concise" });
+    const delays: number[] = [];
+    const provider = createOpenAIEmailReplyProvider(
+      { OPENAI_API_KEY: "openai-test-key" },
+      (async () =>
+        Response.json(
+          {
+            error: {
+              code: "rate_limit_exceeded",
+              message: "Too many requests for customer body Can you send pricing? sk-secret-value",
+              type: "rate_limit_error"
+            }
+          },
+          { headers: { "Retry-After": "20" }, status: 429 }
+        )) as typeof fetch,
+      {
+        random: () => 0.5,
+        sleep: async (ms) => {
+          delays.push(ms);
+        }
+      }
+    );
+
+    await expect(provider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+      code: "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
+      details: {
+        attemptCount: 3,
+        category: "rate_limited",
+        providerMessage: "Provider rate limit was reached.",
+        providerStatus: 429,
+        rateLimitCount: 3,
+        retryable: true,
+        retryAfterSeconds: 20,
+        retryAttemptCount: 2
+      },
+      message: "AI email reply provider is still rate limited after retrying. Try again in about 20 seconds.",
+      status: 503
+    });
+    expect(delays).toEqual([20_000, 20_000]);
+    await provider?.generate({ context, prompt, tone: "concise" }).catch((error) => {
+      const serialized = JSON.stringify(error);
+      expect(serialized).not.toContain("Can you send pricing");
+      expect(serialized).not.toContain("sk-secret-value");
+      expect(serialized).not.toContain(prompt.user);
+    });
+  });
+
+  it("does not retry authentication, unavailable-model, or invalid-request provider failures", async () => {
+    const context = sampleContext();
+    const prompt = buildEmailReplyPrompt({ context, tone: "concise" });
+    for (const providerCase of [
+      { body: { error: { code: "invalid_api_key", message: "bad key", type: "invalid_request_error" } }, status: 401 },
+      { body: { error: { code: "model_not_found", message: "model does not exist", type: "invalid_request_error" } }, status: 400 },
+      { body: { error: { code: "invalid_request_error", message: "payload rejected", type: "invalid_request_error" } }, status: 400 }
+    ]) {
+      let calls = 0;
+      const delays: number[] = [];
+      const provider = createOpenAIEmailReplyProvider(
+        { OPENAI_API_KEY: "openai-test-key" },
+        (async () => {
+          calls += 1;
+          return Response.json(providerCase.body, { status: providerCase.status });
+        }) as typeof fetch,
+        {
+          sleep: async (ms) => {
+            delays.push(ms);
+          }
+        }
+      );
+
+      await expect(provider?.generate({ context, prompt, tone: "concise" })).rejects.toMatchObject({
+        status: 502
+      });
+      expect(calls).toBe(1);
+      expect(delays).toEqual([]);
+    }
+  });
+
+  it("parses Retry-After and bounds exponential jitter delays", () => {
+    const now = new Date("2030-01-01T00:00:00.000Z");
+    expect(parseOpenAIEmailReplyRetryAfterMs("2", now)).toBe(2000);
+    expect(parseOpenAIEmailReplyRetryAfterMs("Tue, 01 Jan 2030 00:00:05 GMT", now)).toBe(5000);
+    expect(parseOpenAIEmailReplyRetryAfterMs("not-a-date", now)).toBeUndefined();
+    expect(openAIEmailReplyRateLimitRetryDelayMs({ attemptIndex: 0, random: () => 0 })).toBe(640);
+    expect(openAIEmailReplyRateLimitRetryDelayMs({ attemptIndex: 1, random: () => 1 })).toBe(1920);
+    expect(openAIEmailReplyRateLimitRetryDelayMs({ attemptIndex: 4, random: () => 0.5, retryAfterMs: 60_000 })).toBe(20_000);
   });
 
   it("does not expose provider-echoed prompt or email body text in error details", async () => {
@@ -278,6 +409,9 @@ describe("AI email reply assistant", () => {
     expect(emailAiReplyPanel).toContain("never sends AI replies automatically");
     expect(emailAiReplyPanel).toContain("Generate reply");
     expect(emailAiReplyPanel).toContain("Regenerate reply");
+    expect(emailAiReplyPanel).toContain("Retry reply");
+    expect(emailAiReplyPanel).toContain("Northstar will retry briefly");
+    expect(emailAiReplyPanel).toContain("clientSubmitting");
     expect(emailAiReplyPanel).toContain("Context used");
     expect(emailAiReplyPanel).toContain("Review cautions");
     expect(emailAiReplyPanel).toContain("textarea");

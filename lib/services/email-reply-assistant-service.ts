@@ -10,6 +10,7 @@ import { ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
 
 type EnvInput = Record<string, string | undefined>;
 type FetchLike = typeof fetch;
+type SleepLike = (ms: number) => Promise<void>;
 
 export type EmailReplyTone = "concise" | "warm" | "professional" | "follow_up" | "pricing_quote";
 
@@ -87,11 +88,27 @@ const emailReplyModelEnvName = "EMAIL_REPLY_OPENAI_MODEL";
 const maxEmailBodyChars = 3000;
 const maxContextItemChars = 500;
 const openAIEmailReplyTimeoutMs = 30_000;
+const openAIEmailReplyMaxAttempts = 3;
+const openAIEmailReplyRetryBaseMs = 800;
+const openAIEmailReplyRetryMaxMs = 20_000;
 const playwrightEmailReplyTestProviderFlag = "PLAYWRIGHT_EMAIL_REPLY_TEST_PROVIDER";
+const emailReplyDraftInFlight = new Map<string, Promise<EmailReplyDraftResult>>();
+const playwrightEmailReplyRateLimitAttempts = new Map<string, number>();
 const defaultWarnings = [
   "Review and edit before using. Northstar never sends AI-generated replies automatically.",
   "Do not add pricing, discounts, legal terms, dates, or promises unless you verify them first."
 ];
+
+export type EmailReplyDraftResult = {
+  body: string;
+  contextUsed: string[];
+  providerId: string;
+  providerName: string;
+  subjectSuggestion: string;
+  suggestedNextAction?: string;
+  tone: EmailReplyTone;
+  warnings: string[];
+};
 
 export function emailReplyAssistantReadiness(env: EnvInput = process.env): EmailReplyAssistantReadiness {
   const testProvider = createPlaywrightEmailReplyTestProvider(env);
@@ -128,8 +145,25 @@ export async function generateEmailReplyDraft(
   actor: WorkspaceActor,
   input: { emailLogId: unknown; tone?: unknown },
   options: GenerateEmailReplyDraftOptions = {}
-) {
+): Promise<EmailReplyDraftResult> {
   const tone = normalizeEmailReplyTone(input.tone);
+  const emailLogId = normalizeEmailLogId(input.emailLogId);
+  const dedupeKey = emailReplyDraftDedupeKey(actor, emailLogId, tone);
+  const existing = emailReplyDraftInFlight.get(dedupeKey);
+  if (existing) return existing;
+
+  const draftPromise = generateEmailReplyDraftOnce(actor, { emailLogId, tone }, options).finally(() => {
+    emailReplyDraftInFlight.delete(dedupeKey);
+  });
+  emailReplyDraftInFlight.set(dedupeKey, draftPromise);
+  return draftPromise;
+}
+
+async function generateEmailReplyDraftOnce(
+  actor: WorkspaceActor,
+  input: { emailLogId: string; tone: EmailReplyTone },
+  options: GenerateEmailReplyDraftOptions
+): Promise<EmailReplyDraftResult> {
   const context = await buildEmailReplyContext(actor, input.emailLogId);
   const readiness = emailReplyAssistantReadiness(options.env);
 
@@ -142,8 +176,8 @@ export async function generateEmailReplyDraft(
     throw new ApiError("AI_EMAIL_REPLY_NOT_CONFIGURED", readiness.message, 503);
   }
 
-  const prompt = buildEmailReplyPrompt({ context, tone });
-  const generated = normalizeProviderOutput(await provider.generate({ context, prompt, tone }));
+  const prompt = buildEmailReplyPrompt({ context, tone: input.tone });
+  const generated = normalizeProviderOutput(await provider.generate({ context, prompt, tone: input.tone }));
 
   return {
     body: generated.body,
@@ -152,7 +186,7 @@ export async function generateEmailReplyDraft(
     providerName: provider.name,
     subjectSuggestion: generated.subjectSuggestion || defaultReplySubject(context.email.subject),
     suggestedNextAction: generated.suggestedNextAction,
-    tone,
+    tone: input.tone,
     warnings: dedupeWarnings([...defaultWarnings, ...generated.warnings])
   };
 }
@@ -327,49 +361,104 @@ export function buildEmailReplyPrompt({ context, tone }: { context: EmailReplyCo
   return { system, user };
 }
 
-export function createOpenAIEmailReplyProvider(env: EnvInput = process.env, fetchImpl: FetchLike = fetch): EmailReplyProvider | null {
+type OpenAIEmailReplyProviderOptions = {
+  random?: () => number;
+  sleep?: SleepLike;
+};
+
+export function createOpenAIEmailReplyProvider(
+  env: EnvInput = process.env,
+  fetchImpl: FetchLike = fetch,
+  options: OpenAIEmailReplyProviderOptions = {}
+): EmailReplyProvider | null {
   const apiKey = readNonEmpty(env.OPENAI_API_KEY);
   if (!apiKey) return null;
+  const sleep = options.sleep ?? sleepMs;
+  const random = options.random ?? Math.random;
 
   return {
     id: "openai",
     name: "OpenAI",
     async generate(input) {
-      let response: Response;
-      const abortController = new AbortController();
-      const timeout = setTimeout(() => abortController.abort(), openAIEmailReplyTimeoutMs);
-      try {
-        response = await fetchImpl("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(buildOpenAIEmailReplyRequestPayload(input, env)),
-          signal: abortController.signal
-        });
-      } catch (error) {
-        throw openAIEmailReplyTransportError(error);
-      } finally {
-        clearTimeout(timeout);
-      }
-      const body = (await response.json().catch(() => null)) as OpenAIResponseBody | null;
-      if (!response.ok) {
-        throw openAIEmailReplyProviderError(response.status, body);
-      }
-      const outputText = readNonEmpty(body?.output_text) ?? extractResponsesOutputText(body?.output) ?? readNonEmpty(body?.text);
-      if (!outputText) {
-        throw new ApiError(
-          "AI_EMAIL_REPLY_PROVIDER_INVALID_RESPONSE",
-          "AI email reply provider returned an invalid draft response.",
-          502,
-          {
-            category: "invalid_response",
-            providerStatus: response.status
+      let rateLimitCount = 0;
+
+      for (let attemptIndex = 0; attemptIndex < openAIEmailReplyMaxAttempts; attemptIndex += 1) {
+        let response: Response;
+        const abortController = new AbortController();
+        const timeout = setTimeout(() => abortController.abort(), openAIEmailReplyTimeoutMs);
+        try {
+          response = await fetchImpl("https://api.openai.com/v1/responses", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(buildOpenAIEmailReplyRequestPayload(input, env)),
+            signal: abortController.signal
+          });
+        } catch (error) {
+          throw openAIEmailReplyTransportError(error);
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        const body = (await response.json().catch(() => null)) as OpenAIResponseBody | null;
+        if (!response.ok) {
+          const providerError = safeOpenAIProviderError(body);
+          const category = classifyOpenAIEmailReplyProviderError(response.status, providerError);
+          const retryAfterMs = parseOpenAIEmailReplyRetryAfterMs(response.headers.get("retry-after"));
+          const nextAttemptAvailable = attemptIndex < openAIEmailReplyMaxAttempts - 1;
+
+          if (category === "rate_limited") {
+            rateLimitCount += 1;
+            if (nextAttemptAvailable) {
+              const delayMs = openAIEmailReplyRateLimitRetryDelayMs({ attemptIndex, random, retryAfterMs });
+              await sleep(delayMs);
+              continue;
+            }
           }
-        );
+
+          throw openAIEmailReplyProviderError(response.status, body, {
+            attemptCount: attemptIndex + 1,
+            rateLimitCount,
+            retryAfterMs,
+            retryAttemptCount: attemptIndex
+          });
+        }
+
+        const outputText = readNonEmpty(body?.output_text) ?? extractResponsesOutputText(body?.output) ?? readNonEmpty(body?.text);
+        if (!outputText) {
+          throw new ApiError(
+            "AI_EMAIL_REPLY_PROVIDER_INVALID_RESPONSE",
+            "AI email reply provider returned an invalid draft response.",
+            502,
+            {
+              category: "invalid_response",
+              providerStatus: response.status
+            }
+          );
+        }
+        const output = parseProviderJson(outputText);
+        if (rateLimitCount > 0) {
+          output.warnings = [
+            ...(output.warnings ?? []),
+            `Provider was busy; Northstar generated this draft after ${rateLimitCount} ${rateLimitCount === 1 ? "retry" : "retries"}.`
+          ];
+        }
+        return output;
       }
-      return parseProviderJson(outputText);
+
+      throw new ApiError(
+        "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
+        "AI email reply provider is still rate limited after retrying. Try again shortly.",
+        503,
+        {
+          category: "rate_limited",
+          rateLimitCount,
+          retryable: true,
+          retryAttemptCount: openAIEmailReplyMaxAttempts - 1
+        }
+      );
     }
   };
 }
@@ -426,15 +515,32 @@ function openAIEmailReplyTransportError(error: unknown) {
   );
 }
 
-function openAIEmailReplyProviderError(status: number, body: OpenAIResponseBody | null) {
+type OpenAIEmailReplyProviderErrorOptions = {
+  attemptCount?: number;
+  rateLimitCount?: number;
+  retryAfterMs?: number;
+  retryAttemptCount?: number;
+};
+
+function openAIEmailReplyProviderError(
+  status: number,
+  body: OpenAIResponseBody | null,
+  options: OpenAIEmailReplyProviderErrorOptions = {}
+) {
   const providerError = safeOpenAIProviderError(body);
   const category = classifyOpenAIEmailReplyProviderError(status, providerError);
+  const retryAfterSeconds = retryAfterSecondsFromMs(options.retryAfterMs);
   const details = {
+    attemptCount: options.attemptCount,
     category,
     providerCode: providerError.code,
     providerMessage: safeOpenAIProviderDiagnosticMessage(category),
     providerStatus: status,
-    providerType: providerError.type
+    providerType: providerError.type,
+    rateLimitCount: options.rateLimitCount,
+    retryable: category === "rate_limited" ? true : undefined,
+    retryAfterSeconds,
+    retryAttemptCount: options.retryAttemptCount
   };
 
   if (category === "authentication") {
@@ -458,7 +564,9 @@ function openAIEmailReplyProviderError(status: number, body: OpenAIResponseBody 
   if (category === "rate_limited") {
     return new ApiError(
       "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
-      "AI email reply provider is rate limited. Retry shortly.",
+      retryAfterSeconds
+        ? `AI email reply provider is still rate limited after retrying. Try again in about ${formatRetryAfterSeconds(retryAfterSeconds)}.`
+        : "AI email reply provider is still rate limited after retrying. Try again shortly.",
       503,
       details
     );
@@ -490,6 +598,26 @@ function createPlaywrightEmailReplyTestProvider(env: EnvInput = process.env): Em
     async generate(input) {
       if (/empty provider/i.test(input.context.email.subject)) {
         return parseProviderJson('```json\n{"replyBody":"","subject":"Re: Empty provider output","nextAction":"Review the provider configuration."}\n```');
+      }
+
+      if (/rate limited/i.test(input.context.email.subject)) {
+        const key = `${input.context.email.subject}:${input.context.email.body}`;
+        const attempts = playwrightEmailReplyRateLimitAttempts.get(key) ?? 0;
+        playwrightEmailReplyRateLimitAttempts.set(key, attempts + 1);
+        if (attempts === 0) {
+          throw new ApiError(
+            "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
+            "AI email reply provider is still rate limited after retrying. Try again in about 2 seconds.",
+            503,
+            {
+              category: "rate_limited",
+              rateLimitCount: 1,
+              retryable: true,
+              retryAfterSeconds: 2,
+              retryAttemptCount: 0
+            }
+          );
+        }
       }
 
       const threadBodies = input.context.threadMessages.map((message) => message.body);
@@ -558,6 +686,34 @@ export function classifyOpenAIEmailReplyProviderError(
   }
 
   return "provider_request_rejected";
+}
+
+export function parseOpenAIEmailReplyRetryAfterMs(value: unknown, now = new Date()) {
+  const text = readNonEmpty(value);
+  if (!text) return undefined;
+  const numericSeconds = Number(text);
+  if (Number.isFinite(numericSeconds) && numericSeconds >= 0) {
+    return Math.round(numericSeconds * 1000);
+  }
+  const retryAt = new Date(text);
+  const retryAtMs = retryAt.getTime();
+  if (Number.isNaN(retryAtMs)) return undefined;
+  return Math.max(0, retryAtMs - now.getTime());
+}
+
+export function openAIEmailReplyRateLimitRetryDelayMs({
+  attemptIndex,
+  random = Math.random,
+  retryAfterMs
+}: {
+  attemptIndex: number;
+  random?: () => number;
+  retryAfterMs?: number;
+}) {
+  const exponential = openAIEmailReplyRetryBaseMs * 2 ** Math.max(0, attemptIndex);
+  const jitter = 0.8 + clamp(random(), 0, 1) * 0.4;
+  const delay = retryAfterMs ?? exponential * jitter;
+  return Math.min(openAIEmailReplyRetryMaxMs, Math.max(0, Math.round(delay)));
 }
 
 function safeOpenAIProviderError(body: OpenAIResponseBody | null): SafeOpenAIProviderError {
@@ -817,6 +973,10 @@ function normalizeEmailLogId(value: unknown) {
   return normalized;
 }
 
+function emailReplyDraftDedupeKey(actor: WorkspaceActor, emailLogId: string, tone: EmailReplyTone) {
+  return [actor.workspaceId, actor.actorUserId, emailLogId, tone].join(":");
+}
+
 function normalizeEmailReplyTone(value: unknown): EmailReplyTone {
   if (value === "warm" || value === "professional" || value === "follow_up" || value === "pricing_quote") return value;
   return "concise";
@@ -862,6 +1022,23 @@ function readFirstNonEmpty(...values: unknown[]) {
 
 function dedupeWarnings(warnings: string[]) {
   return Array.from(new Set(warnings.map(compactLine).filter(Boolean)));
+}
+
+function sleepMs(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function retryAfterSecondsFromMs(value: number | undefined) {
+  if (value === undefined) return undefined;
+  return Math.max(0, Math.ceil(value / 1000));
+}
+
+function formatRetryAfterSeconds(seconds: number) {
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function compactLine(value: string) {

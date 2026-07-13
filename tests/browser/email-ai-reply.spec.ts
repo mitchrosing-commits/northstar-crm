@@ -14,6 +14,7 @@ type EmailAiReplyBrowserFixture = {
   emptyProviderEmailId: string;
   expiresAt: Date;
   noReplyEmailId: string;
+  rateLimitedEmailId: string;
   otherUserId: string;
   otherWorkspaceId: string;
   sessionCookieValue: string;
@@ -77,6 +78,28 @@ test.describe("Email AI Reply Assistant browser flow", () => {
     await expect(panel.getByText("AI email reply provider returned no draft.")).toBeVisible();
     await expect(panel.getByRole("textbox", { name: /Draft reply/ })).toHaveCount(0);
     await expect(panel).not.toContainText(/raw-secret-token|authorization|stack|provider payload/i);
+    expect(actionableBrowserErrors(errors.current())).toEqual([]);
+  });
+
+  test("keeps the reply panel retryable after a provider rate limit", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await openEmailThread(page, "Browser AI Rate Limited");
+
+    const panel = page.locator("#email-ai-reply-panel");
+    await panel.getByText("Draft with AI").click();
+    await panel.getByLabel("Tone").selectOption("warm");
+    await panel.getByRole("button", { name: "Generate reply" }).click();
+
+    await expect(panel.getByText("AI email reply provider is still rate limited after retrying. Try again in about 2 seconds.")).toBeVisible();
+    await expect(panel.getByText("Try again in about 2 seconds.", { exact: true })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Retry reply" })).toBeVisible();
+    await expect(panel.getByLabel("Tone")).toHaveValue("warm");
+    await expect(panel).not.toContainText(/authorization|bearer|stack|provider payload|raw-secret/i);
+
+    await panel.getByRole("button", { name: "Retry reply" }).click();
+    await expect(panel.getByText("AI draft generated. Review and edit before using it.")).toBeVisible();
+    await expect(panel.getByRole("textbox", { name: /Draft reply/ })).toHaveValue(/Primary reply target: Trigger a deterministic provider rate limit before recovery\./);
     expect(actionableBrowserErrors(errors.current())).toEqual([]);
   });
 
@@ -222,7 +245,7 @@ async function createEmailAiReplyBrowserFixture(): Promise<EmailAiReplyBrowserFi
       }
     ]
   });
-  const [currentEmail, emptyProviderEmail, noReplyEmail] = await prisma.$transaction([
+  const [currentEmail, emptyProviderEmail, noReplyEmail, rateLimitedEmail] = await prisma.$transaction([
     prisma.emailLog.findFirstOrThrow({
       where: { providerMessageId: `email-ai-reply-message-3-${suffix}`, workspaceId: workspace.id },
       select: { id: true }
@@ -262,6 +285,24 @@ async function createEmailAiReplyBrowserFixture(): Promise<EmailAiReplyBrowserFi
         workspaceId: workspace.id
       },
       select: { id: true }
+    }),
+    prisma.emailLog.create({
+      data: {
+        body: "Trigger a deterministic provider rate limit before recovery.",
+        direction: "INBOUND",
+        emailConnectionId: connection.id,
+        fromText: "Browser Buyer <buyer@example.test>",
+        occurredAt: new Date("2030-01-04T11:00:00.000Z"),
+        provider: "GOOGLE_WORKSPACE",
+        providerLabels: ["INBOX"],
+        providerMessageId: `email-ai-reply-rate-limit-${suffix}`,
+        providerSnippet: "Trigger deterministic rate limit",
+        providerThreadId: `email-ai-reply-rate-limit-thread-${suffix}`,
+        subject: "Browser AI Rate Limited",
+        toText: `sales-${suffix}@example.test`,
+        workspaceId: workspace.id
+      },
+      select: { id: true }
     })
   ]);
   const session = await createLocalSession(user.id);
@@ -270,6 +311,7 @@ async function createEmailAiReplyBrowserFixture(): Promise<EmailAiReplyBrowserFi
     emptyProviderEmailId: emptyProviderEmail.id,
     expiresAt: session.expiresAt,
     noReplyEmailId: noReplyEmail.id,
+    rateLimitedEmailId: rateLimitedEmail.id,
     otherUserId: otherUser.id,
     otherWorkspaceId: otherWorkspace.id,
     sessionCookieValue: serializeLocalSessionCookieValue(session.token),

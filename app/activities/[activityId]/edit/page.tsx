@@ -50,6 +50,7 @@ export default async function ActivityEditPage({ params, searchParams }: PagePro
   const returnLabel = redirectTo === defaultReturnPath ? getActivityReturnLabel(activity) : returnToLabel(redirectTo);
   const related = activityRecordContext(activity);
   const activityCompleted = Boolean(activity.completedAt);
+  const schedulerBooking = activity.schedulerBookings[0] ?? null;
   const pageTitle = activityCompleted ? "Activity details" : "Edit activity";
   const pageSubtitle = activityCompleted
     ? "Completed follow-ups are locked; review the context or create the next follow-up."
@@ -121,7 +122,19 @@ export default async function ActivityEditPage({ params, searchParams }: PagePro
               <InlineEmptyStateText>No linked CRM record</InlineEmptyStateText>
             ),
             tone: related ? "default" : "warning"
-          }
+          },
+          ...(schedulerBooking
+            ? [
+                {
+                  label: "Scheduler booking",
+                  value: (
+                    <Link className="inline-link" href={`/scheduler/bookings/${schedulerBooking.id}` as Route}>
+                      {schedulerBooking.schedulerLink.name}
+                    </Link>
+                  )
+                }
+              ]
+            : [])
         ]}
         title="Activity workspace"
       />

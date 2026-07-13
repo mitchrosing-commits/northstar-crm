@@ -41,6 +41,11 @@ export default async function SchedulerPage({ searchParams }: PageProps) {
   return (
     <AppShell workspace={workspace}>
       <PageHeader
+        actions={
+          <Link className="button-secondary" href="/scheduler/bookings">
+            Review bookings
+          </Link>
+        }
         eyebrow="Booking links"
         subtitle="Create public scheduling links from Northstar-configured availability. Bookings create meeting activities only, without calendar sync or workflow automation."
         title="Scheduler"
@@ -193,6 +198,9 @@ export default async function SchedulerPage({ searchParams }: PageProps) {
                         </a>
                         <Link className="button-secondary button-compact" href={`/scheduler/${schedulerLink.id}` as Route}>
                           View
+                        </Link>
+                        <Link className="button-secondary button-compact" href={`/scheduler/bookings?link=${schedulerLink.id}` as Route}>
+                          Bookings
                         </Link>
                         <form action={setSchedulerLinkEnabledAction}>
                           <input name="schedulerLinkId" type="hidden" value={schedulerLink.id} />

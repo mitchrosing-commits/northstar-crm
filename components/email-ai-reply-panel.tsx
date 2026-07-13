@@ -25,13 +25,17 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
   const [state, formAction, isPending] = useActionState(generateEmailReplyDraftAction, initialState);
   const [draftSubject, setDraftSubject] = useState(`Re: ${subject}`.slice(0, 160));
   const [draftBody, setDraftBody] = useState("");
+  const [replyPanelOpen, setReplyPanelOpen] = useState(false);
+  const [clientSubmitting, setClientSubmitting] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "unavailable">("idle");
 
   useEffect(() => {
     if (state.subjectSuggestion) setDraftSubject(state.subjectSuggestion);
     if (state.replyBody) setDraftBody(state.replyBody);
     if (state.replyBody || state.subjectSuggestion) setCopyState("idle");
-  }, [state.replyBody, state.subjectSuggestion]);
+    if (state.error || state.message || state.retryable || state.replyBody) setReplyPanelOpen(true);
+    setClientSubmitting(false);
+  }, [state]);
 
   async function copyDraft() {
     if (!navigator.clipboard) {
@@ -49,7 +53,13 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
   const generated = Boolean(state.replyBody);
 
   return (
-    <details aria-label={aiReplyDisclosureLabel} className="email-draft-panel email-ai-reply-panel" title={aiReplyDisclosureLabel}>
+    <details
+      aria-label={aiReplyDisclosureLabel}
+      className="email-draft-panel email-ai-reply-panel"
+      onToggle={(event) => setReplyPanelOpen(event.currentTarget.open)}
+      open={replyPanelOpen}
+      title={aiReplyDisclosureLabel}
+    >
       <summary title={aiReplyDisclosureLabel}>Draft with AI</summary>
       <p className="form-hint">
         Review-first only. Northstar drafts text for you to edit, copy, or open in your mail client; it never sends AI replies automatically.
@@ -57,11 +67,21 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
       {!readiness.configured ? (
         <p className="form-hint">{readiness.message}</p>
       ) : (
-        <form action={formAction} className="email-ai-reply-form">
+        <form
+          action={formAction}
+          className="email-ai-reply-form"
+          onSubmit={(event) => {
+            if (clientSubmitting || isPending) {
+              event.preventDefault();
+              return;
+            }
+            setClientSubmitting(true);
+          }}
+        >
           <input name="emailLogId" type="hidden" value={emailLogId} />
           <label className="form-field">
             <FormFieldLabel>Tone</FormFieldLabel>
-            <select name="tone" defaultValue={state.tone ?? defaultTone}>
+            <select disabled={isPending || clientSubmitting} name="tone" defaultValue={state.tone ?? defaultTone}>
               <option value="concise">Concise</option>
               <option value="warm">Warm</option>
               <option value="professional">Professional</option>
@@ -69,12 +89,22 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
               <option value="pricing_quote">Pricing / quote careful</option>
             </select>
           </label>
-          <button className="button-primary button-compact" disabled={isPending} type="submit">
-            {isPending ? "Generating..." : generated ? "Regenerate reply" : "Generate reply"}
+          <button className="button-primary button-compact" disabled={isPending || clientSubmitting} type="submit">
+            {isPending || clientSubmitting ? "Generating..." : state.retryable ? "Retry reply" : generated ? "Regenerate reply" : "Generate reply"}
           </button>
+          {isPending || clientSubmitting ? (
+            <p className="form-hint" role="status">
+              Generating draft. If the provider is busy, Northstar will retry briefly before asking you to try again.
+            </p>
+          ) : null}
         </form>
       )}
       {state.error ? <FormErrorMessage compact>{state.error}</FormErrorMessage> : null}
+      {state.retryable ? (
+        <p className="form-hint">
+          {state.retryLabel ?? "Retry is available from this panel without reopening the thread."}
+        </p>
+      ) : null}
       {state.message ? <FormSuccessMessage compact>{state.message}</FormSuccessMessage> : null}
       {generated ? (
         <div className="email-ai-review">

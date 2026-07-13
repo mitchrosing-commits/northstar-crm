@@ -12,12 +12,17 @@ const service = readFileSync(join(process.cwd(), "lib/services/scheduler-service
 const crmBarrel = readFileSync(join(process.cwd(), "lib/services/crm.ts"), "utf8");
 const adminPage = readFileSync(join(process.cwd(), "app/scheduler/page.tsx"), "utf8");
 const detailPage = readFileSync(join(process.cwd(), "app/scheduler/[schedulerLinkId]/page.tsx"), "utf8");
+const bookingsPage = readFileSync(join(process.cwd(), "app/scheduler/bookings/page.tsx"), "utf8");
+const bookingDetailPage = readFileSync(join(process.cwd(), "app/scheduler/bookings/[bookingId]/page.tsx"), "utf8");
+const bookingCopyControl = readFileSync(join(process.cwd(), "app/scheduler/bookings/[bookingId]/copy-attendee-email-control.tsx"), "utf8");
 const adminActions = readFileSync(join(process.cwd(), "app/scheduler/actions.ts"), "utf8");
 const publicPage = readFileSync(join(process.cwd(), "app/s/[token]/page.tsx"), "utf8");
 const publicActions = readFileSync(join(process.cwd(), "app/s/[token]/actions.ts"), "utf8");
 const linkControls = readFileSync(join(process.cwd(), "components/scheduler-public-link-controls.tsx"), "utf8");
 const navigation = readFileSync(join(process.cwd(), "lib/navigation.ts"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
+const activityService = readFileSync(join(process.cwd(), "lib/services/activity-service.ts"), "utf8");
+const activityEditPage = readFileSync(join(process.cwd(), "app/activities/[activityId]/edit/page.tsx"), "utf8");
 
 describe("scheduler links v1", () => {
   it("adds a workspace-scoped scheduler schema with booking-to-activity linkage", () => {
@@ -38,8 +43,13 @@ describe("scheduler links v1", () => {
     expect(service).toContain("export async function createSchedulerLink");
     expect(service).toContain("export async function listSchedulerLinks");
     expect(service).toContain("export async function getSchedulerLinkReview");
+    expect(service).toContain("export async function getSchedulerBookingReview");
+    expect(service).toContain("export async function getSchedulerBookingDetail");
     expect(service).toContain("export async function getPublicSchedulerLinkByToken");
     expect(service).toContain("export async function submitPublicSchedulerBooking");
+    expect(service).toContain("normalizeSchedulerBookingReviewFilters");
+    expect(service).toContain("buildSchedulerBookingReviewWhere");
+    expect(service).toContain("BOOKING_REVIEW_LIMIT");
     expect(service).toContain("ActivityType.MEETING");
     expect(service).toContain("tx.activity.create");
     expect(service).toContain("tx.schedulerBooking.create");
@@ -65,6 +75,8 @@ describe("scheduler links v1", () => {
     expect(adminPage).toContain("setSchedulerLinkEnabledAction");
     expect(adminPage).toContain("SchedulerPublicLinkControls");
     expect(adminPage).toContain("buildPublicSchedulerUrl");
+    expect(adminPage).toContain('href="/scheduler/bookings"');
+    expect(adminPage).toContain('href={`/scheduler/bookings?link=${schedulerLink.id}` as Route}');
     expect(adminPage).toContain("No scheduling links yet");
     expect(adminPage).toContain("No bookings");
     expect(detailPage).toContain("export default async function SchedulerLinkReviewPage");
@@ -72,12 +84,62 @@ describe("scheduler links v1", () => {
     expect(detailPage).toContain("Recent Booking Requests");
     expect(detailPage).toContain("Accepted bookings");
     expect(detailPage).toContain("No booking requests yet");
+    expect(detailPage).toContain("bookingDetailHref");
+    expect(detailPage).toContain('href={`/scheduler/bookings?link=${schedulerLink.id}` as Route}');
     expect(detailPage).toContain('href={`/activities/${booking.activity.id}/edit` as Route}');
     expect(detailPage).toContain("notFound()");
     expect(detailPage).not.toContain("website");
     expect(adminActions).toContain("createSchedulerLink(actor");
     expect(adminActions).toContain("updateSchedulerLink(actor");
     expect(linkControls).toContain("navigator.clipboard.writeText(publicUrl)");
+  });
+
+  it("adds internal scheduler booking review and detail pages without public token leakage", () => {
+    expect(bookingsPage).toContain("export default async function SchedulerBookingsPage");
+    expect(bookingsPage).toContain("getSchedulerBookingReview");
+    expect(bookingsPage).toContain("Scheduler Bookings");
+    expect(bookingsPage).toContain("Filter Bookings");
+    expect(bookingsPage).toContain('name="q"');
+    expect(bookingsPage).toContain('name="link"');
+    expect(bookingsPage).toContain('name="from"');
+    expect(bookingsPage).toContain('name="to"');
+    expect(bookingsPage).toContain('name="activity"');
+    expect(bookingsPage).toContain("Clear filters");
+    expect(bookingsPage).toContain("No bookings match these filters");
+    expect(bookingsPage).toContain("No accepted bookings yet");
+    expect(bookingsPage).toContain("bookingDetailHref");
+    expect(bookingsPage).toContain('id="scheduler-bookings"');
+    expect(bookingsPage).toContain('href={`/activities/${booking.activity.id}/edit` as Route}');
+    expect(bookingsPage).toContain('href={`/scheduler/${booking.schedulerLink.id}` as Route}');
+    expect(bookingsPage).not.toContain(".token");
+    expect(bookingsPage).not.toContain("website");
+
+    expect(bookingDetailPage).toContain("export default async function SchedulerBookingDetailPage");
+    expect(bookingDetailPage).toContain("getSchedulerBookingDetail");
+    expect(bookingDetailPage).toContain("Submitted Attendee Values");
+    expect(bookingDetailPage).toContain("Scheduler Configuration");
+    expect(bookingDetailPage).toContain("Linked CRM Activity");
+    expect(bookingDetailPage).toContain("safeReturnTo");
+    expect(bookingDetailPage).toContain('url.pathname === "/scheduler/bookings"');
+    expect(bookingDetailPage).toContain('url.pathname === `/scheduler/${schedulerLinkId}`');
+    expect(bookingDetailPage).toContain("CopyAttendeeEmailControl");
+    expect(bookingDetailPage).toContain("Activity unavailable or deleted.");
+    expect(bookingDetailPage).toContain("Provider-calendar availability is not checked or inferred.");
+    expect(bookingDetailPage).not.toContain(".token");
+    expect(bookingDetailPage).not.toContain("website");
+    expect(bookingDetailPage).not.toContain("updateSchedulerLink");
+    expect(bookingDetailPage).not.toContain("submitPublicSchedulerBooking");
+    expect(bookingCopyControl).toContain('"use client"');
+    expect(bookingCopyControl).toContain("navigator.clipboard.writeText(value)");
+    expect(bookingCopyControl).toContain("Copy attendee email");
+    expect(bookingCopyControl).toContain("Attendee email copied.");
+    expect(bookingCopyControl).toContain("Attendee email could not be copied.");
+    expect(bookingCopyControl).not.toContain("console.");
+    expect(activityService).toContain("schedulerBookings");
+    expect(activityEditPage).toContain("Scheduler booking");
+    expect(activityEditPage).toContain('href={`/scheduler/bookings/${schedulerBooking.id}` as Route}');
+    expect(globalStyles).toContain(".scheduler-booking-filter-grid");
+    expect(globalStyles).toContain(".scheduler-booking-detail-grid");
   });
 
   it("adds a public no-chrome scheduler route with safe unavailable and confirmation states", () => {

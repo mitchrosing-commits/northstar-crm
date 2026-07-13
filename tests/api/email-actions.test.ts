@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { decodeEmailSyncReview, emailSyncReviewCookieName } from "@/app/email/sync-review";
+import { ApiError } from "@/lib/api/responses";
 
 const mocks = vi.hoisted(() => ({
   classifyEmailLog: vi.fn(),
@@ -404,6 +405,34 @@ describe("email sync server actions", () => {
       emailLogId: "email_log_1",
       error: "AI reply draft could not be generated.",
       tone: "concise"
+    });
+  });
+
+  it("returns retryable AI reply rate-limit state without exposing provider diagnostics", async () => {
+    mocks.generateEmailReplyDraft.mockRejectedValue(
+      new ApiError(
+        "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED",
+        "AI email reply provider is still rate limited after retrying. Try again in about 20 seconds.",
+        503,
+        {
+          providerMessage: "Provider rate limit was reached.",
+          rawHeader: "Authorization: Bearer sk-should-not-leak",
+          retryable: true,
+          retryAfterSeconds: 20
+        }
+      )
+    );
+    const formData = new FormData();
+    formData.set("emailLogId", "email_log_1");
+    formData.set("tone", "warm");
+
+    await expect(generateEmailReplyDraftAction({}, formData)).resolves.toEqual({
+      emailLogId: "email_log_1",
+      error: "AI email reply provider is still rate limited after retrying. Try again in about 20 seconds.",
+      retryAfterSeconds: 20,
+      retryLabel: "Try again in about 20 seconds.",
+      retryable: true,
+      tone: "warm"
     });
   });
 

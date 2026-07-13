@@ -175,11 +175,11 @@ test.describe("Northstar CRM browser smoke", () => {
       if (path === "/assistant") {
         await expect(page.getByRole("link", { name: "Current section: Assistant" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Assistant" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Ask Stella" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Chat with Stella" })).toBeVisible();
         await expect(page.getByLabel("Suggested Assistant prompts")).toBeVisible();
         await expect(page.getByRole("textbox", { name: /^Question or command\b/ })).toBeVisible();
         await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
-        await expect(page.getByText("draft a CRM action for review")).toBeVisible();
+        await expect(page.getByText("draft safe actions for review")).toBeVisible();
       }
       if (path === "/pipeline") {
         const contractSummaries = page.locator(".contract-status-summary");
@@ -1313,6 +1313,42 @@ test.describe("Northstar CRM browser smoke", () => {
       })
     ).resolves.toBe(0);
 
+    const bookingReviewPath = `/scheduler/bookings?link=${schedulerLink.id}&q=${encodeURIComponent("Browser Scheduler Guest")}&activity=open`;
+    await expectPageReady(page, bookingReviewPath);
+    await expect(page.getByRole("heading", { name: "Scheduler Bookings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Filter Bookings" })).toBeVisible();
+    await expect(page.getByText("Source link:")).toBeVisible();
+    await expect(page.getByText("Search: Browser Scheduler Guest")).toBeVisible();
+    await expect(page.getByText("Activity state: Activity available")).toBeVisible();
+    const allBookingsRow = page.locator("tbody tr", { hasText: attendeeEmail });
+    await expect(allBookingsRow.getByText("Browser Scheduler Guest", { exact: true })).toBeVisible();
+    await expect(allBookingsRow.getByText("Activity available")).toBeVisible();
+    await expect(page.getByText(schedulerLink.token)).toHaveCount(0);
+
+    await allBookingsRow.getByRole("link", { name: "Review" }).click();
+    await page.waitForURL(new RegExp(`/scheduler/bookings/${booking.id}\\?returnTo=`));
+    await expect(page.getByRole("heading", { name: meetingTitle })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Submitted Attendee Values" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Scheduler Configuration" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Linked CRM Activity" })).toBeVisible();
+    await expect(page.getByText("Browser Scheduler Guest", { exact: true })).toBeVisible();
+    await expect(page.getByText(attendeeEmail)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy attendee email" })).toBeVisible();
+    await expect(page.getByText("Provider-calendar availability is not checked or inferred.")).toBeVisible();
+    await expect(page.getByText(schedulerLink.token)).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Back to Review" }).click();
+    await page.waitForURL(new RegExp(`/scheduler/bookings\\?link=${schedulerLink.id}&q=Browser\\+Scheduler\\+Guest&activity=open#scheduler-bookings$`));
+    await expect(page.locator("tbody tr", { hasText: attendeeEmail })).toBeVisible();
+
+    await expectPageReady(page, `/scheduler/bookings?q=${encodeURIComponent("no matching scheduler guest")}`);
+    await expect(page.getByRole("heading", { name: "No bookings match these filters" })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await expectPageReady(page, `/scheduler/bookings?link=${schedulerLink.id}`);
+    await expectNoPageHorizontalOverflow(page, "/scheduler/bookings");
+    await expectNoOneCharacterTextStacking(page, "/scheduler/bookings");
+    await page.setViewportSize({ width: 1280, height: 900 });
+
     await page.goto(publicPath);
     await page.getByLabel("Your name").fill("Browser Scheduler Guest");
     await page.getByLabel("Email").fill(attendeeEmail);
@@ -1343,9 +1379,14 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(bookingRow.getByText("This should create one meeting activity.")).toBeVisible();
     await expect(page.getByText(schedulerLink.token)).toHaveCount(0);
     await expect(page.getByText(`honeypot-${attendeeEmail}`)).toHaveCount(0);
+    await expect(bookingRow.getByRole("link", { name: "Review" })).toBeVisible();
     await page.getByRole("link", { name: activity.title }).click();
     await page.waitForURL(new RegExp(`/activities/${activity.id}/edit$`));
     await expect(page.getByRole("heading", { name: "Edit activity" })).toBeVisible();
+    await expect(page.getByText("Scheduler booking", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: schedulerName }).click();
+    await page.waitForURL(new RegExp(`/scheduler/bookings/${booking.id}$`));
+    await expect(page.getByRole("heading", { name: "Linked CRM Activity" })).toBeVisible();
 
     await expectPageReady(page, "/scheduler");
     const formRow = page.locator("tr", { hasText: schedulerName });

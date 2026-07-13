@@ -13,7 +13,6 @@ export async function updateOnboardingAiPreferencesAction(formData: FormData) {
     assistantCustomName: stringValue(formData.get("assistantCustomName")),
     assistantTonePreset: stringValue(formData.get("assistantTonePreset")),
     assistantHelpAreas: formData.getAll("assistantHelpAreas").map(stringValue),
-    assistantPermissionMode: "review_first",
     onboardingGoals: stringValue(formData.get("onboardingGoals"))
   });
   revalidatePath("/onboarding");

@@ -1,0 +1,890 @@
+import { Prisma } from "@prisma/client";
+import type { Route } from "next";
+
+import { prisma } from "@/lib/db/prisma";
+import { formatPersonName } from "@/lib/person-name";
+import { redactSensitiveText } from "@/lib/security/redaction";
+import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "@/lib/services/workspace-access";
+
+import {
+  answerAssistantCommand,
+  parseAssistantCommand,
+  type AssistantAnswerItem,
+  type AssistantCommandResult
+} from "./assistant-command-service";
+import {
+  buildAssistantDealRiskContext,
+  buildAssistantTodayContext
+} from "./assistant-context-service";
+import type { AssistantDraftAction } from "./assistant-draft-action-service";
+
+export type AssistantConversationSource = {
+  detail: string;
+  href?: Route;
+  label: string;
+  recordType: string;
+};
+
+export type AssistantConversationMessageView = {
+  content: string;
+  createdAt: string;
+  draftActions: AssistantDraftAction[];
+  errorCode: string | null;
+  id: string;
+  retryPrompt: string | null;
+  role: "assistant" | "user";
+  sources: AssistantConversationSource[];
+  title: string | null;
+};
+
+export type AssistantConversationView = {
+  id: string;
+  messages: AssistantConversationMessageView[];
+  title: string;
+};
+
+export type SendAssistantConversationMessageInput = {
+  conversationId?: string;
+  message: unknown;
+  now?: Date;
+};
+
+type ConversationReply = {
+  content: string;
+  draftActions?: AssistantDraftAction[];
+  errorCode?: string;
+  sources: AssistantConversationSource[];
+  title: string;
+};
+
+type RetrievedRecord = {
+  detail: string;
+  href: Route;
+  label: string;
+  recordType: string;
+};
+
+export const assistantConversationStarterPrompts = [
+  "Help me plan my day.",
+  "What should I focus on?",
+  "Summarize the Acme relationship.",
+  "Which deals look risky?",
+  "Help me prepare for my meeting.",
+  "What am I waiting on?"
+] as const;
+
+const maxConversationMessages = 40;
+const maxStoredMessageLength = 2_000;
+const maxAssistantMessageLength = 4_000;
+const maxSourceCount = 12;
+const maxSourceTextLength = 260;
+const noMutationNotice =
+  "Permission-checked only: this conversation can read scoped CRM and stored Inbox context, but it does not send email, sync providers, change CRM records, or apply anything outside eligible activity or note drafts allowed by your AI Preferences.";
+
+export async function getAssistantConversation(
+  actor: WorkspaceActor,
+  conversationId: string | undefined
+): Promise<AssistantConversationView | null> {
+  await ensureWorkspaceAccess(actor);
+  const id = normalizeId(conversationId);
+  if (!id) return null;
+  const conversation = await prisma.assistantConversation.findFirst({
+    include: { messages: { orderBy: { createdAt: "asc" }, take: maxConversationMessages } },
+    where: { id, userId: actor.actorUserId, workspaceId: actor.workspaceId }
+  });
+  return conversation ? assistantConversationView(conversation) : null;
+}
+
+export async function sendAssistantConversationMessage(
+  actor: WorkspaceActor,
+  input: SendAssistantConversationMessageInput
+): Promise<AssistantConversationView> {
+  await ensureWorkspaceAccess(actor);
+  const message = sanitizeConversationText(input.message);
+  if (!message) throw new Error("Enter a question or command before asking.");
+  const now = input.now ?? new Date();
+  const existing = await getExistingConversation(actor, input.conversationId);
+  const conversation = existing ?? await prisma.assistantConversation.create({
+    data: {
+      title: conversationTitle(message),
+      userId: actor.actorUserId,
+      workspaceId: actor.workspaceId
+    }
+  });
+  const recentMessages = await prisma.assistantConversationMessage.findMany({
+    orderBy: { createdAt: "asc" },
+    take: maxConversationMessages,
+    where: {
+      conversationId: conversation.id,
+      workspaceId: actor.workspaceId
+    }
+  });
+  await prisma.assistantConversationMessage.create({
+    data: {
+      content: message,
+      conversationId: conversation.id,
+      role: "user",
+      workspaceId: actor.workspaceId
+    }
+  });
+
+  const reply = await safeBuildConversationReply(actor, message, recentMessages.map(messageViewBase), now);
+  await prisma.assistantConversationMessage.create({
+    data: {
+      content: sanitizeAssistantText(reply.content),
+      conversationId: conversation.id,
+      draftActions: jsonArrayOrNull(reply.draftActions ?? []),
+      errorCode: reply.errorCode ?? null,
+      role: "assistant",
+      sources: jsonArrayOrNull(reply.sources),
+      title: safeText(reply.title, 160),
+      workspaceId: actor.workspaceId
+    }
+  });
+  await prisma.assistantConversation.update({
+    data: {
+      title: existing ? existing.title : conversationTitle(message),
+      updatedAt: now
+    },
+    where: { id: conversation.id }
+  });
+  const updated = await getAssistantConversation(actor, conversation.id);
+  if (!updated) throw new Error("Assistant conversation could not be loaded.");
+  return updated;
+}
+
+export function sanitizeAssistantConversationFailure(error: unknown) {
+  const detail = error instanceof Error ? redactSensitiveText(error.message) : "";
+  return detail
+    ? `I could not finish that answer safely. ${safeText(detail, 220)}`
+    : "I could not finish that answer safely. Retry the question or start a new conversation.";
+}
+
+async function safeBuildConversationReply(
+  actor: WorkspaceActor,
+  message: string,
+  history: AssistantConversationMessageView[],
+  now: Date
+): Promise<ConversationReply> {
+  try {
+    return await buildConversationReply(actor, message, history, now);
+  } catch (error) {
+    return {
+      content: sanitizeAssistantConversationFailure(error),
+      errorCode: "ASSISTANT_CONVERSATION_FAILED",
+      sources: [],
+      title: "Assistant response unavailable"
+    };
+  }
+}
+
+async function buildConversationReply(
+  actor: WorkspaceActor,
+  message: string,
+  history: AssistantConversationMessageView[],
+  now: Date
+): Promise<ConversationReply> {
+  const parsed = parseAssistantCommand(message);
+  if (parsed.kind !== "unsupported") {
+    return commandResultToConversationReply(await answerAssistantCommand(actor, message, { now }));
+  }
+
+  const intent = classifyConversationIntent(message, history);
+  if (intent === "day") return buildDayPlanningReply(actor, message, now);
+  if (intent === "deal_risk") return commandResultToConversationReply(await answerAssistantCommand(actor, "Show me the highest-risk deals this week.", { now }));
+  if (intent === "waiting") return buildWaitingOnReply(actor, message, history, now);
+  if (intent === "meeting") return buildMeetingPrepReply(actor, message, history, now);
+  if (intent === "compare") return buildCompareReply(actor, message, history, now);
+  return buildRelationshipReply(actor, message, history, now);
+}
+
+async function buildDayPlanningReply(actor: WorkspaceActor, message: string, now: Date): Promise<ConversationReply> {
+  const [today, dealRisk, emails] = await Promise.all([
+    buildAssistantTodayContext(actor, now),
+    buildAssistantDealRiskContext(actor, now),
+    listRelevantEmails(actor, message, now, { waitingOnCustomer: true })
+  ]);
+  const activities = today.activities.slice(0, 4);
+  const riskyDeals = dealRisk.deals
+    .filter((deal) => deal.activities.length === 0 || deal.activities.some((activity) => activity.bucket === "overdue"))
+    .slice(0, 3);
+  const sources = [
+    ...activities.map((activity): AssistantConversationSource => ({
+      detail: activity.dueAt ? `Due ${formatDate(activity.dueAt)}` : "No due date recorded",
+      href: activity.href as Route,
+      label: activity.title,
+      recordType: "Activity"
+    })),
+    ...riskyDeals.map((deal): AssistantConversationSource => ({
+      detail: deal.relatedLabel ?? deal.stageName,
+      href: deal.href as Route,
+      label: deal.title,
+      recordType: "Deal"
+    })),
+    ...emails.slice(0, 3)
+  ].slice(0, maxSourceCount);
+  const facts = [
+    `${today.counts.overdue} overdue and ${today.counts.today} due-today open activities are visible in this workspace.`,
+    riskyDeals.length > 0
+      ? `${riskyDeals.length} open deal${riskyDeals.length === 1 ? "" : "s"} have deterministic risk signals.`
+      : "No high-risk open deals stood out in the bounded risk snapshot.",
+    emails.length > 0
+      ? `${emails.length} stored Inbox item${emails.length === 1 ? "" : "s"} may need a reply or customer follow-up.`
+      : "No obvious stored Inbox waiting-on-customer item appeared in this bounded lookup."
+  ];
+  const suggestions = [
+    activities[0] ? `Start with ${activities[0].title}.` : "Open Activities before assuming the day is clear.",
+    riskyDeals[0] ? `Review ${riskyDeals[0].title} before changing deal state or quote terms.` : "Use the Command Center for the next deterministic priority.",
+    "Ask a follow-up like “what should I do first?” or “draft a follow-up for this customer” when you want a review-first draft."
+  ];
+  return {
+    content: conversationContent({
+      facts,
+      intro: "Here is a safe work plan from bounded CRM and stored Inbox context.",
+      suggestions
+    }),
+    sources,
+    title: "Plan your day"
+  };
+}
+
+async function buildRelationshipReply(
+  actor: WorkspaceActor,
+  message: string,
+  history: AssistantConversationMessageView[],
+  now: Date
+): Promise<ConversationReply> {
+  const term = entitySearchTerm(message, history);
+  const records = term ? await retrieveConversationRecords(actor, term, now) : await retrieveConversationRecords(actor, message, now);
+  const primaryRecords = records.filter((record) => ["Contact", "Organization", "Deal", "Lead"].includes(record.recordType));
+  if (isAmbiguous(primaryRecords, term)) {
+    return {
+      content: conversationContent({
+        facts: [`I found ${primaryRecords.length} possible records for “${term}”.`],
+        intro: "I should not guess which CRM record you mean.",
+        suggestions: ["Open the right source below, or ask again with the full contact, organization, deal, or lead name."]
+      }),
+      sources: primaryRecords.slice(0, maxSourceCount),
+      title: "Clarify the record"
+    };
+  }
+  const sources = records.slice(0, maxSourceCount);
+  if (sources.length === 0) {
+    return {
+      content: conversationContent({
+        facts: [`I did not find matching CRM or stored Inbox records for “${term || message}” in this workspace.`],
+        intro: "I only used scoped Northstar records.",
+        suggestions: ["Try a more specific customer, deal, quote number, contact email, or meeting title."]
+      }),
+      sources: [],
+      title: "No scoped records found"
+    };
+  }
+  return {
+    content: conversationContent({
+      facts: sources.slice(0, 6).map((source) => `${source.recordType}: ${source.label}. ${source.detail}`),
+      intro: `Here is the scoped relationship context I found for “${term || message}”.`,
+      suggestions: [
+        "Treat these as stored facts, not automatic changes.",
+        "Ask a follow-up to focus on risks, next steps, recent email, or a review-first follow-up draft."
+      ]
+    }),
+    sources,
+    title: "Relationship summary"
+  };
+}
+
+async function buildWaitingOnReply(
+  actor: WorkspaceActor,
+  message: string,
+  history: AssistantConversationMessageView[],
+  now: Date
+): Promise<ConversationReply> {
+  const emails = await listRelevantEmails(actor, entitySearchTerm(message, history) || message, now, { waitingOnCustomer: true });
+  return {
+    content: conversationContent({
+      facts: emails.length > 0
+        ? emails.slice(0, 5).map((email) => `Stored email: ${email.label}. ${email.detail}`)
+        : ["No obvious waiting-on-customer stored email appeared in this bounded lookup."],
+      intro: "I checked stored Inbox context only; I did not sync, refresh, send, archive, or mark provider mail.",
+      suggestions: emails.length > 0
+        ? ["Open the source email before replying.", "Ask me to draft a follow-up if you want a review-first draft."]
+        : ["Try a customer or deal name, or review Relationship Inbox filters."]
+    }),
+    sources: emails.slice(0, maxSourceCount),
+    title: "Waiting-on context"
+  };
+}
+
+async function buildMeetingPrepReply(
+  actor: WorkspaceActor,
+  message: string,
+  history: AssistantConversationMessageView[],
+  now: Date
+): Promise<ConversationReply> {
+  const term = entitySearchTerm(message, history);
+  const [records, meetings] = await Promise.all([
+    retrieveConversationRecords(actor, term || message, now),
+    listUpcomingMeetings(actor, term || message, now)
+  ]);
+  const sources = [...meetings, ...records].slice(0, maxSourceCount);
+  return {
+    content: conversationContent({
+      facts: sources.length > 0
+        ? sources.slice(0, 6).map((source) => `${source.recordType}: ${source.label}. ${source.detail}`)
+        : ["No upcoming meeting or matching CRM context appeared in the bounded workspace lookup."],
+      intro: "Here is meeting prep context from stored CRM records.",
+      suggestions: [
+        "Review the linked activity and relationship records before the meeting.",
+        "Ask a follow-up for likely questions, risks, or a review-first follow-up draft."
+      ]
+    }),
+    sources,
+    title: "Meeting prep"
+  };
+}
+
+async function buildCompareReply(
+  actor: WorkspaceActor,
+  message: string,
+  history: AssistantConversationMessageView[],
+  now: Date
+): Promise<ConversationReply> {
+  const terms = compareTerms(message, history);
+  const recordSets = await Promise.all(terms.map((term) => retrieveConversationRecords(actor, term, now)));
+  const dealSources = recordSets.flat().filter((record) => record.recordType === "Deal").slice(0, 4);
+  const fallback = dealSources.length > 0 ? dealSources : recordSets.flat().slice(0, 4);
+  return {
+    content: conversationContent({
+      facts: fallback.length > 0
+        ? fallback.map((source) => `${source.recordType}: ${source.label}. ${source.detail}`)
+        : ["I could not find enough scoped records to compare."],
+      intro: "Here is a safe comparison based on visible stored records.",
+      suggestions: [
+        "Compare value, next activity, expected close date, and relationship risk before changing either opportunity.",
+        "Ask with exact deal names if you want a tighter comparison."
+      ]
+    }),
+    sources: fallback,
+    title: "Compare opportunities"
+  };
+}
+
+async function retrieveConversationRecords(actor: WorkspaceActor, term: string, now: Date): Promise<RetrievedRecord[]> {
+  const query = normalizeSearchTerm(term);
+  if (!query) return [];
+  const contains = { contains: query, mode: "insensitive" as const };
+  const scoped = { workspaceId: actor.workspaceId, ...activeWhere };
+  const [people, organizations, deals, leads, quotes, activities, notes, emails] = await Promise.all([
+    prisma.person.findMany({
+      orderBy: [{ updatedAt: "desc" }, { firstName: "asc" }],
+      select: {
+        email: true,
+        firstName: true,
+        id: true,
+        lastName: true,
+        organization: { select: { name: true, workspaceId: true, deletedAt: true } },
+        relationshipBusinessConcerns: true,
+        relationshipCommunicationStyle: true,
+        relationshipFollowUpReminders: true,
+        updatedAt: true
+      },
+      take: 4,
+      where: { ...scoped, OR: [{ firstName: contains }, { lastName: contains }, { email: contains }] }
+    }),
+    prisma.organization.findMany({
+      orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
+      select: { domain: true, id: true, name: true, updatedAt: true },
+      take: 4,
+      where: { ...scoped, OR: [{ name: contains }, { domain: contains }] }
+    }),
+    prisma.deal.findMany({
+      orderBy: [{ updatedAt: "desc" }],
+      select: {
+        currency: true,
+        expectedCloseAt: true,
+        id: true,
+        organization: { select: { name: true, workspaceId: true, deletedAt: true } },
+        person: { select: { firstName: true, lastName: true, workspaceId: true, deletedAt: true } },
+        stage: { select: { name: true } },
+        status: true,
+        title: true,
+        updatedAt: true,
+        valueCents: true
+      },
+      take: 5,
+      where: { ...scoped, title: contains }
+    }),
+    prisma.lead.findMany({
+      orderBy: [{ updatedAt: "desc" }],
+      select: {
+        id: true,
+        organization: { select: { name: true, workspaceId: true, deletedAt: true } },
+        person: { select: { firstName: true, lastName: true, workspaceId: true, deletedAt: true } },
+        source: true,
+        status: true,
+        title: true,
+        updatedAt: true
+      },
+      take: 4,
+      where: { ...scoped, OR: [{ title: contains }, { source: contains }] }
+    }),
+    prisma.quote.findMany({
+      orderBy: [{ updatedAt: "desc" }],
+      select: {
+        deal: { select: { id: true, title: true, workspaceId: true, deletedAt: true } },
+        id: true,
+        number: true,
+        status: true,
+        totalCents: true,
+        updatedAt: true
+      },
+      take: 4,
+      where: { workspaceId: actor.workspaceId, OR: [{ number: contains }, { deal: { is: { workspaceId: actor.workspaceId, title: contains } } }] }
+    }),
+    prisma.activity.findMany({
+      orderBy: [{ dueAt: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }],
+      select: { dueAt: true, id: true, title: true, type: true },
+      take: 4,
+      where: { ...scoped, OR: [{ title: contains }, { description: contains }] }
+    }),
+    prisma.note.findMany({
+      orderBy: [{ createdAt: "desc" }],
+      select: { body: true, dealId: true, id: true, leadId: true, organizationId: true, personId: true },
+      take: 4,
+      where: { ...scoped, body: contains }
+    }),
+    prisma.emailLog.findMany({
+      orderBy: [{ occurredAt: "desc" }],
+      select: { body: true, direction: true, fromText: true, id: true, occurredAt: true, providerSnippet: true, subject: true, toText: true },
+      take: 4,
+      where: { workspaceId: actor.workspaceId, OR: [{ subject: contains }, { body: contains }, { fromText: contains }, { toText: contains }, { providerSnippet: contains }] }
+    })
+  ]);
+  return [
+    ...people.map((person): RetrievedRecord => ({
+      detail: [
+        person.email ? `Email ${person.email}` : "No email recorded",
+        person.organization?.workspaceId === actor.workspaceId && !person.organization.deletedAt ? `Organization ${person.organization.name}` : "",
+        person.relationshipCommunicationStyle ? `Communication style: ${person.relationshipCommunicationStyle}` : "",
+        person.relationshipBusinessConcerns ? `Business concerns: ${person.relationshipBusinessConcerns}` : "",
+        person.relationshipFollowUpReminders ? `Follow-up reminders: ${person.relationshipFollowUpReminders}` : ""
+      ].filter(Boolean).map((part) => safeText(part, 140)).join(" · "),
+      href: `/contacts/${person.id}` as Route,
+      label: formatPersonName(person) ?? person.email ?? "Unnamed contact",
+      recordType: "Contact"
+    })),
+    ...organizations.map((organization): RetrievedRecord => ({
+      detail: [organization.domain ? `Domain ${organization.domain}` : "No domain recorded", `Updated ${formatDate(organization.updatedAt)}`].join(" · "),
+      href: `/organizations/${organization.id}` as Route,
+      label: organization.name,
+      recordType: "Organization"
+    })),
+    ...deals.map((deal): RetrievedRecord => ({
+      detail: [
+        `Status ${deal.status}`,
+        `Stage ${deal.stage.name}`,
+        deal.valueCents ? formatMoney(deal.valueCents, deal.currency) : "No value recorded",
+        deal.expectedCloseAt ? `Expected close ${formatDate(deal.expectedCloseAt)}` : "No expected close recorded",
+        deal.organization?.workspaceId === actor.workspaceId && !deal.organization.deletedAt ? `Organization ${deal.organization.name}` : "",
+        deal.person?.workspaceId === actor.workspaceId && !deal.person.deletedAt ? `Contact ${formatPersonName(deal.person)}` : ""
+      ].filter(Boolean).join(" · "),
+      href: `/deals/${deal.id}` as Route,
+      label: deal.title,
+      recordType: "Deal"
+    })),
+    ...leads.map((lead): RetrievedRecord => ({
+      detail: [
+        `Status ${lead.status}`,
+        lead.source ? `Source ${lead.source}` : "No source recorded",
+        lead.organization?.workspaceId === actor.workspaceId && !lead.organization.deletedAt ? `Organization ${lead.organization.name}` : "",
+        lead.person?.workspaceId === actor.workspaceId && !lead.person.deletedAt ? `Contact ${formatPersonName(lead.person)}` : ""
+      ].filter(Boolean).join(" · "),
+      href: `/leads/${lead.id}` as Route,
+      label: lead.title,
+      recordType: "Lead"
+    })),
+    ...quotes.map((quote): RetrievedRecord => ({
+      detail: [`Status ${quote.status}`, `Total ${formatMoney(quote.totalCents, "USD")}`, quote.deal ? `Deal ${quote.deal.title}` : ""].filter(Boolean).join(" · "),
+      href: `/deals/${quote.deal.id}/quotes/${quote.id}` as Route,
+      label: `Quote ${quote.number}`,
+      recordType: "Quote"
+    })),
+    ...activities.map((activity): RetrievedRecord => ({
+      detail: [activity.type, activity.dueAt ? `Due ${formatDate(activity.dueAt)}` : "No due date"].join(" · "),
+      href: `/activities/${activity.id}/edit` as Route,
+      label: activity.title,
+      recordType: "Activity"
+    })),
+    ...notes.map((note): RetrievedRecord => ({
+      detail: safeText(note.body, 180),
+      href: note.dealId ? `/deals/${note.dealId}` as Route : note.leadId ? `/leads/${note.leadId}` as Route : note.personId ? `/contacts/${note.personId}` as Route : note.organizationId ? `/organizations/${note.organizationId}` as Route : "/search" as Route,
+      label: "Internal note",
+      recordType: "Note"
+    })),
+    ...emails.map((email): RetrievedRecord => ({
+      detail: [
+        `${email.direction} on ${formatDate(email.occurredAt)}`,
+        email.fromText ? `From ${safeText(email.fromText, 80)}` : "",
+        safeText(email.providerSnippet || email.body, 180)
+      ].filter(Boolean).join(" · "),
+      href: `/email#email-card-${email.id}` as Route,
+      label: email.subject,
+      recordType: "Email"
+    }))
+  ].slice(0, maxSourceCount);
+}
+
+async function listRelevantEmails(
+  actor: WorkspaceActor,
+  term: string,
+  now: Date,
+  options: { waitingOnCustomer?: boolean } = {}
+): Promise<AssistantConversationSource[]> {
+  const query = normalizeSearchTerm(term);
+  const since = new Date(now);
+  since.setDate(since.getDate() - 30);
+  const contains = query ? { contains: query, mode: "insensitive" as const } : undefined;
+  const entityIds = query ? await matchingEmailRelationIds(actor, query) : { dealIds: [], leadIds: [], organizationIds: [], personIds: [] };
+  const emails = await prisma.emailLog.findMany({
+    orderBy: [{ occurredAt: "desc" }],
+    select: {
+      body: true,
+      direction: true,
+      fromText: true,
+      id: true,
+      occurredAt: true,
+      providerSnippet: true,
+      subject: true,
+      toText: true
+    },
+    take: 8,
+    where: {
+      workspaceId: actor.workspaceId,
+      occurredAt: { gte: since },
+      ...(contains
+        ? {
+            OR: [
+              { subject: contains },
+              { body: contains },
+              { fromText: contains },
+              { toText: contains },
+              { providerSnippet: contains },
+              ...(entityIds.personIds.length > 0 ? [{ personId: { in: entityIds.personIds } }] : []),
+              ...(entityIds.organizationIds.length > 0 ? [{ organizationId: { in: entityIds.organizationIds } }] : []),
+              ...(entityIds.dealIds.length > 0 ? [{ dealId: { in: entityIds.dealIds } }] : []),
+              ...(entityIds.leadIds.length > 0 ? [{ leadId: { in: entityIds.leadIds } }] : [])
+            ]
+          }
+        : {}),
+      ...(options.waitingOnCustomer ? { direction: "OUTBOUND" } : {})
+    }
+  });
+  return emails.map((email): AssistantConversationSource => ({
+    detail: [
+      `${email.direction} on ${formatDate(email.occurredAt)}`,
+      email.toText ? `To ${safeText(email.toText, 80)}` : email.fromText ? `From ${safeText(email.fromText, 80)}` : "",
+      safeText(email.providerSnippet || email.body, 180)
+    ].filter(Boolean).join(" · "),
+    href: `/email#email-card-${email.id}` as Route,
+    label: email.subject,
+    recordType: "Email"
+  }));
+}
+
+async function matchingEmailRelationIds(actor: WorkspaceActor, query: string) {
+  const contains = { contains: query, mode: "insensitive" as const };
+  const [people, organizations, deals, leads] = await Promise.all([
+    prisma.person.findMany({
+      select: { id: true },
+      take: 8,
+      where: { workspaceId: actor.workspaceId, ...activeWhere, OR: [{ firstName: contains }, { lastName: contains }, { email: contains }] }
+    }),
+    prisma.organization.findMany({
+      select: { id: true },
+      take: 8,
+      where: { workspaceId: actor.workspaceId, ...activeWhere, OR: [{ name: contains }, { domain: contains }] }
+    }),
+    prisma.deal.findMany({
+      select: { id: true },
+      take: 8,
+      where: { workspaceId: actor.workspaceId, ...activeWhere, title: contains }
+    }),
+    prisma.lead.findMany({
+      select: { id: true },
+      take: 8,
+      where: { workspaceId: actor.workspaceId, ...activeWhere, title: contains }
+    })
+  ]);
+  return {
+    dealIds: deals.map((deal) => deal.id),
+    leadIds: leads.map((lead) => lead.id),
+    organizationIds: organizations.map((organization) => organization.id),
+    personIds: people.map((person) => person.id)
+  };
+}
+
+async function listUpcomingMeetings(actor: WorkspaceActor, term: string, now: Date): Promise<AssistantConversationSource[]> {
+  const query = normalizeSearchTerm(term);
+  const nextMonth = new Date(now);
+  nextMonth.setDate(nextMonth.getDate() + 30);
+  const contains = query ? { contains: query, mode: "insensitive" as const } : undefined;
+  const meetings = await prisma.activity.findMany({
+    orderBy: [{ dueAt: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }],
+    select: { description: true, dueAt: true, id: true, title: true },
+    take: 6,
+    where: {
+      workspaceId: actor.workspaceId,
+      completedAt: null,
+      deletedAt: null,
+      type: "MEETING",
+      OR: [
+        { dueAt: { gte: now, lte: nextMonth } },
+        ...(contains ? [{ title: contains }, { description: contains }] : [])
+      ]
+    }
+  });
+  return meetings.map((meeting): AssistantConversationSource => ({
+    detail: [meeting.dueAt ? `Scheduled ${formatDate(meeting.dueAt)}` : "No meeting date recorded", safeText(meeting.description, 140)].filter(Boolean).join(" · "),
+    href: `/activities/${meeting.id}/edit` as Route,
+    label: meeting.title,
+    recordType: "Activity"
+  }));
+}
+
+function commandResultToConversationReply(answer: AssistantCommandResult): ConversationReply {
+  return {
+    content: conversationContent({
+      facts: [
+        answer.summary,
+        ...answer.items.slice(0, 6).map((item) => `${item.label ?? "Context"}: ${item.title}. ${item.detail}`)
+      ],
+      intro: answer.title,
+      suggestions: [
+        answer.safetyNotice,
+        "You can ask a follow-up in this conversation, or save any eligible draft to the review queue first."
+      ]
+    }),
+    draftActions: answer.draftActions ?? [],
+    sources: [
+      ...answer.items.filter((item) => item.href).map(itemSource),
+      ...answer.sources.map((source): AssistantConversationSource => ({
+        detail: source.detail,
+        label: source.label,
+        recordType: "Context"
+      }))
+    ].slice(0, maxSourceCount),
+    title: answer.title
+  };
+}
+
+function itemSource(item: AssistantAnswerItem): AssistantConversationSource {
+  return {
+    detail: item.detail,
+    href: item.href as Route,
+    label: item.title,
+    recordType: item.label ?? "CRM record"
+  };
+}
+
+function conversationContent({ facts, intro, suggestions }: { facts: string[]; intro: string; suggestions: string[] }) {
+  return [
+    intro,
+    "",
+    "Stored facts:",
+    ...facts.filter(Boolean).map((fact) => `- ${safeText(fact, 360)}`),
+    "",
+    "Suggestions:",
+    ...suggestions.filter(Boolean).map((suggestion) => `- ${safeText(suggestion, 360)}`),
+    "",
+    noMutationNotice
+  ].join("\n");
+}
+
+function classifyConversationIntent(message: string, history: AssistantConversationMessageView[]) {
+  const text = `${message} ${recentUserText(history)}`.toLowerCase();
+  if (/\b(compare|versus| vs\.? |which (?:opportunity|deal))\b/.test(text)) return "compare";
+  if (/\b(waiting on|waiting for|owe me|customer owes|needs reply|inbox)\b/.test(text)) return "waiting";
+  if (/\b(meeting|prepare|prep|agenda)\b/.test(text)) return "meeting";
+  if (/\b(risky|risk|at risk|pipeline|opportunit(?:y|ies)|deals?)\b/.test(text)) return "deal_risk";
+  if (/\b(plan my day|focus|prioriti[sz]e|what should i do|help me plan|my day)\b/.test(text)) return "day";
+  return "relationship";
+}
+
+function entitySearchTerm(message: string, history: AssistantConversationMessageView[]) {
+  const current = extractEntityTerm(message);
+  if (current) return current;
+  const previous = [...history].reverse().find((item) => item.role === "user" && extractEntityTerm(item.content));
+  return previous ? extractEntityTerm(previous.content) : "";
+}
+
+function extractEntityTerm(value: string) {
+  const cleaned = value
+    .replace(/[?!.]+$/g, "")
+    .replace(/\b(summarize|summary|relationship|customer|account|contact|deal|lead|quote|meeting|prepare|prep|for|from|about|with|the|this|that|them|their|they|it|please|help|me|compare|opportunities|opportunity|what|am|i|waiting|on|focus|should|do|first)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const quoted = value.match(/["“]([^"”]{2,120})["”]/);
+  if (quoted?.[1]) return quoted[1].trim();
+  return cleaned.length >= 2 && cleaned.length <= 120 ? cleaned : "";
+}
+
+function compareTerms(message: string, history: AssistantConversationMessageView[]) {
+  const cleaned = message.replace(/\b(compare|opportunities|opportunity|deals?|please|help|me)\b/gi, " ");
+  const parts = cleaned.split(/\b(?:and|vs\.?|versus)\b/i).map((part) => extractEntityTerm(part)).filter(Boolean);
+  if (parts.length >= 2) return parts.slice(0, 2);
+  const fallback = entitySearchTerm(message, history);
+  return fallback ? [fallback] : [];
+}
+
+function isAmbiguous(records: RetrievedRecord[], term: string) {
+  if (records.length < 2 || !term) return false;
+  const normalizedTerm = term.toLowerCase();
+  const closeMatches = records.filter((record) => record.label.toLowerCase().includes(normalizedTerm));
+  return closeMatches.length > 1;
+}
+
+function recentUserText(history: AssistantConversationMessageView[]) {
+  return history
+    .filter((message) => message.role === "user")
+    .slice(-2)
+    .map((message) => message.content)
+    .join(" ");
+}
+
+async function getExistingConversation(actor: WorkspaceActor, conversationId: string | undefined) {
+  const id = normalizeId(conversationId);
+  if (!id) return null;
+  return prisma.assistantConversation.findFirst({
+    where: { id, userId: actor.actorUserId, workspaceId: actor.workspaceId }
+  });
+}
+
+function assistantConversationView<T extends {
+  id: string;
+  messages: Array<{
+    content: string;
+    createdAt: Date;
+    draftActions: Prisma.JsonValue | null;
+    errorCode: string | null;
+    id: string;
+    role: string;
+    sources: Prisma.JsonValue | null;
+    title: string | null;
+  }>;
+  title: string;
+}>(conversation: T): AssistantConversationView {
+  const baseMessages = conversation.messages.map(messageViewBase);
+  return {
+    id: conversation.id,
+    messages: baseMessages.map((message, index) => ({
+      ...message,
+      retryPrompt: message.role === "assistant" ? previousUserPrompt(baseMessages, index) : null
+    })),
+    title: conversation.title
+  };
+}
+
+function messageViewBase(message: {
+  content: string;
+  createdAt: Date;
+  draftActions: Prisma.JsonValue | null;
+  errorCode: string | null;
+  id: string;
+  role: string;
+  sources: Prisma.JsonValue | null;
+  title: string | null;
+}): AssistantConversationMessageView {
+  return {
+    content: message.content,
+    createdAt: message.createdAt.toISOString(),
+    draftActions: parseDraftActions(message.draftActions),
+    errorCode: message.errorCode,
+    id: message.id,
+    retryPrompt: null,
+    role: message.role === "user" ? "user" : "assistant",
+    sources: parseSources(message.sources),
+    title: message.title
+  };
+}
+
+function previousUserPrompt(messages: AssistantConversationMessageView[], index: number) {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (messages[cursor]?.role === "user") return messages[cursor]?.content ?? null;
+  }
+  return null;
+}
+
+function parseSources(value: Prisma.JsonValue | null): AssistantConversationSource[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const label = stringField(record.label, maxSourceTextLength);
+    const detail = stringField(record.detail, maxSourceTextLength);
+    const recordType = stringField(record.recordType, 80);
+    if (!label || !detail || !recordType) return [];
+    const href = safeHref(record.href);
+    return [{ detail, href, label, recordType }];
+  }).slice(0, maxSourceCount);
+}
+
+function parseDraftActions(value: Prisma.JsonValue | null): AssistantDraftAction[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is AssistantDraftAction =>
+    Boolean(item && typeof item === "object" && !Array.isArray(item) && typeof (item as Record<string, unknown>).id === "string")
+  ).slice(0, 4);
+}
+
+function sanitizeConversationText(value: unknown) {
+  if (typeof value !== "string") return "";
+  return safeText(value, maxStoredMessageLength);
+}
+
+function sanitizeAssistantText(value: string) {
+  return safeText(value, maxAssistantMessageLength);
+}
+
+function normalizeId(value: string | undefined) {
+  return typeof value === "string" ? value.trim().slice(0, 160) : "";
+}
+
+function normalizeSearchTerm(value: string) {
+  return safeText(value, 120);
+}
+
+function conversationTitle(message: string) {
+  return safeText(message, 64) || "New Assistant conversation";
+}
+
+function safeText(value: unknown, maxLength = maxStoredMessageLength) {
+  if (typeof value !== "string") return "";
+  return redactSensitiveText(value).trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function stringField(value: unknown, maxLength: number) {
+  return typeof value === "string" ? safeText(value, maxLength) : "";
+}
+
+function safeHref(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  if (!value.startsWith("/") || value.startsWith("/api/")) return undefined;
+  return value.slice(0, 260) as Route;
+}
+
+function jsonArrayOrNull(value: unknown[]) {
+  return value.length > 0 ? (value.slice(0, maxSourceCount) as Prisma.InputJsonArray) : Prisma.JsonNull;
+}
+
+function formatDate(value: Date | string) {
+  return new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
+}
+
+function formatMoney(valueCents: number, currency: string) {
+  return new Intl.NumberFormat("en-US", {
+    currency,
+    maximumFractionDigits: Math.abs(valueCents) % 100 === 0 ? 0 : 2,
+    minimumFractionDigits: Math.abs(valueCents) % 100 === 0 ? 0 : 2,
+    style: "currency"
+  }).format(valueCents / 100);
+}

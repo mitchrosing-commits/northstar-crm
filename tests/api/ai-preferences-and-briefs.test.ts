@@ -3,6 +3,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  aiActionPermissionDefinitions,
+  defaultAiActionPermissions,
+  normalizeAiActionPermissionUpdate,
+  permissionLevelLabel
+} from "@/lib/services/ai-action-permissions";
 import { draftAiPreferenceChangesFromText, sanitizeInstructionText, type AiPreferences } from "@/lib/services/ai-preferences-service";
 import { buildAiRecordBrief } from "@/lib/services/ai-record-brief-service";
 import { summarizeStoredEmailForAi } from "@/lib/services/ai-email-summary-service";
@@ -11,8 +17,10 @@ import { buildDeterministicInsight, type NorthstarAssistantContext } from "@/lib
 
 const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
 const migration = readFileSync(join(process.cwd(), "prisma/migrations/20260707120000_ai_preferences/migration.sql"), "utf8");
+const actionPermissionMigration = readFileSync(join(process.cwd(), "prisma/migrations/20260710150000_ai_action_permissions/migration.sql"), "utf8");
 const settingsPage = readFileSync(join(process.cwd(), "app/settings/page.tsx"), "utf8");
 const aiSettingsPage = readFileSync(join(process.cwd(), "app/settings/ai/page.tsx"), "utf8");
+const aiSettingsActions = readFileSync(join(process.cwd(), "app/settings/ai/actions.ts"), "utf8");
 const hygieneService = readFileSync(join(process.cwd(), "lib/services/ai-hygiene-service.ts"), "utf8");
 const meetingReview = readFileSync(join(process.cwd(), "components/meeting-intelligence-review.tsx"), "utf8");
 const emailPage = readFileSync(join(process.cwd(), "app/email/page.tsx"), "utf8");
@@ -28,22 +36,75 @@ describe("AI preferences and review-first briefs", () => {
     expect(schema).toContain("assistantNamePreset");
     expect(schema).toContain("assistantTonePreset");
     expect(schema).toContain("assistantHelpAreas");
+    expect(schema).toContain("assistantActionPermissions   Json?");
+    expect(schema).toContain("aiActionPermissionDefaults  Json?");
+    expect(schema).not.toContain("assistantPermissionMode      String");
     expect(schema).not.toContain("aiPreferences Json");
     expect(migration).toContain('CREATE TABLE "AiPreference"');
     expect(migration).toContain('"workspaceId" TEXT NOT NULL');
     expect(migration).toContain('ON DELETE CASCADE');
+    expect(actionPermissionMigration).toContain('"aiActionPermissionDefaults" JSONB');
+    expect(actionPermissionMigration).toContain('"assistantActionPermissions" JSONB');
+    expect(actionPermissionMigration).toContain('DROP COLUMN IF EXISTS "assistantPermissionMode"');
   });
 
-  it("renders a discoverable AI preferences console with review-first copy", () => {
+  it("renders a discoverable AI preferences console with grouped action boundaries", () => {
     expect(settingsPage).toContain('href={"/settings/ai" as Route}');
     expect(aiSettingsPage).toContain("AI Preferences");
-    expect(aiSettingsPage).toContain("Review-first");
+    expect(aiSettingsPage).toContain("Assistant Action Boundaries");
+    expect(aiSettingsPage).toContain("aiActionPermissionGroups.map");
+    expect(aiSettingsPage).toContain('group.group === "follow_ups_notes"');
+    expect(aiSettingsPage).toContain("Settings-only");
+    expect(aiSettingsPage).toContain('level="allow_automatically"');
+    expect(aiSettingsPage).toContain("permissionLevelLabel(level)");
+    expect(aiSettingsPage).toContain("activePermissionGroup");
     expect(aiSettingsPage).toContain("Assistant name");
     expect(aiSettingsPage).toContain("Where the assistant helps");
     expect(aiSettingsPage).toContain("CRM Hygiene Suggestions");
     expect(aiSettingsPage).toContain("Provider-specific model choice");
     expect(aiSettingsPage).toContain("updateAiPreferencesAction");
     expect(aiSettingsPage).toContain("resetAiPreferencesAction");
+    expect(aiSettingsActions).toContain("aiActionPermissionKeys.map");
+    expect(aiSettingsActions).toContain("#ai-permissions");
+  });
+
+  it("defines typed safe permission defaults and rejects unsupported automatic levels", () => {
+    expect(defaultAiActionPermissions).toMatchObject({
+      create_follow_up_activity: "require_confirmation",
+      create_note: "require_confirmation",
+      send_email: "require_confirmation",
+      update_relationship_memory: "suggest_only"
+    });
+    expect(aiActionPermissionDefinitions.map((definition) => definition.key)).toEqual([
+      "create_follow_up_activity",
+      "create_note",
+      "update_note_after_meeting",
+      "update_relationship_memory",
+      "update_contact_or_organization",
+      "update_deal_fields",
+      "change_deal_stage",
+      "create_lead_or_deal",
+      "draft_email",
+      "send_email"
+    ]);
+    expect(permissionLevelLabel("never_allow")).toBe("Never allow");
+    expect(() => normalizeAiActionPermissionUpdate({ send_email: "allow_automatically" })).toThrow(/Send email/i);
+    expect(normalizeAiActionPermissionUpdate({
+      create_follow_up_activity: "never_allow",
+      create_note: "suggest_only",
+      update_note_after_meeting: "require_confirmation",
+      update_relationship_memory: "suggest_only",
+      update_contact_or_organization: "require_confirmation",
+      update_deal_fields: "suggest_only",
+      change_deal_stage: "require_confirmation",
+      create_lead_or_deal: "never_allow",
+      draft_email: "require_confirmation",
+      send_email: "never_allow"
+    })).toMatchObject({
+      create_follow_up_activity: "never_allow",
+      create_note: "suggest_only",
+      send_email: "never_allow"
+    });
   });
 
   it("parses natural language preference drafts without applying changes", () => {
@@ -299,10 +360,10 @@ describe("AI preferences and review-first briefs", () => {
 function samplePreferences(overrides: Partial<AiPreferences> = {}): AiPreferences {
   return {
     assistantDetailLevel: "balanced",
+    assistantActionPermissions: defaultAiActionPermissions,
     assistantNamePreset: "Stella",
     assistantCustomName: null,
     assistantHelpAreas: ["guide_around_app", "suggest_follow_ups"],
-    assistantPermissionMode: "review_first",
     assistantTonePreset: "warm_helpful",
     diagnosticsDetailLevel: "simple",
     emailSummaryLength: "short",

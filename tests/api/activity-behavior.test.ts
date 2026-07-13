@@ -103,14 +103,17 @@ describe("activity create and completion behavior", () => {
   it("sanitizes activity return paths before preserving source workflow context", () => {
     expect(parseReturnToHref("/search?q=Acme", "/activities")).toBe("/search?q=Acme");
     expect(parseReturnToHref("/deals/deal_123#activities", "/activities")).toBe("/deals/deal_123#activities");
+    expect(parseReturnToHref("/settings/ai?saved=1#ai-preferences", "/activities")).toBe("/settings/ai?saved=1#ai-preferences");
+    expect(parseReturnToHref("/web-forms/form_123?q=Acme#accepted-submissions", "/activities")).toBe("/web-forms/form_123?q=Acme#accepted-submissions");
     expect(parseReturnToHref("https://example.test/search", "/activities")).toBe("/activities");
     expect(parseReturnToHref("//example.test/search", "/activities")).toBe("/activities");
-    expect(parseReturnToHref("/settings", "/activities")).toBe("/activities");
     expect(returnToLabel("/search?q=Acme")).toBe("Back to search");
     expect(returnToLabel("/deals?status=OPEN")).toBe("Back to deals");
     expect(returnToLabel("/deals/deal_123#activities")).toBe("Back to deal");
     expect(returnToLabel("/activities")).toBe("Back to activities");
     expect(returnToLabel("/email")).toBe("Back to email");
+    expect(returnToLabel("/settings/ai?saved=1#ai-preferences")).toBe("Back to settings");
+    expect(returnToLabel("/web-forms/form_123?q=Acme#accepted-submissions")).toBe("Back to web forms");
   });
 
   it("formats activity type labels for detail and timeline readability", () => {

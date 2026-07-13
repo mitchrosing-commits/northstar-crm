@@ -9,10 +9,17 @@ import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import {
+  aiActionPermissionDefinitions,
+  aiActionPermissionGroups,
+  aiActionPermissionOptionsForAction,
   aiPreferenceOptions,
   draftAiPreferenceChangesFromText,
   getAiPreferences,
-  listAiHygieneSuggestions
+  listAiHygieneSuggestions,
+  permissionLevelLabel,
+  type AiActionPermissionDefinition,
+  type AiActionPermissionGroup,
+  type AiActionPermissionLevel
 } from "@/lib/services/crm";
 
 import { resetAiPreferencesAction, updateAiPreferencesAction } from "./actions";
@@ -20,7 +27,7 @@ import { resetAiPreferencesAction, updateAiPreferencesAction } from "./actions";
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams?: Promise<{ reset?: string; saved?: string }>;
+  searchParams?: Promise<{ group?: string; reset?: string; saved?: string; section?: string }>;
 };
 
 export default async function AiSettingsPage({ searchParams }: PageProps) {
@@ -33,6 +40,8 @@ export default async function AiSettingsPage({ searchParams }: PageProps) {
   const instructionDraft = preferences.naturalLanguageInstructions
     ? draftAiPreferenceChangesFromText(preferences.naturalLanguageInstructions)
     : null;
+  const activePermissionGroup = normalizePermissionGroup(resolvedSearchParams?.group);
+  const showPermissionSection = resolvedSearchParams?.section === "permissions" || Boolean(resolvedSearchParams?.reset);
 
   return (
     <AppShell workspace={workspace}>
@@ -43,7 +52,7 @@ export default async function AiSettingsPage({ searchParams }: PageProps) {
           </Link>
         }
         eyebrow="AI settings"
-        subtitle="Personalize review-first summaries, drafts, CRM hygiene checks, and Assistant detail without enabling automatic CRM changes."
+        subtitle="Personalize summaries, drafts, CRM hygiene checks, and exactly which Assistant actions can be suggested, confirmed, or applied automatically."
         title="AI Preferences"
       />
 
@@ -52,8 +61,8 @@ export default async function AiSettingsPage({ searchParams }: PageProps) {
 
       <section className="panel section-separated" id="ai-preferences">
         <PanelTitleRow
-          actions={<Badge>Review-first</Badge>}
-          description="Preferences guide AI explanations and defaults. Suggestions still require human review before anything is applied."
+          actions={<Badge>Safe defaults</Badge>}
+          description="Preferences guide AI explanations and defaults. Assistant action boundaries are enforced server-side before any supported apply."
           title="Assistant Behavior"
         />
         <form action={updateAiPreferencesAction} className="inline-form section-spaced">
@@ -165,6 +174,59 @@ export default async function AiSettingsPage({ searchParams }: PageProps) {
               ) : null}
             </div>
           ) : null}
+
+          <section className="ai-permissions-section" id="ai-permissions" aria-labelledby="ai-permissions-title">
+            <PanelTitleRow
+              actions={<Badge>Per action</Badge>}
+              description="User overrides take precedence over workspace defaults for this account. Unsupported actions keep their configured future boundary but cannot be applied until a handler exists."
+              title="Assistant Action Boundaries"
+              titleId="ai-permissions-title"
+            />
+            <div className="ai-permission-level-guide" aria-label="Permission level guide">
+              <LevelGuideItem level="never_allow" text="The Assistant should not propose or apply this action." />
+              <LevelGuideItem level="suggest_only" text="The Assistant may explain or draft, but no apply button is available." />
+              <LevelGuideItem level="require_confirmation" text="A supported action can apply only after you confirm it." />
+              <LevelGuideItem level="allow_automatically" text="Only supported low-risk actions can apply immediately after a new eligible request is saved." />
+            </div>
+            <div className="ai-permission-groups">
+              {aiActionPermissionGroups.map((group) => {
+                const definitions = aiActionPermissionDefinitions.filter((definition) => definition.group === group.group);
+                return (
+                  <details
+                    className="ai-permission-group"
+                    key={group.group}
+                    open={showPermissionSection ? activePermissionGroup === group.group : group.group === "follow_ups_notes"}
+                  >
+                    <summary>
+                      <span>
+                        <strong>{group.label}</strong>
+                        <small>{group.description}</small>
+                      </span>
+                      <Badge>{definitions.length} actions</Badge>
+                    </summary>
+                    <div className="ai-permission-action-list">
+                      {definitions.map((definition) => (
+                        <PermissionActionRow
+                          definition={definition}
+                          key={definition.key}
+                          value={preferences.assistantActionPermissions[definition.key]}
+                        />
+                      ))}
+                    </div>
+                    <div className="ai-permission-group-actions">
+                      <button className="button-secondary button-compact" name="activePermissionGroup" type="submit" value={group.group}>
+                        Save {group.label.toLowerCase()}
+                      </button>
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+            <p className="ai-permission-warning">
+              Broader levels can create CRM records faster. Automatic mode is only offered where v1 has a scoped low-risk handler, and changing this setting never applies older pending requests.
+            </p>
+          </section>
+
           <FormActionBar isSaving={false} submitActionLabel="Save AI preferences" submitLabel="Save preferences" />
         </form>
         <form action={resetAiPreferencesAction} className="section-spaced">
@@ -228,6 +290,49 @@ function PreferenceSelect<T extends readonly string[]>({
       </select>
     </label>
   );
+}
+
+function PermissionActionRow({
+  definition,
+  value
+}: {
+  definition: AiActionPermissionDefinition;
+  value: AiActionPermissionLevel;
+}) {
+  return (
+    <div className="ai-permission-action-row">
+      <div className="ai-permission-action-copy">
+        <strong>{definition.label}</strong>
+        <span>{definition.description}</span>
+        <small>
+          {definition.technicallySupported ? "Technically enabled now" : `Settings-only: ${definition.unavailableReason}`}
+        </small>
+      </div>
+      <label className="form-field ai-permission-select">
+        <FormFieldLabel>Boundary</FormFieldLabel>
+        <select defaultValue={value} name={`assistantActionPermission:${definition.key}`}>
+          {aiActionPermissionOptionsForAction(definition.key).map((level) => (
+            <option key={level} value={level}>
+              {permissionLevelLabel(level)}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function LevelGuideItem({ level, text }: { level: AiActionPermissionLevel; text: string }) {
+  return (
+    <div>
+      <strong>{permissionLevelLabel(level)}</strong>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function normalizePermissionGroup(value: string | undefined): AiActionPermissionGroup {
+  return aiActionPermissionGroups.some((group) => group.group === value) ? value as AiActionPermissionGroup : "follow_ups_notes";
 }
 
 function labelFromValue(value: string) {

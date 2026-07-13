@@ -263,6 +263,213 @@ describe("scheduler link service", () => {
 
     await expect(fx.prisma.schedulerBooking.count({ where: { workspaceId: fx.workspaceA.id, schedulerLinkId: schedulerLink.id } })).resolves.toBe(0);
   });
+
+  it("returns workspace-wide scheduler bookings with safe filters, activity state, and token-safe projections", async () => {
+    const fx = currentFixture();
+    const alphaLink = await crm.createSchedulerLink(fx.actorA, {
+      name: "Alpha review scheduler",
+      meetingTitle: "Alpha review",
+      durationMinutes: 30,
+      timezone: "UTC",
+      minimumNoticeMinutes: 0,
+      availability: [{ weekday: 1, start: "09:00", end: "12:00" }]
+    });
+    const betaLink = await crm.createSchedulerLink(fx.actorA, {
+      name: "Beta review scheduler",
+      meetingTitle: "Beta review",
+      durationMinutes: 30,
+      timezone: "UTC",
+      minimumNoticeMinutes: 0,
+      availability: [{ weekday: 1, start: "09:00", end: "12:00" }]
+    });
+    const otherLink = await crm.createSchedulerLink(fx.actorB, {
+      name: "Other workspace scheduler",
+      meetingTitle: "Other review",
+      durationMinutes: 30,
+      timezone: "UTC",
+      minimumNoticeMinutes: 0,
+      availability: [{ weekday: 1, start: "09:00", end: "10:00" }]
+    });
+
+    const alpha = await crm.submitPublicSchedulerBooking(
+      alphaLink.token,
+      {
+        startAt: "2026-07-06T09:00:00.000Z",
+        attendeeName: "Alice Scheduler",
+        attendeeEmail: "alice-scheduler@example.test",
+        attendeeCompany: "Alpha Co",
+        attendeeNote: "Alpha review note."
+      },
+      { now: new Date("2026-07-06T08:00:00.000Z") }
+    );
+    const beta = await crm.submitPublicSchedulerBooking(
+      betaLink.token,
+      {
+        startAt: "2026-07-06T09:30:00.000Z",
+        attendeeName: "Bob Scheduler",
+        attendeeEmail: "bob-scheduler@example.test",
+        attendeeCompany: "Beta Co",
+        attendeeNote: "Beta review note."
+      },
+      { now: new Date("2026-07-06T08:00:00.000Z") }
+    );
+    const gamma = await crm.submitPublicSchedulerBooking(
+      betaLink.token,
+      {
+        startAt: "2026-07-06T10:00:00.000Z",
+        attendeeName: "Gamma Scheduler",
+        attendeeEmail: "gamma-scheduler@example.test",
+        attendeeCompany: "Gamma Co",
+        attendeeNote: "Gamma deleted activity note."
+      },
+      { now: new Date("2026-07-06T08:00:00.000Z") }
+    );
+    const other = await crm.submitPublicSchedulerBooking(
+      otherLink.token,
+      {
+        startAt: "2026-07-06T09:00:00.000Z",
+        attendeeName: "Other Scheduler",
+        attendeeEmail: "other-scheduler@example.test"
+      },
+      { now: new Date("2026-07-06T08:00:00.000Z") }
+    );
+
+    await crm.updateActivity(fx.actorA, alpha.activityId ?? "", { completedAt: new Date("2026-07-07T12:00:00.000Z") });
+    await fx.prisma.activity.update({ where: { id: gamma.activityId ?? "" }, data: { deletedAt: new Date("2026-07-08T12:00:00.000Z") } });
+    await fx.prisma.schedulerBooking.update({
+      where: { id: alpha.bookingId ?? "" },
+      data: { requestedAt: new Date("2026-07-10T09:00:00.000Z") }
+    });
+    await fx.prisma.schedulerBooking.update({
+      where: { id: beta.bookingId ?? "" },
+      data: { requestedAt: new Date("2026-07-11T09:00:00.000Z") }
+    });
+    await fx.prisma.schedulerBooking.update({
+      where: { id: gamma.bookingId ?? "" },
+      data: { requestedAt: new Date("2026-07-12T09:00:00.000Z") }
+    });
+
+    const all = await crm.getSchedulerBookingReview(fx.actorA);
+    expect(all.acceptedBookingCount).toBe(3);
+    expect(all.filteredBookingCount).toBe(3);
+    expect(all.bookingLimit).toBeGreaterThanOrEqual(3);
+    expect(all.bookings.map((booking) => booking.attendeeName)).toEqual(["Gamma Scheduler", "Bob Scheduler", "Alice Scheduler"]);
+    expect(JSON.stringify(all)).not.toContain(alphaLink.token);
+    expect(JSON.stringify(all)).not.toContain(betaLink.token);
+    expect(JSON.stringify(all)).not.toContain(otherLink.token);
+    expect(JSON.stringify(all)).not.toContain("other-scheduler@example.test");
+
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { q: "alice" })).resolves.toMatchObject({
+      filteredBookingCount: 1,
+      bookings: [{ attendeeName: "Alice Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { link: betaLink.id })).resolves.toMatchObject({
+      filteredBookingCount: 2,
+      bookings: [{ attendeeName: "Gamma Scheduler" }, { attendeeName: "Bob Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { from: "2026-07-11", to: "2026-07-11" })).resolves.toMatchObject({
+      filteredBookingCount: 1,
+      bookings: [{ attendeeName: "Bob Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { activity: "completed" })).resolves.toMatchObject({
+      filteredBookingCount: 1,
+      bookings: [{ attendeeName: "Alice Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { activity: "open" })).resolves.toMatchObject({
+      filteredBookingCount: 1,
+      bookings: [{ attendeeName: "Bob Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { activity: "unavailable" })).resolves.toMatchObject({
+      filteredBookingCount: 1,
+      bookings: [{ attendeeName: "Gamma Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { activity: "open", link: betaLink.id, q: "beta" })).resolves.toMatchObject({
+      filteredBookingCount: 1,
+      bookings: [{ attendeeName: "Bob Scheduler" }]
+    });
+    await expect(crm.getSchedulerBookingReview(fx.actorA, { activity: "bogus", from: "bad-date", link: otherLink.id, to: "2026-99-99" })).resolves.toMatchObject({
+      filteredBookingCount: 3
+    });
+
+    const otherWorkspaceReview = await crm.getSchedulerBookingReview(fx.actorB);
+    expect(otherWorkspaceReview.acceptedBookingCount).toBe(1);
+    expect(otherWorkspaceReview.bookings[0]?.id).toBe(other.bookingId);
+  });
+
+  it("returns scheduler booking detail with linked activity/source states without CRM mutation", async () => {
+    const fx = currentFixture();
+    const schedulerLink = await crm.createSchedulerLink(fx.actorA, {
+      name: "Detail booking scheduler",
+      meetingTitle: "Detail booking review",
+      durationMinutes: 45,
+      timezone: "UTC",
+      minimumNoticeMinutes: 60,
+      availability: [{ weekday: 1, start: "09:00", end: "11:00" }]
+    });
+    const result = await crm.submitPublicSchedulerBooking(
+      schedulerLink.token,
+      {
+        startAt: "2026-07-06T09:00:00.000Z",
+        attendeeName: "Detail Guest",
+        attendeeEmail: "detail-guest@example.test",
+        attendeeCompany: "Detail Co",
+        attendeeNote: "Detail note."
+      },
+      { now: new Date("2026-07-06T08:00:00.000Z") }
+    );
+    const beforeCounts = await recordCounts(fx);
+
+    const detail = await crm.getSchedulerBookingDetail(fx.actorA, result.bookingId ?? "");
+    expect(detail).toMatchObject({
+      id: result.bookingId,
+      attendeeName: "Detail Guest",
+      attendeeEmail: "detail-guest@example.test",
+      attendeeCompany: "Detail Co",
+      attendeeNote: "Detail note.",
+      timezone: "UTC",
+      schedulerLink: {
+        id: schedulerLink.id,
+        name: "Detail booking scheduler",
+        meetingTitle: "Detail booking review",
+        durationMinutes: 45,
+        timezone: "UTC",
+        minimumNoticeMinutes: 60,
+        isEnabled: true,
+        deletedAt: null
+      },
+      activity: {
+        id: result.activityId,
+        title: "Detail booking review with Detail Guest",
+        type: "MEETING",
+        completedAt: null,
+        deletedAt: null
+      }
+    });
+    expect(JSON.stringify(detail)).not.toContain(schedulerLink.token);
+    await expect(fx.prisma.person.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeCounts.peopleA);
+    await expect(fx.prisma.organization.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeCounts.organizationsA);
+    await expect(fx.prisma.deal.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeCounts.dealsA);
+    await expect(fx.prisma.lead.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeCounts.leadsA);
+
+    await crm.updateActivity(fx.actorA, result.activityId ?? "", { completedAt: new Date("2026-07-07T12:00:00.000Z") });
+    const completed = await crm.getSchedulerBookingDetail(fx.actorA, result.bookingId ?? "");
+    expect(completed.activity?.completedAt).toBeInstanceOf(Date);
+
+    await fx.prisma.activity.update({ where: { id: result.activityId ?? "" }, data: { deletedAt: new Date("2026-07-08T12:00:00.000Z") } });
+    await fx.prisma.schedulerLink.update({ where: { id: schedulerLink.id }, data: { deletedAt: new Date("2026-07-08T12:30:00.000Z") } });
+    const unavailable = await crm.getSchedulerBookingDetail(fx.actorA, result.bookingId ?? "");
+    expect(unavailable.activity?.deletedAt).toBeInstanceOf(Date);
+    expect(unavailable.schedulerLink.deletedAt).toBeInstanceOf(Date);
+
+    await expect(crm.getSchedulerBookingDetail(fx.actorB, result.bookingId ?? "")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      status: 404
+    });
+    await expect(crm.getSchedulerBookingDetail(fx.actorA, "not-a-real-booking")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      status: 404
+    });
+  });
 });
 
 function currentFixture() {

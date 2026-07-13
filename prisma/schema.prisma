@@ -32,6 +32,7 @@ model User {
   emailConnectionSecrets   EmailConnectionSecret[] @relation("EmailConnectionSecretUser")
   aiPreferences            AiPreference[]
   assistantActionRequests  AssistantActionRequest[] @relation("AssistantActionRequestCreator")
+  assistantConversations   AssistantConversation[] @relation("AssistantConversationUser")
   assistantTodayItemHides  AssistantTodayItemHide[]
   auditLogs                AuditLog[]
   createdAt                DateTime                @default(now())
@@ -105,8 +106,11 @@ model Workspace {
   schedulerBookings           SchedulerBooking[]
   aiPreferences               AiPreference[]
   assistantActionRequests     AssistantActionRequest[]
+  assistantConversations      AssistantConversation[]
+  assistantConversationMessages AssistantConversationMessage[]
   assistantTodayItemHides     AssistantTodayItemHide[]
   auditLogs                   AuditLog[]
+  aiActionPermissionDefaults  Json?
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
   deletedAt                   DateTime?
@@ -877,7 +881,7 @@ model AiPreference {
   assistantCustomName          String?
   assistantTonePreset          String    @default("warm_helpful")
   assistantHelpAreas           String?
-  assistantPermissionMode      String    @default("review_first")
+  assistantActionPermissions   Json?
   onboardingGoals              String?
   workspace                    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user                         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -915,6 +919,39 @@ model AssistantActionRequest {
   @@index([workspaceId, status, createdAt])
   @@index([workspaceId, createdById, status])
   @@index([createdById, status])
+}
+
+model AssistantConversation {
+  id          String                         @id @default(cuid())
+  workspaceId String
+  userId      String
+  title       String
+  workspace   Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User                           @relation("AssistantConversationUser", fields: [userId], references: [id], onDelete: Cascade)
+  messages    AssistantConversationMessage[]
+  createdAt   DateTime                       @default(now())
+  updatedAt   DateTime                       @updatedAt
+
+  @@index([workspaceId, userId, updatedAt])
+  @@index([userId, updatedAt])
+}
+
+model AssistantConversationMessage {
+  id             String                @id @default(cuid())
+  workspaceId    String
+  conversationId String
+  role           String
+  content        String
+  title          String?
+  sources        Json?
+  draftActions   Json?
+  errorCode      String?
+  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime              @default(now())
+
+  @@index([workspaceId, conversationId, createdAt])
+  @@index([conversationId, createdAt])
 }
 
 model AssistantTodayItemHide {

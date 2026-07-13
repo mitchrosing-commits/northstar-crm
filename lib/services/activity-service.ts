@@ -263,7 +263,19 @@ const activityInclude = {
   deal: true,
   lead: true,
   person: true,
-  organization: true
+  organization: true,
+  schedulerBookings: {
+    orderBy: { requestedAt: "desc" },
+    select: {
+      id: true,
+      schedulerLink: {
+        select: {
+          name: true
+        }
+      }
+    },
+    take: 1
+  }
 } satisfies Prisma.ActivityInclude;
 
 function activityWhere(workspaceId: string, filters: ActivityListFilters): Prisma.ActivityWhereInput {

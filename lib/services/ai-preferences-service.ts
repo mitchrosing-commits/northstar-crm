@@ -2,7 +2,13 @@ import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
 import { redactSensitiveText } from "@/lib/security/redaction";
 
-import { ensureWorkspaceAccess, type WorkspaceActor } from "./workspace-access";
+import {
+  defaultAiActionPermissions,
+  normalizeAiActionPermissionUpdate,
+  normalizeStoredAiActionPermissions,
+  type AiActionPermissionMap
+} from "./ai-action-permissions";
+import { ensureWorkspaceAccess, type WorkspaceActor, writeAuditLog } from "./workspace-access";
 
 export type EmailSummaryLength = "detailed" | "none" | "one_sentence" | "short";
 export type RecordSummaryStyle = "balanced" | "concise" | "detailed";
@@ -24,14 +30,13 @@ export type AssistantHelpArea =
   | "suggest_follow_ups"
   | "summarize_contact_relationships"
   | "watch_stale_deals";
-export type AssistantPermissionMode = "review_first";
 
 export type AiPreferences = {
+  assistantActionPermissions: AiActionPermissionMap;
   assistantDetailLevel: AssistantDetailLevel;
   assistantNamePreset: AssistantNamePreset;
   assistantCustomName: string | null;
   assistantHelpAreas: AssistantHelpArea[];
-  assistantPermissionMode: AssistantPermissionMode;
   assistantTonePreset: AssistantTonePreset;
   diagnosticsDetailLevel: DiagnosticsDetailLevel;
   emailSummaryLength: EmailSummaryLength;
@@ -68,7 +73,6 @@ export const aiPreferenceOptions = {
     "guide_around_app"
   ] as const,
   assistantNamePreset: ["Stella", "Nova", "Lyra", "Astra", "Orion", "Maris", "Sage", "Custom"] as const,
-  assistantPermissionMode: ["review_first"] as const,
   assistantTonePreset: ["professional_concise", "warm_helpful", "direct_action_oriented", "detailed_analytical", "custom_later"] as const,
   diagnosticsDetailLevel: ["simple", "technical"] as const,
   emailSummaryLength: ["none", "one_sentence", "short", "detailed"] as const,
@@ -80,11 +84,11 @@ export const aiPreferenceOptions = {
 };
 
 export const defaultAiPreferences: AiPreferences = {
+  assistantActionPermissions: defaultAiActionPermissions,
   assistantDetailLevel: "balanced",
   assistantNamePreset: "Stella",
   assistantCustomName: null,
   assistantHelpAreas: ["guide_around_app", "suggest_follow_ups"],
-  assistantPermissionMode: "review_first",
   assistantTonePreset: "warm_helpful",
   diagnosticsDetailLevel: "simple",
   emailSummaryLength: "short",
@@ -99,15 +103,17 @@ export const defaultAiPreferences: AiPreferences = {
 
 const defaultStoredAiPreferenceValues = {
   ...defaultAiPreferences,
+  assistantActionPermissions: undefined,
   assistantHelpAreas: defaultAiPreferences.assistantHelpAreas.join(",")
 };
 
 const aiPreferenceSelect = {
+  id: true,
+  assistantActionPermissions: true,
   assistantDetailLevel: true,
   assistantNamePreset: true,
   assistantCustomName: true,
   assistantHelpAreas: true,
-  assistantPermissionMode: true,
   assistantTonePreset: true,
   diagnosticsDetailLevel: true,
   emailSummaryLength: true,
@@ -122,20 +128,28 @@ const aiPreferenceSelect = {
 
 export async function getAiPreferences(actor: WorkspaceActor): Promise<AiPreferences> {
   await ensureWorkspaceAccess(actor);
-  const row = await prisma.aiPreference.findUnique({
-    where: {
-      workspaceId_userId: {
-        userId: actor.actorUserId,
-        workspaceId: actor.workspaceId
-      }
-    },
-    select: aiPreferenceSelect
-  });
-  return row ? normalizeStoredAiPreferences(row) : defaultAiPreferences;
+  const [workspace, row] = await Promise.all([
+    prisma.workspace.findFirst({
+      where: { deletedAt: null, id: actor.workspaceId },
+      select: { aiActionPermissionDefaults: true }
+    }),
+    prisma.aiPreference.findUnique({
+      where: {
+        workspaceId_userId: {
+          userId: actor.actorUserId,
+          workspaceId: actor.workspaceId
+        }
+      },
+      select: aiPreferenceSelect
+    })
+  ]);
+  const workspaceDefaults = normalizeStoredAiActionPermissions(workspace?.aiActionPermissionDefaults);
+  return row ? normalizeStoredAiPreferences(row, workspaceDefaults) : { ...defaultAiPreferences, assistantActionPermissions: workspaceDefaults };
 }
 
 export async function updateAiPreferences(actor: WorkspaceActor, input: unknown): Promise<AiPreferences> {
   await ensureWorkspaceAccess(actor);
+  const before = await getAiPreferences(actor);
   const normalized = normalizeAiPreferenceUpdate(input);
   const row = await prisma.aiPreference.upsert({
     create: {
@@ -153,18 +167,36 @@ export async function updateAiPreferences(actor: WorkspaceActor, input: unknown)
     },
     select: aiPreferenceSelect
   });
-  return normalizeStoredAiPreferences(row);
+  const after = normalizeStoredAiPreferences(row, before.assistantActionPermissions);
+  const changedKeys = changedPreferenceKeys(before, after);
+  await writeAuditLog(actor, "ai_preferences.updated", "AiPreference", row.id, {
+    changedKeys,
+    permissionChanges: permissionChanges(before.assistantActionPermissions, after.assistantActionPermissions)
+  });
+  return after;
 }
 
 export async function resetAiPreferences(actor: WorkspaceActor): Promise<AiPreferences> {
   await ensureWorkspaceAccess(actor);
+  const existing = await prisma.aiPreference.findUnique({
+    where: {
+      workspaceId_userId: {
+        userId: actor.actorUserId,
+        workspaceId: actor.workspaceId
+      }
+    },
+    select: { id: true }
+  });
   await prisma.aiPreference.deleteMany({
     where: {
       userId: actor.actorUserId,
       workspaceId: actor.workspaceId
     }
   });
-  return defaultAiPreferences;
+  await writeAuditLog(actor, "ai_preferences.reset", "AiPreference", existing?.id ?? actor.actorUserId, {
+    resetTo: "safe_defaults"
+  });
+  return getAiPreferences(actor);
 }
 
 export function draftAiPreferenceChangesFromText(text: string): AiPreferenceDraft {
@@ -219,6 +251,9 @@ function normalizeAiPreferenceUpdate(input: unknown): StoredAiPreferenceUpdate {
   }
   const value = input as Record<string, unknown>;
   return omitUndefined({
+    assistantActionPermissions: hasKey(value, "assistantActionPermissions")
+      ? normalizeAiActionPermissionUpdate(value.assistantActionPermissions)
+      : undefined,
     assistantDetailLevel: hasKey(value, "assistantDetailLevel")
       ? optionValue(value.assistantDetailLevel, aiPreferenceOptions.assistantDetailLevel, "Assistant detail level is invalid.")
       : undefined,
@@ -230,9 +265,6 @@ function normalizeAiPreferenceUpdate(input: unknown): StoredAiPreferenceUpdate {
       : undefined,
     assistantHelpAreas: hasKey(value, "assistantHelpAreas")
       ? serializeHelpAreas(value.assistantHelpAreas)
-      : undefined,
-    assistantPermissionMode: hasKey(value, "assistantPermissionMode")
-      ? optionValue(value.assistantPermissionMode, aiPreferenceOptions.assistantPermissionMode, "Assistant permission level is invalid.")
       : undefined,
     assistantTonePreset: hasKey(value, "assistantTonePreset")
       ? optionValue(value.assistantTonePreset, aiPreferenceOptions.assistantTonePreset, "Assistant tone is invalid.")
@@ -267,17 +299,21 @@ function normalizeAiPreferenceUpdate(input: unknown): StoredAiPreferenceUpdate {
   });
 }
 
-type StoredAiPreferenceRow = Omit<Record<keyof AiPreferences, string | null>, "assistantHelpAreas"> & {
+type StoredAiPreferenceRow = Omit<Record<keyof AiPreferences, string | null>, "assistantActionPermissions" | "assistantHelpAreas"> & {
+  assistantActionPermissions: unknown;
   assistantHelpAreas: string | null;
 };
 
-function normalizeStoredAiPreferences(row: StoredAiPreferenceRow): AiPreferences {
+function normalizeStoredAiPreferences(
+  row: StoredAiPreferenceRow,
+  workspaceDefaults: AiActionPermissionMap = defaultAiActionPermissions
+): AiPreferences {
   return {
+    assistantActionPermissions: normalizeStoredAiActionPermissions(row.assistantActionPermissions, workspaceDefaults),
     assistantDetailLevel: optionOrDefault(row.assistantDetailLevel, aiPreferenceOptions.assistantDetailLevel, defaultAiPreferences.assistantDetailLevel),
     assistantNamePreset: optionOrDefault(row.assistantNamePreset, aiPreferenceOptions.assistantNamePreset, defaultAiPreferences.assistantNamePreset),
     assistantCustomName: row.assistantCustomName || null,
     assistantHelpAreas: parseHelpAreas(row.assistantHelpAreas),
-    assistantPermissionMode: optionOrDefault(row.assistantPermissionMode, aiPreferenceOptions.assistantPermissionMode, defaultAiPreferences.assistantPermissionMode),
     assistantTonePreset: optionOrDefault(row.assistantTonePreset, aiPreferenceOptions.assistantTonePreset, defaultAiPreferences.assistantTonePreset),
     diagnosticsDetailLevel: optionOrDefault(row.diagnosticsDetailLevel, aiPreferenceOptions.diagnosticsDetailLevel, defaultAiPreferences.diagnosticsDetailLevel),
     emailSummaryLength: optionOrDefault(row.emailSummaryLength, aiPreferenceOptions.emailSummaryLength, defaultAiPreferences.emailSummaryLength),
@@ -332,4 +368,16 @@ function hasKey(input: Record<string, unknown>, key: string) {
 
 function omitUndefined<T extends Record<string, unknown>>(input: T) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as StoredAiPreferenceUpdate;
+}
+
+function changedPreferenceKeys(before: AiPreferences, after: AiPreferences) {
+  return (Object.keys(after) as Array<keyof AiPreferences>).filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+}
+
+function permissionChanges(before: AiActionPermissionMap, after: AiActionPermissionMap) {
+  return Object.fromEntries(
+    Object.entries(after).flatMap(([key, value]) => before[key as keyof AiActionPermissionMap] === value
+      ? []
+      : [[key, { from: before[key as keyof AiActionPermissionMap], to: value }]])
+  );
 }

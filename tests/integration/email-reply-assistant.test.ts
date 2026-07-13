@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import type { EmailReplyProviderInput } from "@/lib/services/email-reply-assistant-service";
+
 import { createIntegrationFixture, disconnectPrisma } from "./fixtures";
 
 type CrmServices = typeof import("@/lib/services/crm");
@@ -229,6 +231,88 @@ describe("AI email reply assistant service", () => {
     });
     expect(JSON.stringify(observed?.threadMessages)).not.toContain("another workspace");
     await expect(readMutationGuardCounts(fx)).resolves.toEqual(beforeCounts);
+  });
+
+  it("deduplicates concurrent identical reply generations for one user and email", async () => {
+    const fx = currentFixture();
+    const emailLog = await crm.createEmailLog(fx.actorA, {
+      body: "Can you send next steps?",
+      direction: "INBOUND",
+      fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
+      occurredAt: "2030-01-03T12:00:00.000Z",
+      personId: fx.recordsA.person.id,
+      subject: "Concurrent reply",
+      toText: "sales@example.test"
+    });
+    const beforeCounts = await readMutationGuardCounts(fx);
+    let providerCalls = 0;
+    const provider = {
+      id: "test-provider",
+      name: "Test provider",
+      async generate() {
+        providerCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          body: "Hi Alpha,\n\nThanks. I will send next steps after review.",
+          subjectSuggestion: "Re: Concurrent reply"
+        };
+      }
+    };
+
+    const [first, second] = await Promise.all([
+      crm.generateEmailReplyDraft(fx.actorA, { emailLogId: emailLog.id, tone: "warm" }, { provider }),
+      crm.generateEmailReplyDraft(fx.actorA, { emailLogId: emailLog.id, tone: "warm" }, { provider })
+    ]);
+
+    expect(providerCalls).toBe(1);
+    expect(first).toEqual(second);
+    await expect(readMutationGuardCounts(fx)).resolves.toEqual(beforeCounts);
+  });
+
+  it("keeps concurrent reply dedupe isolated by workspace and user", async () => {
+    const fx = currentFixture();
+    const [emailLogA, emailLogB] = await Promise.all([
+      crm.createEmailLog(fx.actorA, {
+        body: "Can you send Alpha next steps?",
+        direction: "INBOUND",
+        fromText: `${fx.recordsA.person.firstName} <${fx.recordsA.person.email}>`,
+        occurredAt: "2030-01-03T12:00:00.000Z",
+        personId: fx.recordsA.person.id,
+        subject: "Shared-looking reply",
+        toText: "sales@example.test"
+      }),
+      crm.createEmailLog(fx.actorB, {
+        body: "Can you send Beta next steps?",
+        direction: "INBOUND",
+        fromText: `${fx.recordsB.person.firstName} <${fx.recordsB.person.email}>`,
+        occurredAt: "2030-01-03T12:00:00.000Z",
+        personId: fx.recordsB.person.id,
+        subject: "Shared-looking reply",
+        toText: "sales@example.test"
+      })
+    ]);
+    let providerCalls = 0;
+    const provider = {
+      id: "test-provider",
+      name: "Test provider",
+      async generate(input: EmailReplyProviderInput) {
+        providerCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          body: `Hi,\n\nReplying to ${input.context.email.body}`,
+          subjectSuggestion: "Re: Shared-looking reply"
+        };
+      }
+    };
+
+    const [draftA, draftB] = await Promise.all([
+      crm.generateEmailReplyDraft(fx.actorA, { emailLogId: emailLogA.id, tone: "warm" }, { provider }),
+      crm.generateEmailReplyDraft(fx.actorB, { emailLogId: emailLogB.id, tone: "warm" }, { provider })
+    ]);
+
+    expect(providerCalls).toBe(2);
+    expect(draftA.body).toContain("Alpha");
+    expect(draftB.body).toContain("Beta");
   });
 });
 

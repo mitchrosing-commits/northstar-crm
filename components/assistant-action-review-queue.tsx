@@ -91,7 +91,7 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
                 </div>
                 <div>
                   <dt>Apply availability</dt>
-                  <dd>{request.canApply ? `Review-first ${applyNoun(request)} creation` : applyLabel(request)}</dd>
+                  <dd>{request.applyAvailability}</dd>
                 </div>
               </dl>
               <p className="assistant-apply-explanation">{applyExplanation(request)}</p>
@@ -193,6 +193,8 @@ function actionTypeLabel(request: AssistantActionRequestView) {
 function applyLabel(request: AssistantActionRequestView) {
   if (request.status === "APPLIED") return "Applied";
   if (request.status === "REJECTED") return "Rejected";
+  if (request.permissionState === "blocked" && request.permissionLevel === "require_confirmation") return "Blocked pending review";
+  if (request.permissionState === "blocked") return `Blocked by AI Preferences: ${request.permissionLevel}`;
   if (request.actionType === "activity" || request.actionType === "note") return "Blocked pending review";
   return "Apply not available yet";
 }
@@ -200,7 +202,11 @@ function applyLabel(request: AssistantActionRequestView) {
 function applyExplanation(request: AssistantActionRequestView) {
   if (request.status === "APPLIED") return "This request has already been applied and cannot be applied again.";
   if (request.status === "REJECTED") return "This request was rejected and cannot be applied.";
-  if (request.canApply) return `Apply will create one ${applyNoun(request)} after this explicit review step.`;
+  if (request.canApply && request.permissionState === "allowed_automatically") {
+    return `New eligible ${applyNoun(request)} requests can apply automatically under your current AI Preferences. This saved request still requires a current server-side eligibility check.`;
+  }
+  if (request.canApply) return `Apply will create one ${applyNoun(request)} after this explicit review step because your AI Preferences require confirmation.`;
+  if (request.permissionReason) return request.permissionReason;
   if (request.actionType === "activity" || request.actionType === "note") {
     if (request.missingInfo.length > 0) return "Apply is blocked until the missing information is resolved.";
     if (!request.targetHref || request.confidence === "needs_clarification") return "Apply is blocked until one clear target record is selected.";

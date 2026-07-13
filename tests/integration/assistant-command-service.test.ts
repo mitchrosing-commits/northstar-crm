@@ -29,6 +29,87 @@ afterAll(async () => {
 });
 
 describe("read-only Assistant command service integration", () => {
+  it("starts a workspace-scoped conversation and answers follow-ups with CRM and stored Inbox sources only", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    await fx.prisma.emailLog.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        createdById: fx.userA.id,
+        organizationId: fx.recordsA.organization.id,
+        subject: "Alpha renewal next steps",
+        body: "We are waiting on customer confirmation for the renewal timeline.",
+        direction: "OUTBOUND",
+        occurredAt: new Date("2030-01-01T12:00:00.000Z"),
+        toText: "buyer@alpha.example",
+        providerMessageId: "secret-provider-message-alpha",
+        providerThreadId: "secret-provider-thread-alpha"
+      }
+    });
+    const before = await crmRecordCounts(fx);
+
+    const first = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Summarize the Alpha Orbit relationship.",
+      now
+    });
+    const second = await crm.sendAssistantConversationMessage(fx.actorA, {
+      conversationId: first.id,
+      message: "What am I waiting on from them?",
+      now
+    });
+    const serialized = JSON.stringify(second);
+
+    expect(first.messages).toHaveLength(2);
+    expect(second.id).toBe(first.id);
+    expect(second.messages).toHaveLength(4);
+    expect(second.messages[0]).toMatchObject({ role: "user", content: "Summarize the Alpha Orbit relationship." });
+    expect(second.messages[1]).toMatchObject({ role: "assistant", title: "Relationship summary" });
+    expect(second.messages[1].sources.some((source) => source.href === `/organizations/${fx.recordsA.organization.id}`)).toBe(true);
+    expect(second.messages[3]).toMatchObject({ role: "assistant", title: "Waiting-on context" });
+    expect(second.messages[3].sources.some((source) => source.recordType === "Email" && source.href?.startsWith("/email#email-card-"))).toBe(true);
+    expect(second.messages[3].content).toContain("stored Inbox context only");
+    expect(serialized).not.toMatch(secretOrRawProviderTerms);
+    await expect(crmRecordCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("asks for clarification on ambiguous names and does not leak another workspace", async () => {
+    const fx = currentFixture();
+    await fx.prisma.person.createMany({
+      data: [
+        {
+          workspaceId: fx.workspaceA.id,
+          firstName: "Jordan",
+          lastName: "River",
+          email: "jordan-one@example.test"
+        },
+        {
+          workspaceId: fx.workspaceA.id,
+          firstName: "Jordan",
+          lastName: "Reed",
+          email: "jordan-two@example.test"
+        },
+        {
+          workspaceId: fx.workspaceB.id,
+          firstName: "Jordan",
+          lastName: "Secret",
+          email: "jordan-secret@example.test"
+        }
+      ]
+    });
+
+    const conversation = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Summarize Jordan relationship.",
+      now: new Date("2030-01-02T12:00:00.000Z")
+    });
+    const assistantMessage = conversation.messages.at(-1);
+    if (!assistantMessage) throw new Error("Expected Assistant reply.");
+
+    expect(assistantMessage.content).toContain("I should not guess");
+    expect(assistantMessage.sources.filter((source) => source.recordType === "Contact")).toHaveLength(2);
+    expect(JSON.stringify(assistantMessage)).not.toContain("Jordan Secret");
+    expect(JSON.stringify(assistantMessage)).not.toContain("jordan-secret@example.test");
+  });
+
   it("builds a deterministic Today Command Center with workspace-scoped links and no view-time mutations", async () => {
     const fx = currentFixture();
     const now = new Date("2030-01-02T12:00:00.000Z");
@@ -1156,6 +1237,164 @@ describe("read-only Assistant command service integration", () => {
     expect(noteAudit.entityType).toBe("Note");
   });
 
+  it("resolves workspace defaults before user action permission overrides and audits preference changes", async () => {
+    const fx = currentFixture();
+    const actorBInWorkspaceA = { actorUserId: fx.userB.id, workspaceId: fx.workspaceA.id };
+    await fx.prisma.workspaceMembership.create({
+      data: {
+        role: "MEMBER",
+        userId: fx.userB.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.workspace.update({
+      data: {
+        aiActionPermissionDefaults: {
+          create_note: "never_allow",
+          update_relationship_memory: "require_confirmation"
+        }
+      },
+      where: { id: fx.workspaceA.id }
+    });
+
+    const inheritedForA = await crm.getAiPreferences(fx.actorA);
+    const inheritedForB = await crm.getAiPreferences(actorBInWorkspaceA);
+    expect(inheritedForA.assistantActionPermissions).toMatchObject({
+      create_note: "never_allow",
+      create_follow_up_activity: "require_confirmation",
+      update_relationship_memory: "require_confirmation"
+    });
+    expect(inheritedForB.assistantActionPermissions.create_note).toBe("never_allow");
+
+    await expect(crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ send_email: "allow_automatically" })
+    })).rejects.toThrow(/Send email/i);
+
+    const updatedForA = await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_note: "require_confirmation",
+        send_email: "never_allow"
+      })
+    });
+    const afterForB = await crm.getAiPreferences(actorBInWorkspaceA);
+    const audit = await fx.prisma.auditLog.findFirstOrThrow({
+      orderBy: { createdAt: "desc" },
+      where: {
+        action: "ai_preferences.updated",
+        entityType: "AiPreference",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(updatedForA.assistantActionPermissions).toMatchObject({
+      create_note: "require_confirmation",
+      send_email: "never_allow"
+    });
+    expect(afterForB.assistantActionPermissions.create_note).toBe("never_allow");
+    expect(audit.actorId).toBe(fx.userA.id);
+    expect(audit.metadata).toMatchObject({
+      changedKeys: expect.arrayContaining(["assistantActionPermissions"]),
+      permissionChanges: expect.objectContaining({
+        create_note: { from: "never_allow", to: "require_confirmation" },
+        send_email: { from: "require_confirmation", to: "never_allow" }
+      })
+    });
+
+    const resetForA = await crm.resetAiPreferences(fx.actorA);
+    const storedAfterReset = await crm.getAiPreferences(fx.actorA);
+    const resetAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      orderBy: { createdAt: "desc" },
+      where: {
+        action: "ai_preferences.reset",
+        entityType: "AiPreference",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(resetForA.assistantActionPermissions).toMatchObject({
+      create_note: "never_allow",
+      update_relationship_memory: "require_confirmation"
+    });
+    expect(storedAfterReset.assistantActionPermissions.create_note).toBe("never_allow");
+    expect(resetAudit.actorId).toBe(fx.userA.id);
+    expect(resetAudit.metadata).toMatchObject({ resetTo: "safe_defaults" });
+  });
+
+  it("enforces action permissions server-side, revokes immediately, and never retroactively auto-applies pending requests", async () => {
+    const fx = currentFixture();
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    const noteAnswer = await crm.answerAssistantCommand(fx.actorA, `Add a note for ${contactName}: Permission test note.`);
+    const noteDraft = noteAnswer.draftActions?.[0];
+    if (!noteDraft) throw new Error("Expected a note draft.");
+    const pendingRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: noteAnswer.query });
+    expect(pendingRequest).toMatchObject({
+      actionType: "note",
+      canApply: true,
+      permissionLevel: "require_confirmation",
+      permissionState: "requires_confirmation"
+    });
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ create_note: "never_allow" })
+    });
+    const revokedView = (await crm.listAssistantActionRequests(fx.actorA)).find((request) => request.id === pendingRequest.id);
+    const beforeNotes = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } });
+    await expect(crm.applyAssistantActionRequest(fx.actorA, pendingRequest.id)).rejects.toThrow(/never allow|AI Preferences/i);
+    const afterRevokedApply = await fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: pendingRequest.id } });
+    const blockedAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      orderBy: { createdAt: "desc" },
+      where: {
+        action: "assistant_action_request.apply_rejected",
+        entityId: pendingRequest.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(revokedView).toMatchObject({
+      canApply: false,
+      permissionLevel: "never_allow",
+      permissionState: "blocked"
+    });
+    expect(afterRevokedApply.status).toBe("PENDING");
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeNotes);
+    expect(blockedAudit.metadata).toMatchObject({
+      permissionActionKey: "create_note",
+      permissionLevel: "never_allow"
+    });
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ create_note: "allow_automatically" })
+    });
+    await expect(fx.prisma.assistantActionRequest.findUniqueOrThrow({ where: { id: pendingRequest.id } })).resolves.toMatchObject({
+      appliedAt: null,
+      status: "PENDING"
+    });
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeNotes);
+
+    const autoApplied = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: noteAnswer.query });
+    const automaticAudit = await fx.prisma.auditLog.findFirstOrThrow({
+      orderBy: { createdAt: "desc" },
+      where: {
+        action: "assistant_action_request.applied",
+        entityId: autoApplied.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(autoApplied).toMatchObject({
+      actionType: "note",
+      canApply: false,
+      permissionLevel: "allow_automatically",
+      status: "APPLIED"
+    });
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeNotes + 1);
+    expect(automaticAudit.metadata).toMatchObject({
+      automatic: true,
+      permissionActionKey: "create_note",
+      permissionLevel: "allow_automatically"
+    });
+  });
+
   it("does not apply an already applied or rejected Assistant request twice", async () => {
     const fx = currentFixture();
     const answer = await crm.answerAssistantCommand(
@@ -1263,7 +1502,7 @@ describe("read-only Assistant command service integration", () => {
     });
     const beforeCrm = await crmRecordCounts(fx);
 
-    await expect(crm.applyAssistantActionRequest(fx.actorA, unsupportedRequest.id)).rejects.toThrow(/only available/i);
+    await expect(crm.applyAssistantActionRequest(fx.actorA, unsupportedRequest.id)).rejects.toThrow(/settings-only|handler exists/i);
     await expect(crm.applyAssistantActionRequest(fx.actorB, crossWorkspaceRequest.id)).rejects.toThrow(/not found|no longer pending/i);
     await expect(crm.applyAssistantActionRequest(fx.actorB, crossWorkspaceNoteRequest.id)).rejects.toThrow(/not found|no longer pending/i);
     await expect(crm.applyAssistantActionRequest(fx.actorA, ambiguousRequest.id)).rejects.toThrow(/only available/i);
@@ -1326,6 +1565,13 @@ async function crmRecordCounts(fx: Fixture) {
     notes: counts.notes,
     organizations: counts.organizations,
     people: counts.people
+  };
+}
+
+function permissionMap(overrides: Record<string, string> = {}) {
+  return {
+    ...crm.defaultAiActionPermissions,
+    ...overrides
   };
 }
 

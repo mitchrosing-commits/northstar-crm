@@ -75,29 +75,45 @@ test.describe("Assistant review-first browser workflow", () => {
     const permissionSummary = page.getByLabel("Assistant permissions and limits");
     await expect(permissionSummary).toContainText("Available now");
     await expect(permissionSummary).toContainText("Read-only answers");
-    await expect(permissionSummary).toContainText("confirmed activity or note apply");
-    await expect(permissionSummary).toContainText("Review-only for now");
-    await expect(permissionSummary).toContainText("email send, sync, and autonomous actions");
+    await expect(permissionSummary).toContainText("permission-checked confirmed activity or note apply");
+    await expect(permissionSummary).toContainText("Settings-only for now");
+    await expect(permissionSummary).toContainText("email send, sync, and unsupported automatic actions");
 
     const suggestions = page.getByLabel("Suggested Assistant prompts");
-    await expect(suggestions).toContainText("Tell me what I have to do today.");
-    await expect(suggestions).toContainText("Show me the highest-risk deals this week.");
-    await expect(suggestions).toContainText("Check whether Mike Fox replied to my recent email.");
-    await expect(suggestions).toContainText("Remind me to follow up with Jane Doe next Tuesday.");
-    await expect(suggestions).toContainText("Add a note for Jane Doe: she prefers concise email updates.");
+    await expect(suggestions).toContainText("Help me plan my day.");
+    await expect(suggestions).toContainText("What should I focus on?");
+    await expect(suggestions).toContainText("Summarize the Acme relationship.");
+    await expect(suggestions).toContainText("Which deals look risky?");
+    await expect(suggestions).toContainText("Help me prepare for my meeting.");
+    await expect(suggestions).toContainText("What am I waiting on?");
     await expect(suggestions).not.toContainText(/create (?:a )?(?:deal|quote|organization)/i);
     await expect(suggestions).not.toContainText(/send|sync|convert|delete|autonomous/i);
 
     await commandInput(page).fill("Tell me what I have to do today.");
     await page.getByRole("button", { name: "Ask" }).click();
-    await expect(page.getByRole("heading", { name: "Today's Assistant agenda" })).toBeVisible();
+    const thread = page.getByLabel("Assistant conversation");
+    await expect(thread.getByRole("heading", { name: "Today's Assistant agenda" })).toBeVisible();
     const commandResultUrl = new URL(page.url());
     expect(commandResultUrl.pathname).toBe("/assistant");
-    expect(commandResultUrl.searchParams.get("command")).toBe("Tell me what I have to do today.");
-    expect(commandResultUrl.hash).toBe("");
-    await expect(page.getByLabel("Assistant answer")).toContainText("Context-only");
-    await expect(page.getByLabel("Assistant answer")).toContainText("Draft only");
-    await expect(page.getByRole("status")).toContainText("Answer ready below.");
+    expect(commandResultUrl.searchParams.get("conversation")).toBeTruthy();
+    expect(commandResultUrl.searchParams.get("assistantChat")).toBe("sent");
+    expect(["", "#assistant-chat-composer"]).toContain(commandResultUrl.hash);
+    await expect(thread).toContainText("You");
+    await expect(thread).toContainText("Assistant");
+    await expect(thread).toContainText("Sources");
+    await expect(thread).toContainText("Context-only");
+    await expect(thread).toContainText("draft-only");
+    await expect(page.getByRole("status")).toContainText("Reply ready in the conversation.");
+    await expect(commandInput(page)).toBeFocused();
+
+    await commandInput(page).fill("What should I do first?");
+    await page.getByRole("button", { name: "Ask" }).click();
+    await expect(page.getByRole("status")).toContainText("Reply ready in the conversation.", { timeout: 15_000 });
+    await expect(thread).toContainText("What should I do first?", { timeout: 15_000 });
+    await expect(thread.locator(".assistant-chat-message")).toHaveCount(4);
+    await page.getByRole("link", { name: "New conversation" }).click();
+    await expect(page).toHaveURL(/\/assistant$/);
+    await expect(page.getByLabel("Assistant conversation")).toContainText("ready for a work conversation");
 
     expect(errors.current()).toEqual([]);
   });
@@ -114,7 +130,7 @@ test.describe("Assistant review-first browser workflow", () => {
 
     await commandInput(page).fill("Tell me what I have to do today.");
     await page.locator(".assistant-command-form").dispatchEvent("submit");
-    await expect(page.getByRole("status")).toContainText("is building a review-first answer");
+    await expect(page.getByRole("status")).toContainText("is building a review-first reply");
 
     expect(errors.current()).toEqual([]);
   });
@@ -153,7 +169,7 @@ test.describe("Assistant review-first browser workflow", () => {
 
     await expectAssistantPageReady(page);
     const commandBoxes = await page.locator(".assistant-command-form input, .assistant-command-form button, .assistant-suggestion").evaluateAll((elements) =>
-      elements.map((element) => {
+      elements.filter((element) => element.checkVisibility()).map((element) => {
         const rect = element.getBoundingClientRect();
         return { height: rect.height, text: element.textContent ?? element.getAttribute("placeholder") ?? "", width: rect.width };
       })
@@ -195,7 +211,7 @@ test.describe("Assistant review-first browser workflow", () => {
 
     const activityRequest = reviewRequest(page, "Draft activity");
     await expect(activityRequest).toContainText("Review-first activity creation");
-    await expect(activityRequest).toContainText("Apply will create one activity after this explicit review step.");
+    await expect(activityRequest).toContainText("AI Preferences require confirmation");
     await expect(activityRequest.getByRole("button", { name: "Apply activity" })).toBeVisible();
     await activityRequest.getByRole("button", { name: "Apply activity" }).click();
     await expect(activityRequest).toContainText("APPLIED");
@@ -210,7 +226,7 @@ test.describe("Assistant review-first browser workflow", () => {
 
     const noteRequest = reviewRequest(page, "Draft note");
     await expect(noteRequest).toContainText("Review-first note creation");
-    await expect(noteRequest).toContainText("Apply will create one note after this explicit review step.");
+    await expect(noteRequest).toContainText("AI Preferences require confirmation");
     await expect(noteRequest.getByRole("button", { name: "Apply note" })).toBeVisible();
     await noteRequest.getByRole("button", { name: "Apply note" }).click();
     await expect(noteRequest).toContainText("APPLIED");
@@ -230,7 +246,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await preferenceDraft.getByRole("button", { name: "Save to review queue" }).click();
 
     const preferenceRequest = reviewRequest(page, "Draft AI preference change");
-    await expect(preferenceRequest).toContainText("AI preference changes are review-only for now");
+    await expect(preferenceRequest).toContainText("settings-only until a scoped apply handler exists");
     await expect(preferenceRequest.getByRole("button", { name: /Apply/i })).toHaveCount(0);
     await preferenceRequest.getByRole("button", { name: "Reject request" }).click();
     await expect(preferenceRequest).toContainText("REJECTED");
@@ -244,7 +260,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await ambiguousDraft.getByRole("button", { name: "Save to review queue" }).click();
 
     const ambiguousRequest = reviewRequest(page, `Follow up with ${fixture.ambiguousContactName}`);
-    await expect(ambiguousRequest).toContainText("Apply is blocked until one clear target record is selected.");
+    await expect(ambiguousRequest).toContainText("Apply is only available for low-risk pending activity or note requests with a clear target.");
     await expect(ambiguousRequest.getByRole("button", { name: /Apply/i })).toHaveCount(0);
     await expect(ambiguousRequest.getByRole("button", { name: "Reject request" })).toBeVisible();
 
@@ -304,6 +320,42 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(reviewRequest(page, "Draft AI preference change")).toContainText("REJECTED");
     await expect(reviewQueue(page)).not.toContainText("refresh_token");
     await expect(reviewQueue(page)).not.toContainText("provider payload");
+
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("saves AI action permissions back to the active settings section on narrow viewports", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+    await page.setViewportSize({ width: 390, height: 900 });
+
+    await page.goto(`${browserBaseUrl}/settings/ai`);
+    await expect(page.getByRole("heading", { exact: true, name: "AI Preferences" })).toBeVisible();
+    const permissions = page.locator("#ai-permissions");
+    await expect(permissions).toContainText("Assistant Action Boundaries");
+    await expect(permissions).toContainText("Never allow");
+    await expect(permissions).toContainText("Allow automatically");
+    const followUps = permissions.locator("details.ai-permission-group").filter({ hasText: "Follow-ups and notes" }).first();
+    await expect(followUps).toHaveAttribute("open", "");
+    await expect(followUps).toContainText("Create follow-up activities");
+    await expect(followUps).toContainText("Create notes");
+    await followUps.locator('select[name="assistantActionPermission:create_note"]').selectOption("suggest_only");
+    await followUps.getByRole("button", { name: "Save follow-ups and notes" }).click();
+
+    await expect(page).toHaveURL(/\/settings\/ai\?saved=1&section=permissions&group=follow_ups_notes(?:#ai-permissions)?$/);
+    await expect(page.locator(".form-success")).toContainText("AI preferences saved.");
+    await expect(followUps).toHaveAttribute("open", "");
+    await expect(followUps.locator('select[name="assistantActionPermission:create_note"]')).toHaveValue("suggest_only");
+
+    const controlBoxes = await permissions.locator("summary, select, button").evaluateAll((elements) =>
+      elements.filter((element) => element.checkVisibility()).map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { height: rect.height, text: element.textContent ?? "", width: rect.width };
+      })
+    );
+    for (const box of controlBoxes) {
+      expect.soft(box.width, `${box.text} should stay readable in AI permission controls`).toBeGreaterThan(86);
+      expect.soft(box.height, `${box.text} should not become a tall narrow control`).toBeLessThan(120);
+    }
 
     expect(errors.current()).toEqual([]);
   });
@@ -401,7 +453,10 @@ async function createAssistantBrowserFixture(): Promise<AssistantBrowserFixture>
 }
 
 async function resetAssistantBrowserWorkspace() {
+  await prisma.aiPreference.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantTodayItemHide.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.assistantConversationMessage.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.assistantConversation.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantActionRequest.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.activity.deleteMany({ where: { workspaceId: fixture.workspaceId } });
@@ -412,7 +467,10 @@ async function cleanupAssistantBrowserFixture() {
   if (!fixture) return;
   if (fixture.token) await revokeLocalSessionToken(fixture.token);
   await prisma.assistantTodayItemHide.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.assistantConversationMessage.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.assistantConversation.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.assistantActionRequest.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.aiPreference.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.activity.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.note.deleteMany({ where: { workspaceId: fixture.workspaceId } });
@@ -454,7 +512,7 @@ async function expectAssistantPageReady(page: Page) {
   await page.goto("/assistant");
   await expect(page.locator("#main-content")).toBeVisible();
   await expect(page.getByRole("heading", { exact: true, name: "Assistant" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Ask Stella" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat with Stella" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
 }
 

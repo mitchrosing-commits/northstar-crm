@@ -44,6 +44,9 @@ export type GenerateEmailReplyDraftActionState = {
   contextUsed?: string[];
   emailLogId?: string;
   error?: string;
+  retryAfterSeconds?: number;
+  retryLabel?: string;
+  retryable?: boolean;
   message?: string;
   replyBody?: string;
   subjectSuggestion?: string;
@@ -328,11 +331,30 @@ export async function generateEmailReplyDraftAction(
     };
   } catch (error) {
     if (error instanceof ApiError) {
-      return { emailLogId, error: redactSensitiveText(error.message), tone };
+      const retryAfterSeconds = emailReplyRetryAfterSeconds(error);
+      return {
+        emailLogId,
+        error: redactSensitiveText(error.message),
+        retryAfterSeconds,
+        retryLabel: retryAfterSeconds ? `Try again in about ${retryAfterSeconds} ${retryAfterSeconds === 1 ? "second" : "seconds"}.` : undefined,
+        retryable: isRetryableEmailReplyError(error),
+        tone
+      };
     }
 
     return { emailLogId, error: "AI reply draft could not be generated.", tone };
   }
+}
+
+function isRetryableEmailReplyError(error: ApiError) {
+  const details = error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {};
+  return error.code === "AI_EMAIL_REPLY_PROVIDER_RATE_LIMITED" || details.retryable === true;
+}
+
+function emailReplyRetryAfterSeconds(error: ApiError) {
+  const details = error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {};
+  const seconds = details.retryAfterSeconds;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
 }
 
 export async function classifyEmailLogAction(
