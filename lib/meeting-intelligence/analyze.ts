@@ -38,6 +38,10 @@ const dealFactPattern = /\b(budget|scope|sow|proposal|buying signal|decision|dec
 const leadFactPattern = /\b(discovery|qualification|qualify|lead source|source|interest|interested|evaluation|pilot|timeline|budget|approval|stakeholder|decision process|next step|pain|risk)\b/i;
 const stakeholderPattern = /\b(stakeholder|sponsor|champion|decision maker|economic buyer|influencer|buyer committee|buying committee)\b/i;
 const actionLinePattern = /^(action|action item|todo|to do|next step|follow[- ]?up)\s*:/i;
+const decisionPattern = /\b(decision|decided|approved|selected|confirmed|agreed to|signed off|go forward|move forward)\b/i;
+const commitmentPattern = /\b(committed|commitment|promised|confirmed|will|agreed to|by\s+(?:20\d{2}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/20\d{2}|tomorrow|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i;
+const openQuestionPattern = /\b(open question|question|confirm whether|needs clarification|who owns|unclear|tbd|to be confirmed)\b/i;
+const titleTopicPattern = /\b(?:about|for|on|regarding|review(?:ed|ing)?|discuss(?:ed|ing)?|focused on|goal:?|objective:?|agenda:?)\s+([^.;\n]{8,90})/i;
 const rawSpeakerPrefixPattern = /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})\s*:\s+(.+)$/;
 const genericTargetTerms = new Set([
   "account",
@@ -62,7 +66,8 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
   const transcriptSegments = buildTranscriptSegments(text, input.sourceMetadata);
   const summarySections = buildStructuredSummary(lines, sections, { meetingDate, participants });
   const summary = buildSummary(summarySections, lines);
-  const warnings = buildWarnings(input.matchedObjects, input.unmatchedEntities, sections.actionItems, lines, meetingDate);
+  const actionItems = extractActionCandidates(lines, sections.actionItems);
+  const warnings = buildWarnings(input.matchedObjects, input.unmatchedEntities, actionItems, lines, meetingDate);
   const primaryTarget = pickPrimaryTarget(input.matchedObjects);
   const primaryMatch = primaryTarget ? input.matchedObjects.find((match) => match.id === primaryTarget.id && match.objectType === primaryTarget.type) : undefined;
   const associatedTargets = buildAssociatedTargets(input.matchedObjects);
@@ -88,7 +93,7 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
         matchedReason: primaryMatch?.matchedReason,
         target: primaryTarget,
         targetWarning: primaryMatch?.warning,
-        title: buildMeetingTitle(input.contextText ?? text, primaryTarget.label ?? "CRM record")
+        title: buildMeetingTitle(`${input.contextText ?? ""}\n${text}`, primaryTarget.label ?? "CRM record", summarySections)
       }
     : null;
 
@@ -98,7 +103,7 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     matchedObjects: input.matchedObjects,
     meetingActivity,
     notes: buildNotes(input.matchedObjects, primaryTarget, summary, lines, { meetingDate, participants }),
-    nextStepActivities: buildNextSteps(input.matchedObjects, sections.actionItems, meetingDate),
+    nextStepActivities: buildNextSteps(input.matchedObjects, actionItems, meetingDate),
     relationshipBriefUpdates: buildRelationshipBriefUpdates(input.matchedObjects, lines),
     sourceMetadata: input.sourceMetadata,
     summary,
@@ -320,7 +325,7 @@ function buildNotes(
       category,
       confidence: match.confidence,
       evidence: [match.evidenceExcerpt, ...factLines].filter(Boolean).slice(0, 4),
-      id: `note-${match.objectType}-${match.id}`,
+      id: `note-${match.objectType}-${match.id}-${category}`,
       include: true,
       kind,
       matchedReason: match.matchedReason,
@@ -341,12 +346,14 @@ function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[], meet
   return deduped.map((item, index) => {
     const dueAt = parseDueDate(item, meetingDate);
     const ownerHint = parseOwnerHint(item);
+    const title = actionTitle(item);
     return {
       category: "followUpAction" as const,
       confidence: match?.confidence,
       description: [
-        `Source: ${item}`,
+        `Action evidence: ${cleanActionEvidence(item)}`,
         ownerHint ? `Owner hint: ${ownerHint}` : "",
+        dueAt ? `Due date supported by source: ${dueAt.toISOString().slice(0, 10)}` : "Due date not stated clearly; reviewer should set one if needed.",
         associatedTargets.length > 1
           ? `Related records: ${associatedTargets.map((related) => `${targetTypeLabel(related.type)}: ${related.label ?? related.id}`).join("; ")}`
           : ""
@@ -355,14 +362,14 @@ function buildNextSteps(matches: MatchedCrmObject[], actionItems: string[], meet
         .join("\n"),
       dueAt: dueAt?.toISOString(),
       evidence: [item],
-      id: `next-step-${index + 1}`,
+      id: `next-step-${stableActionId(item, index)}`,
       include: true,
       matchedReason: match?.matchedReason,
       ownerId: null,
       target,
       targetWarning: match?.warning,
-      title: actionTitle(item),
-      type: "TASK" as const
+      title,
+      type: inferActivityType(title)
     };
   });
 }
@@ -655,7 +662,7 @@ function targetTypeLabel(type: MatchedCrmObject["objectType"]) {
 }
 
 function buildSummary(summarySections: MeetingSummarySection[], lines: string[]) {
-  const overview = summarySections.find((section) => section.key === "meeting_overview");
+  const overview = summarySections.find((section) => section.key === "context");
   if (overview?.items.length) return overview.items.join(" ").slice(0, 700);
   const candidates = lines
     .filter((line) => !isMeetingMetadataLine(line))
@@ -674,32 +681,45 @@ function buildStructuredSummary(
   const safeLines = uniqueNormalizedLines(lines)
     .filter((line) => !isMeetingMetadataLine(line))
     .filter((line) => !protectedTraitPattern.test(line));
-  const nextSteps = dedupeActionItems(sections.actionItems.filter(isActionableNextStep)).map(cleanSummaryItem).slice(0, 5);
-  const decisions = uniqueNormalizedLines(sections.decisions.map(cleanSummaryItem)).slice(0, 5);
-  const risks = uniqueNormalizedLines([...sections.risks, ...safeLines.filter((line) => businessConcernPattern.test(line))].map(cleanSummaryItem)).slice(0, 5);
-  const openQuestions = uniqueNormalizedLines(sections.openQuestions.map(cleanSummaryItem)).slice(0, 5);
-  const objectives = summaryLinesMatching(safeLines, /\b(objective|goal|agenda|purpose|wanted to|looking to|trying to)\b/i);
-  const commercial = summaryLinesMatching(safeLines, /\b(budget|pricing|price|quote|proposal|sow|commercial|legal|procurement|approval|renewal|expansion|pilot)\b/i);
-  const needs = summaryLinesMatching(safeLines, /\b(needs?|pain|concern|worried|blocker|risk|challenge|problem|looking for|requires?)\b/i);
-  const commitments = summaryLinesMatching(safeLines, /\b(committed|commitment|agreed|will|promised|confirmed)\b/i);
-  const discussion = safeLines
+  const nextSteps = dedupeActionItems(extractActionCandidates(safeLines, sections.actionItems).filter(isActionableNextStep)).map(cleanSummaryItem).slice(0, 5);
+  const decisionItems = uniqueNormalizedLines([
+    ...sections.decisions,
+    ...safeLines.filter((line) => decisionPattern.test(line) && !lineLooksLikeAction(line))
+  ].map(cleanSummaryItem)).slice(0, 5);
+  const concerns = uniqueNormalizedLines([
+    ...sections.risks,
+    ...safeLines.filter((line) => (businessConcernPattern.test(line) || /\b(blocker|blocked|concern|risk|worried|challenge|issue)\b/i.test(line)) && !lineLooksLikeAction(line))
+  ].map(cleanSummaryItem))
+    .filter((item) => !decisionItems.includes(item))
+    .slice(0, 5);
+  const openQuestions = uniqueNormalizedLines([
+    ...sections.openQuestions,
+    ...safeLines.filter((line) => openQuestionPattern.test(line) || /\?\s*$/.test(line))
+  ].map(cleanSummaryItem)).slice(0, 5);
+  const commitments = summaryLinesMatching(safeLines, commitmentPattern)
+    .filter((item) => !nextSteps.includes(item))
+    .filter((item) => !openQuestions.includes(item))
+    .slice(0, 5);
+  const keyFacts = safeLines
     .filter((line) => !isStructuralMeetingLine(line))
     .filter((line) => !lineLooksLikeAction(line))
-    .filter((line) => !decisions.includes(cleanSummaryItem(line)))
-    .filter((line) => !risks.includes(cleanSummaryItem(line)))
+    .filter((line) => !lineLooksLikeImplicitAction(line))
+    .filter((line) => !stakeholderPattern.test(line))
+    .filter((line) => !personalFactPattern.test(line) && !communicationStylePattern.test(line) && !relationshipReminderPattern.test(line))
     .map(cleanSummaryItem)
     .filter(Boolean)
+    .filter((item) => !decisionItems.includes(item))
+    .filter((item) => !concerns.includes(item))
+    .filter((item) => !openQuestions.includes(item))
+    .filter((item) => !commitments.includes(item))
     .slice(0, 5);
-  const overview = buildOverviewItems(safeLines, context);
+  const overview = buildContextItems(safeLines, context);
   return [
-    summarySection("meeting_overview", "Meeting overview", overview, "inferred"),
+    summarySection("context", "Context", overview, "inferred"),
     summarySection("participants", "Participants", context.participants, "explicit"),
-    summarySection("objectives", "Objectives", objectives, "explicit"),
-    summarySection("key_discussion_points", "Key discussion points", discussion, "explicit"),
-    summarySection("decisions", "Decisions", decisions, "explicit"),
-    summarySection("customer_needs_or_concerns", "Customer needs or concerns", needs, "explicit"),
-    summarySection("commercial_details", "Commercial details", commercial, "explicit"),
-    summarySection("risks_or_blockers", "Risks or blockers", risks, "explicit"),
+    summarySection("key_facts", "Key facts", keyFacts, "explicit"),
+    summarySection("decisions", "Decisions", decisionItems, "explicit"),
+    summarySection("concerns_or_risks", "Concerns or risks", concerns, "explicit"),
     summarySection("commitments", "Commitments", commitments, "explicit"),
     summarySection("open_questions", "Open questions", openQuestions, "explicit"),
     summarySection("next_steps", "Next steps", nextSteps, "explicit")
@@ -756,7 +776,7 @@ function summarySection(
   };
 }
 
-function buildOverviewItems(lines: string[], context: { meetingDate?: Date; participants: string[] }) {
+function buildContextItems(lines: string[], context: { meetingDate?: Date; participants: string[] }) {
   const first = lines
     .filter((line) => !isStructuralMeetingLine(line))
     .filter((line) => !lineLooksLikeAction(line))
@@ -782,24 +802,32 @@ function summaryLinesMatching(lines: string[], pattern: RegExp) {
 function cleanSummaryItem(value: string) {
   return value
     .replace(/^[-*]\s*/, "")
-    .replace(/^(decision|risk|open question|question|objective|goal|summary|note|action item|action|next step|follow[- ]?up)\s*:\s*/i, "")
+    .replace(/^(decision|risk|concern|blocker|open question|question|objective|goal|summary|note|action item|action|next step|follow[- ]?up)\s*:\s*/i, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 260);
 }
 
-function buildMeetingTitle(text: string, targetLabel: string) {
+function buildMeetingTitle(text: string, targetLabel: string, summarySections: MeetingSummarySection[] = []) {
   const date = parseMeetingDate(text);
-  const datePrefix = date ? `${date.toISOString().slice(0, 10)} ` : "";
-  return `${datePrefix}Meeting: ${targetLabel}`.slice(0, 160);
+  const topic = extractMeetingTopic(text, summarySections);
+  const datePrefix = date ? `${date.toISOString().slice(0, 10)} - ` : "";
+  const base = topic ? `${topic} with ${targetLabel}` : `Meeting with ${targetLabel}`;
+  return compactTitle(`${datePrefix}${base}`, 120);
 }
 
 function actionTitle(item: string) {
-  return item
+  const cleaned = item
     .replace(/^(todo|to do|action item|action|next step|follow[- ]?up)\s*:?\s*/i, "")
+    .replace(/\bowner\s*:\s*[^.;\n]+[.;]?\s*/gi, "")
+    .replace(/^\s*[A-Z][A-Za-z .'-]{1,60}\s+(?:to|will)\s+/i, "")
+    .replace(/^.*?\b(?:needs? to|should|will)\s+(?=send|schedule|share|follow up|call|email|review|prepare|confirm|update|create|draft|provide|book|set up|assign)\b/i, "")
+    .replace(/\bby\s+(?:20\d{2}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/20\d{2}|tomorrow|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|[A-Z][a-z]+\s+\d{1,2}(?:,\s*20\d{2})?)\.?/gi, "")
     .replace(/^\[[ x]\]\s*/i, "")
-    .trim()
-    .slice(0, 160) || "Follow up from meeting";
+    .replace(/\s+/g, " ")
+    .replace(/[.;,\s]+$/g, "")
+    .trim();
+  return compactTitle(cleaned ? uppercaseFirst(cleaned) : "Follow up from meeting", 120);
 }
 
 function parseDueDate(text: string, meetingDate?: Date): Date | undefined {
@@ -808,10 +836,20 @@ function parseDueDate(text: string, meetingDate?: Date): Date | undefined {
   const slash = text.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
   if (slash) return safeDate(`${slash[3]}-${slash[1].padStart(2, "0")}-${slash[2].padStart(2, "0")}T00:00:00.000Z`);
   const baseDate: Date | undefined = meetingDate ?? parseMeetingDate(text);
+  const monthDate = text.match(/\b(?:by|on|before|due)\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:,\s*(20\d{2}))?\b/i);
+  if (monthDate) {
+    const year = monthDate[3] ?? baseDate?.getUTCFullYear().toString();
+    const month = monthIndex(monthDate[1]);
+    if (year && month >= 0) return safeDate(`${year}-${String(month + 1).padStart(2, "0")}-${monthDate[2].padStart(2, "0")}T00:00:00.000Z`);
+  }
   if (!baseDate) return undefined;
-  if (/\bby tomorrow\b/i.test(text)) return addDays(baseDate, 1);
-  if (/\bby next week\b/i.test(text)) return addDays(baseDate, 7);
-  const weekday = text.match(/\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  const shortSlash = text.match(/\b(?:by|on|before|due)\s+(\d{1,2})\/(\d{1,2})\b/i);
+  if (shortSlash) {
+    return safeDate(`${baseDate.getUTCFullYear()}-${shortSlash[1].padStart(2, "0")}-${shortSlash[2].padStart(2, "0")}T00:00:00.000Z`);
+  }
+  if (/\b(?:by|due|on)\s+tomorrow\b/i.test(text)) return addDays(baseDate, 1);
+  if (/\b(?:by|due)\s+next week\b/i.test(text)) return addDays(baseDate, 7);
+  const weekday = text.match(/\b(?:by|on|before|due)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
   if (weekday) return nextWeekday(baseDate, weekday[1]);
   return undefined;
 }
@@ -840,6 +878,13 @@ function dedupeActionItems(items: string[]) {
   return unique;
 }
 
+function extractActionCandidates(lines: string[], sectionActionItems: string[]) {
+  return uniqueNormalizedLines([
+    ...sectionActionItems,
+    ...lines.filter((line) => lineLooksLikeAction(line) || lineLooksLikeImplicitAction(line))
+  ]);
+}
+
 function actionDedupeKey(item: string) {
   return actionTitle(item)
     .replace(/\b(20\d{2}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/20\d{2})\b/g, "")
@@ -850,7 +895,30 @@ function actionDedupeKey(item: string) {
     .toLowerCase();
 }
 
+function stableActionId(item: string, index: number) {
+  const slug = actionDedupeKey(item)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return slug || String(index + 1);
+}
+
+function cleanActionEvidence(item: string) {
+  return item
+    .replace(/^(todo|to do|action item|action|next step|follow[- ]?up)\s*:?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferActivityType(title: string): "CALL" | "EMAIL" | "MEETING" | "TASK" {
+  if (/\b(call|phone)\b/i.test(title)) return "CALL";
+  if (/\b(email|send|share|forward)\b/i.test(title)) return "EMAIL";
+  if (/\b(meeting|workshop|demo|session|schedule|book|set up)\b/i.test(title)) return "MEETING";
+  return "TASK";
+}
+
 function isActionableNextStep(item: string) {
+  if (/^(decision|risk|concern|blocker|open question|question|note|summary)\s*:/i.test(item.replace(/^[-*]\s*/, "").trim())) return false;
   const cleaned = actionTitle(item);
   if (!cleaned) return false;
   if (/\b(maybe|possibly|consider|think about|explore whether|discuss options|nice to have)\b/i.test(cleaned)) return false;
@@ -859,6 +927,14 @@ function isActionableNextStep(item: string) {
 
 function lineLooksLikeAction(line: string) {
   return actionLinePattern.test(line) || /^next step\s*:/i.test(line);
+}
+
+function lineLooksLikeImplicitAction(line: string) {
+  const cleaned = line.replace(/^[-*]\s*/, "").trim();
+  if (/^(decision|risk|open question|question|note|summary)\s*:/i.test(cleaned)) return false;
+  if (/\b(maybe|possibly|consider|think about|explore whether|nice to have)\b/i.test(cleaned)) return false;
+  if (/^[A-Z][A-Za-z .'-]{1,60}\s+(?:to|will)\s+(send|schedule|share|follow up|call|email|review|prepare|confirm|update|create|draft|provide|book|set up|assign)\b/i.test(cleaned)) return true;
+  return /\b(?:needs? to|should|will)\s+(send|schedule|share|follow up|call|email|review|prepare|confirm|update|create|draft|provide|book|set up|assign)\b/i.test(cleaned);
 }
 
 function isStructuralMeetingLine(line: string) {
@@ -884,7 +960,9 @@ function safeDate(value: string): Date | undefined {
 }
 
 function parseOwnerHint(text: string) {
-  return text.match(/\bowner\s*:\s*([^.;\n]+)/i)?.[1]?.trim();
+  return text.match(/\bowner\s*:\s*([^.;\n]+)/i)?.[1]?.trim()
+    ?? text.match(/^(?:action|action item|todo|to do|next step|follow[- ]?up)\s*:\s*([A-Z][A-Za-z .'-]{1,60})\s+(?:to|will)\s+/i)?.[1]?.trim()
+    ?? text.match(/^([A-Z][A-Za-z .'-]{1,60})\s+(?:to|will)\s+/i)?.[1]?.trim();
 }
 
 function addDays(value: Date, days: number): Date {
@@ -901,6 +979,54 @@ function nextWeekday(baseDate: Date, weekday: string): Date | undefined {
   const date = new Date(baseDate);
   const delta = (target - date.getUTCDay() + 7) % 7 || 7;
   return addDays(date, delta);
+}
+
+function monthIndex(value: string) {
+  return [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december"
+  ].indexOf(value.toLowerCase());
+}
+
+function extractMeetingTopic(text: string, summarySections: MeetingSummarySection[]) {
+  const contextItem = summarySections.find((section) => section.key === "key_facts")?.items[0] ??
+    summarySections.find((section) => section.key === "context")?.items[0];
+  const explicit = [text, contextItem ?? ""].join("\n").match(titleTopicPattern)?.[1];
+  const candidate = explicit ?? contextItem;
+  if (!candidate) return null;
+  return compactTitle(
+    candidate
+      .replace(/\bmeeting date:\s*20\d{2}-\d{2}-\d{2}\.?\s*/i, "")
+      .replace(/\bparticipants?:[^.]+\.?\s*/i, "")
+      .replace(/^(decision|risk|open question|question|objective|goal|summary|note)\s*:\s*/i, "")
+      .replace(/\b(meeting|call|discussion)\b/gi, "")
+      .trim(),
+    64
+  ) || null;
+}
+
+function compactTitle(value: string, maxLength: number) {
+  const compacted = value
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/[.;,\s]+$/g, "")
+    .trim();
+  if (compacted.length <= maxLength) return compacted;
+  return `${compacted.slice(0, maxLength - 3).replace(/\s+\S*$/, "")}...`;
+}
+
+function uppercaseFirst(value: string) {
+  return value ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
 function meaningfulLines(text: string) {

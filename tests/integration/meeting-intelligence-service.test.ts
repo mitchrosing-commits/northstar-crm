@@ -58,7 +58,13 @@ afterEach(async () => {
     }
   });
   await fixture?.prisma.activity.deleteMany({
-    where: { workspaceId: fixture.workspaceA.id, title: { contains: "Meeting:" } }
+    where: {
+      workspaceId: fixture.workspaceA.id,
+      OR: [
+        { title: { contains: "Meeting:" } },
+        { description: { contains: "Source attribution: Meeting Intelligence reviewed intake." } }
+      ]
+    }
   });
   await fixture?.prisma.activity.deleteMany({
     where: {
@@ -541,7 +547,12 @@ describe("meeting intelligence service", () => {
       })
     ).resolves.toBeTruthy();
     const meeting = await fx.prisma.activity.findFirstOrThrow({
-      where: { dealId: fx.recordsA.deal.id, title: { contains: "Meeting:" }, type: "MEETING", workspaceId: fx.workspaceA.id }
+      where: {
+        dealId: fx.recordsA.deal.id,
+        description: { contains: "Source attribution: Meeting Intelligence reviewed intake." },
+        type: "MEETING",
+        workspaceId: fx.workspaceA.id
+      }
     });
     expect(meeting.completedAt?.toISOString()).toBe("2030-04-10T00:00:00.000Z");
     expect(meeting.description).toContain("Structured meeting summary:");
@@ -571,11 +582,11 @@ describe("meeting intelligence service", () => {
       type: "activity"
     });
     const followUp = await fx.prisma.activity.findFirstOrThrow({
-      where: { dealId: fx.recordsA.deal.id, title: { contains: "send SOW" }, type: "TASK", workspaceId: fx.workspaceA.id }
+      where: { dealId: fx.recordsA.deal.id, title: { contains: "Send SOW" }, type: "EMAIL", workspaceId: fx.workspaceA.id }
     });
     expect(followUp.dueAt?.toISOString()).toBe("2030-04-15T00:00:00.000Z");
     expect(followUp.description).toContain("Source: Meeting Intelligence next-step activity.");
-    expect(followUp.description).toContain("Source: Action: send SOW by 2030-04-15.");
+    expect(followUp.description).toContain("Action evidence: send SOW by 2030-04-15.");
     await expect(
       fx.prisma.emailLogActivityLink.count({ where: { activityId: followUp.id, workspaceId: fx.workspaceA.id } })
     ).resolves.toBe(0);
@@ -1266,7 +1277,12 @@ describe("meeting intelligence service", () => {
       });
 
       const meeting = await fx.prisma.activity.findFirstOrThrow({
-        where: { dealId: fx.recordsA.deal.id, title: { contains: "Meeting:" }, type: "MEETING", workspaceId: fx.workspaceA.id }
+        where: {
+          dealId: fx.recordsA.deal.id,
+          description: { contains: "Source attribution: Meeting Intelligence reviewed intake." },
+          type: "MEETING",
+          workspaceId: fx.workspaceA.id
+        }
       });
       const associations = await fx.prisma.meetingActivityAssociation.findMany({
         where: { activityId: meeting.id, workspaceId: fx.workspaceA.id }

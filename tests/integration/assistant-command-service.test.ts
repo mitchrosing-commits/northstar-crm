@@ -72,6 +72,164 @@ describe("read-only Assistant command service integration", () => {
     await expect(crmRecordCounts(fx)).resolves.toEqual(before);
   });
 
+  it("lists, renames, deletes, regenerates, and answers general chat without CRM mutation", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    const before = await crmRecordCounts(fx);
+
+    const first = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Rewrite: hey can you send the procurement update ASAP. thanks",
+      now
+    });
+    const assistantMessage = first.messages.at(-1);
+    if (!assistantMessage) throw new Error("Expected Assistant reply.");
+    const list = await crm.listAssistantConversations(fx.actorA);
+
+    expect(first.title).toContain("Rewrite");
+    expect(assistantMessage.title).toBe("Writing help");
+    expect(assistantMessage.sources).toEqual([]);
+    expect(assistantMessage.content).toContain("does not mutate CRM data");
+    expect(JSON.stringify(assistantMessage)).not.toMatch(secretOrRawProviderTerms);
+    expect(list[0]).toMatchObject({
+      id: first.id,
+      title: first.title
+    });
+
+    const renamed = await crm.renameAssistantConversation(fx.actorA, {
+      conversationId: first.id,
+      title: "Procurement rewrite"
+    });
+    expect(renamed.title).toBe("Procurement rewrite");
+
+    const regenerated = await crm.regenerateLatestAssistantConversationResponse(fx.actorA, {
+      conversationId: first.id,
+      now
+    });
+    expect(regenerated.messages.filter((message) => message.role === "assistant")).toHaveLength(2);
+    expect(regenerated.messages.at(-1)?.title).toBe("Writing help");
+
+    await expect(crm.renameAssistantConversation(fx.actorB, {
+      conversationId: first.id,
+      title: "Cross workspace rename"
+    })).rejects.toThrow();
+    await crm.deleteAssistantConversation(fx.actorA, first.id);
+    await expect(crm.getAssistantConversation(fx.actorA, first.id)).resolves.toBeNull();
+    await expect(crmRecordCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("persists bounded conversation memory and resolves numbered deal references safely", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    const urgentDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        organizationId: fx.recordsA.organization.id,
+        personId: fx.recordsA.person.id,
+        title: "Memory urgent expansion",
+        valueCents: 999900,
+        currency: "USD",
+        expectedCloseAt: new Date("2030-01-04T12:00:00.000Z")
+      }
+    });
+
+    const first = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Show me the highest-risk deals this week.",
+      now
+    });
+    const memory = await crm.getAssistantConversationMemory(fx.actorA, first.id);
+
+    expect(memory?.summary.recentResultSets[0]?.items.map((item) => item.recordId)).toContain(urgentDeal.id);
+    expect(memory?.summary.recentResultSets[0]?.items.map((item) => item.recordId)).toContain(fx.recordsA.deal.id);
+    expect(memory?.contextWindow.limits.maxRecentMessages).toBeLessThanOrEqual(12);
+    expect(JSON.stringify(memory)).not.toMatch(secretOrRawProviderTerms);
+
+    const second = await crm.sendAssistantConversationMessage(fx.actorA, {
+      conversationId: first.id,
+      message: "Tell me more about the second one.",
+      now
+    });
+    const assistantMessage = second.messages.at(-1);
+    const updatedMemory = await crm.getAssistantConversationMemory(fx.actorA, first.id);
+
+    expect(assistantMessage?.content).toContain("Using remembered context");
+    expect(assistantMessage?.title).toContain("Deal brief");
+    expect(assistantMessage?.title).toContain(fx.recordsA.deal.title);
+    expect(updatedMemory?.summary.activeSubject?.recordId).toBe(fx.recordsA.deal.id);
+    await expect(crm.getAssistantConversationMemory(fx.actorB, first.id)).resolves.toBeNull();
+  });
+
+  it("handles stale and deleted remembered records without redirecting to another CRM record", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    const urgentDeal = await fx.prisma.deal.create({
+      data: {
+        workspaceId: fx.workspaceA.id,
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        ownerId: fx.userA.id,
+        organizationId: fx.recordsA.organization.id,
+        personId: fx.recordsA.person.id,
+        title: "Memory stale expansion",
+        valueCents: 999900,
+        currency: "USD"
+      }
+    });
+    const first = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Show me the highest-risk deals this week.",
+      now
+    });
+
+    await fx.prisma.deal.update({
+      data: { status: "WON", wonAt: new Date("2030-01-03T12:00:00.000Z") },
+      where: { id: urgentDeal.id }
+    });
+    const stale = await crm.sendAssistantConversationMessage(fx.actorA, {
+      conversationId: first.id,
+      message: "Tell me more about the first one.",
+      now: new Date("2030-01-04T12:00:00.000Z")
+    });
+    expect(stale.messages.at(-1)?.content).toContain("I rechecked the remembered deal");
+    expect(stale.messages.at(-1)?.title).toContain("Deal brief");
+
+    await fx.prisma.deal.update({
+      data: { deletedAt: new Date("2030-01-05T12:00:00.000Z") },
+      where: { id: urgentDeal.id }
+    });
+    const deleted = await crm.sendAssistantConversationMessage(fx.actorA, {
+      conversationId: first.id,
+      message: "Continue with that deal.",
+      now: new Date("2030-01-06T12:00:00.000Z")
+    });
+
+    expect(deleted.messages.at(-1)?.title).toBe("Remembered record unavailable");
+    expect(deleted.messages.at(-1)?.content).toContain("no longer available");
+    expect(deleted.messages.at(-1)?.content).toContain("I did not redirect this request to another record");
+  });
+
+  it("keeps memory isolated across New Chat and deletes conversation-owned memory only", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-02T12:00:00.000Z");
+    const first = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Summarize the Alpha Needle Deal.",
+      now
+    });
+    await expect(crm.getAssistantConversationMemory(fx.actorA, first.id)).resolves.not.toBeNull();
+
+    const fresh = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Tell me more about the second one.",
+      now
+    });
+    expect(fresh.id).not.toBe(first.id);
+    expect(JSON.stringify(fresh)).not.toContain(fx.recordsA.deal.id);
+
+    await crm.deleteAssistantConversation(fx.actorA, first.id);
+    await expect(crm.getAssistantConversationMemory(fx.actorA, first.id)).resolves.toBeNull();
+    await expect(fx.prisma.crmChangeProposal.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(0);
+  });
+
   it("asks for clarification on ambiguous names and does not leak another workspace", async () => {
     const fx = currentFixture();
     await fx.prisma.person.createMany({

@@ -38,6 +38,7 @@ const actionRequestService = readFileSync(join(process.cwd(), "lib/services/assi
 const assistantCrmProposalService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-crm-change-proposal-service.ts"), "utf8");
 const commandService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-command-service.ts"), "utf8");
 const conversationService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-conversation-service.ts"), "utf8");
+const conversationMemoryService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-conversation-memory-service.ts"), "utf8");
 const contextService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-context-service.ts"), "utf8");
 const draftActionService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-draft-action-service.ts"), "utf8");
 const todayCommandCenterService = readFileSync(join(process.cwd(), "lib/services/assistant/assistant-today-command-center-service.ts"), "utf8");
@@ -50,6 +51,7 @@ const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8")
 const assistantActionRequestMigration = readFileSync(join(process.cwd(), "prisma/migrations/20260709130000_assistant_action_requests/migration.sql"), "utf8");
 const assistantTodayItemHideMigration = readFileSync(join(process.cwd(), "prisma/migrations/20260710120000_assistant_today_item_hides/migration.sql"), "utf8");
 const assistantConversationMigration = readFileSync(join(process.cwd(), "prisma/migrations/20260710140000_assistant_conversations_v1/migration.sql"), "utf8");
+const assistantConversationMemoryMigration = readFileSync(join(process.cwd(), "prisma/migrations/20260721120000_assistant_conversation_memory/migration.sql"), "utf8");
 
 describe("read-only and draft-only Northstar Assistant command service", () => {
   it("parses supported deterministic commands", () => {
@@ -333,6 +335,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantPage).toContain("export default async function AssistantPage");
     expect(assistantPage).toContain("answerAssistantCommand(actor, command)");
     expect(assistantPage).toContain("getAssistantConversation(actor, conversationId)");
+    expect(assistantPage).toContain("listAssistantConversations(actor)");
     expect(assistantPage).toContain("listAssistantActionRequests(actor)");
     expect(assistantPage).toContain("listCrmChangeProposals(actor)");
     expect(assistantPage).toContain('proposal.sourceType === "assistant"');
@@ -358,9 +361,15 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantConsole).toContain("AssistantCommandForm");
     expect(assistantConsole).toContain("AssistantIcon");
     expect(assistantConsole).toContain("AssistantChatThread");
+    expect(assistantConsole).toContain("AssistantConversationHistory");
+    expect(assistantConsole).toContain("AssistantConversationTitleControls");
     expect(assistantConsole).toContain("AssistantStarterPrompts");
     expect(assistantConsole).toContain("AssistantSourceList");
     expect(assistantConsole).toContain("AssistantMessageLifecycleNotice");
+    expect(assistantConsole).toContain("AssistantCopyButton");
+    expect(assistantConsole).toContain("Regenerate");
+    expect(assistantConsole).toContain("Edit and resend");
+    expect(assistantConsole).toContain("Delete chat");
     expect(assistantConsole).toContain("Clarification canceled");
     expect(assistantConsole).toContain("Clarification resolved");
     expect(assistantConsole).toContain("Candidate stale or deleted");
@@ -377,15 +386,22 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantCommandForm).toContain('name="message"');
     expect(assistantCommandForm).toContain('name="conversationId"');
     expect(assistantCommandForm).toContain('id="assistant-chat-composer"');
-    expect(assistantCommandForm).toContain("Question or command");
+    expect(assistantCommandForm).toContain("<FormFieldLabel>Message</FormFieldLabel>");
+    expect(assistantCommandForm).toContain("Enter sends. Shift+Enter adds a new line.");
+    expect(assistantCommandForm).toContain("onKeyDown");
+    expect(assistantCommandForm).toContain("requestSubmit");
+    expect(assistantCommandForm).toContain("Stop unavailable");
     expect(assistantCommandForm).toContain("Ready for a review-first CRM question.");
     expect(assistantCommandForm).toContain("is building a review-first reply");
-    expect(assistantCommandForm).toContain("Enter a question or command before asking.");
+    expect(assistantCommandForm).toContain("Enter a message before sending.");
     expect(assistantCommandForm).toContain("aria-live");
     expect(assistantCommandForm).toContain("required");
     expect(assistantConsole).toContain("Context-only");
     expect(assistantConsole).toContain("Draft only");
     expect(assistantActions).toContain("saveAssistantDraftActionRequest");
+    expect(assistantActions).toContain("regenerateAssistantConversationAction");
+    expect(assistantActions).toContain("renameAssistantConversationAction");
+    expect(assistantActions).toContain("deleteAssistantConversationAction");
     expect(assistantActions).toContain("createCrmChangeProposalFromAssistantDraft");
     expect(assistantActions).toContain("isAssistantCrmChangeProposalDraft");
     expect(assistantActions).toContain("clarifyAssistantDraftAction");
@@ -456,6 +472,12 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantTodayCommandCenter).toContain("Draft follow-up");
     expect(assistantTodayCommandCenter).toContain("Review activities");
     expect(globalStyles).toContain(".assistant-console");
+    expect(globalStyles).toContain(".assistant-chat-layout");
+    expect(globalStyles).toContain(".assistant-conversation-history");
+    expect(globalStyles).toContain(".assistant-history-link");
+    expect(globalStyles).toContain(".assistant-conversation-title-controls");
+    expect(globalStyles).toContain(".assistant-chat-message-actions");
+    expect(globalStyles).toContain(".assistant-edit-message");
     expect(globalStyles).toContain(".assistant-command-panel-primary");
     expect(globalStyles).toContain(".assistant-command-icon");
     expect(globalStyles).toContain(".assistant-command-status");
@@ -475,6 +497,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(globalStyles).toContain(".assistant-review-request-rejected");
     expect(crmBarrel).toContain('export * from "./assistant/assistant-command-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-conversation-service"');
+    expect(crmBarrel).toContain('export * from "./assistant/assistant-conversation-memory-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-context-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-crm-change-proposal-service"');
     expect(crmBarrel).toContain('export * from "./assistant/assistant-draft-action-service"');
@@ -483,6 +506,8 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(schema).toContain("model AssistantActionRequest");
     expect(schema).toContain("model AssistantConversation");
     expect(schema).toContain("model AssistantConversationMessage");
+    expect(schema).toContain("model AssistantConversationMemory");
+    expect(schema).toContain("model AssistantConversationReference");
     expect(schema).toContain("@@index([workspaceId, userId, updatedAt])");
     expect(schema).toContain("assistantActionPermissions");
     expect(schema).toContain("model AssistantTodayItemHide");
@@ -492,6 +517,10 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantTodayItemHideMigration).toContain('CREATE TABLE IF NOT EXISTS "AssistantTodayItemHide"');
     expect(assistantConversationMigration).toContain('CREATE TABLE IF NOT EXISTS "AssistantConversation"');
     expect(assistantConversationMigration).toContain('CREATE TABLE IF NOT EXISTS "AssistantConversationMessage"');
+    expect(assistantConversationMemoryMigration).toContain('CREATE TABLE IF NOT EXISTS "AssistantConversationMemory"');
+    expect(assistantConversationMemoryMigration).toContain('CREATE TABLE IF NOT EXISTS "AssistantConversationReference"');
+    expect(assistantConversationMemoryMigration).toContain('"resultSetKey" TEXT NOT NULL DEFAULT');
+    expect(assistantConversationMemoryMigration).toContain('FOREIGN KEY ("conversationId") REFERENCES "AssistantConversation"("id") ON DELETE CASCADE');
   });
 
   it("keeps Assistant slices workspace-scoped and non-mutating", () => {
@@ -556,11 +585,28 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(conversationService).toContain("redactSensitiveText");
     expect(conversationService).toContain("assistantConversation.create");
     expect(conversationService).toContain("assistantConversationMessage.create");
+    expect(conversationService).toContain("listAssistantConversations");
+    expect(conversationService).toContain("renameAssistantConversation");
+    expect(conversationService).toContain("deleteAssistantConversation");
+    expect(conversationService).toContain("regenerateLatestAssistantConversationResponse");
+    expect(conversationService).toContain("prepareAssistantConversationMemoryContext");
+    expect(conversationService).toContain("updateAssistantConversationMemory");
+    expect(conversationService).toContain("buildGeneralWorkReply");
+    expect(conversationService).toContain("safeMultilineText");
     expect(conversationService).toContain("clarifyAssistantConversationDraft");
     expect(conversationService).toContain("conversationAlreadyHasClarificationDraft");
     expect(conversationService).toContain("Clarification canceled");
     expect(conversationService).not.toMatch(/sendGmail|syncGmail|refreshGmail|providerMessageId|providerThreadId|raw provider|raw Gmail/i);
     expect(conversationService).not.toMatch(/prisma\.(activity|deal|lead|quote|note|emailLog|aiPreference)\.(create|update|delete|upsert|createMany|deleteMany|updateMany)\b/);
+    expect(conversationMemoryService).toContain("getAssistantConversationMemory");
+    expect(conversationMemoryService).toContain("prepareAssistantConversationMemoryContext");
+    expect(conversationMemoryService).toContain("updateAssistantConversationMemory");
+    expect(conversationMemoryService).toContain("rebuildAssistantConversationMemory");
+    expect(conversationMemoryService).toContain("referencedOrdinal");
+    expect(conversationMemoryService).toContain("snapshotChanged");
+    expect(conversationMemoryService).toContain("maxRecentMessages");
+    expect(conversationMemoryService).toContain("await ensureWorkspaceAccess(actor)");
+    expect(conversationMemoryService).not.toMatch(/sendGmail|syncGmail|refreshGmail|providerMessageId|providerThreadId|raw provider|raw Gmail/i);
   });
 
   it("does not regress Gmail OAuth scopes from Assistant work", () => {

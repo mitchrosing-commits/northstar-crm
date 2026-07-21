@@ -315,6 +315,7 @@ describe("email sync provider foundation", () => {
     expect(emailPage).toContain("Showing ${threadCount} stored synced threads");
     expect(emailPage).toContain("GmailSyncProgressPanel");
     expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
+    expect(emailPage).toContain("account.syncStatusLabel ?? account.syncHealth.currentStateLabel");
     expect(emailPage).toContain("gmail-sync-queued");
     expect(emailPage).toContain("Send Gmail reply");
     expect(emailPage).toContain("Disconnect");

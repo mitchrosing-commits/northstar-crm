@@ -28,6 +28,7 @@ export function RecordTimeline({
   title = "Timeline"
 }: RecordTimelineProps) {
   const timelineCountLabel = `${title} timeline event count: ${items.length}`;
+  const summaryLabel = `Show ${items.length} ${items.length === 1 ? "timeline event" : "timeline events"}`;
 
   return (
     <section className="data-card section-spaced" id={id}>
@@ -42,11 +43,14 @@ export function RecordTimeline({
         title={title}
       />
       {items.length > 0 ? (
-        <ol className="timeline" aria-label="Unified record timeline">
-          {items.map((item) => (
-            <RecordTimelineItem key={item.id} item={item} />
-          ))}
-        </ol>
+        <details className="record-history-disclosure record-timeline-disclosure">
+          <summary>{summaryLabel}</summary>
+          <ol className="timeline" aria-label="Unified record timeline">
+            {items.map((item) => (
+              <RecordTimelineItem key={item.id} item={item} />
+            ))}
+          </ol>
+        </details>
       ) : (
         <EmptyState className="empty-state-compact empty-state-panel" title={emptyMessage} />
       )}

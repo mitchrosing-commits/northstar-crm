@@ -7,7 +7,7 @@ import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { listAssistantActionRequests } from "@/lib/services/assistant/assistant-action-request-service";
 import { answerAssistantCommand } from "@/lib/services/assistant/assistant-command-service";
-import { getAssistantConversation } from "@/lib/services/assistant/assistant-conversation-service";
+import { getAssistantConversation, listAssistantConversations } from "@/lib/services/assistant/assistant-conversation-service";
 import { buildAssistantTodayCommandCenter } from "@/lib/services/assistant/assistant-today-command-center-service";
 import { getAiPreferences, listCrmChangeProposals } from "@/lib/services/crm";
 
@@ -35,9 +35,10 @@ export default async function AssistantPage({ searchParams }: PageProps) {
   const todayCommandCenterStatus = normalizeTodayCommandCenterStatus(resolvedSearchParams.todayCommandCenter);
   const showHiddenTodayItems = resolvedSearchParams.today === "hidden";
   const { actor, workspace } = await getCurrentWorkspaceContext();
-  const [answer, conversation, pendingActionRequests, crmChangeProposalReview, todayCommandCenter, preferences] = await Promise.all([
+  const [answer, conversation, conversations, pendingActionRequests, crmChangeProposalReview, todayCommandCenter, preferences] = await Promise.all([
     command ? answerAssistantCommand(actor, command) : Promise.resolve(null),
     getAssistantConversation(actor, conversationId),
+    listAssistantConversations(actor),
     listAssistantActionRequests(actor),
     listCrmChangeProposals(actor),
     buildAssistantTodayCommandCenter(actor, new Date(), { showHidden: showHiddenTodayItems }),
@@ -84,6 +85,7 @@ export default async function AssistantPage({ searchParams }: PageProps) {
         assistantTone={preferences.assistantTonePreset}
         command={command}
         conversation={conversation}
+        conversations={conversations}
         crmChangeProposals={crmChangeProposalReview.proposals.filter((proposal) => proposal.sourceType === "assistant")}
         pendingActionRequests={pendingActionRequests}
         todayCommandCenter={todayCommandCenter}

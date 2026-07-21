@@ -147,6 +147,7 @@ test.describe("Northstar CRM browser smoke", () => {
         await expectRecordSectionNav(page, ["#overview", "#ai-record-brief", "#related-people", "#related-deals", "#custom-fields"], "#related-people");
       }
       if (path === communicationDealPath) {
+        await expandRecordTimeline(page);
         await expect(page.getByText("Quote shared for manager training package")).toBeVisible();
         await expect(page.getByText("Logged outbound email")).toBeVisible();
         const contractWorkflow = page.locator(".contract-workflow-panel");
@@ -187,9 +188,10 @@ test.describe("Northstar CRM browser smoke", () => {
         await expect(page.getByRole("heading", { name: "Assistant" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Chat with Stella" })).toBeVisible();
         await expect(page.getByLabel("Suggested Assistant prompts")).toBeVisible();
-        await expect(page.getByRole("textbox", { name: /^Question or command\b/ })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Ask" })).toBeVisible();
-        await expect(page.getByText("draft safe actions for review")).toBeVisible();
+        await expect(page.getByRole("textbox", { name: /^Message\b/ })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+        await expect(page.getByText("Actions stay review-first before anything eligible can be applied.")).toBeVisible();
+        await expect(page.getByLabel("Assistant permissions and limits")).toContainText("draft actions");
       }
       if (path === "/pipeline") {
         const contractSummaries = page.locator(".contract-status-summary");
@@ -829,6 +831,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await emailLogPanel.getByRole("button", { name: "Save email log" }).click();
     await expectApiOk(emailLogResponse, "Expected lead email log API to succeed");
     await page.reload();
+    await expandRecordTimeline(page);
     await expect(page.getByText(emailSubject)).toBeVisible();
     await expect(page.getByText("Logged inbound email")).toBeVisible();
 
@@ -838,6 +841,7 @@ test.describe("Northstar CRM browser smoke", () => {
     await expectApiOk(conversionResponse, "Expected lead conversion API to succeed");
     const dealPath = await waitForDetailPath(page, "/deals/");
     await expect(page.locator(".page-title", { hasText: dealTitle })).toBeVisible();
+    await expandRecordTimeline(page);
     await expect(page.getByText(emailSubject)).toBeVisible();
     await expect(page.getByText("Logged inbound email")).toBeVisible();
 
@@ -1845,6 +1849,14 @@ async function firstActivityEditHref(page: Page) {
   });
   expect(href, "Expected activities list to include a seeded activity edit link").toBeTruthy();
   return href;
+}
+
+async function expandRecordTimeline(page: Page) {
+  const timelineDisclosure = page.locator(".record-timeline-disclosure").first();
+  await expect(timelineDisclosure).toBeVisible();
+  if ((await timelineDisclosure.getAttribute("open")) === null) {
+    await timelineDisclosure.locator("summary").click();
+  }
 }
 
 async function expectPageReady(page: Page, path: string, options: { requireAppShell?: boolean } = {}) {

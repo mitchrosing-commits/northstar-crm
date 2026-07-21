@@ -92,7 +92,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(suggestions).not.toContainText(/send|sync|convert|delete|autonomous/i);
 
     await commandInput(page).fill("Tell me what I have to do today.");
-    await page.getByRole("button", { name: "Ask" }).click();
+    await page.getByRole("button", { name: "Send" }).click();
     const thread = page.getByLabel("Assistant conversation");
     await expect(thread.getByRole("heading", { name: "Today's Assistant agenda" })).toBeVisible();
     const commandResultUrl = new URL(page.url());
@@ -109,11 +109,11 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(commandInput(page)).toBeFocused();
 
     await commandInput(page).fill("What should I do first?");
-    await page.getByRole("button", { name: "Ask" }).click();
+    await page.getByRole("button", { name: "Send" }).click();
     await expect(page.getByRole("status")).toContainText("Reply ready in the conversation.", { timeout: 15_000 });
     await expect(thread).toContainText("What should I do first?", { timeout: 15_000 });
     await expect(thread.locator(".assistant-chat-message")).toHaveCount(4);
-    await page.getByRole("link", { name: "New conversation" }).click();
+    await page.getByRole("link", { name: "New chat" }).click();
     await expect(page).toHaveURL(/\/assistant$/);
     await expect(page.getByLabel("Assistant conversation")).toContainText("ready for a work conversation");
 
@@ -127,12 +127,43 @@ test.describe("Assistant review-first browser workflow", () => {
     await commandInput(page).focus();
     await expect(commandInput(page)).toBeFocused();
     await commandInput(page).fill("");
-    await page.getByRole("button", { name: "Ask" }).click();
-    await expect(page.getByRole("status")).toContainText("Enter a question or command before asking.");
+    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+    await expect(page.getByRole("status")).toContainText("Ready for a review-first CRM question.");
 
     await commandInput(page).fill("Tell me what I have to do today.");
     await page.locator(".assistant-command-form").dispatchEvent("submit");
     await expect(page.getByRole("status")).toContainText("is building a review-first reply");
+
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("remembers a numbered deal reference across refresh without leaking into New chat", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await expectAssistantPageReady(page);
+    await commandInput(page).fill("Show me the highest-risk deals this week.");
+    await page.getByRole("button", { name: "Send" }).click();
+    const thread = page.getByRole("region", { name: "Assistant conversation" });
+    await expect(thread.getByRole("heading", { name: "Highest-risk deals this week" })).toBeVisible({ timeout: 15_000 });
+
+    await commandInput(page).fill("Tell me more about the first one.");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(thread).toContainText("Using remembered context", { timeout: 15_000 });
+    await expect(thread.getByRole("heading", { name: /Deal brief:/ })).toBeVisible();
+
+    await page.reload();
+    await expect(page.locator("#main-content")).toBeVisible();
+    await expect(page.getByRole("heading", { exact: true, name: "Assistant" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Chat with Stella" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Assistant conversation" })).toContainText("Using remembered context");
+
+    await page.getByRole("link", { name: "New chat" }).click();
+    await expect(page).toHaveURL(/\/assistant$/);
+    await commandInput(page).fill("Tell me more about the first one.");
+    await page.getByRole("button", { name: "Send" }).click();
+    const freshThread = page.getByRole("region", { name: "Assistant conversation" });
+    await expect(freshThread).not.toContainText("Using remembered context");
+    await expect(freshThread).not.toContainText(/Deal brief:/);
 
     expect(errors.current()).toEqual([]);
   });
@@ -170,7 +201,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await page.setViewportSize({ width: 360, height: 900 });
 
     await expectAssistantPageReady(page);
-    const commandBoxes = await page.locator(".assistant-command-form input, .assistant-command-form button, .assistant-suggestion").evaluateAll((elements) =>
+    const commandBoxes = await page.locator(".assistant-command-form textarea, .assistant-command-form button, .assistant-suggestion").evaluateAll((elements) =>
       elements.filter((element) => element.checkVisibility()).map((element) => {
         const rect = element.getBoundingClientRect();
         return { height: rect.height, text: element.textContent ?? element.getAttribute("placeholder") ?? "", width: rect.width };
@@ -299,8 +330,9 @@ test.describe("Assistant review-first browser workflow", () => {
     const contactDraft = page.getByLabel("Assistant draft actions").locator(".assistant-draft-card").filter({ hasText: "Propose creating contact" });
     await expect(contactDraft).toContainText("Save, then review");
     await expect(contactDraft).toContainText("Email");
-    await expect(contactDraft).toContainText(email);
+    await expect(contactDraft).toContainText("Not provided");
     await expect(contactDraft).toContainText("[redacted email]");
+    await expect(contactDraft).not.toContainText(email);
     await expect(contactDraft).toContainText("Phone");
 
     await Promise.all([
@@ -335,7 +367,7 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(appliedProposalOutcome.getByRole("link", { name: "Applied contact" })).toBeVisible();
 
     const created = await prisma.person.findFirst({
-      where: { email, workspaceId: fixture.workspaceId },
+      where: { firstName: "Browser Reviewed", lastName: "Proposal", phone: "555-0177", workspaceId: fixture.workspaceId },
       select: { firstName: true, lastName: true, phone: true }
     });
     expect(created).toEqual({ firstName: "Browser Reviewed", lastName: "Proposal", phone: "555-0177" });
@@ -667,12 +699,12 @@ async function expectAssistantPageReady(page: Page) {
 async function draftCommand(page: Page, command: string) {
   await expectAssistantPageReady(page);
   await commandInput(page).fill(command);
-  await page.getByRole("button", { name: "Ask" }).click();
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Draft action for review" })).toBeVisible();
 }
 
 function commandInput(page: Page) {
-  return page.getByRole("textbox", { name: /^Question or command\b/ });
+  return page.getByRole("textbox", { name: /^Message\b/ });
 }
 
 function reviewRequest(page: Page, text: string) {

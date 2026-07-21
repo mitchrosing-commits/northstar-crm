@@ -365,6 +365,7 @@ describe("email sync server actions", () => {
     await expect(generateEmailReplyDraftAction({}, formData)).resolves.toEqual({
       contextUsed: ["Email subject and body", "Contact"],
       emailLogId: "email_log_1",
+      instructions: "",
       message: "AI draft generated. Review and edit before using it.",
       replyBody: "Hi there,\n\nThanks for reaching out.",
       subjectSuggestion: "Re: Hello",
@@ -375,6 +376,7 @@ describe("email sync server actions", () => {
 
     expect(mocks.generateEmailReplyDraft).toHaveBeenCalledWith(actor, {
       emailLogId: "email_log_1",
+      instructions: "",
       tone: "warm"
     });
   });
@@ -387,6 +389,7 @@ describe("email sync server actions", () => {
     await expect(generateEmailReplyDraftAction({}, formData)).resolves.toEqual({
       emailLogId: "email_log_1",
       error: "AI reply draft could not be generated.",
+      instructions: "",
       tone: "concise"
     });
   });
@@ -412,6 +415,7 @@ describe("email sync server actions", () => {
     await expect(generateEmailReplyDraftAction({}, formData)).resolves.toEqual({
       emailLogId: "email_log_1",
       error: "AI email reply provider is still rate limited after retrying. Try again in about 20 seconds.",
+      instructions: "",
       retryAfterSeconds: 20,
       retryLabel: "Try again in about 20 seconds.",
       retryable: true,

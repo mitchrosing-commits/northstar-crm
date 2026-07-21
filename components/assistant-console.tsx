@@ -1,10 +1,16 @@
 import Link from "next/link";
 import type { Route } from "next";
 
-import { sendAssistantConversationMessageAction } from "@/app/assistant/actions";
+import {
+  deleteAssistantConversationAction,
+  regenerateAssistantConversationAction,
+  renameAssistantConversationAction,
+  sendAssistantConversationMessageAction
+} from "@/app/assistant/actions";
 import { AssistantActionReviewQueue } from "@/components/assistant-action-review-queue";
 import { Badge } from "@/components/badge";
 import { AssistantCommandForm } from "@/components/assistant-command-form";
+import { AssistantCopyButton } from "@/components/assistant-copy-button";
 import { AssistantDraftActionCard } from "@/components/assistant-draft-action-card";
 import { AssistantIcon } from "@/components/assistant-icon";
 import { AssistantTodayCommandCenter } from "@/components/assistant-today-command-center";
@@ -18,6 +24,7 @@ import {
 } from "@/lib/services/assistant/assistant-crm-change-proposal-service";
 import {
   assistantConversationStarterPrompts,
+  type AssistantConversationListItem,
   type AssistantConversationMessageView,
   type AssistantConversationSource,
   type AssistantConversationView
@@ -34,6 +41,7 @@ type AssistantConsoleProps = {
   assistantTone: AssistantTonePreset;
   command: string;
   conversation: AssistantConversationView | null;
+  conversations: AssistantConversationListItem[];
   crmChangeProposals: CrmChangeProposalView[];
   pendingActionRequests: AssistantActionRequestView[];
   todayCommandCenter: AssistantTodayCommandCenterView;
@@ -49,6 +57,7 @@ export function AssistantConsole({
   assistantTone,
   command,
   conversation,
+  conversations,
   crmChangeProposals,
   pendingActionRequests,
   todayCommandCenter,
@@ -56,44 +65,46 @@ export function AssistantConsole({
 }: AssistantConsoleProps) {
   return (
     <section className="assistant-console" aria-label="Northstar Assistant console">
-      <section className="panel assistant-command-panel assistant-command-panel-primary assistant-chat-panel" id="assistant-ask" aria-labelledby="assistant-command-title">
-        <div className="assistant-command-head">
-          <span className="assistant-command-icon" aria-hidden="true">
-            <AssistantIcon data-testid="assistant-icon" size={24} />
-          </span>
-          <div className="assistant-command-copy">
-            <p className="assistant-command-kicker">Review-first Assistant</p>
-            <h2 id="assistant-command-title">Chat with {assistantName}</h2>
-            <p>
-              Ask open-ended CRM and Inbox questions, keep follow-up context in this conversation, and draft safe actions for review. {assistantName} is using a {assistantToneLabel(assistantTone)} tone; eligible contact and organization changes go through CRM Change Proposals before anything mutates.
-            </p>
-          </div>
-          <div className="assistant-command-head-actions">
-            <Badge>Review-first</Badge>
-            {conversation ? (
+      <div className="assistant-chat-layout">
+        <AssistantConversationHistory conversations={conversations} currentConversationId={conversation?.id ?? ""} />
+        <section className="panel assistant-command-panel assistant-command-panel-primary assistant-chat-panel" id="assistant-ask" aria-labelledby="assistant-command-title">
+          <div className="assistant-command-head">
+            <span className="assistant-command-icon" aria-hidden="true">
+              <AssistantIcon data-testid="assistant-icon" size={24} />
+            </span>
+            <div className="assistant-command-copy">
+              <p className="assistant-command-kicker">Review-first Assistant</p>
+              <h2 id="assistant-command-title">Chat with {assistantName}</h2>
+              <p>
+                Ask naturally, follow up, change direction, and keep CRM work review-first. {assistantName} is using a {assistantToneLabel(assistantTone)} tone; eligible contact and organization changes go through CRM Change Proposals before anything mutates.
+              </p>
+            </div>
+            <div className="assistant-command-head-actions">
+              <Badge>Review-first</Badge>
               <Link className="button-secondary button-compact" href={"/assistant" as Route}>
-                New conversation
+                New chat
               </Link>
-            ) : null}
+            </div>
           </div>
-        </div>
-        <AssistantChatThread
-          answer={answer}
-          assistantName={assistantName}
-          command={command}
-          conversation={conversation}
-          crmChangeProposals={crmChangeProposals}
-        />
-        <AssistantStarterPrompts conversationId={conversation?.id ?? ""} />
-        <AssistantCommandForm
-          assistantChatStatus={assistantChatStatus}
-          assistantName={assistantName}
-          command={command}
-          conversationId={conversation?.id ?? null}
-          hasAnswer={Boolean(answer) || Boolean(conversation?.messages.length)}
-        />
-        <AssistantPermissionSummary />
-      </section>
+          {conversation ? <AssistantConversationTitleControls conversation={conversation} /> : null}
+          <AssistantChatThread
+            answer={answer}
+            assistantName={assistantName}
+            command={command}
+            conversation={conversation}
+            crmChangeProposals={crmChangeProposals}
+          />
+          <AssistantStarterPrompts conversationId={conversation?.id ?? ""} />
+          <AssistantCommandForm
+            assistantChatStatus={assistantChatStatus}
+            assistantName={assistantName}
+            command={command}
+            conversationId={conversation?.id ?? null}
+            hasAnswer={Boolean(answer) || Boolean(conversation?.messages.length)}
+          />
+          <AssistantPermissionSummary />
+        </section>
+      </div>
 
       {answer ? <AssistantAnswerCard answer={answer} crmChangeProposals={crmChangeProposals} /> : null}
       <section className="assistant-workspace-panels" aria-label="Assistant workspace panels">
@@ -106,6 +117,74 @@ export function AssistantConsole({
         />
       </section>
     </section>
+  );
+}
+
+function AssistantConversationHistory({
+  conversations,
+  currentConversationId
+}: {
+  conversations: AssistantConversationListItem[];
+  currentConversationId: string;
+}) {
+  return (
+    <aside className="assistant-conversation-history" aria-label="Assistant chat history">
+      <div className="assistant-history-header">
+        <div>
+          <p className="assistant-command-kicker">Conversations</p>
+          <h2>History</h2>
+        </div>
+        <Link className="button-primary button-compact" href={"/assistant" as Route}>
+          New
+        </Link>
+      </div>
+      {conversations.length > 0 ? (
+        <ol className="assistant-history-list">
+          {conversations.map((item) => (
+            <li key={item.id}>
+              <Link
+                aria-current={currentConversationId === item.id ? "page" : undefined}
+                className={currentConversationId === item.id ? "assistant-history-link assistant-history-link-active" : "assistant-history-link"}
+                href={`/assistant?conversation=${item.id}` as Route}
+              >
+                <strong>{item.title}</strong>
+                <span>{item.lastMessagePreview}</span>
+                <small>{formatConversationDate(item.updatedAt)}</small>
+              </Link>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="assistant-history-empty">Start a chat to keep the thread here.</p>
+      )}
+    </aside>
+  );
+}
+
+function AssistantConversationTitleControls({ conversation }: { conversation: AssistantConversationView }) {
+  return (
+    <details className="assistant-conversation-title-controls">
+      <summary>Conversation settings</summary>
+      <div className="assistant-conversation-title-panel">
+        <form action={renameAssistantConversationAction} className="assistant-inline-form">
+          <input name="conversationId" type="hidden" value={conversation.id} />
+          <label>
+            <span>Rename chat</span>
+            <input name="title" defaultValue={conversation.title} maxLength={80} required />
+          </label>
+          <button className="button-secondary button-compact" type="submit">
+            Rename
+          </button>
+        </form>
+        <form action={deleteAssistantConversationAction} className="assistant-inline-form">
+          <input name="conversationId" type="hidden" value={conversation.id} />
+          <button className="button-secondary button-compact" type="submit">
+            Delete chat
+          </button>
+          <small>Deletes this conversation only. CRM records and review history stay intact.</small>
+        </form>
+      </div>
+    </details>
   );
 }
 
@@ -128,6 +207,8 @@ function AssistantChatThread({
   crmChangeProposals: CrmChangeProposalView[];
 }) {
   const hasMessages = Boolean(conversation?.messages.length);
+  const latestAssistantId = latestMessageId(conversation?.messages ?? [], "assistant");
+  const latestUserId = latestMessageId(conversation?.messages ?? [], "user");
   return (
     <section className="assistant-chat-thread" id="assistant-chat-thread" aria-label="Assistant conversation">
       {hasMessages ? (
@@ -137,6 +218,8 @@ function AssistantChatThread({
             key={message.id}
             message={message}
             crmChangeProposals={crmChangeProposals}
+            isLatestAssistant={message.id === latestAssistantId}
+            isLatestUser={message.id === latestUserId}
             sourceCommand={previousSourceCommand(conversation.messages, message)}
           />
         ))
@@ -157,6 +240,8 @@ function AssistantChatThread({
               title: null
             }}
             sourceCommand={command}
+            isLatestAssistant={false}
+            isLatestUser={false}
           />
           <AssistantTransientAnswer answer={answer} crmChangeProposals={crmChangeProposals} />
         </>
@@ -208,17 +293,30 @@ function AssistantTransientAnswer({
     ],
     title: answer.title
   };
-  return <AssistantMessageBubble conversationId="" crmChangeProposals={crmChangeProposals} message={message} sourceCommand={answer.query} />;
+  return (
+    <AssistantMessageBubble
+      conversationId=""
+      crmChangeProposals={crmChangeProposals}
+      isLatestAssistant
+      isLatestUser={false}
+      message={message}
+      sourceCommand={answer.query}
+    />
+  );
 }
 
 function AssistantMessageBubble({
   conversationId,
   crmChangeProposals,
+  isLatestAssistant,
+  isLatestUser,
   message,
   sourceCommand
 }: {
   conversationId: string;
   crmChangeProposals: CrmChangeProposalView[];
+  isLatestAssistant: boolean;
+  isLatestUser: boolean;
   message: AssistantConversationMessageView;
   sourceCommand: string;
 }) {
@@ -231,6 +329,7 @@ function AssistantMessageBubble({
       </div>
       {message.title ? <h3>{message.title}</h3> : null}
       <p className="assistant-chat-message-content">{message.content}</p>
+      {isLatestUser ? <AssistantEditLatestUserMessage conversationId={conversationId} message={message.content} /> : null}
       <AssistantMessageLifecycleNotice message={message} />
       {message.sources.length > 0 ? <AssistantSourceList sources={message.sources} /> : null}
       {message.draftActions.length > 0 ? (
@@ -247,15 +346,44 @@ function AssistantMessageBubble({
         </div>
       ) : null}
       {isAssistant && message.retryPrompt ? (
-        <form action={sendAssistantConversationMessageAction} className="assistant-chat-retry">
-          {conversationId ? <input name="conversationId" type="hidden" value={conversationId} /> : null}
-          <input name="message" type="hidden" value={message.retryPrompt} />
-          <button className="button-secondary button-compact" type="submit">
-            Retry
-          </button>
-        </form>
+        <div className="assistant-chat-message-actions">
+          <AssistantCopyButton text={message.content} />
+          {message.errorCode ? (
+            <form action={sendAssistantConversationMessageAction}>
+              {conversationId ? <input name="conversationId" type="hidden" value={conversationId} /> : null}
+              <input name="message" type="hidden" value={message.retryPrompt} />
+              <button className="button-secondary button-compact" type="submit">
+                Retry
+              </button>
+            </form>
+          ) : null}
+          {isLatestAssistant && conversationId ? (
+            <form action={regenerateAssistantConversationAction}>
+              <input name="conversationId" type="hidden" value={conversationId} />
+              <button className="button-secondary button-compact" type="submit">
+                Regenerate
+              </button>
+            </form>
+          ) : null}
+        </div>
       ) : null}
     </article>
+  );
+}
+
+function AssistantEditLatestUserMessage({ conversationId, message }: { conversationId: string; message: string }) {
+  if (!conversationId) return null;
+  return (
+    <details className="assistant-edit-message">
+      <summary>Edit and resend</summary>
+      <form action={sendAssistantConversationMessageAction}>
+        <input name="conversationId" type="hidden" value={conversationId} />
+        <textarea aria-label="Edited message" defaultValue={message} maxLength={2_000} name="message" required />
+        <button className="button-secondary button-compact" type="submit">
+          Send edited message
+        </button>
+      </form>
+    </details>
   );
 }
 
@@ -332,6 +460,17 @@ function previousSourceCommand(messages: AssistantConversationMessageView[], mes
     if (messages[cursor]?.role === "user") return messages[cursor]?.content ?? message.content;
   }
   return message.content;
+}
+
+function latestMessageId(messages: AssistantConversationMessageView[], role: AssistantConversationMessageView["role"]) {
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    if (messages[cursor]?.role === role) return messages[cursor]?.id ?? "";
+  }
+  return "";
+}
+
+function formatConversationDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short" }).format(new Date(value));
 }
 
 function AssistantAnswerCard({

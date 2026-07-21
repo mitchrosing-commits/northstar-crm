@@ -8958,6 +8958,79 @@ textarea {
   gap: 16px;
 }
 
+.assistant-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.assistant-conversation-history {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  max-height: calc(100vh - 32px);
+  gap: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.assistant-history-header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.assistant-history-header h2 {
+  margin: 2px 0 0;
+  font-size: 17px;
+}
+
+.assistant-history-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistant-history-link {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-strong);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.assistant-history-link-active,
+.assistant-history-link:hover,
+.assistant-history-link:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.assistant-history-link strong,
+.assistant-history-link span,
+.assistant-history-link small,
+.assistant-history-empty {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.assistant-history-link span,
+.assistant-history-link small,
+.assistant-history-empty {
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
 .assistant-command-panel,
 .assistant-answer-card {
   display: grid;
@@ -9025,6 +9098,48 @@ textarea {
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
+}
+
+.assistant-conversation-title-controls {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-strong);
+}
+
+.assistant-conversation-title-controls summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.assistant-conversation-title-panel,
+.assistant-inline-form {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-conversation-title-panel {
+  margin-top: 10px;
+}
+
+.assistant-inline-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.assistant-inline-form input {
+  width: 100%;
+  text-transform: none;
+}
+
+.assistant-inline-form small {
+  color: var(--muted-strong);
 }
 
 .assistant-today-command-center,
@@ -9298,7 +9413,7 @@ textarea {
 }
 
 .assistant-chat-message-meta,
-.assistant-chat-retry {
+.assistant-chat-message-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -9325,6 +9440,32 @@ textarea {
   white-space: pre-line;
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+.assistant-edit-message {
+  width: 100%;
+}
+
+.assistant-edit-message summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.assistant-edit-message form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-edit-message textarea,
+.assistant-command-input textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  font: inherit;
 }
 
 .assistant-chat-sources {
@@ -9411,12 +9552,18 @@ textarea {
   min-width: 0;
 }
 
-.assistant-command-input input {
-  min-height: 48px;
+.assistant-command-input textarea {
+  min-height: 58px;
   font-size: 15px;
 }
 
-.assistant-command-submit {
+.assistant-command-buttons {
+  display: grid;
+  gap: 6px;
+}
+
+.assistant-command-submit,
+.assistant-command-stop {
   min-width: 92px;
   min-height: 48px;
   white-space: nowrap;
@@ -9939,6 +10086,7 @@ textarea {
 
 @media (max-width: 920px) {
   .ai-record-brief-grid,
+  .assistant-chat-layout,
   .assistant-command-form,
   .assistant-command-head,
   .assistant-draft-card-header,
@@ -9961,11 +10109,18 @@ textarea {
     flex-direction: column;
   }
 
+  .assistant-conversation-history {
+    position: static;
+    max-height: 260px;
+  }
+
   .assistant-command-head-actions {
     justify-content: flex-start;
   }
 
-  .assistant-command-submit {
+  .assistant-command-buttons,
+  .assistant-command-submit,
+  .assistant-command-stop {
     width: 100%;
   }
 }

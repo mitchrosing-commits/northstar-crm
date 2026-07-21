@@ -2,6 +2,7 @@ export * from "./activity-service";
 export * from "./assistant/assistant-action-request-service";
 export * from "./assistant/assistant-command-service";
 export * from "./assistant/assistant-conversation-service";
+export * from "./assistant/assistant-conversation-memory-service";
 export * from "./assistant/assistant-context-service";
 export * from "./assistant/assistant-crm-change-proposal-service";
 export * from "./assistant/assistant-draft-action-service";

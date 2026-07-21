@@ -276,6 +276,10 @@ describe("unified record timeline", () => {
     expect(recordTimeline).toContain("EmptyState");
     expect(recordTimeline).toContain("empty-state-compact empty-state-panel");
     expect(recordTimeline).toContain("const timelineCountLabel = `${title} timeline event count: ${items.length}`");
+    expect(recordTimeline).toContain("record-timeline-disclosure");
+    expect(recordTimeline).toContain("const summaryLabel = `Show ${items.length} ${items.length === 1 ? \"timeline event\" : \"timeline events\"}`");
+    expect(recordTimeline).toContain("<summary>{summaryLabel}</summary>");
+    expect(recordTimeline.indexOf("<summary>{summaryLabel}</summary>")).toBeLessThan(recordTimeline.indexOf("<ol className=\"timeline\""));
     expect(recordTimeline).toContain('import { CountBadge } from "@/components/count-badge"');
     expect(recordTimeline).toContain("<CountBadge label={timelineCountLabel}>");
     expect(recordTimeline).toContain("actionsLabel={`${title} timeline event count`}");

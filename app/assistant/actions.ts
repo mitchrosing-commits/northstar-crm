@@ -12,9 +12,12 @@ import {
   clarifyAssistantConversationDraft,
   createCrmChangeProposalFromAssistantDraft,
   createAssistantActionRequest,
+  deleteAssistantConversation,
   hideAssistantTodayCommandCenterItem,
   isAssistantCrmChangeProposalDraft,
+  regenerateLatestAssistantConversationResponse,
   rejectAssistantActionRequest,
+  renameAssistantConversation,
   sendAssistantConversationMessage
 } from "@/lib/services/crm";
 
@@ -32,6 +35,49 @@ export async function sendAssistantConversationMessageAction(formData: FormData)
 
   revalidatePath("/assistant");
   redirect(assistantChatRedirect("sent", conversation.id));
+}
+
+export async function regenerateAssistantConversationAction(formData: FormData) {
+  const conversationId = stringValue(formData.get("conversationId"), 160);
+  const { actor } = await getCurrentWorkspaceContext();
+
+  try {
+    await regenerateLatestAssistantConversationResponse(actor, { conversationId });
+  } catch {
+    redirect(assistantChatRedirect("error", conversationId));
+  }
+
+  revalidatePath("/assistant");
+  redirect(assistantChatRedirect("sent", conversationId));
+}
+
+export async function renameAssistantConversationAction(formData: FormData) {
+  const conversationId = stringValue(formData.get("conversationId"), 160);
+  const title = stringValue(formData.get("title"), 80);
+  const { actor } = await getCurrentWorkspaceContext();
+
+  try {
+    await renameAssistantConversation(actor, { conversationId, title });
+  } catch {
+    redirect(assistantChatRedirect("error", conversationId));
+  }
+
+  revalidatePath("/assistant");
+  redirect(assistantChatRedirect("sent", conversationId));
+}
+
+export async function deleteAssistantConversationAction(formData: FormData) {
+  const conversationId = stringValue(formData.get("conversationId"), 160);
+  const { actor } = await getCurrentWorkspaceContext();
+
+  try {
+    await deleteAssistantConversation(actor, conversationId);
+  } catch {
+    redirect(assistantChatRedirect("error", conversationId));
+  }
+
+  revalidatePath("/assistant");
+  redirect("/assistant" as Route);
 }
 
 export async function saveAssistantDraftActionRequest(formData: FormData) {

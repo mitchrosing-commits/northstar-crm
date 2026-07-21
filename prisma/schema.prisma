@@ -111,6 +111,8 @@ model Workspace {
   crmChangeProposals          CrmChangeProposal[]
   assistantConversations      AssistantConversation[]
   assistantConversationMessages AssistantConversationMessage[]
+  assistantConversationMemories AssistantConversationMemory[]
+  assistantConversationReferences AssistantConversationReference[]
   assistantTodayItemHides     AssistantTodayItemHide[]
   auditLogs                   AuditLog[]
   aiActionPermissionDefaults  Json?
@@ -985,7 +987,9 @@ model AssistantConversation {
   title       String
   workspace   Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user        User                           @relation("AssistantConversationUser", fields: [userId], references: [id], onDelete: Cascade)
+  memory      AssistantConversationMemory?
   messages    AssistantConversationMessage[]
+  references  AssistantConversationReference[]
   createdAt   DateTime                       @default(now())
   updatedAt   DateTime                       @updatedAt
 
@@ -1009,6 +1013,51 @@ model AssistantConversationMessage {
 
   @@index([workspaceId, conversationId, createdAt])
   @@index([conversationId, createdAt])
+}
+
+model AssistantConversationMemory {
+  id                   String                @id @default(cuid())
+  workspaceId          String
+  conversationId       String                @unique
+  summary              Json
+  contextWindow        Json?
+  updatedFromMessageId String?
+  lastRebuiltAt        DateTime?
+  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation         AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([workspaceId, updatedAt])
+  @@index([workspaceId, conversationId])
+}
+
+model AssistantConversationReference {
+  id             String                @id @default(cuid())
+  workspaceId    String
+  conversationId String
+  entityType     String
+  recordId       String
+  label          String
+  href           String?
+  role           String                @default("referenced")
+  reason         String?
+  firstMessageId String?
+  lastMessageId  String?
+  resultSetKey   String                @default("conversation")
+  ordinal        Int?
+  lastVerifiedAt DateTime?
+  staleStatus    String                @default("CURRENT")
+  snapshot       Json?
+  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([workspaceId, conversationId, entityType, recordId, role, resultSetKey], map: "AssistantConvRef_unique_workspace_conversation_record_role_key")
+  @@index([workspaceId, conversationId, role, updatedAt], map: "AssistantConvRef_workspace_conversation_role_updatedAt_idx")
+  @@index([workspaceId, conversationId, resultSetKey, ordinal], map: "AssistantConvRef_workspace_conversation_resultSet_ordinal_idx")
+  @@index([workspaceId, entityType, recordId], map: "AssistantConvRef_workspace_entity_record_idx")
 }
 
 model AssistantTodayItemHide {

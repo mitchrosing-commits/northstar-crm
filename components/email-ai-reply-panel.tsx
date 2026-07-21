@@ -25,14 +25,18 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
   const [state, formAction, isPending] = useActionState(generateEmailReplyDraftAction, initialState);
   const [draftSubject, setDraftSubject] = useState(`Re: ${subject}`.slice(0, 160));
   const [draftBody, setDraftBody] = useState("");
+  const [instructions, setInstructions] = useState("");
   const [replyPanelOpen, setReplyPanelOpen] = useState(false);
   const [clientSubmitting, setClientSubmitting] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "unavailable">("idle");
+  const [draftHidden, setDraftHidden] = useState(false);
 
   useEffect(() => {
     if (state.subjectSuggestion) setDraftSubject(state.subjectSuggestion);
     if (state.replyBody) setDraftBody(state.replyBody);
+    if (state.instructions !== undefined) setInstructions(state.instructions);
     if (state.replyBody || state.subjectSuggestion) setCopyState("idle");
+    if (state.replyBody) setDraftHidden(false);
     if (state.error || state.message || state.retryable || state.replyBody) setReplyPanelOpen(true);
     setClientSubmitting(false);
   }, [state]);
@@ -50,7 +54,23 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
     recipientEmail && draftBody
       ? `mailto:${encodeURIComponent(recipientEmail)}?subject=${encodeURIComponent(draftSubject)}&body=${encodeURIComponent(draftBody)}`
       : null;
-  const generated = Boolean(state.replyBody);
+  const generated = Boolean(state.replyBody) && !draftHidden;
+  const primaryActionLabel = isPending || clientSubmitting ? "Generating..." : state.retryable ? "Retry reply" : generated ? "Regenerate reply" : "Generate reply";
+
+  function applyInstruction(value: string) {
+    setInstructions((current) => {
+      const next = current ? `${current}; ${value}` : value;
+      return next.slice(0, 500);
+    });
+  }
+
+  function resetDraft() {
+    setDraftSubject(`Re: ${subject}`.slice(0, 160));
+    setDraftBody("");
+    setInstructions("");
+    setCopyState("idle");
+    setDraftHidden(true);
+  }
 
   return (
     <details
@@ -80,6 +100,36 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
         >
           <input name="emailLogId" type="hidden" value={emailLogId} />
           <label className="form-field">
+            <FormFieldLabel>Refinement instructions</FormFieldLabel>
+            <textarea
+              disabled={isPending || clientSubmitting}
+              name="instructions"
+              onChange={(event) => setInstructions(event.target.value)}
+              placeholder="Optional: make it shorter, friendlier, more direct, mention pricing, or ask for availability."
+              rows={3}
+              value={instructions}
+            />
+          </label>
+          <ActionGroup className="email-ai-reply-suggestions" label="AI reply refinement suggestions">
+            {[
+              "Make it shorter",
+              "Make it friendlier",
+              "Make it more direct",
+              "Mention pricing carefully",
+              "Ask for availability"
+            ].map((suggestion) => (
+              <button
+                className="button-secondary button-compact"
+                disabled={isPending || clientSubmitting}
+                key={suggestion}
+                onClick={() => applyInstruction(suggestion)}
+                type="button"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </ActionGroup>
+          <label className="form-field">
             <FormFieldLabel>Tone</FormFieldLabel>
             <select disabled={isPending || clientSubmitting} name="tone" defaultValue={state.tone ?? defaultTone}>
               <option value="concise">Concise</option>
@@ -90,7 +140,7 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
             </select>
           </label>
           <button className="button-primary button-compact" disabled={isPending || clientSubmitting} type="submit">
-            {isPending || clientSubmitting ? "Generating..." : state.retryable ? "Retry reply" : generated ? "Regenerate reply" : "Generate reply"}
+            {primaryActionLabel}
           </button>
           {isPending || clientSubmitting ? (
             <p className="form-hint" role="status">
@@ -140,6 +190,9 @@ export function EmailAiReplyPanel({ defaultTone = "concise", emailLogId, readine
           <ActionGroup className="filter-actions" label={aiReplyActionsLabel}>
             <button className="button-secondary button-compact" onClick={copyDraft} title="Copy AI draft" type="button">
               {copyState === "copied" ? "Copied" : copyState === "unavailable" ? "Copy unavailable" : "Copy draft"}
+            </button>
+            <button className="button-secondary button-compact" onClick={resetDraft} title="Clear the current AI draft" type="button">
+              Start over
             </button>
             {composeHref ? (
               <a className="button-secondary button-compact" href={composeHref} title="Open compose with AI draft">

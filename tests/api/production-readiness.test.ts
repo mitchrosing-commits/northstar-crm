@@ -16,6 +16,7 @@ const envExample = readFileSync(join(process.cwd(), ".env.example"), "utf8");
 const readme = readFileSync(join(process.cwd(), "README.md"), "utf8");
 const readinessDoc = readFileSync(join(process.cwd(), "docs/deployment-readiness.md"), "utf8");
 const browserSmokeDoc = readFileSync(join(process.cwd(), "docs/browser-smoke-qa.md"), "utf8");
+const stakeholderDemoRunbook = readFileSync(join(process.cwd(), "docs/stakeholder-demo-runbook.md"), "utf8");
 const currentStatus = readFileSync(join(process.cwd(), "docs/current-status.md"), "utf8");
 const architecture = readFileSync(join(process.cwd(), "docs/architecture.md"), "utf8");
 const routeMap = readFileSync(join(process.cwd(), "docs/api-route-map.md"), "utf8");
@@ -528,5 +529,36 @@ describe("production readiness foundation", () => {
     expect(currentStatus).toContain("minimal Railway preview configuration");
     expect(architecture).toContain("lib/env.ts");
     expect(architecture).toContain("minimal Railway preview configuration");
+  });
+
+  it("documents a production-safe stakeholder demo path without fake UI data", () => {
+    for (const phrase of [
+      "This runbook is the polished end-to-end path",
+      "not production customer data",
+      "npm run prisma:deploy",
+      "npm run prisma:seed",
+      "AUTH_MODE=local",
+      "alex@example.test",
+      "New lead enters the CRM",
+      "Lead converts safely",
+      "Meeting transcript is analyzed",
+      "Correct one association inline before apply",
+      "Contact and organization field changes must remain CRM Change Proposals",
+      "Assistant summarizes next actions",
+      "Relevant email is reviewed",
+      "Quote is created from the deal",
+      "Public quote is accepted",
+      "Accepted quote updates the deal safely",
+      "Follow-up work is visible and completable",
+      "Dashboard and reporting reflect the state",
+      "RAILWAY_SERVICE_ROLE=worker",
+      "Do not seed a real-use production database",
+      "Do not present AI inference as confirmed fact",
+      "git diff --check"
+    ]) {
+      expect(stakeholderDemoRunbook).toContain(phrase);
+    }
+    expect(stakeholderDemoRunbook).not.toContain("fake UI-only data");
+    expect(stakeholderDemoRunbook).toContain("The browser smoke lane already covers key pieces of this story");
   });
 });

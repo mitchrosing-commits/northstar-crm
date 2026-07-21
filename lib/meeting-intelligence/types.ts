@@ -246,17 +246,14 @@ export type ProposedRelationshipBriefUpdate = {
 };
 
 export type MeetingSummarySectionKey =
-  | "commercial_details"
   | "commitments"
-  | "customer_needs_or_concerns"
+  | "concerns_or_risks"
+  | "context"
   | "decisions"
-  | "key_discussion_points"
-  | "meeting_overview"
+  | "key_facts"
   | "next_steps"
-  | "objectives"
   | "open_questions"
-  | "participants"
-  | "risks_or_blockers";
+  | "participants";
 
 export type MeetingSummarySection = {
   evidenceType: "explicit" | "inferred";

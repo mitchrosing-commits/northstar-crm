@@ -401,10 +401,14 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.meetingActivity?.description).not.toContain("Source meeting markdown:");
     expect(draft.summarySections).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "meeting_overview", title: "Meeting overview" }),
-        expect.objectContaining({ key: "commercial_details", title: "Commercial details" }),
+        expect.objectContaining({ key: "context", title: "Context" }),
+        expect.objectContaining({ key: "key_facts", title: "Key facts" }),
+        expect.objectContaining({ key: "decisions", title: "Decisions" }),
         expect.objectContaining({ key: "next_steps", title: "Next steps" })
       ])
+    );
+    expect(draft.summarySections?.find((section) => section.key === "concerns_or_risks")?.items ?? []).not.toContain(
+      "Budget is approved and legal needs the SOW."
     );
     expect(draft.notes[0]).toMatchObject({ include: true, target: { id: "deal-1", type: "deal" } });
     expect(draft.notes[0].body).toContain("Target: Deal - Alpha Needle Deal");
@@ -413,9 +417,11 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.nextStepActivities[0]).toMatchObject({
       dueAt: "2030-04-05T00:00:00.000Z",
       include: true,
-      title: "Owner: Sam. send SOW by 2030-04-05."
+      title: "Send SOW",
+      type: "EMAIL"
     });
     expect(draft.nextStepActivities[0].description).toContain("Owner hint: Sam");
+    expect(draft.nextStepActivities[0].description).toContain("Due date supported by source: 2030-04-05");
   });
 
   it("segments transcript review text and leaves weak associations unselected", () => {
@@ -780,10 +786,11 @@ describe("meeting intelligence markdown and proposals", () => {
     });
 
     expect(draft.notes.some((note) => note.kind === "company_fact" && note.body.includes("Current WMS"))).toBe(true);
-    const ownerAction = draft.nextStepActivities.find((activity) => activity.title === "Owner: Lee. schedule UAT workshop by next week.");
+    const ownerAction = draft.nextStepActivities.find((activity) => activity.title === "Schedule UAT workshop");
     expect(ownerAction).toMatchObject({
       confidence: "high",
       matchedReason: "Context hint match",
+      type: "MEETING"
     });
     expect(ownerAction?.evidence).toContain("Action: Owner: Lee. schedule UAT workshop by next week.");
     expect(draft.warnings).not.toContain("No deal or lead was confidently matched.");
@@ -936,6 +943,73 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.warnings).toContain("Some mentioned entities were not matched to CRM records.");
   });
 
+  it("cleans titles, sections, implicit actions, due dates, uncertainty, and duplicate review ids", () => {
+    const draft = analyzeMeetingIntelligence({
+      contextText: "Meeting date: 2030-04-01\nAttendees: Jane Contact, Sam Seller",
+      markdown: [
+        "# Meeting Intake",
+        "Goal: WMS rollout planning and pricing recap.",
+        "Decision: approved discovery.",
+        "Concern: legal review may block the SOW timeline.",
+        "Jane Contact is the economic buyer.",
+        "Jane Contact prefers concise morning emails.",
+        "Sam Seller to send pricing recap by April 5.",
+        "Jane Contact should schedule UAT workshop.",
+        "Action: maybe consider future optimization options."
+      ].join("\n"),
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jane Contact",
+          evidenceExcerpt: "Jane Contact",
+          id: "person-1",
+          matchedReason: "Exact name match",
+          objectType: "person"
+        },
+        {
+          confidence: "high",
+          displayName: "Alpha Needle Deal",
+          evidenceExcerpt: "Alpha Needle Deal",
+          id: "deal-1",
+          matchedReason: "Deal title match",
+          objectType: "deal",
+          status: "OPEN"
+        }
+      ],
+      unmatchedEntities: []
+    });
+
+    expect(draft.meetingActivity?.title).toBe("2030-04-01 - WMS rollout planning and pricing recap with Alpha Needle Deal");
+    expect(draft.summarySections?.map((section) => section.title)).toEqual(
+      expect.arrayContaining(["Context", "Participants", "Key facts", "Decisions", "Concerns or risks", "Next steps"])
+    );
+    expect(draft.summarySections?.find((section) => section.key === "key_facts")?.items.join(" ")).not.toContain(
+      "economic buyer"
+    );
+    expect(draft.summarySections?.find((section) => section.key === "concerns_or_risks")?.items).toContain(
+      "legal review may block the SOW timeline."
+    );
+    expect(draft.nextStepActivities.map((activity) => activity.title)).toEqual([
+      "Send pricing recap",
+      "Schedule UAT workshop"
+    ]);
+    expect(draft.nextStepActivities[0]).toMatchObject({
+      dueAt: "2030-04-05T00:00:00.000Z",
+      type: "EMAIL"
+    });
+    expect(draft.nextStepActivities[1]).toMatchObject({
+      dueAt: undefined,
+      type: "MEETING"
+    });
+    expect(draft.nextStepActivities[1]?.description).toContain("Due date not stated clearly");
+    expect(draft.nextStepActivities.map((activity) => activity.title).join(" ")).not.toContain("maybe consider");
+
+    const noteIds = draft.notes.map((note) => note.id);
+    expect(new Set(noteIds).size).toBe(noteIds.length);
+    expect(draft.notes.some((note) => note.kind === "stakeholder_note")).toBe(true);
+    expect(draft.relationshipBriefUpdates?.[0]?.proposed.relationshipCommunicationStyle).toContain("prefers concise morning emails");
+  });
+
   it("excludes protected-trait lines from curated Relationship Brief and fact-note suggestions", () => {
     const draft = analyzeMeetingIntelligence({
       markdown: [
@@ -1013,8 +1087,8 @@ describe("meeting intelligence markdown and proposals", () => {
     });
 
     expect(draft.nextStepActivities.map((activity) => activity.title)).toEqual([
-      "Owner: Sam. send SOW by 2030-04-05.",
-      "schedule UAT workshop by next week."
+      "Send SOW",
+      "Schedule UAT workshop"
     ]);
     expect(draft.nextStepActivities[1]?.dueAt).toBe("2030-04-08T00:00:00.000Z");
   });

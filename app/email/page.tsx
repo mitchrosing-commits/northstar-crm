@@ -2394,6 +2394,10 @@ function ConnectedGmailAccountsPanel({
       <div className="connected-inbox-list">
         {accounts.map((account) => {
           const accountSyncMetricText = emailSyncMetricText(account);
+          const accountSyncStatusLabel =
+            account.syncStatusLabel ?? account.syncHealth.currentStateLabel;
+          const showAccountSyncStatusLabel =
+            Boolean(accountSyncStatusLabel) && accountSyncStatusLabel !== account.status;
           const syncButtonLabel = gmailSyncButtonLabel(
             account.syncHealth,
             "Sync this inbox",
@@ -2424,8 +2428,8 @@ function ConnectedGmailAccountsPanel({
               label={`${account.accountEmail ?? account.connectionRef} inbox actions`}
             >
               <Badge>{account.status}</Badge>
-              {account.syncStatusLabel ? (
-                <Badge>{account.syncStatusLabel}</Badge>
+              {showAccountSyncStatusLabel ? (
+                <Badge>{accountSyncStatusLabel}</Badge>
               ) : null}
               <Link
                 className="button-secondary button-compact"

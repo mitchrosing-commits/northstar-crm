@@ -339,6 +339,11 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("emailSyncModeLabel(source.lastSyncMode)");
     expect(emailPage).toContain("Last sync issue: {provider.lastError}");
     expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
+    expect(emailPage).toContain("const accountSyncStatusLabel =");
+    expect(emailPage).toContain("account.syncStatusLabel ?? account.syncHealth.currentStateLabel");
+    expect(emailPage).toContain("accountSyncStatusLabel !== account.status");
+    expect(emailPage).toContain("showAccountSyncStatusLabel");
+    expect(emailPage).toContain("<Badge>{accountSyncStatusLabel}</Badge>");
     expect(emailPage).toContain(
       "formatProviderSyncStatusDetail(provider.syncStatusDetail)",
     );

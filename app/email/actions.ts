@@ -46,6 +46,7 @@ export type GenerateEmailReplyDraftActionState = {
   contextUsed?: string[];
   emailLogId?: string;
   error?: string;
+  instructions?: string;
   retryAfterSeconds?: number;
   retryLabel?: string;
   retryable?: boolean;
@@ -329,15 +330,17 @@ export async function generateEmailReplyDraftAction(
   formData: FormData
 ): Promise<GenerateEmailReplyDraftActionState> {
   const emailLogId = String(formData.get("emailLogId") ?? "").trim();
+  const instructions = String(formData.get("instructions") ?? "").trim();
   const tone = String(formData.get("tone") ?? "concise").trim();
 
   try {
     const { actor } = await getCurrentWorkspaceContext();
-    const draft = await generateEmailReplyDraft(actor, { emailLogId, tone });
+    const draft = await generateEmailReplyDraft(actor, { emailLogId, instructions, tone });
 
     return {
       contextUsed: draft.contextUsed,
       emailLogId,
+      instructions,
       message: "AI draft generated. Review and edit before using it.",
       replyBody: draft.body,
       subjectSuggestion: draft.subjectSuggestion,
@@ -351,6 +354,7 @@ export async function generateEmailReplyDraftAction(
       return {
         emailLogId,
         error: redactSensitiveText(error.message),
+        instructions,
         retryAfterSeconds,
         retryLabel: retryAfterSeconds ? `Try again in about ${retryAfterSeconds} ${retryAfterSeconds === 1 ? "second" : "seconds"}.` : undefined,
         retryable: isRetryableEmailReplyError(error),
@@ -358,7 +362,7 @@ export async function generateEmailReplyDraftAction(
       };
     }
 
-    return { emailLogId, error: "AI reply draft could not be generated.", tone };
+    return { emailLogId, error: "AI reply draft could not be generated.", instructions, tone };
   }
 }
 

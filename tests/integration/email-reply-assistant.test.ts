@@ -63,16 +63,18 @@ describe("AI email reply assistant service", () => {
       toText: "sales@example.test"
     });
     let observed: Awaited<ReturnType<typeof crm.buildEmailReplyContext>> | undefined;
+    let observedProviderInput: EmailReplyProviderInput | undefined;
 
     const draft = await crm.generateEmailReplyDraft(
       fx.actorA,
-      { emailLogId: emailLog.id, tone: "pricing_quote" },
+      { emailLogId: emailLog.id, instructions: "Make it shorter and ask for availability.", tone: "pricing_quote" },
       {
         provider: {
           id: "test-provider",
           name: "Test provider",
           async generate(input) {
             observed = input.context;
+            observedProviderInput = input;
             return {
               body: "Hi Alpha,\n\nThanks for asking. I will verify pricing before sharing specifics.",
               contextUsed: ["Email subject and body", "Deal stage/status", "Recent notes", "Approved relationship profile facts"],
@@ -90,6 +92,8 @@ describe("AI email reply assistant service", () => {
       tone: "pricing_quote"
     });
     expect(draft.warnings).toContain("Review and edit before using. Northstar never sends AI-generated replies automatically.");
+    expect(observedProviderInput?.instructions).toBe("Make it shorter and ask for availability.");
+    expect(observedProviderInput?.prompt.user).toContain("User refinement instructions: Make it shorter and ask for availability.");
     expect(observed?.deal).toContain(fx.recordsA.deal.title);
     expect(observed?.contact).toContain(fx.recordsA.person.email);
     expect(observed?.notes.join("\n")).toContain("Alpha pricing must be verified");

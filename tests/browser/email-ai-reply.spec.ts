@@ -44,24 +44,39 @@ test.describe("Email AI Reply Assistant browser flow", () => {
   test("generates and displays an editable draft from a stored Inbox thread", async ({ page }) => {
     const countsBefore = await readMutationGuardCounts();
     const errors = watchBrowserErrors(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
 
     await openEmailThread(page, "Browser AI Reply Main");
 
     const panel = page.locator("#email-ai-reply-panel");
     await panel.getByText("Draft with AI").click();
+    await expect(panel.getByRole("textbox", { name: /Refinement instructions/ })).toBeVisible();
+    await panel.getByRole("button", { name: "Ask for availability" }).click();
+    await expect(panel.getByRole("textbox", { name: /Refinement instructions/ })).toHaveValue("Ask for availability");
     await panel.getByRole("button", { name: "Generate reply" }).click();
 
     await expect(panel.getByText("AI draft generated. Review and edit before using it.")).toBeVisible();
     await expect(panel.getByRole("textbox", { name: /Subject suggestion/ })).toHaveValue("Re: Browser AI Reply Main");
     const draft = panel.getByRole("textbox", { name: /Draft reply/ });
     await expect(draft).toHaveValue(/Hi Browser Buyer,/);
+    await expect(draft).toHaveValue(/Refinement instructions: Ask for availability/);
     await expect(draft).toHaveValue(/Thread context order: First stored thread context for browser -> Second stored thread context for browser\./);
     await expect(draft).toHaveValue(/Primary reply target: Current browser customer asks for next steps\./);
     await expect(draft).not.toHaveValue(/cross-workspace|unrelated-thread/i);
+    await panel.getByRole("button", { name: "Make it shorter" }).click();
+    await expect(panel.getByRole("textbox", { name: /Refinement instructions/ })).toHaveValue(/Make it shorter/);
+    await panel.getByRole("button", { name: "Regenerate reply" }).click();
+    await expect(draft).toHaveValue(/Refinement instructions: Ask for availability; Make it shorter/);
     await draft.fill("Edited browser AI reply draft.");
     await expect(draft).toHaveValue("Edited browser AI reply draft.");
     await expect(panel.getByText("Suggested next action: Review this draft before using it.")).toBeVisible();
     await expect(panel.getByText("Deterministic browser test draft. Northstar still does not send automatically.")).toBeVisible();
+    await panel.getByRole("button", { name: "Copy draft" }).click();
+    await expect(panel.getByRole("button", { name: "Copied" })).toBeVisible();
+    await panel.getByRole("button", { name: "Start over" }).click();
+    await expect(panel.getByRole("textbox", { name: /Draft reply/ })).toHaveCount(0);
+    await expect(panel.getByRole("textbox", { name: /Refinement instructions/ })).toHaveValue("");
+    await expect(panel.getByRole("button", { name: "Generate reply" })).toBeVisible();
     await expect(readMutationGuardCounts()).resolves.toEqual(countsBefore);
     expect(actionableBrowserErrors(errors.current())).toEqual([]);
   });
@@ -73,10 +88,12 @@ test.describe("Email AI Reply Assistant browser flow", () => {
 
     const panel = page.locator("#email-ai-reply-panel");
     await panel.getByText("Draft with AI").click();
+    await panel.getByRole("textbox", { name: /Refinement instructions/ }).fill("Keep the customer context selected.");
     await panel.getByRole("button", { name: "Generate reply" }).click();
 
     await expect(panel.getByText("AI email reply provider returned no draft.")).toBeVisible();
     await expect(panel.getByRole("textbox", { name: /Draft reply/ })).toHaveCount(0);
+    await expect(panel.getByRole("textbox", { name: /Refinement instructions/ })).toHaveValue("Keep the customer context selected.");
     await expect(panel).not.toContainText(/raw-secret-token|authorization|stack|provider payload/i);
     expect(actionableBrowserErrors(errors.current())).toEqual([]);
   });
@@ -89,16 +106,19 @@ test.describe("Email AI Reply Assistant browser flow", () => {
     const panel = page.locator("#email-ai-reply-panel");
     await panel.getByText("Draft with AI").click();
     await panel.getByLabel("Tone").selectOption("warm");
+    await panel.getByRole("textbox", { name: /Refinement instructions/ }).fill("Make it friendlier.");
     await panel.getByRole("button", { name: "Generate reply" }).click();
 
     await expect(panel.getByText("AI email reply provider is still rate limited after retrying. Try again in about 2 seconds.")).toBeVisible();
     await expect(panel.getByText("Try again in about 2 seconds.", { exact: true })).toBeVisible();
     await expect(panel.getByRole("button", { name: "Retry reply" })).toBeVisible();
     await expect(panel.getByLabel("Tone")).toHaveValue("warm");
+    await expect(panel.getByRole("textbox", { name: /Refinement instructions/ })).toHaveValue("Make it friendlier.");
     await expect(panel).not.toContainText(/authorization|bearer|stack|provider payload|raw-secret/i);
 
     await panel.getByRole("button", { name: "Retry reply" }).click();
     await expect(panel.getByText("AI draft generated. Review and edit before using it.")).toBeVisible();
+    await expect(panel.getByRole("textbox", { name: /Draft reply/ })).toHaveValue(/Refinement instructions: Make it friendlier\./);
     await expect(panel.getByRole("textbox", { name: /Draft reply/ })).toHaveValue(/Primary reply target: Trigger a deterministic provider rate limit before recovery\./);
     expect(actionableBrowserErrors(errors.current())).toEqual([]);
   });
@@ -111,6 +131,7 @@ test.describe("Email AI Reply Assistant browser flow", () => {
 
     await expect(panel.getByText("Review-first only.")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Generate reply" })).toBeVisible();
+    await expect(panel.getByRole("link", { name: /Send|Reply/i })).toHaveCount(0);
   });
 });
 

@@ -21,6 +21,10 @@ import {
   type AssistantDraftAction,
   type AssistantDraftActionCandidate
 } from "./assistant-draft-action-service";
+import {
+  prepareAssistantConversationMemoryContext,
+  updateAssistantConversationMemory
+} from "./assistant-conversation-memory-service";
 
 export type AssistantConversationSource = {
   detail: string;
@@ -39,6 +43,14 @@ export type AssistantConversationMessageView = {
   role: "assistant" | "user";
   sources: AssistantConversationSource[];
   title: string | null;
+};
+
+export type AssistantConversationListItem = {
+  createdAt: string;
+  id: string;
+  lastMessagePreview: string;
+  title: string;
+  updatedAt: string;
 };
 
 export type AssistantConversationView = {
@@ -99,6 +111,33 @@ export async function getAssistantConversation(
   return conversation ? assistantConversationView(conversation) : null;
 }
 
+export async function listAssistantConversations(
+  actor: WorkspaceActor,
+  options: { limit?: number } = {}
+): Promise<AssistantConversationListItem[]> {
+  await ensureWorkspaceAccess(actor);
+  const limit = Math.min(Math.max(options.limit ?? 18, 1), 40);
+  const conversations = await prisma.assistantConversation.findMany({
+    include: {
+      messages: {
+        orderBy: { createdAt: "desc" },
+        select: { content: true, role: true },
+        take: 1
+      }
+    },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    where: { userId: actor.actorUserId, workspaceId: actor.workspaceId }
+  });
+  return conversations.map((conversation) => ({
+    createdAt: conversation.createdAt.toISOString(),
+    id: conversation.id,
+    lastMessagePreview: safeText(conversation.messages[0]?.content ?? "No messages yet.", 120),
+    title: safeText(conversation.title, 80) || "Untitled conversation",
+    updatedAt: conversation.updatedAt.toISOString()
+  }));
+}
+
 export async function sendAssistantConversationMessage(
   actor: WorkspaceActor,
   input: SendAssistantConversationMessageInput
@@ -124,7 +163,7 @@ export async function sendAssistantConversationMessage(
       workspaceId: actor.workspaceId
     }
   });
-  await prisma.assistantConversationMessage.create({
+  const userMessage = await prisma.assistantConversationMessage.create({
     data: {
       content: message,
       conversationId: conversation.id,
@@ -133,8 +172,19 @@ export async function sendAssistantConversationMessage(
     }
   });
 
-  const reply = await safeBuildConversationReply(actor, rawMessage, recentMessages.map(messageViewBase), now);
-  await prisma.assistantConversationMessage.create({
+  const memoryContext = await prepareAssistantConversationMemoryContext(actor, {
+    conversationId: conversation.id,
+    history: recentMessages.map(messageViewBase),
+    message: rawMessage,
+    now
+  });
+  const reply = memoryContext.resolvedReference?.status === "deleted"
+    ? deletedReferencedRecordReply(memoryContext.notices[0] ?? "The remembered record is no longer available.")
+    : withMemoryNotices(
+        await safeBuildConversationReply(actor, memoryContext.rewrittenMessage, recentMessages.map(messageViewBase), now),
+        memoryContext.notices
+      );
+  const assistantMessage = await prisma.assistantConversationMessage.create({
     data: {
       content: sanitizeAssistantText(reply.content),
       conversationId: conversation.id,
@@ -146,11 +196,113 @@ export async function sendAssistantConversationMessage(
       workspaceId: actor.workspaceId
     }
   });
+  await updateAssistantConversationMemory(actor, {
+    assistantMessage,
+    draftActions: reply.draftActions ?? [],
+    sources: reply.sources,
+    userMessage
+  });
   await prisma.assistantConversation.update({
     data: {
       title: existing ? existing.title : conversationTitle(message),
       updatedAt: now
     },
+    where: { id: conversation.id }
+  });
+  const updated = await getAssistantConversation(actor, conversation.id);
+  if (!updated) throw new Error("Assistant conversation could not be loaded.");
+  return updated;
+}
+
+export async function renameAssistantConversation(
+  actor: WorkspaceActor,
+  input: { conversationId: unknown; title: unknown }
+): Promise<AssistantConversationView> {
+  await ensureWorkspaceAccess(actor);
+  const conversationId = normalizeId(input.conversationId);
+  const title = safeText(input.title, 80);
+  if (!conversationId || !title) throw new Error("Conversation title is required.");
+  const updated = await prisma.assistantConversation.updateMany({
+    data: { title },
+    where: { id: conversationId, userId: actor.actorUserId, workspaceId: actor.workspaceId }
+  });
+  if (updated.count !== 1) throw new Error("Assistant conversation was not found.");
+  const conversation = await getAssistantConversation(actor, conversationId);
+  if (!conversation) throw new Error("Assistant conversation could not be loaded.");
+  return conversation;
+}
+
+export async function deleteAssistantConversation(
+  actor: WorkspaceActor,
+  conversationIdInput: unknown
+): Promise<void> {
+  await ensureWorkspaceAccess(actor);
+  const conversationId = normalizeId(conversationIdInput);
+  if (!conversationId) throw new Error("Assistant conversation was not found.");
+  await prisma.assistantConversation.deleteMany({
+    where: { id: conversationId, userId: actor.actorUserId, workspaceId: actor.workspaceId }
+  });
+}
+
+export async function regenerateLatestAssistantConversationResponse(
+  actor: WorkspaceActor,
+  input: { conversationId: unknown; now?: Date }
+): Promise<AssistantConversationView> {
+  await ensureWorkspaceAccess(actor);
+  const conversationId = normalizeId(input.conversationId);
+  if (!conversationId) throw new Error("Assistant conversation was not found.");
+  const conversation = await prisma.assistantConversation.findFirst({
+    include: {
+      messages: { orderBy: { createdAt: "asc" }, take: maxConversationMessages }
+    },
+    where: { id: conversationId, userId: actor.actorUserId, workspaceId: actor.workspaceId }
+  });
+  if (!conversation) throw new Error("Assistant conversation was not found.");
+  const messages = conversation.messages.map(messageViewBase);
+  const lastAssistantIndex = findLastMessageIndex(messages, "assistant");
+  const prompt = lastAssistantIndex >= 0 ? previousUserPrompt(messages, lastAssistantIndex) : previousUserPrompt(messages, messages.length);
+  if (!prompt) throw new Error("No user prompt is available to regenerate.");
+  const history = messages.slice(0, Math.max(lastAssistantIndex, 0));
+  const now = input.now ?? new Date();
+  const memoryContext = await prepareAssistantConversationMemoryContext(actor, {
+    conversationId: conversation.id,
+    history,
+    message: prompt,
+    now
+  });
+  const reply = memoryContext.resolvedReference?.status === "deleted"
+    ? deletedReferencedRecordReply(memoryContext.notices[0] ?? "The remembered record is no longer available.")
+    : withMemoryNotices(await safeBuildConversationReply(actor, memoryContext.rewrittenMessage, history, now), memoryContext.notices);
+  const existingDraftIds = new Set(messages.flatMap((message) => message.draftActions.map((draft) => draft.id)));
+  const draftActions = (reply.draftActions ?? []).filter((draft) => !existingDraftIds.has(draft.id));
+  const assistantMessage = await prisma.assistantConversationMessage.create({
+    data: {
+      content: sanitizeAssistantText(reply.content),
+      conversationId: conversation.id,
+      draftActions: jsonArrayOrNull(draftActions),
+      errorCode: reply.errorCode ?? null,
+      role: "assistant",
+      sources: jsonArrayOrNull(reply.sources),
+      title: safeText(reply.title, 160),
+      workspaceId: actor.workspaceId
+    }
+  });
+  const previousUser = lastAssistantIndex >= 0 ? previousUserMessage(messages, lastAssistantIndex) : previousUserMessage(messages, messages.length);
+  if (previousUser) {
+    await updateAssistantConversationMemory(actor, {
+      assistantMessage,
+      draftActions,
+      sources: reply.sources,
+      supersededAssistantMessageId: lastAssistantIndex >= 0 ? messages[lastAssistantIndex]?.id ?? null : null,
+      userMessage: {
+        content: previousUser.content,
+        createdAt: new Date(previousUser.createdAt),
+        id: previousUser.id
+      }
+    });
+  }
+  await prisma.assistantConversation.update({
+    data: { updatedAt: input.now ?? new Date() },
     where: { id: conversation.id }
   });
   const updated = await getAssistantConversation(actor, conversation.id);
@@ -262,6 +414,7 @@ async function buildConversationReply(
   if (intent === "waiting") return buildWaitingOnReply(actor, message, history, now);
   if (intent === "meeting") return buildMeetingPrepReply(actor, message, history, now);
   if (intent === "compare") return buildCompareReply(actor, message, history, now);
+  if (intent === "general") return buildGeneralWorkReply(message, history);
   return buildRelationshipReply(actor, message, history, now);
 }
 
@@ -434,6 +587,36 @@ async function buildCompareReply(
     }),
     sources: fallback,
     title: "Compare opportunities"
+  };
+}
+
+function buildGeneralWorkReply(message: string, history: AssistantConversationMessageView[]): ConversationReply {
+  const suppliedText = extractSuppliedText(message) || extractSuppliedText(recentUserText(history));
+  const wantsRewrite = /\b(rewrite|make this sound|polish|professional|concise|less formal|more formal)\b/i.test(message);
+  const wantsSummary = /\b(summarize|summary|tl;dr|recap)\b/i.test(message);
+  const wantsBrainstorm = /\b(brainstorm|ideas|questions|agenda|plan|outline)\b/i.test(message);
+  const facts = suppliedText
+    ? [
+        wantsRewrite ? `Draft: ${rewritePlainWorkText(suppliedText, message)}` : "",
+        wantsSummary ? `Summary: ${summarizePlainWorkText(suppliedText)}` : "",
+        !wantsRewrite && !wantsSummary ? `Working text: ${safeText(suppliedText, 360)}` : ""
+      ].filter(Boolean)
+    : [
+        "I can help with writing, planning, brainstorming, explanations, and summaries without retrieving CRM records unless you ask for CRM context."
+      ];
+  const suggestions = [
+    wantsBrainstorm ? "Pick the strongest idea, then ask me to turn it into a meeting agenda or follow-up note." : "",
+    "Paste the exact text if you want a tighter rewrite.",
+    "Ask for CRM context separately if this should connect to a customer, deal, email, meeting, or quote."
+  ].filter(Boolean);
+  return {
+    content: conversationContent({
+      facts,
+      intro: suppliedText ? "Here is a conversational work draft that does not mutate CRM data." : "I can help with that as a general work question.",
+      suggestions
+    }),
+    sources: [],
+    title: wantsRewrite ? "Writing help" : wantsSummary ? "Summary help" : wantsBrainstorm ? "Planning help" : "General work help"
   };
 }
 
@@ -745,6 +928,30 @@ function commandResultToConversationReply(answer: AssistantCommandResult): Conve
   };
 }
 
+function withMemoryNotices(reply: ConversationReply, notices: string[]) {
+  const safeNotices = notices.map((notice) => safeText(notice, 260)).filter(Boolean);
+  if (safeNotices.length === 0) return reply;
+  return {
+    ...reply,
+    content: [...safeNotices, "", reply.content].join("\n")
+  };
+}
+
+function deletedReferencedRecordReply(notice: string): ConversationReply {
+  return {
+    content: conversationContent({
+      facts: [notice],
+      intro: "I could not safely continue from the remembered record.",
+      suggestions: [
+        "Ask with the current CRM record name or open the intended record and use its Assistant action.",
+        "I did not redirect this request to another record or create any draft."
+      ]
+    }),
+    sources: [],
+    title: "Remembered record unavailable"
+  };
+}
+
 async function appendAssistantConversationMessages(
   actor: WorkspaceActor,
   conversationId: string,
@@ -753,7 +960,7 @@ async function appendAssistantConversationMessages(
     user: string;
   }
 ) {
-  await prisma.assistantConversationMessage.create({
+  const userMessage = await prisma.assistantConversationMessage.create({
     data: {
       content: sanitizeConversationText(messages.user),
       conversationId,
@@ -761,7 +968,7 @@ async function appendAssistantConversationMessages(
       workspaceId: actor.workspaceId
     }
   });
-  await prisma.assistantConversationMessage.create({
+  const assistantMessage = await prisma.assistantConversationMessage.create({
     data: {
       content: sanitizeAssistantText(messages.assistant.content),
       conversationId,
@@ -771,6 +978,12 @@ async function appendAssistantConversationMessages(
       title: safeText(messages.assistant.title, 160),
       workspaceId: actor.workspaceId
     }
+  });
+  await updateAssistantConversationMemory(actor, {
+    assistantMessage,
+    draftActions: messages.assistant.draftActions,
+    sources: messages.assistant.sources,
+    userMessage
   });
   await prisma.assistantConversation.update({
     data: { updatedAt: new Date() },
@@ -829,6 +1042,8 @@ function classifyConversationIntent(message: string, history: AssistantConversat
   if (/\b(meeting|prepare|prep|agenda)\b/.test(text)) return "meeting";
   if (/\b(risky|risk|at risk|pipeline|opportunit(?:y|ies)|deals?)\b/.test(text)) return "deal_risk";
   if (/\b(plan my day|focus|prioriti[sz]e|what should i do|help me plan|my day)\b/.test(text)) return "day";
+  if (/\b(summari[sz]e|summary)\b/.test(text) && /\b(relationship|customer|account|contact|organization|deal|lead|quote)\b/.test(text)) return "relationship";
+  if (/\b(rewrite|summari[sz]e|summary|brainstorm|make this sound|polish|agenda|outline|explain|sales concept|less formal|more formal|professional|concise)\b/.test(text)) return "general";
   return "relationship";
 }
 
@@ -841,7 +1056,7 @@ function entitySearchTerm(message: string, history: AssistantConversationMessage
 
 function extractEntityTerm(value: string) {
   const cleaned = value
-    .replace(/[?!.]+$/g, "")
+    .replace(/[?!.]+/g, " ")
     .replace(/\b(summarize|summary|relationship|customer|account|contact|deal|lead|quote|meeting|prepare|prep|for|from|about|with|the|this|that|them|their|they|it|please|help|me|compare|opportunities|opportunity|what|am|i|waiting|on|focus|should|do|first)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -936,6 +1151,44 @@ function previousUserPrompt(messages: AssistantConversationMessageView[], index:
   return null;
 }
 
+function previousUserMessage(messages: AssistantConversationMessageView[], index: number) {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (messages[cursor]?.role === "user") return messages[cursor] ?? null;
+  }
+  return null;
+}
+
+function findLastMessageIndex(messages: AssistantConversationMessageView[], role: AssistantConversationMessageView["role"]) {
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    if (messages[cursor]?.role === role) return cursor;
+  }
+  return -1;
+}
+
+function extractSuppliedText(value: string) {
+  const match = value.match(/(?:rewrite|summari[sz]e|polish|make this sound|turn this into|draft|text|notes?)\s*:?\s*([\s\S]{20,1600})$/i);
+  if (match?.[1]) return safeText(match[1], 1200);
+  const quoted = value.match(/["“]([^"”]{20,1600})["”]/);
+  return quoted?.[1] ? safeText(quoted[1], 1200) : "";
+}
+
+function rewritePlainWorkText(value: string, instruction: string) {
+  const concise = /\b(concise|shorter|brief)\b/i.test(instruction);
+  const formal = /\b(professional|formal|polish)\b/i.test(instruction);
+  const cleaned = safeText(value, concise ? 360 : 700).replace(/\s+/g, " ");
+  if (!cleaned) return "";
+  if (formal) {
+    return `Thanks for the context. ${cleaned.replace(/^hey\b/i, "Hello").replace(/\bASAP\b/g, "as soon as practical")} Please let me know what timing works best.`;
+  }
+  return concise ? cleaned.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ") : cleaned;
+}
+
+function summarizePlainWorkText(value: string) {
+  const sentences = safeText(value, 900).split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.length === 0) return "";
+  return sentences.slice(0, 3).join(" ");
+}
+
 function parseSources(value: Prisma.JsonValue | null): AssistantConversationSource[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -959,12 +1212,12 @@ function parseDraftActions(value: Prisma.JsonValue | null): AssistantDraftAction
 
 function sanitizeConversationText(value: unknown) {
   if (typeof value !== "string") return "";
-  return safeText(value, maxStoredMessageLength);
+  return safeMultilineText(value, maxStoredMessageLength);
 }
 
 function normalizeConversationText(value: unknown) {
   if (typeof value !== "string") return "";
-  return value.trim().replace(/\s+/g, " ").slice(0, maxStoredMessageLength);
+  return safeMultilineText(value, maxStoredMessageLength);
 }
 
 function sanitizeAssistantText(value: string) {
@@ -990,6 +1243,15 @@ function conversationTitle(message: string) {
 function safeText(value: unknown, maxLength = maxStoredMessageLength) {
   if (typeof value !== "string") return "";
   return redactSensitiveText(value).trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function safeMultilineText(value: unknown, maxLength = maxStoredMessageLength) {
+  if (typeof value !== "string") return "";
+  return redactSensitiveText(value)
+    .trim()
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .slice(0, maxLength);
 }
 
 function stringField(value: unknown, maxLength: number) {
