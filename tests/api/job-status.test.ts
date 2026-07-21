@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { formatJobQueueStatus } from "@/lib/jobs/status-cli";
-import { internalNoopJobType, passwordResetEmailJobType } from "@/lib/jobs/handlers";
+import {
+  gmailInboxSyncJobType,
+  internalNoopJobType,
+  meetingMediaExtractionJobType,
+  passwordResetEmailJobType,
+  workspaceInvitationEmailJobType
+} from "@/lib/jobs/handlers";
 import type { JobQueueStatus } from "@/lib/services/job-service";
 
 const scriptSource = readFileSync(join(process.cwd(), "scripts/jobs-status.ts"), "utf8");
@@ -28,6 +34,9 @@ describe("job queue status command", () => {
       typeCounts: [
         { type: passwordResetEmailJobType, count: 2 },
         { type: internalNoopJobType, count: 1 },
+        { type: gmailInboxSyncJobType, count: 6 },
+        { type: meetingMediaExtractionJobType, count: 7 },
+        { type: workspaceInvitationEmailJobType, count: 8 },
         { type: "AUTH.PASSWORD_RESET_EMAIL", count: 3 },
         { type: "auth.password_reset_email.", count: 4 },
         { type: "internal.noop ", count: 5 },
@@ -41,6 +50,9 @@ describe("job queue status command", () => {
     expect(output).toContain("oldestDuePendingRunAt=2030-04-01T00:00:00.000Z");
     expect(output).toContain("auth.password_reset_email=2");
     expect(output).toContain("internal.noop=1");
+    expect(output).toContain("email.gmail_sync=6");
+    expect(output).toContain("meeting_intake.extract_media=7");
+    expect(output).toContain("workspace.invitation_email=8");
     expect(output).toContain("unregistered=14");
     expect(output).not.toContain("AUTH.PASSWORD_RESET_EMAIL");
     expect(output).not.toContain("auth.password_reset_email.");
