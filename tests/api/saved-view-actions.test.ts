@@ -30,15 +30,21 @@ vi.mock("@/lib/auth/request-context", () => ({
 }));
 
 vi.mock("@/lib/services/crm", () => ({
-  createAutomationTemplateActivity: mocks.createAutomationTemplateActivity,
-  createDealSavedView: mocks.createDealSavedView,
-  deleteDealSavedView: mocks.deleteDealSavedView,
-  createLeadSavedView: mocks.createLeadSavedView,
-  deleteLeadSavedView: mocks.deleteLeadSavedView,
   createContactSavedView: mocks.createContactSavedView,
   deleteContactSavedView: mocks.deleteContactSavedView,
   createOrganizationSavedView: mocks.createOrganizationSavedView,
   deleteOrganizationSavedView: mocks.deleteOrganizationSavedView
+}));
+
+vi.mock("@/lib/services/saved-view-service", () => ({
+  createDealSavedView: mocks.createDealSavedView,
+  deleteDealSavedView: mocks.deleteDealSavedView,
+  createLeadSavedView: mocks.createLeadSavedView,
+  deleteLeadSavedView: mocks.deleteLeadSavedView
+}));
+
+vi.mock("@/lib/services/automation-template-service", () => ({
+  createAutomationTemplateActivity: mocks.createAutomationTemplateActivity
 }));
 
 import { createContactSavedViewAction, deleteContactSavedViewAction } from "@/app/contacts/actions";

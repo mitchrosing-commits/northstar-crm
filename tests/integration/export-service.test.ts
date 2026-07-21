@@ -48,7 +48,7 @@ describe("workspace CSV exports", () => {
     const quotes = await crm.exportWorkspaceCsv(fx.actorA, "quotes");
 
     expect(deals.filename).toBe("northstar-deals.csv");
-    expect(deals.csv).toContain("title,status,value,currency,pipeline,stage");
+    expect(deals.csv).toContain("Deal Title,Status,Deal Value,Currency,Pipeline,Stage");
     expect(deals.csv).toContain("Alpha Needle Deal");
     expect(deals.csv).not.toContain("Beta Needle Deal");
     expect(contacts.csv).toContain("Alpha,Contact");
@@ -151,8 +151,8 @@ describe("workspace CSV exports", () => {
       status: "DECLINED"
     });
     const parsedProducts = parseCsv(products.csv);
-    const productNameIndex = parsedProducts.headers.indexOf("name");
-    const productActiveIndex = parsedProducts.headers.indexOf("active");
+    const productNameIndex = parsedProducts.headers.indexOf("Product Name");
+    const productActiveIndex = parsedProducts.headers.indexOf("Active");
     const inactiveProductRow = parsedProducts.rows.find((row) => row[productNameIndex] === secondProduct.name);
 
     expect(products.csv).toContain(firstProduct.name);
@@ -253,14 +253,14 @@ describe("workspace CSV exports", () => {
       crm.exportWorkspaceCsv(fx.actorA, "quotes")
     ]);
     const parsedQuotes = parseCsv(quotes.csv);
-    const quoteNumberIndex = parsedQuotes.headers.indexOf("number");
-    const itemCountIndex = parsedQuotes.headers.indexOf("itemCount");
+    const quoteNumberIndex = parsedQuotes.headers.indexOf("Quote Number");
+    const itemCountIndex = parsedQuotes.headers.indexOf("Item Count");
     const quoteRow = parsedQuotes.rows.find((row) => row[quoteNumberIndex] === quote.number);
     const parsedDeals = parseCsv(deals.csv);
-    const dealTitleIndex = parsedDeals.headers.indexOf("title");
-    const lineItemCountIndex = parsedDeals.headers.indexOf("lineItemCount");
-    const quoteCountIndex = parsedDeals.headers.indexOf("quoteCount");
-    const latestQuoteNumberIndex = parsedDeals.headers.indexOf("latestQuoteNumber");
+    const dealTitleIndex = parsedDeals.headers.indexOf("Deal Title");
+    const lineItemCountIndex = parsedDeals.headers.indexOf("Line Item Count");
+    const quoteCountIndex = parsedDeals.headers.indexOf("Quote Count");
+    const latestQuoteNumberIndex = parsedDeals.headers.indexOf("Latest Quote Number");
     const dealRow = parsedDeals.rows.find((row) => row[dealTitleIndex] === fx.recordsA.deal.title);
 
     for (const csv of [deals.csv, contacts.csv, leads.csv, activities.csv, quotes.csv]) {
@@ -319,23 +319,23 @@ describe("workspace CSV exports", () => {
     const parsedLeads = parseCsv(leads.csv);
     const parsedActivities = parseCsv(activities.csv);
     const parsedQuotes = parseCsv(quotes.csv);
-    const dealRow = parsedDeals.rows.find((row) => row[parsedDeals.headers.indexOf("title")] === fx.recordsA.deal.title);
-    const leadRow = parsedLeads.rows.find((row) => row[parsedLeads.headers.indexOf("title")] === fx.recordsA.lead.title);
-    const activityRow = parsedActivities.rows.find((row) => row[parsedActivities.headers.indexOf("title")] === fx.recordsA.activity.title);
-    const quoteRow = parsedQuotes.rows.find((row) => row[parsedQuotes.headers.indexOf("number")] === quote.number);
+    const dealRow = parsedDeals.rows.find((row) => row[parsedDeals.headers.indexOf("Deal Title")] === fx.recordsA.deal.title);
+    const leadRow = parsedLeads.rows.find((row) => row[parsedLeads.headers.indexOf("Lead Title")] === fx.recordsA.lead.title);
+    const activityRow = parsedActivities.rows.find((row) => row[parsedActivities.headers.indexOf("Activity Title")] === fx.recordsA.activity.title);
+    const quoteRow = parsedQuotes.rows.find((row) => row[parsedQuotes.headers.indexOf("Quote Number")] === quote.number);
 
-    expect(dealRow?.[parsedDeals.headers.indexOf("contactName")]).toBe("");
-    expect(dealRow?.[parsedDeals.headers.indexOf("contactEmail")]).toBe("");
-    expect(dealRow?.[parsedDeals.headers.indexOf("organizationName")]).toBe("");
-    expect(leadRow?.[parsedLeads.headers.indexOf("contactName")]).toBe("");
-    expect(leadRow?.[parsedLeads.headers.indexOf("contactEmail")]).toBe("");
-    expect(leadRow?.[parsedLeads.headers.indexOf("organizationName")]).toBe("");
-    expect(activityRow?.[parsedActivities.headers.indexOf("contactName")]).toBe("");
-    expect(activityRow?.[parsedActivities.headers.indexOf("contactEmail")]).toBe("");
-    expect(activityRow?.[parsedActivities.headers.indexOf("organizationName")]).toBe("");
-    expect(quoteRow?.[parsedQuotes.headers.indexOf("contactName")]).toBe("");
-    expect(quoteRow?.[parsedQuotes.headers.indexOf("contactEmail")]).toBe("");
-    expect(quoteRow?.[parsedQuotes.headers.indexOf("organizationName")]).toBe("");
+    expect(dealRow?.[parsedDeals.headers.indexOf("Contact Name")]).toBe("");
+    expect(dealRow?.[parsedDeals.headers.indexOf("Contact Email")]).toBe("");
+    expect(dealRow?.[parsedDeals.headers.indexOf("Organization Name")]).toBe("");
+    expect(leadRow?.[parsedLeads.headers.indexOf("Contact Name")]).toBe("");
+    expect(leadRow?.[parsedLeads.headers.indexOf("Contact Email")]).toBe("");
+    expect(leadRow?.[parsedLeads.headers.indexOf("Organization Name")]).toBe("");
+    expect(activityRow?.[parsedActivities.headers.indexOf("Contact Name")]).toBe("");
+    expect(activityRow?.[parsedActivities.headers.indexOf("Contact Email")]).toBe("");
+    expect(activityRow?.[parsedActivities.headers.indexOf("Organization Name")]).toBe("");
+    expect(quoteRow?.[parsedQuotes.headers.indexOf("Contact Name")]).toBe("");
+    expect(quoteRow?.[parsedQuotes.headers.indexOf("Contact Email")]).toBe("");
+    expect(quoteRow?.[parsedQuotes.headers.indexOf("Organization Name")]).toBe("");
     expect(deletedOrganizationDealSearch.csv).not.toContain(fx.recordsA.deal.title);
     expect(deletedOrganizationContactSearch.csv).not.toContain(fx.recordsA.person.email as string);
     expect(deletedOrganizationLeadSearch.csv).not.toContain(fx.recordsA.lead.title);
@@ -365,13 +365,13 @@ describe("workspace CSV exports", () => {
       const products = await crm.exportWorkspaceCsv(actor, "products");
       const quotes = await crm.exportWorkspaceCsv(actor, "quotes");
 
-      expect(deals.csv).toBe("title,status,value,currency,pipeline,stage,expectedCloseAt,contactName,contactEmail,organizationName,ownerEmail,lineItemCount,quoteCount,latestQuoteNumber,latestQuoteStatus,latestQuoteTotal,createdAt,updatedAt");
-      expect(contacts.csv).toBe("firstName,lastName,email,phone,organizationName,ownerEmail,createdAt,updatedAt");
-      expect(organizations.csv).toBe("name,domain,ownerEmail,peopleCount,dealsCount,createdAt,updatedAt");
-      expect(leads.csv).toBe("title,status,source,contactName,contactEmail,organizationName,ownerEmail,createdAt,updatedAt");
-      expect(activities.csv).toBe("title,type,status,dueAt,completedAt,dealTitle,leadTitle,contactName,contactEmail,organizationName,ownerEmail,description,createdAt,updatedAt");
-      expect(products.csv).toBe("name,description,unitPrice,currency,active,createdAt,updatedAt");
-      expect(quotes.csv).toBe("number,status,dealTitle,contactName,contactEmail,organizationName,currency,subtotal,discountType,discount,taxType,tax,total,itemCount,createdAt,updatedAt");
+      expect(deals.csv).toBe("Deal Title,Status,Deal Value,Currency,Pipeline,Stage,Expected Close,Contact Name,Contact Email,Organization Name,Owner Email,Line Item Count,Quote Count,Latest Quote Number,Latest Quote Status,Latest Quote Total,Created At,Updated At");
+      expect(contacts.csv).toBe("First Name,Last Name,Email,Phone,Organization Name,Owner Email,Created At,Updated At");
+      expect(organizations.csv).toBe("Organization Name,Domain,Owner Email,People Count,Deal Count,Created At,Updated At");
+      expect(leads.csv).toBe("Lead Title,Status,Source,Contact Name,Contact Email,Organization Name,Owner Email,Created At,Updated At");
+      expect(activities.csv).toBe("Activity Title,Type,Status,Due At,Completed At,Deal Title,Lead Title,Contact Name,Contact Email,Organization Name,Owner Email,Description,Created At,Updated At");
+      expect(products.csv).toBe("Product Name,Description,Unit Price,Currency,Active,Created At,Updated At");
+      expect(quotes.csv).toBe("Quote Number,Status,Deal Title,Contact Name,Contact Email,Organization Name,Currency,Subtotal,Discount Type,Discount,Tax Type,Tax,Total,Item Count,Created At,Updated At");
     } finally {
       await cleanupIntegrationFixture({
         prisma,
@@ -539,7 +539,7 @@ describe("workspace CSV exports", () => {
     expect(malformedRelatedActivities.csv).toContain("Unrelated Export Activity");
     expect(malformedRelatedActivities.csv).not.toContain("Completed Export Activity");
     expect(crossWorkspaceRelatedActivities.csv).toBe(
-      "title,type,status,dueAt,completedAt,dealTitle,leadTitle,contactName,contactEmail,organizationName,ownerEmail,description,createdAt,updatedAt"
+      "Activity Title,Type,Status,Due At,Completed At,Deal Title,Lead Title,Contact Name,Contact Email,Organization Name,Owner Email,Description,Created At,Updated At"
     );
     expect(malformedFilterActivities.csv).toContain("Alpha Needle Activity");
     expect(malformedFilterActivities.csv).toContain("Completed Export Activity");
@@ -675,17 +675,17 @@ describe("workspace CSV exports", () => {
 
     const deals = await crm.exportWorkspaceCsv(fx.actorA, "deals", { q: fx.recordsA.deal.title });
     const parsedDeals = parseCsv(deals.csv);
-    const titleIndex = parsedDeals.headers.indexOf("title");
-    const quoteCountIndex = parsedDeals.headers.indexOf("quoteCount");
-    const latestQuoteNumberIndex = parsedDeals.headers.indexOf("latestQuoteNumber");
-    const latestQuoteStatusIndex = parsedDeals.headers.indexOf("latestQuoteStatus");
-    const latestQuoteTotalIndex = parsedDeals.headers.indexOf("latestQuoteTotal");
+    const titleIndex = parsedDeals.headers.indexOf("Deal Title");
+    const quoteCountIndex = parsedDeals.headers.indexOf("Quote Count");
+    const latestQuoteNumberIndex = parsedDeals.headers.indexOf("Latest Quote Number");
+    const latestQuoteStatusIndex = parsedDeals.headers.indexOf("Latest Quote Status");
+    const latestQuoteTotalIndex = parsedDeals.headers.indexOf("Latest Quote Total");
     const dealRow = parsedDeals.rows.find((row) => row[titleIndex] === fx.recordsA.deal.title);
 
     expect(secondQuote.number).not.toBe(firstQuote.number);
     expect(dealRow?.[quoteCountIndex]).toBe("2");
     expect(dealRow?.[latestQuoteNumberIndex]).toBe(firstQuote.number);
-    expect(dealRow?.[latestQuoteStatusIndex]).toBe("SENT");
+    expect(dealRow?.[latestQuoteStatusIndex]).toBe("Sent");
     expect(dealRow?.[latestQuoteTotalIndex]).toBe("250.00");
   });
 

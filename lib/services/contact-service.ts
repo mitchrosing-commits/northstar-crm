@@ -22,6 +22,7 @@ type CreatePersonInput = {
   organizationId?: unknown;
   firstName: unknown;
   lastName?: unknown;
+  title?: unknown;
   email?: unknown;
   phone?: unknown;
   relationshipPersonalContext?: unknown;
@@ -242,6 +243,7 @@ function normalizeCreatePersonInput(data: unknown) {
     organizationId: normalizeOptionalPersonId(input.organizationId),
     firstName: normalizeRequiredPersonText(input.firstName, "Contact first name is required."),
     lastName: normalizeOptionalPersonText(input.lastName, "Contact last name must be text."),
+    title: normalizeOptionalPersonText(input.title, "Contact title must be text."),
     email: normalizeOptionalPersonText(input.email, "Contact email must be text."),
     phone: normalizeOptionalPersonText(input.phone, "Contact phone must be text."),
     relationshipPersonalContext: normalizeOptionalRelationshipText(
@@ -279,6 +281,7 @@ function normalizeUpdatePersonInput(data: unknown) {
       ? normalizeRequiredPersonText(input.firstName, "Contact first name is required.")
       : undefined,
     lastName: hasInputKey(input, "lastName") ? normalizeOptionalPersonText(input.lastName, "Contact last name must be text.") : undefined,
+    title: hasInputKey(input, "title") ? normalizeOptionalPersonText(input.title, "Contact title must be text.") : undefined,
     email: hasInputKey(input, "email") ? normalizeOptionalPersonText(input.email, "Contact email must be text.") : undefined,
     phone: hasInputKey(input, "phone") ? normalizeOptionalPersonText(input.phone, "Contact phone must be text.") : undefined,
     relationshipPersonalContext: hasInputKey(input, "relationshipPersonalContext")
@@ -342,6 +345,7 @@ function personUpdateChanges(
     organizationId: string | null;
     firstName: string;
     lastName: string | null;
+    title: string | null;
     email: string | null;
     phone: string | null;
     relationshipBusinessConcerns: string | null;
@@ -355,6 +359,7 @@ function personUpdateChanges(
   if (input.organizationId !== undefined && input.organizationId !== existing.organizationId) return true;
   if (input.firstName !== undefined && input.firstName !== existing.firstName) return true;
   if (input.lastName !== undefined && input.lastName !== existing.lastName) return true;
+  if (input.title !== undefined && input.title !== existing.title) return true;
   if (input.email !== undefined && input.email !== existing.email) return true;
   if (input.phone !== undefined && input.phone !== existing.phone) return true;
   if (input.relationshipPersonalContext !== undefined && input.relationshipPersonalContext !== existing.relationshipPersonalContext) return true;

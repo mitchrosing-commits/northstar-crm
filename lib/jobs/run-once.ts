@@ -5,9 +5,14 @@ import {
   markJobFailedForRetry,
   markJobSucceeded
 } from "@/lib/services/job-service";
+import {
+  enqueueDueGmailInboxSyncJobs,
+  gmailInboxSyncJobType
+} from "@/lib/services/email-connection-service";
 import { jobHandlers, type JobHandlerRegistry } from "./handlers";
 
 export type RunJobsOnceOptions = {
+  autoEnqueueGmailSync?: boolean;
   handlers?: JobHandlerRegistry;
   limit?: number;
   now?: Date;
@@ -27,6 +32,12 @@ export async function runJobsOnce(options: RunJobsOnceOptions = {}): Promise<Run
   const now = options.now ?? new Date();
   const workerId = normalizeRunOnceWorkerId(options.workerId);
   const handlers = options.handlers ?? jobHandlers;
+  if (shouldAutoEnqueueGmailSync(options)) {
+    await enqueueDueGmailInboxSyncJobs({
+      now,
+      workspaceId: normalizeAutoSyncWorkspaceId(options.workspaceId)
+    });
+  }
   const jobs = await claimJobs({
     limit: options.limit ?? 10,
     now,
@@ -88,4 +99,23 @@ export function normalizeRunOnceWorkerId(workerId: string | undefined, processId
 
 export function defaultRunOnceWorkerId(processId = process.pid) {
   return `jobs-run-once-${processId}`;
+}
+
+function shouldAutoEnqueueGmailSync(options: RunJobsOnceOptions) {
+  if (options.autoEnqueueGmailSync === false) return false;
+  if (!jobTypesIncludeGmailSync(options.types)) return false;
+  return Boolean(options.handlers?.[gmailInboxSyncJobType] ?? jobHandlers[gmailInboxSyncJobType]);
+}
+
+function jobTypesIncludeGmailSync(types: unknown) {
+  if (types === undefined || types === null || types === "") return true;
+  if (typeof types === "string") return types === gmailInboxSyncJobType;
+  if (Array.isArray(types)) return types.includes(gmailInboxSyncJobType);
+  return false;
+}
+
+function normalizeAutoSyncWorkspaceId(workspaceId: unknown) {
+  return typeof workspaceId === "string" && workspaceId.trim()
+    ? workspaceId.trim()
+    : undefined;
 }

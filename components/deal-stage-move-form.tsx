@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
@@ -7,6 +8,7 @@ import { EmptyState } from "@/components/empty-state";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSuccessMessage } from "@/components/form-success-message";
 
 type StageOption = {
   id: string;
@@ -31,6 +33,7 @@ export function DealStageMoveForm({
   const router = useRouter();
   const [stageId, setStageId] = useState(currentStageId);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const hasStages = stages.length > 0;
   const selectedStage = useMemo(() => stages.find((stage) => stage.id === stageId), [stageId, stages]);
@@ -39,6 +42,7 @@ export function DealStageMoveForm({
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSuccess(null);
 
     if (!selectedStage) {
       setError("Choose a valid stage in this pipeline.");
@@ -48,6 +52,7 @@ export function DealStageMoveForm({
       setError("Use Mark won or Mark lost to close this deal intentionally.");
       return;
     }
+    const movedStageName = selectedStage.name;
 
     setIsSaving(true);
     const response = await fetch(`/api/v1/workspaces/${workspaceId}/deals/${dealId}`, {
@@ -66,6 +71,9 @@ export function DealStageMoveForm({
       return;
     }
 
+    setIsSaving(false);
+    setSuccess(`Deal moved to ${movedStageName}.`);
+    router.replace(currentPathWithHash("overview"), { scroll: true });
     router.refresh();
   }
 
@@ -82,6 +90,7 @@ export function DealStageMoveForm({
   return (
     <form className="inline-form" onSubmit={onSubmit}>
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {success ? <FormSuccessMessage compact>{success}</FormSuccessMessage> : null}
       <label className="form-field">
         <FormFieldLabel required>Move to stage</FormFieldLabel>
         <select onChange={(event) => setStageId(event.target.value)} value={stageId}>
@@ -114,4 +123,8 @@ export function DealStageMoveForm({
 
 function isCloseStageName(name: string) {
   return /\bclosed?\b/i.test(name.trim());
+}
+
+function currentPathWithHash(hash: string) {
+  return `${window.location.pathname}${window.location.search}#${hash}` as Route;
 }

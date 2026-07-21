@@ -51,9 +51,12 @@ export async function runJobsWorker(options: RunJobsWorkerOptions = {}): Promise
     options.onRecoveryResult?.(recovery);
 
     const batch = await runJobsOnce({
+      autoEnqueueGmailSync: options.autoEnqueueGmailSync,
       handlers: options.handlers,
       limit: options.limit,
       now: options.now,
+      types: options.types,
+      workspaceId: options.workspaceId,
       workerId
     });
 

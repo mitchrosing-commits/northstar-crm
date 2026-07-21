@@ -1,11 +1,13 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSuccessMessage } from "@/components/form-success-message";
 
 type NoteFormProps = {
   workspaceId: string;
@@ -22,11 +24,13 @@ export function NoteForm({ workspaceId, attachment }: NoteFormProps) {
   const router = useRouter();
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSuccess(null);
 
     if (!body.trim()) {
       setError("Add note content before saving.");
@@ -51,17 +55,23 @@ export function NoteForm({ workspaceId, attachment }: NoteFormProps) {
     }
 
     setBody("");
+    setSuccess("Note saved. Recent notes refreshed.");
     setIsSaving(false);
+    router.replace(currentPathWithHash("notes"), { scroll: true });
     router.refresh();
   }
 
   return (
     <form className="inline-form" onSubmit={onSubmit}>
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {success ? <FormSuccessMessage compact>{success}</FormSuccessMessage> : null}
       <label className="form-field">
         <FormFieldLabel required>Internal note</FormFieldLabel>
         <textarea
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => {
+            setSuccess(null);
+            setBody(event.target.value);
+          }}
           placeholder="Add a plain-text note for your team."
           required
           rows={4}
@@ -76,4 +86,8 @@ export function NoteForm({ workspaceId, attachment }: NoteFormProps) {
       />
     </form>
   );
+}
+
+function currentPathWithHash(hash: string) {
+  return `${window.location.pathname}${window.location.search}#${hash}` as Route;
 }

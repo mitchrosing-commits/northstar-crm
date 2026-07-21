@@ -12,6 +12,7 @@ const activeWorkspaceCookieName = "northstar_workspace";
 
 type AssistantBrowserFixture = {
   ambiguousContactName: string;
+  dealId: string;
   expiresAt: Date;
   personId: string;
   primaryContactName: string;
@@ -238,9 +239,51 @@ test.describe("Assistant review-first browser workflow", () => {
     expect(errors.current()).toEqual([]);
   });
 
+  test("opens a deal action plan and drafts a reviewed deal follow-up", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await page.goto(`/deals/${fixture.dealId}`);
+    await expect(page.getByRole("heading", { level: 1, name: /Assistant command deal/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Ask Assistant about this deal" })).toBeVisible();
+    await page.getByRole("link", { name: "Action plan" }).click();
+    await expect(page).toHaveURL(/\/assistant\?command=/);
+    const thread = page.getByLabel("Assistant conversation");
+    await expect(thread.getByRole("heading", { name: /Deal action plan:/ })).toBeVisible();
+    await expect(thread).toContainText("Immediate follow-ups");
+    await expect(thread).toContainText("Commercial attention");
+    await expect(thread).not.toContainText(/providerMessageId|providerThreadId|refresh_token|access token/i);
+
+    const activityDraft = thread.getByLabel("Assistant draft actions").locator(".assistant-draft-card").filter({ hasText: "Prepare action-plan activity" });
+    await expect(activityDraft).toContainText("Save, then review");
+    await expect(activityDraft).toContainText("Description");
+    await activityDraft.getByRole("button", { name: "Save to review queue" }).click();
+    const request = reviewRequest(page, "Prepare action-plan activity");
+    await expect(request).toContainText("Review-first activity");
+    await expect(request).toContainText("Apply activity");
+
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("opens a deal latest-changes brief from deal detail", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await page.goto(`/deals/${fixture.dealId}`);
+    await expect(page.getByRole("heading", { level: 1, name: /Assistant command deal/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Latest changes" })).toBeVisible();
+    await page.getByRole("link", { name: "Latest changes" }).click();
+    await expect(page).toHaveURL(/\/assistant\?command=/);
+    const thread = page.getByLabel("Assistant conversation");
+    await expect(thread.getByRole("heading", { name: /Deal change brief:/ })).toBeVisible();
+    await expect(thread).toContainText("Since when");
+    await expect(thread).toContainText("Recommended follow-up");
+    await expect(thread).not.toContainText(/providerMessageId|providerThreadId|refresh_token|access token/i);
+
+    expect(errors.current()).toEqual([]);
+  });
+
   test("routes supported contact drafts into CRM change proposals before applying", async ({ page }) => {
     const errors = watchBrowserErrors(page);
-    const email = `proposal-${fixture.workspaceId.slice(0, 8)}@example.test`;
+    const email = `proposal-${randomUUID()}@example.test`;
 
     await prisma.workspace.update({
       data: {
@@ -269,17 +312,68 @@ test.describe("Assistant review-first browser workflow", () => {
     await expect(page.getByLabel("CRM change proposal summary")).toContainText("Assistant conversation");
     await expect(page.getByText("Current vs Proposed")).toBeVisible();
     await expect(page.getByLabel("CRM change proposal summary")).toContainText("Create contacts");
+
+    const proposalUrl = page.url();
+    await page.goto("/assistant");
+    const pendingProposalOutcome = reviewQueue(page).getByLabel("CRM proposal outcomes").locator(".assistant-proposal-outcome").first();
+    await expect(pendingProposalOutcome).toContainText("CRM Change Proposal pending review");
+    await expect(pendingProposalOutcome).toContainText("Requested action");
+    await expect(pendingProposalOutcome).toContainText("Selected record");
+    await expect(pendingProposalOutcome.getByRole("link", { name: "Review proposal" })).toBeVisible();
+
+    await page.goto(proposalUrl);
     await page.locator('input[name="field.firstName"]').fill("Browser Reviewed");
     await page.getByRole("button", { name: "Apply reviewed change" }).click();
     await expect(page).toHaveURL(/status=applied/);
     await expect(page.getByText("CRM change proposal applied after review.")).toBeVisible();
     await expect(page.getByLabel("CRM change proposal summary").getByRole("link", { name: "Applied contact" })).toBeVisible();
 
+    await page.goto("/assistant?queue=applied");
+    const appliedProposalOutcome = reviewQueue(page).getByLabel("CRM proposal outcomes").locator(".assistant-proposal-outcome").first();
+    await expect(appliedProposalOutcome).toContainText("Proposal applied");
+    await expect(appliedProposalOutcome).toContainText("Applied record");
+    await expect(appliedProposalOutcome.getByRole("link", { name: "Applied contact" })).toBeVisible();
+
     const created = await prisma.person.findFirst({
       where: { email, workspaceId: fixture.workspaceId },
       select: { firstName: true, lastName: true, phone: true }
     });
     expect(created).toEqual({ firstName: "Browser Reviewed", lastName: "Proposal", phone: "555-0177" });
+    expect(errors.current()).toEqual([]);
+  });
+
+  test("clarifies an ambiguous contact update in chat before creating a CRM proposal", async ({ page }) => {
+    const errors = watchBrowserErrors(page);
+
+    await prisma.workspace.update({
+      data: {
+        aiActionPermissionDefaults: {
+          ...defaultAiActionPermissions,
+          update_contact: "require_confirmation"
+        }
+      },
+      where: { id: fixture.workspaceId }
+    });
+
+    await draftCommand(page, `Update ${fixture.ambiguousContactName}'s phone to 555-0190.`);
+    const ambiguousDraft = page.getByLabel("Assistant draft actions").locator(".assistant-draft-card").filter({ hasText: "Propose updating contact" }).first();
+    await expect(ambiguousDraft).toContainText("Needs clarification");
+    await expect(ambiguousDraft).toContainText("Candidates to review");
+    await expect(ambiguousDraft.getByRole("button", { name: "Use this contact" }).first()).toBeVisible();
+
+    await ambiguousDraft.getByRole("button", { name: "Use this contact" }).first().click();
+    await expect(page.getByRole("heading", { name: "Clarification applied" })).toBeVisible();
+    const finalDraft = page.getByLabel("Assistant draft actions").locator(".assistant-draft-card").filter({ hasText: "Propose updating contact" }).last();
+    await expect(finalDraft).toContainText("High");
+    await expect(finalDraft).toContainText("555-0190");
+
+    await Promise.all([
+      page.waitForURL(/\/crm-change-proposals\/[^/]+\?source=assistant$/),
+      finalDraft.getByRole("button", { name: "Save to review queue" }).click()
+    ]);
+    await expect(page.getByRole("heading", { level: 1, name: /Update contact:/i })).toBeVisible();
+    await expect(page.getByText("Current vs Proposed")).toBeVisible();
+    await expect(page.getByText("555-0190")).toBeVisible();
     expect(errors.current()).toEqual([]);
   });
 
@@ -488,6 +582,7 @@ async function createAssistantBrowserFixture(): Promise<AssistantBrowserFixture>
   const session = await createLocalSession(user.id);
   return {
     ambiguousContactName,
+    dealId: deal.id,
     expiresAt: session.expiresAt,
     personId: person.id,
     primaryContactName,
@@ -512,6 +607,7 @@ async function resetAssistantBrowserWorkspace() {
   await prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.activity.deleteMany({ where: { workspaceId: fixture.workspaceId } });
   await prisma.note.deleteMany({ where: { workspaceId: fixture.workspaceId } });
+  await prisma.person.deleteMany({ where: { email: { startsWith: "proposal-" }, workspaceId: fixture.workspaceId } });
 }
 
 async function cleanupAssistantBrowserFixture() {

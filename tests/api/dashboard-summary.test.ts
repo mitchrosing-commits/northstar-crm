@@ -174,10 +174,16 @@ describe("dashboard summary behavior", () => {
       'const viewPipelineLabel = "View pipeline board"',
     );
     expect(dashboardPage).toContain(
+      'const viewReportsLabel = "Open Reports from dashboard"',
+    );
+    expect(dashboardPage).toContain(
       'const newDealLabel = "Create a new deal from dashboard"',
     );
     expect(dashboardPage).toContain("aria-label={viewPipelineLabel}");
     expect(dashboardPage).toContain("title={viewPipelineLabel}");
+    expect(dashboardPage).toContain("aria-label={viewReportsLabel}");
+    expect(dashboardPage).toContain("title={viewReportsLabel}");
+    expect(dashboardPage).toContain('href="/reports"');
     expect(dashboardPage).toContain("aria-label={newDealLabel}");
     expect(dashboardPage).toContain("title={newDealLabel}");
     expect(dashboardPage).toContain(

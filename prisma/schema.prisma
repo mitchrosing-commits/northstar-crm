@@ -291,29 +291,36 @@ model DealLineItem {
 }
 
 model Quote {
-  id            String              @id @default(cuid())
-  workspaceId   String
-  dealId        String
-  number        String
-  status        QuoteStatus         @default(DRAFT)
-  currency      String              @default("USD")
-  subtotalCents Int
-  discountType  QuoteAdjustmentType @default(NONE)
-  discountValue Int                 @default(0)
-  discountCents Int                 @default(0)
-  taxType       QuoteAdjustmentType @default(NONE)
-  taxValue      Int                 @default(0)
-  taxCents      Int                 @default(0)
-  totalCents    Int
-  workspace     Workspace           @relation(fields: [workspaceId], references: [id])
-  deal          Deal                @relation(fields: [dealId], references: [id])
-  items         QuoteItem[]
-  publicLinks   QuotePublicLink[]
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  id                    String              @id @default(cuid())
+  workspaceId           String
+  dealId                String
+  number                String
+  status                QuoteStatus         @default(DRAFT)
+  currency              String              @default("USD")
+  subtotalCents         Int
+  discountType          QuoteAdjustmentType @default(NONE)
+  discountValue         Int                 @default(0)
+  discountCents         Int                 @default(0)
+  taxType               QuoteAdjustmentType @default(NONE)
+  taxValue              Int                 @default(0)
+  taxCents              Int                 @default(0)
+  totalCents            Int
+  sentDealValueCents    Int?
+  sentDealCurrency      String?
+  dealValueSyncedAt     DateTime?
+  dealValueSyncConflict String?
+  dealValueSyncReviewedAt DateTime?
+  dealValueSyncResolution String?
+  workspace             Workspace           @relation(fields: [workspaceId], references: [id])
+  deal                  Deal                @relation(fields: [dealId], references: [id])
+  items                 QuoteItem[]
+  publicLinks           QuotePublicLink[]
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   @@unique([workspaceId, number])
   @@index([workspaceId, dealId])
+  @@index([workspaceId, dealValueSyncedAt])
 }
 
 model QuoteItem {
@@ -483,6 +490,7 @@ model Person {
   organizationId                 String?
   firstName                      String
   lastName                       String?
+  title                          String?
   email                          String?
   phone                          String?
   relationshipPersonalContext    String?
@@ -661,24 +669,31 @@ model EmailTemplate {
 }
 
 model EmailConnection {
-  id             String                  @id @default(cuid())
-  workspaceId    String
-  provider       EmailConnectionProvider
-  status         EmailConnectionStatus   @default(NOT_CONFIGURED)
-  accountEmail   String?
-  displayName    String?
-  scopes         Json?
-  lastSyncAt     DateTime?
-  lastSyncCursor String?
-  lastError      String?
-  createdById    String?
-  workspace      Workspace               @relation(fields: [workspaceId], references: [id])
-  createdBy      User?                   @relation("EmailConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  secret         EmailConnectionSecret?
-  emailLogs      EmailLog[]
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
-  deletedAt      DateTime?
+  id                       String                  @id @default(cuid())
+  workspaceId              String
+  provider                 EmailConnectionProvider
+  status                   EmailConnectionStatus   @default(NOT_CONFIGURED)
+  accountEmail             String?
+  displayName              String?
+  scopes                   Json?
+  lastSyncAt               DateTime?
+  lastSyncAttemptedAt      DateTime?
+  lastSyncCursor           String?
+  lastSyncImportedCount    Int?
+  lastSyncDuplicateCount   Int?
+  lastSyncSkippedCount     Int?
+  lastSyncMessageSkipCount Int?
+  lastSyncTotalFetched     Int?
+  lastSyncMode             String?
+  lastError                String?
+  createdById              String?
+  workspace                Workspace               @relation(fields: [workspaceId], references: [id])
+  createdBy                User?                   @relation("EmailConnectionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  secret                   EmailConnectionSecret?
+  emailLogs                EmailLog[]
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  deletedAt                DateTime?
 
   @@unique([workspaceId, provider, accountEmail, createdById])
   @@index([workspaceId, provider])
@@ -1032,6 +1047,7 @@ enum CrmChangeProposalType {
   CREATE_ORGANIZATION
   UPDATE_ORGANIZATION
   LINK_PERSON_ORGANIZATION
+  COMPOUND_PERSON_ORGANIZATION
 }
 
 enum MembershipRole {

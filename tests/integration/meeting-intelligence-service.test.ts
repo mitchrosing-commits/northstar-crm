@@ -12,7 +12,8 @@ import { internalMeetingMediaExtractionRoutePath } from "@/lib/meeting-intellige
 import {
   applyMeetingIntake,
   cleanupMeetingIntelligenceStoredFiles,
-  createMeetingIntake
+  createMeetingIntake,
+  updateMeetingIntakeAssociation
 } from "@/lib/services/meeting-intelligence-service";
 import { buildEmailReplyContext } from "@/lib/services/email-reply-assistant-service";
 import { updateActivity } from "@/lib/services/activity-service";
@@ -43,6 +44,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await fixture?.prisma.meetingActivityAssociation.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.job.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
+  await fixture?.prisma.crmChangeProposal.deleteMany({ where: { workspaceId: fixture.workspaceA.id, sourceType: "meeting_intelligence" } });
   await fixture?.prisma.meetingIntake.deleteMany({ where: { workspaceId: fixture.workspaceA.id } });
   await fixture?.prisma.auditLog.deleteMany({ where: { workspaceId: fixture.workspaceA.id, entityType: "MeetingIntake" } });
   await fixture?.prisma.note.deleteMany({
@@ -65,7 +67,16 @@ afterEach(async () => {
     }
   });
   await fixture?.prisma.person.deleteMany({
-    where: { workspaceId: fixture.workspaceA.id, email: "retarget-alpha-alt@example.test" }
+    where: {
+      workspaceId: fixture.workspaceA.id,
+      email: { in: ["casey.ray@example.test", "jordan.lee.review@example.test", "jordan.li.review@example.test", "jordan.alt.review@example.test", "retarget-alpha-alt@example.test"] }
+    }
+  });
+  await fixture?.prisma.organization.deleteMany({
+    where: {
+      workspaceId: fixture.workspaceA.id,
+      name: { in: ["Beta Logistics", "Gamma Logistics", "NewCo Logistics"] }
+    }
   });
   if (fixture) {
     await fixture.prisma.person.updateMany({
@@ -149,6 +160,316 @@ describe("meeting intelligence service", () => {
     await expect(fx.prisma.meetingActivityAssociation.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(
       afterFirstApplyCounts.associations
     );
+  });
+
+  it("creates review-first CRM proposals from explicit meeting evidence without mutating contacts or organizations", async () => {
+    const fx = currentFixture();
+    const betaOrganization = await fx.prisma.organization.create({
+      data: {
+        domain: "beta-logistics.example",
+        name: "Beta Logistics",
+        ownerId: fx.userA.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const jordanLee = await fx.prisma.person.create({
+      data: {
+        email: "jordan.lee.review@example.test",
+        firstName: "Jordan",
+        lastName: "Lee",
+        ownerId: fx.userA.id,
+        phone: null,
+        title: "Operations Manager",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const jordanLi = await fx.prisma.person.create({
+      data: {
+        email: "jordan.li.review@example.test",
+        firstName: "Jordan",
+        lastName: "Li",
+        ownerId: fx.userA.id,
+        title: "Implementation Lead",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const beforeContact = await fx.prisma.person.findUniqueOrThrow({ where: { id: jordanLee.id } });
+
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-06-01\nAttendees: Jordan Lee, Jordan Li, Casey Ray",
+      hints: { organizationId: betaOrganization.id, personIds: [jordanLee.id, jordanLi.id] },
+      text: [
+        "[00:01] Jordan Lee: My title is VP Operations.",
+        "[00:18] Jordan Lee: My email is jordan.lee@beta-logistics.example and phone is 555-010-1000.",
+        "[00:35] Jordan Lee: I am now with Beta Logistics.",
+        "[01:02] Jordan Li: I am only here for implementation questions; do not attach Jordan Lee updates to me.",
+        "[01:30] Casey Ray from NewCo Logistics can be reached at casey.ray@newco-logistics.example.",
+        "[01:45] NewCo Logistics website is newco-logistics.example.",
+        "[02:10] Unknown Speaker: I may have mixed up one speaker label during the handoff."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const storedProposals = await fx.prisma.crmChangeProposal.findMany({
+      orderBy: { createdAt: "asc" },
+      where: { sourceId: intake.id, sourceType: "meeting_intelligence", workspaceId: fx.workspaceA.id }
+    });
+    const proposalTypes = storedProposals.map((proposal) => proposal.proposalType);
+    const updatePersonProposal = storedProposals.find((proposal) => proposal.proposalType === "UPDATE_PERSON");
+    const linkProposal = storedProposals.find((proposal) => proposal.proposalType === "LINK_PERSON_ORGANIZATION");
+    const createPersonProposal = storedProposals.find((proposal) => proposal.proposalType === "CREATE_PERSON");
+    const createOrganizationProposal = storedProposals.find((proposal) => proposal.proposalType === "CREATE_ORGANIZATION");
+
+    expect(intake.status).toBe("READY_FOR_REVIEW");
+    expect(draft.transcriptSegments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ speaker: "Jordan Lee", startTime: "00:01" }),
+        expect.objectContaining({ speaker: "Jordan Li", startTime: "01:02" }),
+        expect.objectContaining({ speaker: "Unknown Speaker", startTime: "02:10" })
+      ])
+    );
+    expect(draft.associationReviews).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mention: "Jordan Lee", selectedTarget: { id: jordanLee.id, label: "Jordan Lee", type: "person" } }),
+        expect.objectContaining({ mention: "Jordan Li", selectedTarget: { id: jordanLi.id, label: "Jordan Li", type: "person" } }),
+        expect.objectContaining({ mention: "Casey Ray", confidence: "unmatched", selectedTarget: null })
+      ])
+    );
+    expect(proposalTypes).toEqual(
+      expect.arrayContaining(["UPDATE_PERSON", "LINK_PERSON_ORGANIZATION", "CREATE_PERSON", "CREATE_ORGANIZATION"])
+    );
+    expect(draft.crmChangeProposals?.map((proposal) => proposal.proposalType)).toEqual(expect.arrayContaining(proposalTypes));
+    expect(updatePersonProposal?.targetEntityId).toBe(jordanLee.id);
+    expect(updatePersonProposal?.proposedPayload).toMatchObject({
+      fields: {
+        email: "jordan.lee@beta-logistics.example",
+        phone: "555-010-1000",
+        title: "VP Operations"
+      }
+    });
+    expect(updatePersonProposal?.evidence).toEqual(expect.arrayContaining([expect.stringContaining("My title is VP Operations")]));
+    expect(linkProposal?.targetEntityId).toBe(jordanLee.id);
+    expect(linkProposal?.proposedPayload).toMatchObject({ organizationId: betaOrganization.id });
+    expect(createPersonProposal?.proposedPayload).toMatchObject({
+      fields: {
+        email: "casey.ray@newco-logistics.example",
+        firstName: "Casey",
+        lastName: "Ray"
+      }
+    });
+    expect(createPersonProposal?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("No reliable organization link")]));
+    expect(createOrganizationProposal?.proposedPayload).toMatchObject({
+      fields: {
+        domain: "newco-logistics.example",
+        name: "NewCo Logistics"
+      }
+    });
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: jordanLee.id } })).resolves.toMatchObject({
+      email: beforeContact.email,
+      organizationId: null,
+      phone: beforeContact.phone,
+      title: beforeContact.title
+    });
+    await expect(
+      fx.prisma.organization.findFirst({ where: { name: "NewCo Logistics", workspaceId: fx.workspaceA.id } })
+    ).resolves.toBeNull();
+  });
+
+  it("persists contact association corrections, propagates targets, and avoids duplicate outputs or proposals", async () => {
+    const fx = currentFixture();
+    const jordanLee = await fx.prisma.person.create({
+      data: {
+        email: "jordan.lee.review@example.test",
+        firstName: "Jordan",
+        lastName: "Lee",
+        ownerId: fx.userA.id,
+        title: "Operations Manager",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const jordanAlt = await fx.prisma.person.create({
+      data: {
+        email: "jordan.alt.review@example.test",
+        firstName: "Jordan",
+        lastName: "Alt",
+        ownerId: fx.userA.id,
+        title: "VP Operations",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-06-02\nAttendees: Jordan Lee",
+      hints: { personIds: [jordanLee.id] },
+      text: [
+        "Jordan Lee prefers concise email follow-up.",
+        "Jordan Lee is concerned about implementation disruption.",
+        "Jordan Lee title is VP Operations.",
+        "Jordan Lee email is jordan.lee.updated@example.test.",
+        "Action: send Jordan Lee an implementation recap by 2030-06-05."
+      ].join("\n")
+    });
+    const originalDraft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const association = originalDraft.associationReviews?.find((review) => review.mention === "Jordan Lee");
+    expect(association).toBeTruthy();
+
+    const corrected = await updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+      associationId: association?.id,
+      target: { id: jordanAlt.id, type: "person" }
+    });
+    const correctedDraft = corrected.draft as MeetingIntelligenceDraft;
+    const correctedAssociation = correctedDraft.associationReviews?.find((review) => review.id === association?.id);
+    const persisted = await fx.prisma.meetingIntake.findUniqueOrThrow({ where: { id: intake.id } });
+    const persistedDraft = persisted.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const pendingProposals = await fx.prisma.crmChangeProposal.findMany({
+      where: { sourceId: intake.id, sourceType: "meeting_intelligence", status: "PENDING", workspaceId: fx.workspaceA.id }
+    });
+
+    expect(correctedAssociation).toMatchObject({
+      resolutionStatus: "user_corrected",
+      selectedTarget: { id: jordanAlt.id, label: "Jordan Alt", type: "person" }
+    });
+    expect(persistedDraft.associationReviews?.find((review) => review.id === association?.id)?.selectedTarget?.id).toBe(jordanAlt.id);
+    expect(correctedDraft.notes.filter((note) => note.target?.id === jordanAlt.id).length).toBeGreaterThan(0);
+    expect(correctedDraft.nextStepActivities.filter((activity) => activity.target?.id === jordanAlt.id).length).toBeGreaterThan(0);
+    expect(correctedDraft.relationshipBriefUpdates?.some((update) => update.target?.id === jordanAlt.id)).toBe(true);
+    expect(pendingProposals.filter((proposal) => proposal.proposalType === "UPDATE_PERSON")).toHaveLength(1);
+    expect(pendingProposals.find((proposal) => proposal.proposalType === "UPDATE_PERSON")?.targetEntityId).toBe(jordanAlt.id);
+
+    await updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+      associationId: association?.id,
+      target: { id: jordanAlt.id, type: "person" }
+    });
+    await expect(
+      fx.prisma.crmChangeProposal.count({
+        where: { sourceId: intake.id, sourceType: "meeting_intelligence", status: "PENDING", workspaceId: fx.workspaceA.id }
+      })
+    ).resolves.toBe(pendingProposals.length);
+
+    const unmatched = await updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+      associationId: association?.id,
+      target: null
+    });
+    expect(unmatched.draft.associationReviews?.find((review) => review.id === association?.id)).toMatchObject({
+      resolutionStatus: "unmatched",
+      selectedTarget: null
+    });
+    expect(unmatched.draft.notes.every((note) => note.target?.id !== jordanAlt.id)).toBe(true);
+    await expect(
+      fx.prisma.crmChangeProposal.count({
+        where: { sourceId: intake.id, sourceType: "meeting_intelligence", status: "PENDING", workspaceId: fx.workspaceA.id }
+      })
+    ).resolves.toBe(0);
+
+    const recorrected = await updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+      associationId: association?.id,
+      target: { id: jordanAlt.id, type: "person" }
+    });
+    const applyInput = {
+      meetingActivity: recorrected.draft.meetingActivity ? { ...recorrected.draft.meetingActivity, include: true } : null,
+      notes: recorrected.draft.notes.map((note) => ({ ...note, include: note.target?.id === jordanAlt.id })),
+      nextStepActivities: recorrected.draft.nextStepActivities.map((activity) => ({ ...activity, include: activity.target?.id === jordanAlt.id })),
+      relationshipBriefUpdates: recorrected.draft.relationshipBriefUpdates?.map((update) => ({ ...update, include: update.target?.id === jordanAlt.id })) ?? []
+    };
+    const result = await applyMeetingIntake(fx.actorA, intake.id, applyInput);
+    const secondResult = await applyMeetingIntake(fx.actorA, intake.id, applyInput);
+
+    expect(secondResult).toEqual(result);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: jordanLee.id } })).resolves.toMatchObject({
+      email: "jordan.lee.review@example.test",
+      title: "Operations Manager"
+    });
+    await expect(
+      fx.prisma.note.count({ where: { personId: jordanAlt.id, workspaceId: fx.workspaceA.id } })
+    ).resolves.toBe(result.created.filter((item) => item.type === "note").length);
+  });
+
+  it("persists organization association corrections and updates link proposals without mutating organizations", async () => {
+    const fx = currentFixture();
+    const betaOrganization = await fx.prisma.organization.create({
+      data: { name: "Beta Logistics", ownerId: fx.userA.id, workspaceId: fx.workspaceA.id }
+    });
+    const gammaOrganization = await fx.prisma.organization.create({
+      data: { name: "Gamma Logistics", ownerId: fx.userA.id, workspaceId: fx.workspaceA.id }
+    });
+    await fx.prisma.person.update({ where: { id: fx.recordsA.person.id }, data: { organizationId: null } });
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-06-03\nAttendees: Alpha Contact",
+      hints: { organizationId: betaOrganization.id, personIds: [fx.recordsA.person.id] },
+      text: [
+        "Alpha Contact is now with Beta Logistics.",
+        "Action: send Alpha Contact the migration plan by 2030-06-08."
+      ].join("\n")
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const betaAssociation = draft.associationReviews?.find((review) => review.selectedTarget?.id === betaOrganization.id);
+    expect(betaAssociation).toBeTruthy();
+
+    const corrected = await updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+      associationId: betaAssociation?.id,
+      target: { id: gammaOrganization.id, type: "organization" }
+    });
+    const linkProposal = await fx.prisma.crmChangeProposal.findFirst({
+      where: {
+        proposalType: "LINK_PERSON_ORGANIZATION",
+        sourceId: intake.id,
+        sourceType: "meeting_intelligence",
+        status: "PENDING",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    expect(corrected.draft.associationReviews?.find((review) => review.id === betaAssociation?.id)).toMatchObject({
+      resolutionStatus: "user_corrected",
+      selectedTarget: { id: gammaOrganization.id, label: "Gamma Logistics", type: "organization" }
+    });
+    expect(corrected.draft.meetingActivity?.associatedTargets).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: gammaOrganization.id, type: "organization" })])
+    );
+    expect(linkProposal?.proposedPayload).toMatchObject({ organizationId: gammaOrganization.id });
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      organizationId: null
+    });
+  });
+
+  it("rejects cross-workspace and stale association correction targets with recovery guidance", async () => {
+    const fx = currentFixture();
+    const stalePerson = await fx.prisma.person.create({
+      data: {
+        email: "jordan.alt.review@example.test",
+        firstName: "Jordan",
+        lastName: "Alt",
+        ownerId: fx.userA.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const intake = await createMeetingIntake(fx.actorA, {
+      contextText: "Meeting date: 2030-06-04\nAttendees: Alpha Contact",
+      hints: { personIds: [fx.recordsA.person.id] },
+      text: "Alpha Contact asked for a concise follow-up."
+    });
+    const draft = intake.proposedChangesJson as unknown as MeetingIntelligenceDraft;
+    const association = draft.associationReviews?.find((review) => review.selectedTarget?.id === fx.recordsA.person.id);
+    expect(association).toBeTruthy();
+
+    await expect(
+      updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+        associationId: association?.id,
+        target: { id: fx.recordsB.person.id, type: "person" }
+      })
+    ).rejects.toMatchObject({
+      code: "MEETING_ASSOCIATION_TARGET_STALE",
+      status: 409
+    });
+
+    await fx.prisma.person.update({ where: { id: stalePerson.id }, data: { deletedAt: new Date() } });
+    await expect(
+      updateMeetingIntakeAssociation(fx.actorA, intake.id, {
+        associationId: association?.id,
+        target: { id: stalePerson.id, type: "person" }
+      })
+    ).rejects.toMatchObject({
+      code: "MEETING_ASSOCIATION_TARGET_STALE",
+      message: expect.stringContaining("Choose another workspace record or mark the association unmatched.")
+    });
   });
 
   it("creates object-specific notes, a completed meeting log, and follow-up activities after approval", async () => {

@@ -7,8 +7,28 @@ const pageHeader = readFileSync(
   join(process.cwd(), "components/page-header.tsx"),
   "utf8",
 );
+const panelTitleRow = readFileSync(
+  join(process.cwd(), "components/panel-title-row.tsx"),
+  "utf8",
+);
+const emptyState = readFileSync(
+  join(process.cwd(), "components/empty-state.tsx"),
+  "utf8",
+);
+const statusBadge = readFileSync(
+  join(process.cwd(), "components/status-badge.tsx"),
+  "utf8",
+);
 const actionGroup = readFileSync(
   join(process.cwd(), "components/action-group.tsx"),
+  "utf8",
+);
+const appShell = readFileSync(
+  join(process.cwd(), "components/app-shell.tsx"),
+  "utf8",
+);
+const workspaceActions = readFileSync(
+  join(process.cwd(), "app/workspaces/actions.ts"),
   "utf8",
 );
 const assistantPage = readFileSync(
@@ -186,6 +206,10 @@ describe("shared page header UX", () => {
       '"email-client-shell email-client-detail-shell"',
     );
     expect(emailPage).not.toContain('<header className="page-header">');
+    expect(appShell).not.toContain('from "@/lib/services/crm"');
+    expect(appShell).toContain('from "@/lib/services/workspace-service"');
+    expect(workspaceActions).not.toContain('from "@/lib/services/crm"');
+    expect(workspaceActions).toContain('from "@/lib/services/workspace-service"');
   });
 
   it("preserves existing product, pipeline, and search header copy and actions", () => {
@@ -375,6 +399,89 @@ describe("shared page header UX", () => {
       "Move CRM data safely with filter-aware exports and preview-first CSV imports.",
     );
     expect(importExportPage).toContain('href="/settings"');
+  });
+
+  it("establishes the first shared visual polish foundation for core CRM pages", () => {
+    expect(panelTitleRow).toContain('className="panel-title-row"');
+    expect(panelTitleRow).toContain('className="panel-title-copy"');
+    expect(panelTitleRow).toContain('className="form-hint panel-title-description"');
+    expect(panelTitleRow).toContain('className="panel-title-actions"');
+    expect(emptyState).toContain('className={["empty-state", className].filter(Boolean).join(" ")}');
+    expect(statusBadge).toContain("formatStatusBadgeLabel(status)");
+
+    for (const token of [
+      "--radius-md: 8px",
+      "--radius-pill: 999px",
+      "--space-lg: 16px",
+      "--card-padding: var(--space-lg)",
+      "--shadow-card:",
+    ]) {
+      expect(globalStyles).toContain(token);
+    }
+
+    expect(globalStyles).toContain("align-items: flex-start;");
+    expect(globalStyles).toContain("font-weight: 850;");
+    expect(globalStyles).toContain("box-shadow: var(--shadow-card);");
+    expect(globalStyles).toContain(".panel-title-description");
+    expect(globalStyles).toContain(".table tbody tr:focus-within");
+    expect(globalStyles).toContain(".empty-state-actions");
+    expect(globalStyles).toContain(".header-actions > *");
+    expect(globalStyles).toContain(".record-header-actions > *");
+    expect(globalStyles).toContain(".panel-title-actions > *");
+
+    for (const badgeClass of [
+      ".badge-draft",
+      ".badge-sent",
+      ".badge-accepted",
+      ".badge-declined",
+      ".badge-completed",
+      ".badge-review-needed",
+      ".badge-synced",
+      ".badge-overdue",
+      ".badge-upcoming",
+    ]) {
+      expect(globalStyles).toContain(badgeClass);
+    }
+
+    for (const page of [
+      dashboardPage,
+      dealsPage,
+      contactDetailPage,
+      contactsPage,
+      dealDetailPage,
+      activitiesPage,
+      pipelinePage,
+      quoteDetailPage,
+      reportsPage,
+    ]) {
+      expect(page).toContain("PageHeader");
+    }
+
+    for (const sectionedPage of [
+      dashboardPage,
+      contactDetailPage,
+      dealDetailPage,
+      activitiesPage,
+      quoteDetailPage,
+      reportsPage,
+    ]) {
+      expect(sectionedPage).toContain("PanelTitleRow");
+    }
+
+    for (const listPage of [dealsPage, contactsPage, activitiesPage]) {
+      expect(listPage).toContain("ListResultsSummary");
+      expect(listPage).toContain("FilterPanel");
+    }
+
+    for (const tablePage of [dashboardPage, dealsPage, contactsPage, reportsPage]) {
+      expect(tablePage).toContain("TableScroll");
+    }
+
+    expect(dealDetailPage).toContain("RecordPanelJumpNav");
+    expect(contactDetailPage).toContain("RecordPanelJumpNav");
+    expect(quoteDetailPage).toContain("RecordPanelJumpNav");
+    expect(globalStyles).toContain(".record-panel-jump-list");
+    expect(globalStyles).toContain("overflow-x: auto;");
   });
 
   it("keeps record detail status and navigation actions in the shared header", () => {

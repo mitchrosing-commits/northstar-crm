@@ -41,6 +41,7 @@ describe("lead list and detail behavior", () => {
     expect(leadDetail).toContain("getNextOpenActivity(lead.activities)");
     expect(leadDetail).toContain("RecordNextActivitySummary activity={nextActivity}");
     expect(leadDetail).toContain("Next follow-up");
+    expect(leadDetail).toContain('href: nextActivity ? undefined : "#activities" as Route');
     expect(leadDetail).toContain("No open lead follow-up");
     expect(leadDetail).toContain('import { formatPersonName } from "@/lib/person-name"');
     expect(leadDetail).toContain('import { recordSubtitle } from "@/lib/record-subtitle"');

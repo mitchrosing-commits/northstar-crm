@@ -57,6 +57,7 @@ export default async function DashboardPage() {
   ]);
   const dashboardAiInsight = buildDashboardAiInsight(summary, needsAttention);
   const viewPipelineLabel = "View pipeline board";
+  const viewReportsLabel = "Open Reports from dashboard";
   const newDealLabel = "Create a new deal from dashboard";
   const viewActiveDealsLabel = "View all open deals";
   const createOpenDealLabel = "Create a deal from dashboard";
@@ -79,6 +80,14 @@ export default async function DashboardPage() {
               title={viewPipelineLabel}
             >
               View pipeline
+            </Link>
+            <Link
+              aria-label={viewReportsLabel}
+              className="button-secondary"
+              href="/reports"
+              title={viewReportsLabel}
+            >
+              Reports
             </Link>
             <Link
               aria-label={newDealLabel}

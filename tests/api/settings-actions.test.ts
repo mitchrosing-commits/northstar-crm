@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   listStages: vi.fn(),
   redirect: vi.fn(),
   revalidatePath: vi.fn(),
-  syncRecentGmailMessages: vi.fn(),
+  enqueueGmailInboxSyncJob: vi.fn(),
+  enqueueGmailInboxSyncJobForSelectedConnection: vi.fn(),
   syncRecentMicrosoftMessages: vi.fn(),
   updatePipeline: vi.fn(),
   updateStage: vi.fn()
@@ -28,8 +29,9 @@ vi.mock("@/lib/auth/request-context", () => ({
 vi.mock("@/lib/services/crm", () => ({
   applySupplyChainVerticalPresets: mocks.applySupplyChainVerticalPresets,
   createStage: mocks.createStage,
+  enqueueGmailInboxSyncJob: mocks.enqueueGmailInboxSyncJob,
+  enqueueGmailInboxSyncJobForSelectedConnection: mocks.enqueueGmailInboxSyncJobForSelectedConnection,
   listStages: mocks.listStages,
-  syncRecentGmailMessages: mocks.syncRecentGmailMessages,
   syncRecentMicrosoftMessages: mocks.syncRecentMicrosoftMessages,
   updatePipeline: mocks.updatePipeline,
   updateStage: mocks.updateStage
@@ -68,14 +70,23 @@ describe("settings server actions", () => {
   });
 
   it("syncs provider mail from Settings with provider-specific success and error redirects", async () => {
-    mocks.syncRecentGmailMessages.mockResolvedValue({ created: 3 });
+    mocks.enqueueGmailInboxSyncJob.mockResolvedValue({ status: "queued" });
     mocks.syncRecentMicrosoftMessages.mockResolvedValue({ created: 2 });
 
     await expect(syncRecentGmailAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/settings?emailConnection=gmail-synced&created=3"
+      url: "/settings?emailConnection=gmail-sync-queued#email-connections"
     });
-    expect(mocks.syncRecentGmailMessages).toHaveBeenCalledWith({ actor, maxResults: 10 });
+    expect(mocks.enqueueGmailInboxSyncJob).toHaveBeenCalledWith(actor);
+
+    await expect(syncRecentGmailAction(form({ connectionId: "connection_1" }))).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/settings?emailConnection=gmail-sync-queued#email-connections"
+    });
+    expect(mocks.enqueueGmailInboxSyncJobForSelectedConnection).toHaveBeenCalledWith(
+      actor,
+      "connection_1",
+    );
 
     await expect(syncRecentMicrosoftAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
@@ -88,7 +99,7 @@ describe("settings server actions", () => {
     mocks.redirect.mockImplementation((url: string) => {
       throw redirectError(url);
     });
-    mocks.syncRecentGmailMessages.mockRejectedValue(new Error("provider token=raw-token"));
+    mocks.enqueueGmailInboxSyncJob.mockRejectedValue(new Error("provider token=raw-token"));
     mocks.syncRecentMicrosoftMessages.mockRejectedValue(new Error("provider token=raw-token"));
 
     await expect(syncRecentGmailAction()).rejects.toMatchObject({

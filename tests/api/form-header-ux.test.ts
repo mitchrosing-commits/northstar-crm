@@ -20,6 +20,7 @@ const formHeaderActions = readFileSync(join(process.cwd(), "components/form-head
 const formActionBar = readFileSync(join(process.cwd(), "components/form-action-bar.tsx"), "utf8");
 const formErrorMessage = readFileSync(join(process.cwd(), "components/form-error-message.tsx"), "utf8");
 const formFieldLabel = readFileSync(join(process.cwd(), "components/form-field-label.tsx"), "utf8");
+const formSection = readFileSync(join(process.cwd(), "components/form-section.tsx"), "utf8");
 const formSuccessMessage = readFileSync(join(process.cwd(), "components/form-success-message.tsx"), "utf8");
 const formCallout = readFileSync(join(process.cwd(), "components/form-callout.tsx"), "utf8");
 const formIntroCallout = readFileSync(join(process.cwd(), "components/form-intro-callout.tsx"), "utf8");
@@ -83,8 +84,9 @@ describe("CRM form header UX", () => {
     expect(formHeaderActions).toContain("className=\"button-secondary\"");
 
     expect(newDealPage).toContain("Create a pipeline opportunity with value, stage, owner, and related customer context.");
-    expect(newDealPage).toContain("backHref=\"/deals\"");
-    expect(newDealPage).toContain("cancelHref=\"/deals\"");
+    expect(newDealPage).toContain("backHref={returnHref}");
+    expect(newDealPage).toContain("cancelHref={returnHref}");
+    expect(newDealPage).toContain("const returnLabel = returnToLabel(returnHref)");
     expect(newDealPage).toContain("prefillNotice={");
     expect(newDealPage).toContain("We prefilled this deal from your search or related-record shortcut.");
     expect(newContactPage).toContain("Add a person record that can be linked to deals, organizations, activities, and email.");
@@ -92,16 +94,17 @@ describe("CRM form header UX", () => {
     expect(newContactPage).toContain("cancelHref={(returnTo ?? \"/contacts\") as Route}");
     expect(newContactPage).toContain("prefillNotice={");
     expect(newContactPage).toContain("We prefilled this contact from your search or related-record shortcut.");
-    expect(newContactPage).toContain("Northstar will return to the lead form with the contact selected.");
+    expect(newContactPage).toContain("Northstar will return to the source form with the contact selected.");
     expect(newOrganizationPage).toContain("Create an account record for grouping contacts, deals, activities, and notes.");
     expect(newOrganizationPage).toContain("backHref=\"/organizations\"");
     expect(newOrganizationPage).toContain("cancelHref={(returnTo ?? \"/organizations\") as Route}");
     expect(newOrganizationPage).toContain("prefillNotice={");
     expect(newOrganizationPage).toContain("We prefilled this organization from your search shortcut.");
-    expect(newOrganizationPage).toContain("Northstar will return to the lead form with the company selected.");
+    expect(newOrganizationPage).toContain("Northstar will return to the source form with the company selected.");
     expect(newLeadPage).toContain("Capture an early opportunity before it is qualified into the active deal pipeline.");
-    expect(newLeadPage).toContain("backHref=\"/leads\"");
-    expect(newLeadPage).toContain("cancelHref=\"/leads\"");
+    expect(newLeadPage).toContain("backHref={returnHref}");
+    expect(newLeadPage).toContain("cancelHref={returnHref}");
+    expect(newLeadPage).toContain("const returnLabel = returnToLabel(returnHref)");
     expect(newLeadPage).toContain("prefillNotice={");
     expect(newLeadPage).toContain("We prefilled this lead from your search shortcut.");
     expect(newActivityPage).toContain("Schedule the next call, email, meeting, or task against a CRM record.");
@@ -263,6 +266,62 @@ describe("CRM form header UX", () => {
     expect(activityForm).toContain("Add an activity title and choose a related record before saving.");
     expect(activityForm).toContain("pendingLabel=\"Adding...\"");
     expect(activityForm).not.toContain("router.back()");
+  });
+
+  it("standardizes sectioned form structure and mobile-safe field grouping", () => {
+    expect(formSection).toContain("export function FormSection");
+    expect(formSection).toContain('className={["form-section", className].filter(Boolean).join(" ")}');
+    expect(formSection).toContain('className="form-section-header"');
+    expect(formSection).toContain('className="form-section-title"');
+    expect(formSection).toContain('className="form-section-description"');
+    expect(globalStyles).toContain(".form-section");
+    expect(globalStyles).toContain(".form-section + .form-section");
+    expect(globalStyles).toContain(".form-section-header");
+    expect(globalStyles).toContain(".form-section-title");
+    expect(globalStyles).toContain(".form-section-description");
+    expect(globalStyles).toContain(".form-section-compact");
+    expect(globalStyles).toContain(".form-field .form-field-label {\n    align-items: flex-start;");
+    expect(globalStyles).toContain(".form-actions > * {\n    max-width: 100%;");
+    expect(globalStyles).toContain(".form-related-record-actions {\n  display: grid;");
+    expect(globalStyles).toContain(".form-related-record-actions .inline-link");
+
+    for (const form of [
+      dealForm,
+      contactForm,
+      organizationForm,
+      leadForm,
+      activityForm,
+      activityEditForm,
+      productCreateForm,
+      quoteAdjustmentsForm,
+      accountSettingsForm,
+      workspaceInviteForm,
+      createWorkspaceForm
+    ]) {
+      expect(form).toContain('import { FormSection } from "@/components/form-section"');
+      expect(form).toContain("<FormSection");
+    }
+
+    expect(dealForm).toContain('title="Deal details"');
+    expect(dealForm).toContain('title="Relationships and owner"');
+    expect(contactForm).toContain('title="Contact details"');
+    expect(contactForm).toContain('title="Organization and owner"');
+    expect(organizationForm).toContain('title="Organization details"');
+    expect(leadForm).toContain('title="Lead details"');
+    expect(leadForm).toContain('title="Related records"');
+    expect(activityForm).toContain('title="Activity details"');
+    expect(activityForm).toContain('title="Related record"');
+    expect(activityEditForm).toContain('title="Activity details"');
+    expect(productCreateForm).toContain('title={mode === "create" ? "Product details" : "Edit product"}');
+    expect(productCreateForm).toContain('className={variant === "compact" ? "form-section-compact" : undefined}');
+    expect(quoteAdjustmentsForm).toContain('title="Adjustment inputs"');
+    expect(quoteAdjustmentsForm).toContain("Percent for percentage-based changes");
+    expect(accountSettingsForm).toContain('title="Account details"');
+    expect(workspaceInviteForm).toContain('title="Invitation details"');
+    expect(createWorkspaceForm).toContain('title="Workspace details"');
+    expect(importFormShared).toContain('className="form-field import-csv-field"');
+    expect(globalStyles).toContain(".import-csv-field .form-label");
+    expect(globalStyles).toContain(".import-textarea:focus");
   });
 
   it("marks required and optional fields consistently on primary CRM forms", () => {

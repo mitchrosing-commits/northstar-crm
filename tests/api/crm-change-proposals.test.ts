@@ -8,6 +8,10 @@ const migration = readFileSync(
   join(process.cwd(), "prisma/migrations/20260713120000_crm_change_proposals/migration.sql"),
   "utf8"
 );
+const compoundMigration = readFileSync(
+  join(process.cwd(), "prisma/migrations/20260713130000_compound_crm_change_proposals/migration.sql"),
+  "utf8"
+);
 const service = readFileSync(join(process.cwd(), "lib/services/crm-change-proposal-service.ts"), "utf8");
 const permissions = readFileSync(join(process.cwd(), "lib/services/ai-action-permissions.ts"), "utf8");
 const route = readFileSync(
@@ -28,8 +32,12 @@ describe("CRM change proposal infrastructure", () => {
     expect(schema).toContain("enum CrmChangeProposalStatus");
     expect(schema).toContain("CREATE_PERSON");
     expect(schema).toContain("LINK_PERSON_ORGANIZATION");
+    expect(schema).toContain("COMPOUND_PERSON_ORGANIZATION");
+    expect(schema).toContain("title                          String?");
     expect(migration).toContain('CREATE TABLE "CrmChangeProposal"');
     expect(migration).toContain('CREATE UNIQUE INDEX "CrmChangeProposal_workspaceId_idempotencyKey_key"');
+    expect(compoundMigration).toContain('ALTER TABLE "Person" ADD COLUMN "title" TEXT');
+    expect(compoundMigration).toContain("COMPOUND_PERSON_ORGANIZATION");
   });
 
   it("distinguishes contact and organization permissions server-side", () => {
@@ -38,9 +46,10 @@ describe("CRM change proposal infrastructure", () => {
     expect(permissions).toContain('"create_organization"');
     expect(permissions).toContain('"update_organization"');
     expect(permissions).toContain('"link_contact_organization"');
-    expect(service).toContain("proposalPermissionDecision");
-    expect(service).toContain("permission.level === \"never_allow\"");
-    expect(service).toContain("permission.level !== \"require_confirmation\"");
+    expect(service).toContain("proposalPermissionDecisionForPayload");
+    expect(service).toContain("blockedCheck");
+    expect(service).toContain("permission.checks");
+    expect(service).toContain("aggregatePermissionDecision");
   });
 
   it("validates payloads, duplicate candidates, stale targets, and idempotent applies", () => {
@@ -53,6 +62,8 @@ describe("CRM change proposal infrastructure", () => {
     expect(service).toContain("existing.status === CrmChangeProposalStatus.APPLIED");
     expect(service).toContain("updatePerson(actor");
     expect(service).toContain("updateOrganization(actor");
+    expect(service).toContain("applyCompoundProposalPayload");
+    expect(service).toContain("prisma.$transaction");
   });
 
   it("exposes review API and reusable internal UI without producer-specific mutation", () => {
@@ -63,6 +74,7 @@ describe("CRM change proposal infrastructure", () => {
     expect(listPage).toContain("listCrmChangeProposals(actor");
     expect(detailPage).toContain("getCrmChangeProposal(actor");
     expect(reviewComponent).toContain("Current vs Proposed");
+    expect(reviewComponent).toContain("proposal.changeGroups.map");
     expect(reviewComponent).toContain("Applied record");
     expect(reviewComponent).toContain("Apply reviewed change");
     expect(reviewComponent).toContain("Reject proposal");
@@ -74,6 +86,8 @@ describe("CRM change proposal infrastructure", () => {
     expect(docs).toContain("Producer Contract");
     expect(docs).toContain("Assistant Supported Actions");
     expect(docs).toContain("Supported Fields");
+    expect(docs).toContain("COMPOUND_PERSON_ORGANIZATION");
+    expect(docs).toContain("createContactOrganizationChangeProposal");
     expect(docs).toContain("Applied proposals link to the final contact or organization record.");
     expect(docs).toContain("Duplicate candidates are stored on the proposal and block apply.");
     expect(docs).toContain("Automatic apply is intentionally not supported");

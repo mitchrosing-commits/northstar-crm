@@ -4214,7 +4214,7 @@ describe("database-backed CRM route handlers", () => {
     expect(dealResponse.headers.get("cache-control")).toBe("private, no-store, max-age=0");
     expect(dealResponse.headers.get("x-content-type-options")).toBe("nosniff");
     expect(dealCsv.split("\n")[0]).toBe(
-      "title,status,value,currency,pipeline,stage,expectedCloseAt,contactName,contactEmail,organizationName,ownerEmail,lineItemCount,quoteCount,latestQuoteNumber,latestQuoteStatus,latestQuoteTotal,createdAt,updatedAt"
+      "Deal Title,Status,Deal Value,Currency,Pipeline,Stage,Expected Close,Contact Name,Contact Email,Organization Name,Owner Email,Line Item Count,Quote Count,Latest Quote Number,Latest Quote Status,Latest Quote Total,Created At,Updated At"
     );
     expect(dealCsv).toContain("\"Alpha \"\"Quoted\"\", Deal\nLine\"");
     expect(dealCsv).not.toContain(fx.recordsA.deal.id);

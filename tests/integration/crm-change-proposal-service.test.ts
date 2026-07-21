@@ -205,6 +205,159 @@ describe("CRM change proposal service", () => {
     ]));
     await expect(crm.applyCrmChangeProposal(fx.actorA, rejected.id)).rejects.toMatchObject({ code: "CONFLICT" });
   });
+
+  it("atomically applies a compound organization/contact create-and-link proposal with title, audits, and idempotent retry", async () => {
+    const fx = currentFixture();
+    await allowCrmProposalApplies(fx);
+
+    const proposal = await crm.createContactOrganizationChangeProposal(fx.actorA, {
+      idempotencyKey: "compound-create-link-idempotent",
+      contact: {
+        action: "create",
+        fields: {
+          email: "compound-contact@example.test",
+          firstName: "Compound",
+          lastName: "Buyer",
+          title: "VP Revenue"
+        }
+      },
+      organization: {
+        action: "create",
+        fields: {
+          domain: "compound-org.example",
+          name: "Compound Org"
+        }
+      },
+      linkContactToOrganization: true,
+      sourceType: "meeting_intelligence"
+    });
+    const beforeOrganizations = await fx.prisma.organization.count({ where: { workspaceId: fx.workspaceA.id, name: "Compound Org" } });
+    const applied = await crm.applyCrmChangeProposal(fx.actorA, proposal.id);
+    const reapplied = await crm.applyCrmChangeProposal(fx.actorA, proposal.id);
+    const contact = await fx.prisma.person.findUniqueOrThrow({ where: { id: applied.appliedEntityId ?? "" } });
+    const organization = await fx.prisma.organization.findUniqueOrThrow({ where: { id: contact.organizationId ?? "" } });
+    const afterOrganizations = await fx.prisma.organization.count({ where: { workspaceId: fx.workspaceA.id, name: "Compound Org" } });
+    const audits = await fx.prisma.auditLog.findMany({
+      where: { workspaceId: fx.workspaceA.id, entityId: { in: [proposal.id, contact.id, organization.id] } }
+    });
+
+    expect(beforeOrganizations).toBe(0);
+    expect(applied.appliedEntityId).toBe(reapplied.appliedEntityId);
+    expect(afterOrganizations).toBe(1);
+    expect(contact).toMatchObject({
+      email: "compound-contact@example.test",
+      firstName: "Compound",
+      organizationId: organization.id,
+      title: "VP Revenue",
+      workspaceId: fx.workspaceA.id
+    });
+    expect(organization).toMatchObject({ domain: "compound-org.example", name: "Compound Org", workspaceId: fx.workspaceA.id });
+    expect(proposal.changeGroups.map((group) => group.key)).toEqual(["organization", "contact", "link"]);
+    expect(proposal.permissionChecks.map((check) => check.actionKey)).toEqual(expect.arrayContaining([
+      "create_contact",
+      "create_organization",
+      "link_contact_organization"
+    ]));
+    expect(audits.map((audit) => audit.action)).toEqual(expect.arrayContaining([
+      "crm_change_proposal.applied",
+      "organization.created",
+      "person.created"
+    ]));
+  });
+
+  it("blocks compound apply when one included action lacks confirmation permission", async () => {
+    const fx = currentFixture();
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_organization: "require_confirmation",
+        link_contact_organization: "suggest_only"
+      })
+    });
+
+    const proposal = await crm.createContactOrganizationChangeProposal(fx.actorA, {
+      contact: { action: "existing", id: fx.recordsA.person.id },
+      organization: { action: "create", fields: { name: "Permission Blocked Org" } },
+      linkContactToOrganization: true,
+      sourceType: "assistant"
+    });
+
+    await expect(crm.applyCrmChangeProposal(fx.actorA, proposal.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(fx.prisma.organization.findFirst({
+      where: { name: "Permission Blocked Org", workspaceId: fx.workspaceA.id }
+    })).resolves.toBeNull();
+  });
+
+  it("blocks compound duplicate candidates and stale existing targets", async () => {
+    const fx = currentFixture();
+    await allowCrmProposalApplies(fx);
+
+    const duplicate = await crm.createContactOrganizationChangeProposal(fx.actorA, {
+      contact: {
+        action: "create",
+        fields: { email: fx.recordsA.person.email, firstName: "Duplicate" }
+      },
+      organization: {
+        action: "create",
+        fields: { domain: "compound-duplicate.example", name: "Compound Duplicate Org" }
+      },
+      linkContactToOrganization: true,
+      sourceType: "assistant"
+    });
+    await expect(crm.applyCrmChangeProposal(fx.actorA, duplicate.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(fx.prisma.crmChangeProposal.findUniqueOrThrow({ where: { id: duplicate.id } })).resolves.toMatchObject({
+      status: "FAILED",
+      conflictInfo: expect.objectContaining({ code: "DUPLICATE_CANDIDATES" })
+    });
+
+    const stale = await crm.createContactOrganizationChangeProposal(fx.actorA, {
+      contact: {
+        action: "update",
+        fields: { phone: "555-0202" },
+        id: fx.recordsA.person.id
+      },
+      organization: {
+        action: "existing",
+        id: fx.recordsA.organization.id
+      },
+      linkContactToOrganization: true,
+      sourceType: "meeting_intelligence"
+    });
+    await fx.prisma.person.update({ data: { phone: "555-9999" }, where: { id: fx.recordsA.person.id } });
+    await expect(crm.applyCrmChangeProposal(fx.actorA, stale.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(fx.prisma.crmChangeProposal.findUniqueOrThrow({ where: { id: stale.id } })).resolves.toMatchObject({
+      status: "FAILED",
+      conflictInfo: expect.objectContaining({ code: "STALE_TARGET" })
+    });
+  });
+
+  it("rolls back a partially failed compound apply", async () => {
+    const fx = currentFixture();
+    await allowCrmProposalApplies(fx);
+
+    const proposal = await crm.createContactOrganizationChangeProposal(fx.actorA, {
+      contact: {
+        action: "create",
+        fields: {
+          firstName: "Rollback",
+          ownerId: fx.userB.id
+        }
+      },
+      organization: {
+        action: "create",
+        fields: { name: "Rolled Back Org" }
+      },
+      linkContactToOrganization: true,
+      sourceType: "assistant"
+    });
+
+    await expect(crm.applyCrmChangeProposal(fx.actorA, proposal.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(fx.prisma.organization.findFirst({
+      where: { name: "Rolled Back Org", workspaceId: fx.workspaceA.id }
+    })).resolves.toBeNull();
+    await expect(fx.prisma.person.findFirst({
+      where: { firstName: "Rollback", workspaceId: fx.workspaceA.id }
+    })).resolves.toBeNull();
+  });
 });
 
 async function allowCrmProposalApplies(fx: Fixture) {

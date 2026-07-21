@@ -418,6 +418,89 @@ describe("meeting intelligence markdown and proposals", () => {
     expect(draft.nextStepActivities[0].description).toContain("Owner hint: Sam");
   });
 
+  it("segments transcript review text and leaves weak associations unselected", () => {
+    const sourceMetadata = {
+      processor: "provider-http",
+      providerName: "Configured media extraction provider",
+      sourceType: "audio" as const,
+      transcriptionConfidence: "low" as const,
+      warnings: ["Speaker label confidence is low."]
+    };
+    const normalized = normalizeMeetingMarkdown({
+      contextText: "Meeting date: 2030-04-01\nAttendees: Jordan Lee, Jordan Li, Casey Ray",
+      metadata: sourceMetadata,
+      rawText: [
+        "[00:01] Jordan Lee: My title is VP Operations.",
+        "[00:42] Jordan Li: That was not me; I joined only for implementation questions.",
+        "[01:10] Casey Ray: My email is casey.ray@example.test."
+      ].join("\n"),
+      sourceType: "audio"
+    });
+    const draft = analyzeMeetingIntelligence({
+      contextText: "Meeting date: 2030-04-01\nAttendees: Jordan Lee, Jordan Li, Casey Ray",
+      markdown: normalized.markdown,
+      matchedObjects: [
+        {
+          confidence: "high",
+          displayName: "Jordan Lee",
+          evidenceExcerpt: "Jordan Lee: My title is VP Operations.",
+          id: "person-jordan-lee",
+          matchedReason: "Exact name match",
+          objectType: "person"
+        },
+        {
+          confidence: "ambiguous",
+          displayName: "Jordan Li",
+          evidenceExcerpt: "Jordan Li",
+          id: "person-jordan-li",
+          matchedReason: "Similar attendee name",
+          objectType: "person",
+          warning: "Multiple contacts have similar names."
+        },
+        {
+          confidence: "low",
+          displayName: "Casey Ray",
+          evidenceExcerpt: "Casey Ray",
+          id: "person-casey-ray",
+          matchedReason: "Weak partial name match",
+          objectType: "person",
+          warning: "Only a weak name signal was available."
+        }
+      ],
+      sourceMetadata,
+      unmatchedEntities: [
+        {
+          entityType: "organization",
+          evidenceExcerpt: "Casey Ray mentioned NewCo Logistics.",
+          name: "NewCo Logistics",
+          reason: "No reliable CRM organization match."
+        }
+      ]
+    });
+
+    expect(draft.transcriptSegments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ speaker: "Jordan Lee", startTime: "00:01", text: "My title is VP Operations." }),
+        expect.objectContaining({ speaker: "Jordan Li", startTime: "00:42" })
+      ])
+    );
+    expect(draft.transcriptSegments?.find((segment) => segment.speaker === "Jordan Lee")?.warnings).toEqual(
+      expect.arrayContaining([
+        "Low transcription confidence. Verify this segment before using it as CRM evidence.",
+        "Speaker label confidence is low."
+      ])
+    );
+    expect(draft.warnings).toContain("Transcription confidence is low. Review speaker labels and source snippets before applying CRM updates.");
+    expect(draft.associationReviews).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mention: "Jordan Lee", selectedTarget: { id: "person-jordan-lee", label: "Jordan Lee", type: "person" } }),
+        expect.objectContaining({ mention: "Jordan Li", confidence: "ambiguous", selectedTarget: null }),
+        expect.objectContaining({ mention: "Casey Ray", confidence: "low", selectedTarget: null }),
+        expect.objectContaining({ mention: "NewCo Logistics", confidence: "unmatched", selectedTarget: null, targetType: "organization" })
+      ])
+    );
+  });
+
   it("proposes review-first Relationship Brief updates only for matched contacts with explicit safe facts", () => {
     const draft = analyzeMeetingIntelligence({
       contextText: "Meeting date: 2030-04-01",

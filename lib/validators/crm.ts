@@ -82,6 +82,17 @@ export const createDealLineItemSchema = z.object({
   description: z.string().trim().optional().nullable()
 });
 
+export const createQuoteItemSchema = z.object({
+  productId: idSchema,
+  quantity: z.number().int().positive().max(productIntColumnMax, "Quote line item quantity is too large."),
+  description: z.string().trim().optional().nullable()
+});
+
+export const updateQuoteItemSchema = z.object({
+  quantity: z.number().int().positive().max(productIntColumnMax, "Quote line item quantity is too large.").optional(),
+  description: z.string().trim().optional().nullable()
+});
+
 const contractStepStatusSchema = z.enum(["NOT_STARTED", "IN_PROGRESS", "SENT", "SIGNED", "BLOCKED", "SKIPPED"]);
 
 export const createDealContractStepSchema = z.object({
@@ -119,6 +130,11 @@ export const updateQuoteAdjustmentsSchema = z.object({
       path: ["taxValue"]
     });
   }
+});
+
+export const reviewQuoteDealValueSyncSchema = z.object({
+  resolution: z.enum(["UPDATE_DEAL_TO_QUOTE", "KEEP_CURRENT_DEAL"]),
+  confirmation: z.string().optional()
 });
 
 export const closeDealSchema = z.object({

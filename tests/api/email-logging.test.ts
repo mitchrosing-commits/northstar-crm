@@ -95,7 +95,7 @@ describe("manual email logging and templates foundation", () => {
     expect(schema).toContain("enum EmailDirection");
     expect(schema).toContain("INBOUND");
     expect(schema).toContain("OUTBOUND");
-    expect(schema).toContain("createdBy      User?");
+    expect(schema).toMatch(/createdBy\s+User\?/);
     expect(schema).toMatch(/emailLogs\s+EmailLog\[\]/);
     expect(schema).toMatch(/emailLogActivityLinks\s+EmailLogActivityLink\[\]/);
     expect(schema).toMatch(/emailTemplates\s+EmailTemplate\[\]/);
@@ -229,6 +229,10 @@ describe("manual email logging and templates foundation", () => {
     );
     expect(manualEmailPanel).toContain("Email date");
     expect(manualEmailPanel).toContain("Save email log");
+    expect(manualEmailPanel).toContain('import { FormSuccessMessage } from "@/components/form-success-message"');
+    expect(manualEmailPanel).toContain("Email log saved. Timeline and email history refreshed.");
+    expect(manualEmailPanel).toContain("<FormSuccessMessage compact>{success}</FormSuccessMessage>");
+    expect(manualEmailPanel).toContain("router.replace(currentPathWithHash(id), { scroll: true })");
     expect(manualEmailPanel).toContain("FormActionBar");
     expect(manualEmailPanel).toContain('pendingLabel="Saving log..."');
     expect(manualEmailPanel).toContain(
@@ -308,9 +312,10 @@ describe("manual email logging and templates foundation", () => {
     expect(settingsPage).toContain(
       "can connect when OAuth env and encrypted token",
     );
-    expect(settingsPage).toContain("Manual sync imports recent matched");
-    expect(settingsPage).toContain("metadata/snippets from");
-    expect(settingsPage).toContain("known contacts only.");
+    expect(settingsPage).toContain("Gmail sync runs through the durable Full Inbox background job");
+    expect(settingsPage).toContain("Microsoft manual sync remains metadata-focused for known contacts.");
+    expect(settingsPage).toContain("Gmail Sync Health");
+    expect(settingsPage).toContain("GmailSyncHealthDetails");
     expect(settingsPage).toContain("Sync recent Gmail");
     expect(settingsPage).toContain("disabled");
     expect(settingsPage).toContain('type="button"');
@@ -321,6 +326,8 @@ describe("manual email logging and templates foundation", () => {
     expect(settingsPage).toContain(
       "Last sync: {formatDate(provider.lastSyncAt)}",
     );
+    expect(settingsPage).toContain("emailSyncMetricText(provider)");
+    expect(settingsPage).toContain("emailSyncModeLabel(source.lastSyncMode)");
     expect(settingsPage).toContain("Last sync issue: {provider.lastError}");
     expect(settingsPage).not.toContain("Connect Gmail");
     expect(settingsPage).not.toContain("Connect Outlook");
@@ -331,9 +338,9 @@ describe("manual email logging and templates foundation", () => {
     expect(currentStatus).toContain("Gmail Full Inbox v1 uses the background job worker");
     expect(currentStatus).toContain("connecting/reconnecting Gmail enqueues an `email.gmail_sync` job");
     expect(currentStatus).toContain(
-      "Clicking `/email` Sync Gmail inbox enqueues and immediately claims one bounded Gmail sync job through the same job record"
+      "manual `/email` Sync Gmail inbox enqueues the selected account or all current-user Gmail accounts without running provider calls in the page request"
     );
-    expect(currentStatus).toContain("Unattended reconnect/background jobs still require `npm run jobs:work`");
+    expect(currentStatus).toContain("Unattended reconnect/background jobs require `npm run jobs:work`");
     expect(currentStatus).toContain("The `/email` Load older messages action uses a user-triggered bounded Gmail `before:` inbox search");
     expect(currentStatus).toContain("neither path mutates the stored history cursor");
     expect(currentStatus).toContain("never stores OAuth tokens or message bodies in job payloads");
@@ -344,8 +351,9 @@ describe("manual email logging and templates foundation", () => {
     );
     expect(architecture).toContain("Gmail Full Inbox sync runs through the explicit `email.gmail_sync` job handler");
     expect(architecture).toContain(
-      "The `/email` Sync Gmail inbox action enqueues and immediately claims the selected connection's Gmail sync job"
+      "The `/email` Sync Gmail inbox action only enqueues the selected Gmail connection"
     );
+    expect(architecture).toContain("The worker auto-enqueues due connected Gmail accounts on a conservative interval");
     expect(architecture).toContain("Provider-card sync status is looked up by the selected Gmail connection's dedupe key");
     expect(architecture).toContain("selected-thread refresh calls Gmail thread detail for a provider thread id that already has a same-workspace `EmailLog`");
     expect(architecture).toContain("deliberately leave `lastSyncCursor` unchanged");

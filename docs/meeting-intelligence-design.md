@@ -12,8 +12,11 @@ Automated analysis never silently mutates CRM data. The workflow is:
 4. Normalize the text into markdown.
 5. Match existing CRM objects in the current workspace.
 6. Generate deterministic proposed updates.
-7. Let the user edit/select the proposals.
-8. Apply only approved notes and activities through existing services.
+7. Create evidence-grounded CRM Change Proposals for supported contact and organization changes when explicit meeting evidence is available.
+8. Let the user edit/select the meeting proposals and separately review CRM Change Proposals.
+9. Apply only approved notes, activities, and Relationship Brief updates through existing services.
+
+Meeting analysis and meeting-intake apply do not directly create or update contacts or organizations. Contact/organization creates, field updates, and contact-organization links go through the shared CRM Change Proposal review system and its server-side AI action permissions.
 
 ## Supported Sources
 
@@ -53,6 +56,7 @@ The current app accepts uploaded PDF/DOCX bytes and text-style artifact content 
 - raw text and normalized markdown
 - status
 - analysis/proposal JSON, including processor status metadata for detected source type, original filename, extraction method, local/provider-required conversion mode, required provider when applicable, temporary stored-file metadata for queued provider extraction, failure code, and extraction warnings
+- review metadata for transcript segments, association-confidence review, and linked CRM Change Proposal summaries
 - apply-result JSON
 - failure message and applied timestamp
 
@@ -64,6 +68,12 @@ Matching is deterministic and workspace-scoped. It checks manual hints, email ad
 
 The review page groups matched deals, leads, organizations, contacts, ambiguous matches, and unmatched mentions. Each match and proposal carries concise evidence, confidence, and matched-reason metadata where deterministic analysis can provide it.
 
+The review page also includes a transcript review section before proposals. When source text contains speaker labels or timestamps, segments are shown with speaker, timestamp, confidence, and warnings. Long transcripts can be searched and navigated by segment anchors. Low-confidence transcription metadata from a provider is surfaced as a reviewer warning and on transcript segments. Transcript/source review is deliberately separated from structured summary, facts, notes, activities, Relationship Brief updates, and CRM Change Proposals so reviewers do not mistake source wording for applied CRM data.
+
+Association-confidence review is separate from proposal editing. For each matched attendee or organization mention, Meeting Intelligence shows the selected record, match evidence, confidence, matched reason, warning, and same-type alternatives from the current workspace. Ambiguous, weak, and unmatched mentions default to no selected record. Reviewers correct associations by changing the target fields on the meeting log, notes, Relationship Brief updates, and follow-ups before apply; missing or invalid targets are skipped with clear reasons rather than attached to the closest weak match.
+
+Association-confidence review also supports durable inline corrections for contact and organization mentions. Reviewers can expand alternatives, search existing workspace-scoped contacts or organizations, select a different record, or mark the mention unmatched, then explicitly confirm the correction. Confirmed corrections are saved back to the intake draft, so refreshes keep the selected association and compact status (`Confirmed`, `User corrected`, `Ambiguous`, `Unmatched`, or `Stale`). The correction step rewrites only affected meeting-output targets and regenerates Meeting Intelligence CRM Change Proposal summaries through intake-scoped idempotency keys; it does not directly mutate contacts or organizations. Stale, deleted, and cross-workspace records are rejected with recovery guidance to choose another workspace record or mark the association unmatched.
+
 Proposals can include:
 
 - completed meeting activity
@@ -71,6 +81,7 @@ Proposals can include:
 - personal/company/deal/lead fact notes when detected
 - review-first Relationship Brief updates for matched contacts when explicit relationship context is detected
 - next-step activities from action-item-like lines
+- CRM Change Proposals for explicit contact/organization creates, supported contact/organization field updates, and contact-to-organization links
 - warnings for ambiguity, unmatched entities, locked lifecycle states, and missing due dates
 
 Meeting summaries are stored as concise structured sections instead of transcript-like paragraphs. Deterministic sections are limited to supported categories such as meeting overview, participants, objectives, key discussion points, decisions, customer needs or concerns, commercial details, risks or blockers, commitments, open questions, and next steps. Empty sections are omitted. Each section is marked as explicit or inferred so reviewers can distinguish stated evidence from light organization of the source material.
@@ -86,6 +97,8 @@ Relationship Brief review breaks each field proposal into individual facts for r
 When approved Relationship Brief facts change a contact profile, Meeting Intelligence stores a concise field-level change summary in the existing `person.updated` audit metadata rather than creating a separate history model. The applied-intake result and contact Relationship Brief panel show curated previous/new excerpts, field labels, accepted-fact counts, Meeting Intelligence intake title/date when available, timestamp, and actor. This is a review aid, not a raw memory log: unchanged fields are omitted and opening history never mutates CRM data.
 
 Users can include/exclude each proposed meeting log, note, Relationship Brief update, and follow-up; edit note bodies, relationship facts, and activity titles/details/dates; manually reassign proposal targets to known CRM records; or clear a target so an included item is skipped instead of written to an uncertain record. Submitted target ids are validated in the current workspace before apply. Cross-workspace, deleted, closed-deal, converted-lead, and missing targets are skipped with clear reasons.
+
+Meeting-derived contact and organization changes use `createCrmChangeProposal` with `sourceType: "meeting_intelligence"` and an idempotency key scoped to the intake and candidate. Current supported candidates are intentionally conservative: create contact when an explicit name and email are present and no existing contact has that email; update contact for explicit email, phone, or title changes on a confidently matched contact; create organization when an explicit organization name is detected and no workspace organization matches the name/domain; update organization for explicit domain changes on a matched organization; and link contact to organization when meeting evidence explicitly says a confidently matched contact is now at/with/from a confidently matched organization. Proposal review shows source snippets, rationale, current/proposed values through the shared proposal page, permission state, duplicate warnings, and association confidence. Narrative context that does not fit standard fields remains in notes or Relationship Brief proposals.
 
 ## Apply Behavior
 

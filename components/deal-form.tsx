@@ -11,6 +11,7 @@ import { FormFieldLabel } from "@/components/form-field-label";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { FormPrefillNotice } from "@/components/form-prefill-notice";
 import { FormRelatedRecordCallout } from "@/components/form-related-record-callout";
+import { FormSection } from "@/components/form-section";
 import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type StageOption = {
@@ -50,6 +51,10 @@ type DealFormProps = {
   defaultPersonId?: string;
   defaultTitle?: string;
   prefillNotice?: string;
+  returnTo?: {
+    href: string;
+    paramName: "dealId";
+  };
   initialDeal?: DealFormInitial;
   cancelHref: Route;
 };
@@ -66,6 +71,7 @@ export function DealForm({
   defaultPersonId,
   defaultTitle,
   prefillNotice,
+  returnTo,
   initialDeal,
   cancelHref
 }: DealFormProps) {
@@ -136,7 +142,7 @@ export function DealForm({
     }
 
     const deal = await response.json();
-    router.push(`/deals/${deal.id}`);
+    router.push((mode === "create" && returnTo ? appendReturnParam(returnTo.href, returnTo.paramName, deal.id) : `/deals/${deal.id}`) as Route);
     router.refresh();
   }
 
@@ -173,90 +179,102 @@ export function DealForm({
           linked from day one, or import contacts from a CSV.
         </FormRelatedRecordCallout>
       ) : null}
-      <div className="form-grid">
-        <label className="form-field form-field-wide">
-          <FormFieldLabel required>Title</FormFieldLabel>
-          <input value={title} onChange={(event) => setTitle(event.target.value)} required />
-        </label>
+      <FormSection
+        description="Name the opportunity, set the working value, and choose the active pipeline stage."
+        title="Deal details"
+      >
+        <div className="form-grid">
+          <label className="form-field form-field-wide">
+            <FormFieldLabel required>Title</FormFieldLabel>
+            <input value={title} onChange={(event) => setTitle(event.target.value)} required />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Value</FormFieldLabel>
-          <input
-            inputMode="decimal"
-            min="0"
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="0"
-            step="0.01"
-            type="number"
-            value={value}
-          />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Value</FormFieldLabel>
+            <input
+              inputMode="decimal"
+              min="0"
+              onChange={(event) => setValue(event.target.value)}
+              placeholder="0"
+              step="0.01"
+              type="number"
+              value={value}
+            />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel required>Currency</FormFieldLabel>
-          <input
-            maxLength={3}
-            onChange={(event) => setCurrency(event.target.value.toUpperCase())}
-            required
-            value={currency}
-          />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel required>Currency</FormFieldLabel>
+            <input
+              maxLength={3}
+              onChange={(event) => setCurrency(event.target.value.toUpperCase())}
+              required
+              value={currency}
+            />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel required>Stage</FormFieldLabel>
-          <select onChange={(event) => setStageId(event.target.value)} required value={stageId}>
-            {stages.map((stage) => (
-              <option key={stage.id} value={stage.id}>
-                {stage.pipelineName} / {stage.name}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="form-field">
+            <FormFieldLabel required>Stage</FormFieldLabel>
+            <select onChange={(event) => setStageId(event.target.value)} required value={stageId}>
+              {stages.map((stage) => (
+                <option key={stage.id} value={stage.id}>
+                  {stage.pipelineName} / {stage.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Person</FormFieldLabel>
-          <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
-            <option value="">{people.length === 0 ? "No contacts yet - create deal without contact" : "None"}</option>
-            {people.map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.name}
-              </option>
-            ))}
-          </select>
-          {people.length === 0 ? <small className="form-hint">You can add or import contacts after creating this deal.</small> : null}
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Expected close</FormFieldLabel>
+            <input onChange={(event) => setExpectedCloseAt(event.target.value)} type="date" value={expectedCloseAt} />
+          </label>
+        </div>
+      </FormSection>
 
-        <label className="form-field">
-          <FormFieldLabel>Organization</FormFieldLabel>
-          <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-            <option value="">{organizations.length === 0 ? "No organizations yet - create deal without one" : "None"}</option>
-            {organizations.map((organization) => (
-              <option key={organization.id} value={organization.id}>
-                {organization.name}
-              </option>
-            ))}
-          </select>
-          {organizations.length === 0 ? <small className="form-hint">You can add an organization after creating this deal.</small> : null}
-        </label>
+      <FormSection
+        description="Attach the customer context and owner now, or save the deal and complete the relationships later."
+        title="Relationships and owner"
+      >
+        <div className="form-grid">
+          <label className="form-field">
+            <FormFieldLabel>Person</FormFieldLabel>
+            <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
+              <option value="">{people.length === 0 ? "No contacts yet - create deal without contact" : "None"}</option>
+              {people.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.name}
+                </option>
+              ))}
+            </select>
+            {people.length === 0 ? <small className="form-hint">You can add or import contacts after creating this deal.</small> : null}
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Deal owner</FormFieldLabel>
-          <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
-            {owners.map((owner) => (
-              <option key={owner.id} value={owner.id}>
-                {owner.name}
-              </option>
-            ))}
-          </select>
-          <OwnerAssignmentHint owners={owners} />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Organization</FormFieldLabel>
+            <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
+              <option value="">{organizations.length === 0 ? "No organizations yet - create deal without one" : "None"}</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+            {organizations.length === 0 ? <small className="form-hint">You can add an organization after creating this deal.</small> : null}
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Expected close</FormFieldLabel>
-          <input onChange={(event) => setExpectedCloseAt(event.target.value)} type="date" value={expectedCloseAt} />
-        </label>
-      </div>
+          <label className="form-field">
+            <FormFieldLabel>Deal owner</FormFieldLabel>
+            <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
+              <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
+              {owners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name}
+                </option>
+              ))}
+            </select>
+            <OwnerAssignmentHint owners={owners} />
+          </label>
+        </div>
+      </FormSection>
 
       <FormActionBar
         cancelHref={cancelHref}
@@ -280,4 +298,12 @@ function parseValueCents(value: string) {
 function formatDateInput(value?: Date | string | null) {
   if (!value) return "";
   return new Date(value).toISOString().slice(0, 10);
+}
+
+function appendReturnParam(returnTo: string, paramName: "dealId", id: string) {
+  const [path, query = ""] = returnTo.split("?");
+  const params = new URLSearchParams(query);
+  params.set(paramName, id);
+  const nextQuery = params.toString();
+  return `${path}${nextQuery ? `?${nextQuery}` : ""}`;
 }

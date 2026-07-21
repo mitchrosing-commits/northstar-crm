@@ -16,6 +16,7 @@ import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { RecordContextStrip, recordContextCount } from "@/components/record-context-strip";
 import { getNextOpenActivity, RecordNextActivitySummary } from "@/components/record-next-activity-summary";
 import { RecordHeaderActions } from "@/components/record-header-actions";
 import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
@@ -29,18 +30,15 @@ import type { RelationshipBriefChangeSummary } from "@/lib/meeting-intelligence/
 import { formatPersonName } from "@/lib/person-name";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
-import {
-  buildAiRecordBrief,
-  buildContactAssistantContext,
-  buildMeetingPrepBriefForRecord,
-  buildNorthstarAssistantInsight,
-  getAiPreferences,
-  getPerson,
-  getRecordTimeline,
-  getWorkspace,
-  listEmailTemplates,
-  listPersonCustomFields
-} from "@/lib/services/crm";
+import { getAiPreferences } from "@/lib/services/ai-preferences-service";
+import { buildAiRecordBrief } from "@/lib/services/ai-record-brief-service";
+import { getPerson } from "@/lib/services/contact-service";
+import { listPersonCustomFields } from "@/lib/services/custom-field-service";
+import { listEmailTemplates } from "@/lib/services/email-service";
+import { buildMeetingPrepBriefForRecord } from "@/lib/services/meeting-prep-brief-service";
+import { buildContactAssistantContext, buildNorthstarAssistantInsight } from "@/lib/services/northstar-ai-service";
+import { getRecordTimeline } from "@/lib/services/timeline-service";
+import { getWorkspace } from "@/lib/services/workspace-service";
 
 export const dynamic = "force-dynamic";
 
@@ -236,6 +234,37 @@ export default async function ContactDetailPage({ params }: PageProps) {
           }
         ]}
         title="Contact workspace"
+      />
+
+      <RecordContextStrip
+        ariaLabel={`${personName} current relationship context`}
+        items={[
+          {
+            href: nextActivity ? undefined : "#activities" as Route,
+            label: "Next follow-up",
+            tone: nextActivity ? "default" : "warning",
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel="Needs follow-up" emptyLabel="No open contact follow-up" />
+          },
+          {
+            href: "#relationship-brief" as Route,
+            label: "Relationship brief",
+            tone: relationshipBriefCount > 0 ? "default" : "muted",
+            value: `${relationshipBriefCount}/5 sections`
+          },
+          {
+            href: meetingPrepBrief ? "#meeting-prep-brief" as Route : "#activities" as Route,
+            label: "Meeting prep",
+            meta: meetingPrepBrief ? "Review before the next meeting" : "Create a meeting activity to prepare",
+            tone: meetingPrepBrief ? "success" : "muted",
+            value: meetingPrepBrief ? "Ready" : "No upcoming meeting"
+          },
+          {
+            href: "#notes" as Route,
+            label: "Recent notes",
+            tone: person.notes.length > 0 ? "default" : "muted",
+            value: recordContextCount(person.notes.length, "note", "notes")
+          }
+        ]}
       />
 
       <section className="contact-profile-overview section-spaced" id="profile">

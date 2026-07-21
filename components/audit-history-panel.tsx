@@ -37,7 +37,10 @@ export function AuditHistoryPanel({
         title="Audit History"
       />
       {entries.length > 0 ? (
-        <AuditEventList entries={entries} label="Audit events" />
+        <details className="record-history-disclosure">
+          <summary>Show audit events</summary>
+          <AuditEventList entries={entries} label="Audit events" />
+        </details>
       ) : (
         <EmptyState className="empty-state-compact empty-state-panel" title={emptyMessage} />
       )}

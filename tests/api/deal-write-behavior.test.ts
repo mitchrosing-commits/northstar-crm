@@ -48,12 +48,14 @@ describe("deal create/update behavior", () => {
   });
 
   it("submits create and edit forms to the workspace-scoped deal API", () => {
-    expect(newDealPage).toContain("searchParams?: Promise<{ organizationId?: string; personId?: string; title?: string }>");
+    expect(newDealPage).toContain("searchParams?: Promise<{ organizationId?: string; personId?: string; returnTo?: string; title?: string }>");
     expect(newDealPage).toContain("const defaultTitle = firstSearchParam(resolvedSearchParams?.title)");
     expect(newDealPage).toContain("defaultTitle={defaultTitle}");
     expect(newDealPage).toContain("const hasPrefill = Boolean(defaultTitle || defaultPersonId || defaultOrganizationId)");
     expect(newDealPage).toContain("prefillNotice={");
     expect(newDealPage).toContain("We prefilled this deal from your search or related-record shortcut.");
+    expect(newDealPage).toContain("Create this deal, then Northstar will return to your activity draft with the deal selected.");
+    expect(newDealPage).toContain("returnTo={hasReturnTo ? { href: returnHref, paramName: \"dealId\" } : undefined}");
     expect(newDealPage).toContain('import { formatPersonName } from "@/lib/person-name"');
     expect(newDealPage).toContain('formatPersonName(person) ?? "Unnamed contact"');
     expect(newDealPage).not.toContain("[person.firstName, person.lastName].filter(Boolean).join(\" \")");
@@ -67,6 +69,8 @@ describe("deal create/update behavior", () => {
     expect(form).toContain("mode === \"create\"");
     expect(form).toContain("defaultTitle?: string");
     expect(form).toContain("prefillNotice?: string");
+    expect(form).toContain("returnTo?: {");
+    expect(form).toContain("paramName: \"dealId\";");
     expect(form).toContain("FormPrefillNotice");
     expect(form).toContain("<FormPrefillNotice>{prefillNotice}</FormPrefillNotice>");
     expect(form).toContain("defaultPersonId?: string");
@@ -76,6 +80,7 @@ describe("deal create/update behavior", () => {
     expect(form).toContain("initialDeal?.organizationId ?? defaultOrganizationId ?? \"\"");
     expect(form).toContain("method = mode === \"create\" ? \"POST\" : \"PATCH\"");
     expect(form).toContain("/api/v1/workspaces/${workspaceId}/deals");
+    expect(form).toContain("appendReturnParam(returnTo.href, returnTo.paramName, deal.id)");
     expect(form).toContain("valueCents");
     expect(form).toContain("expectedCloseAt");
   });

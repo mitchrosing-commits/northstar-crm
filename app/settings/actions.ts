@@ -4,20 +4,23 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
-import { applySupplyChainVerticalPresets, createStage, listStages, syncRecentGmailMessages, syncRecentMicrosoftMessages, updatePipeline, updateStage } from "@/lib/services/crm";
+import { applySupplyChainVerticalPresets, createStage, enqueueGmailInboxSyncJob, enqueueGmailInboxSyncJobForSelectedConnection, listStages, syncRecentMicrosoftMessages, updatePipeline, updateStage } from "@/lib/services/crm";
 
-export async function syncRecentGmailAction() {
+export async function syncRecentGmailAction(formData?: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
-  let created = 0;
+  const connectionId = String(formData?.get("connectionId") ?? "").trim();
 
   try {
-    const result = await syncRecentGmailMessages({ actor, maxResults: 10 });
-    created = result.created;
+    if (connectionId) {
+      await enqueueGmailInboxSyncJobForSelectedConnection(actor, connectionId);
+    } else {
+      await enqueueGmailInboxSyncJob(actor);
+    }
   } catch {
     redirect("/settings?emailConnection=gmail-sync-error");
   }
 
-  redirect(`/settings?emailConnection=gmail-synced&created=${created}`);
+  redirect("/settings?emailConnection=gmail-sync-queued#email-connections");
 }
 
 export async function syncRecentMicrosoftAction() {

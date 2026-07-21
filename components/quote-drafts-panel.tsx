@@ -1,19 +1,29 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ActionGroup } from "@/components/action-group";
+import { ActivityDueBadge } from "@/components/activity-due-badge";
 import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
+import { DownloadAction } from "@/components/download-action";
 import { EmptyState } from "@/components/empty-state";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { formatDate, formatMoney } from "@/components/format";
+import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { LockedPanelNotice } from "@/components/locked-panel-notice";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { TableScroll } from "@/components/table-scroll";
-import { buildActivityFollowUpHref } from "@/lib/follow-up-links";
+import {
+  buildQuoteFollowUpHref,
+  quoteFollowUpStatus,
+  quoteHasSimilarOpenFollowUp,
+  type QuoteFollowUpQuote,
+  type QuoteFollowUpStatus
+} from "@/lib/quote-follow-up";
 
 type QuoteItem = {
   id: string;
@@ -33,11 +43,29 @@ type QuoteDraft = {
   totalCents: number;
   createdAt: Date | string;
   items: QuoteItem[];
+  dealValueSyncConflict?: string | null;
+  dealValueSyncReviewedAt?: Date | string | null;
+  dealValueSyncedAt?: Date | string | null;
+};
+
+type QuoteFollowUpActivity = {
+  id: string;
+  title: string;
+  description?: string | null;
+  dueAt?: Date | string | null;
+  completedAt?: Date | string | null;
+  owner?: {
+    name?: string | null;
+    email: string;
+  } | null;
 };
 
 type QuoteDraftsPanelProps = {
   workspaceId: string;
   dealId: string;
+  dealTitle: string;
+  activities: QuoteFollowUpActivity[];
+  followUpReferenceDate: Date | string;
   quotes: QuoteDraft[];
   canCreate: boolean;
   disabledReason?: string;
@@ -46,6 +74,9 @@ type QuoteDraftsPanelProps = {
 export function QuoteDraftsPanel({
   workspaceId,
   dealId,
+  dealTitle,
+  activities,
+  followUpReferenceDate,
   quotes,
   canCreate,
   disabledReason,
@@ -59,6 +90,15 @@ export function QuoteDraftsPanel({
       ? "Quote drafts are read-only for this deal."
       : "Add at least one product-backed deal line item to enable draft quote creation.";
   const quoteStatusSummaryLabel = "Quote status summary";
+  const quotesWithFollowUp = quotes.map((quote) => {
+    const followUpQuote = toQuoteFollowUpQuote(quote, dealId, dealTitle, activities);
+    return {
+      followUpQuote,
+      quote,
+      status: quoteFollowUpStatus(followUpQuote, new Date(followUpReferenceDate))
+    };
+  });
+  const followUpSummary = summarizeQuoteFollowUps(quotesWithFollowUp);
 
   async function createDraftQuote() {
     setError(null);
@@ -78,8 +118,9 @@ export function QuoteDraftsPanel({
       return;
     }
 
+    const quote = await response.json();
     setIsSaving(false);
-    router.refresh();
+    router.push(`/deals/${dealId}/quotes/${quote.id}?created=1#quote-items`);
   }
 
   return (
@@ -111,6 +152,9 @@ export function QuoteDraftsPanel({
             }
           </Badge>
         ))}
+        <Badge className={`badge ${followUpSummary.toneClass}`} label="Quote follow-up attention summary">
+          {followUpSummary.label}
+        </Badge>
       </ActionGroup>
       {!canCreate && disabledReason ? (
         <LockedPanelNotice>{disabledReason}</LockedPanelNotice>
@@ -118,8 +162,10 @@ export function QuoteDraftsPanel({
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
       {quotes.length > 0 ? (
         <div className="quote-draft-list">
-          {quotes.map((quote) => {
+          {quotesWithFollowUp.map(({ followUpQuote, quote, status }) => {
             const quoteActionsLabel = `${quote.number} quote actions`;
+            const shouldShowFollowUp = shouldShowQuoteFollowUp(quote, status);
+            const similarOpenFollowUp = quoteHasSimilarOpenFollowUp(followUpQuote);
 
             return (
               <article className="quote-draft-item" key={quote.id}>
@@ -144,23 +190,60 @@ export function QuoteDraftsPanel({
                   >
                     View quote
                   </Link>
+                  {quote.status === "DRAFT" ? (
+                    <Link
+                      aria-label={`Manage draft line items for quote ${quote.number}`}
+                      className="button-secondary button-compact"
+                      href={`/deals/${dealId}/quotes/${quote.id}#quote-items`}
+                      title={`Manage draft line items for quote ${quote.number}`}
+                    >
+                      Manage items
+                    </Link>
+                  ) : null}
                   {quote.status === "SENT" ? (
                     <Link
-                      aria-label={`Add follow-up for quote ${quote.number}`}
+                      aria-label={`Manage public link for quote ${quote.number}`}
                       className="button-secondary button-compact"
-                      href={buildActivityFollowUpHref({
-                        dueInDays: 3,
-                        related: { type: "deal", id: dealId },
-                        returnTo: `/deals/${dealId}`,
-                        title: `Follow up on ${quote.number}`,
-                        type: "TASK",
-                      })}
-                      title={`Add follow-up for quote ${quote.number}`}
+                      href={`/deals/${dealId}/quotes/${quote.id}#public-link`}
+                      title={`Manage public link for quote ${quote.number}`}
                     >
-                      Add quote follow-up
+                      Public link
+                    </Link>
+                  ) : null}
+                  <DownloadAction
+                    actionLabel={`Download PDF for quote ${quote.number}`}
+                    className="button-secondary button-compact"
+                    filename={`quote-${quote.number}.pdf`}
+                    href={`/deals/${dealId}/quotes/${quote.id}/pdf`}
+                    label="PDF"
+                    pendingLabel="Preparing..."
+                  />
+                  {quote.status !== "DRAFT" && !similarOpenFollowUp ? (
+                    <Link
+                      aria-label={`Create follow-up draft for quote ${quote.number}`}
+                      className="button-secondary button-compact"
+                      href={buildQuoteFollowUpHref(followUpQuote, {
+                        now: followUpReferenceDate,
+                        returnTo: `/deals/${dealId}#quotes`
+                      })}
+                      title={`Create follow-up draft for quote ${quote.number}`}
+                    >
+                      Create follow-up
                     </Link>
                   ) : null}
                 </ActionGroup>
+                {shouldShowFollowUp ? (
+                  <QuoteFollowUpSummary
+                    dealId={dealId}
+                    followUpQuote={followUpQuote}
+                    now={followUpReferenceDate}
+                    status={status}
+                  />
+                ) : (
+                  <p className="quote-follow-up-compact-note">
+                    Draft quote - follow-up actions become useful after the quote is sent.
+                  </p>
+                )}
                 <TableScroll aria-label={`${quote.number} quote items table`}>
                   <table className="table crm-list-table">
                     <thead>
@@ -220,3 +303,130 @@ export function QuoteDraftsPanel({
 }
 
 const quoteLifecycleStatuses = ["Draft", "Sent", "Accepted", "Declined"];
+
+function toQuoteFollowUpQuote(
+  quote: QuoteDraft,
+  dealId: string,
+  dealTitle: string,
+  activities: QuoteFollowUpActivity[]
+): QuoteFollowUpQuote {
+  return {
+    deal: {
+      activities,
+      title: dealTitle
+    },
+    dealId,
+    dealValueSyncConflict: quote.dealValueSyncConflict,
+    dealValueSyncReviewedAt: quote.dealValueSyncReviewedAt,
+    dealValueSyncedAt: quote.dealValueSyncedAt,
+    id: quote.id,
+    number: quote.number,
+    status: quote.status
+  };
+}
+
+function shouldShowQuoteFollowUp(quote: QuoteDraft, status: QuoteFollowUpStatus) {
+  if (status.activity) return true;
+  return quote.status === "SENT" || quote.status === "ACCEPTED" || quote.status === "DECLINED";
+}
+
+function summarizeQuoteFollowUps(
+  quotes: Array<{ quote: QuoteDraft; status: QuoteFollowUpStatus }>
+) {
+  const relevant = quotes.filter(({ quote, status }) => shouldShowQuoteFollowUp(quote, status));
+  const overdue = relevant.filter(({ status }) => status.label === "Follow-up overdue").length;
+  const awaiting = relevant.filter(({ status }) => status.label === "No open quote follow-up").length;
+
+  if (overdue > 0) {
+    return {
+      label: `${overdue} overdue quote follow-up${overdue === 1 ? "" : "s"}`,
+      toneClass: "badge-overdue"
+    };
+  }
+
+  if (awaiting > 0) {
+    return {
+      label: `${awaiting} quote${awaiting === 1 ? "" : "s"} awaiting follow-up`,
+      toneClass: "badge-review-needed"
+    };
+  }
+
+  if (relevant.length > 0) {
+    return {
+      label: "All active quotes covered",
+      toneClass: "badge-completed"
+    };
+  }
+
+  return {
+    label: "No active quote follow-up needed",
+    toneClass: "badge-not-applicable"
+  };
+}
+
+function QuoteFollowUpSummary({
+  dealId,
+  followUpQuote,
+  now,
+  status
+}: {
+  dealId: string;
+  followUpQuote: QuoteFollowUpQuote;
+  now: Date | string;
+  status: QuoteFollowUpStatus;
+}) {
+  const activity = status.activity;
+  const returnTo = `/deals/${dealId}#quotes`;
+  const activityHref = activity ? (`/activities/${activity.id}/edit?returnTo=${encodeURIComponent(returnTo)}` as Route) : null;
+  const createHref = buildQuoteFollowUpHref(followUpQuote, { now, returnTo });
+  const statusClassName = status.tone === "success"
+    ? "quote-follow-up-card quote-follow-up-card-success"
+    : status.tone === "warning"
+      ? "quote-follow-up-card quote-follow-up-card-warning"
+      : "quote-follow-up-card quote-follow-up-card-muted";
+
+  return (
+    <div className={statusClassName}>
+      <div className="quote-follow-up-card-main">
+        <span className="quote-follow-up-label">{status.label}</span>
+        {activity ? (
+          <>
+            <Link className="inline-link" href={activityHref as Route}>
+              {activity.title}
+            </Link>
+            <span className="quote-follow-up-meta">
+              <ActivityDueBadge activity={activity} />
+              {activity.owner ? (
+                <span>Owner: {activity.owner.name ?? activity.owner.email}</span>
+              ) : null}
+              {activity.completedAt ? <span>Completed</span> : <span>Open</span>}
+            </span>
+          </>
+        ) : (
+          <InlineEmptyStateText>
+            No saved activity mentions {followUpQuote.number} yet.
+          </InlineEmptyStateText>
+        )}
+      </div>
+      <ActionGroup className="filter-actions quote-follow-up-compact-actions" label={`${followUpQuote.number} follow-up actions`}>
+        <Link className="button-secondary button-compact" href={`/deals/${dealId}/quotes/${followUpQuote.id}` as Route}>
+          Open quote
+        </Link>
+        {activityHref ? (
+          <Link className="button-secondary button-compact" href={activityHref}>
+            {status.label === "Follow-up overdue" ? "Review or reschedule" : "Review follow-up"}
+          </Link>
+        ) : (
+          <Link className="button-secondary button-compact" href={createHref}>
+            Create follow-up
+          </Link>
+        )}
+      </ActionGroup>
+      {activity && !activity.completedAt ? (
+        <p className="quote-follow-up-compact-note">
+          Similar open follow-up exists. Open it before creating another.
+        </p>
+      ) : null}
+    </div>
+  );
+}

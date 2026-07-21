@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
+
 import type { Prisma } from "@prisma/client";
 
 import { draftAiPreferenceChangesFromText, getAiPreferences } from "@/lib/services/ai-preferences-service";
 import { prisma } from "@/lib/db/prisma";
 import { formatPersonName } from "@/lib/person-name";
 import { redactSensitiveText } from "@/lib/security/redaction";
+import { userDisplaySelect } from "@/lib/services/user-select";
 import { activeWhere, ensureWorkspaceAccess, type WorkspaceActor } from "@/lib/services/workspace-access";
 
 export type AssistantDraftActionKind =
@@ -47,10 +50,29 @@ export type AssistantDraftActionProposal = {
   targetRecordId?: string;
 };
 
+export type AssistantDraftClarificationSlot = {
+  candidateType: "organization" | "person";
+  key: "organization" | "person";
+  label: string;
+  selectedRecordId?: string;
+};
+
+export type AssistantDraftActionClarification = {
+  intent: CrmRecordChangeParseResult;
+  resolved?: {
+    organizationId?: string;
+    personId?: string;
+  };
+  resolutionKey?: string;
+  slots: AssistantDraftClarificationSlot[];
+  status: "needs_selection" | "resolved";
+};
+
 export type AssistantDraftAction = {
   applyState: "disabled";
   candidates: AssistantDraftActionCandidate[];
   confidence: AssistantDraftActionConfidence;
+  clarification?: AssistantDraftActionClarification;
   evidence: string[];
   fields: AssistantDraftActionField[];
   id: string;
@@ -233,11 +255,8 @@ async function draftOrganizationContactCreationAction(actor: WorkspaceActor, que
 async function draftCrmRecordChangeActions(actor: WorkspaceActor, query: string): Promise<AssistantDraftAction[]> {
   const evidenceText = sanitizeEvidence(query);
   const parsed = parseCrmRecordChangeCommand(query);
-  if (parsed.kind === "create_contact") return [await draftCreateContactAction(actor, evidenceText, parsed)];
-  if (parsed.kind === "update_contact") return [await draftUpdateContactAction(actor, evidenceText, parsed)];
-  if (parsed.kind === "create_organization") return [await draftCreateOrganizationAction(actor, evidenceText, parsed)];
-  if (parsed.kind === "update_organization") return [await draftUpdateOrganizationAction(actor, evidenceText, parsed)];
-  if (parsed.kind === "link_contact_organization") return [await draftLinkContactOrganizationAction(actor, evidenceText, parsed)];
+  const draft = await draftFromParsedCrmRecordChange(actor, evidenceText, parsed);
+  if (draft) return [draft];
   return [{
     applyState: "disabled",
     candidates: [],
@@ -251,16 +270,57 @@ async function draftCrmRecordChangeActions(actor: WorkspaceActor, query: string)
     targetKind: "Contact",
     targetLabel: "Supported CRM record required",
     title: "Draft CRM record change",
-    warnings: ["Supported fields are contact name, email, phone, organization link, and organization name or domain."]
+    warnings: ["Supported fields are contact name, title, email, phone, organization link, and organization name or domain."]
   }];
+}
+
+export async function resolveAssistantCrmDraftClarification(
+  actor: WorkspaceActor,
+  input: { candidateId: string; candidateType: "organization" | "person"; draftAction: AssistantDraftAction }
+): Promise<AssistantDraftAction> {
+  await ensureWorkspaceAccess(actor);
+  const clarification = input.draftAction.clarification;
+  if (!clarification || clarification.status !== "needs_selection") {
+    return unavailableClarificationDraft(input.draftAction, "This draft no longer needs clarification.");
+  }
+  const candidateId = input.candidateId.trim().slice(0, 160);
+  const slot = clarification.slots.find((item) => !item.selectedRecordId && item.candidateType === input.candidateType);
+  const selectedCandidate = input.draftAction.candidates.find((candidate) => candidate.id === candidateId && candidate.type === input.candidateType);
+  if (!candidateId || !slot || !selectedCandidate) {
+    return unavailableClarificationDraft(input.draftAction, "Selected candidate is not valid for this clarification.");
+  }
+  const resolution = {
+    ...(clarification.resolved ?? {}),
+    ...(input.candidateType === "person" ? { personId: candidateId } : { organizationId: candidateId })
+  };
+  const resolvedDraft = await draftFromParsedCrmRecordChange(actor, input.draftAction.evidence[0] ?? input.draftAction.title, clarification.intent, resolution);
+  if (!resolvedDraft) return unavailableClarificationDraft(input.draftAction, "The original action is no longer supported.");
+  return resolvedDraft;
+}
+
+async function draftFromParsedCrmRecordChange(
+  actor: WorkspaceActor,
+  evidenceText: string,
+  parsed: CrmRecordChangeParseResult,
+  resolution: CrmRecordChangeResolution = {}
+) {
+  if (parsed.kind === "create_contact") return draftCreateContactAction(actor, evidenceText, parsed, resolution);
+  if (parsed.kind === "update_contact") return draftUpdateContactAction(actor, evidenceText, parsed, resolution);
+  if (parsed.kind === "create_organization") return draftCreateOrganizationAction(actor, evidenceText, parsed, resolution);
+  if (parsed.kind === "update_organization") return draftUpdateOrganizationAction(actor, evidenceText, parsed, resolution);
+  if (parsed.kind === "link_contact_organization") return draftLinkContactOrganizationAction(actor, evidenceText, parsed, resolution);
+  return null;
 }
 
 async function draftCreateContactAction(
   actor: WorkspaceActor,
   cleaned: string,
-  parsed: Extract<CrmRecordChangeParseResult, { kind: "create_contact" }>
+  parsed: Extract<CrmRecordChangeParseResult, { kind: "create_contact" }>,
+  resolution: CrmRecordChangeResolution = {}
 ): Promise<AssistantDraftAction> {
-  const organizationMatch = parsed.organizationName ? await matchOrganizations(actor, parsed.organizationName) : emptyMatch();
+  const organizationMatch = resolution.organizationId
+    ? await matchResolvedOrganization(actor, resolution.organizationId)
+    : parsed.organizationName ? await matchOrganizations(actor, parsed.organizationName) : emptyMatch();
   const duplicateCandidates = await findDuplicateContactCandidates(actor, {
     email: parsed.email,
     firstName: parsed.firstName,
@@ -288,6 +348,11 @@ async function draftCreateContactAction(
   return {
     applyState: "disabled",
     candidates: [...duplicateCandidates, ...organizationMatch.candidates],
+    clarification: clarificationForDraft(parsed, resolution, [
+      ...(parsed.organizationName && organizationMatch.confidence === "needs_clarification"
+        ? [{ candidateType: "organization" as const, key: "organization" as const, label: `Choose the organization for ${parsed.fullName || "this contact"}` }]
+        : [])
+    ]),
     confidence: missingInfo.length === 0 && duplicateCandidates.length === 0 && organizationMatch.confidence !== "needs_clarification" ? "high" : "needs_clarification",
     evidence: [`User-provided request: ${cleaned}`],
     fields,
@@ -315,9 +380,12 @@ async function draftCreateContactAction(
 async function draftUpdateContactAction(
   actor: WorkspaceActor,
   cleaned: string,
-  parsed: Extract<CrmRecordChangeParseResult, { kind: "update_contact" }>
+  parsed: Extract<CrmRecordChangeParseResult, { kind: "update_contact" }>,
+  resolution: CrmRecordChangeResolution = {}
 ): Promise<AssistantDraftAction> {
-  const personMatch = parsed.targetName ? await matchPeople(actor, parsed.targetName) : emptyMatch();
+  const personMatch = resolution.personId
+    ? await matchResolvedPerson(actor, resolution.personId)
+    : parsed.targetName ? await matchPeople(actor, parsed.targetName) : emptyMatch();
   const selectedPerson = personMatch.selected ? await loadPersonProposalSnapshot(actor, personMatch.selected.id) : null;
   const supportedFields = selectedPerson ? supportedContactUpdateFields(parsed, selectedPerson) : {};
   const fields = selectedPerson
@@ -336,6 +404,11 @@ async function draftUpdateContactAction(
   return {
     applyState: "disabled",
     candidates: personMatch.candidates,
+    clarification: clarificationForDraft(parsed, resolution, [
+      ...(parsed.targetName && personMatch.confidence === "needs_clarification"
+        ? [{ candidateType: "person" as const, key: "person" as const, label: `Choose the contact to update for ${parsed.targetName}` }]
+        : [])
+    ]),
     confidence: missingInfo.length === 0 ? "high" : "needs_clarification",
     evidence: [`User-provided request: ${cleaned}`],
     fields,
@@ -360,10 +433,13 @@ async function draftUpdateContactAction(
 async function draftCreateOrganizationAction(
   actor: WorkspaceActor,
   cleaned: string,
-  parsed: Extract<CrmRecordChangeParseResult, { kind: "create_organization" }>
+  parsed: Extract<CrmRecordChangeParseResult, { kind: "create_organization" }>,
+  resolution: CrmRecordChangeResolution = {}
 ): Promise<AssistantDraftAction> {
   const duplicateCandidates = await findDuplicateOrganizationCandidates(actor, { domain: parsed.domain, name: parsed.name });
-  const personMatch = parsed.linkPersonName ? await matchPeople(actor, parsed.linkPersonName) : emptyMatch();
+  const personMatch = resolution.personId
+    ? await matchResolvedPerson(actor, resolution.personId)
+    : parsed.linkPersonName ? await matchPeople(actor, parsed.linkPersonName) : emptyMatch();
   const selectedPerson = personMatch.selected ? await loadPersonProposalSnapshot(actor, personMatch.selected.id) : null;
   const fields: AssistantDraftActionField[] = [
     { label: "Organization name", value: parsed.name || "Missing" },
@@ -383,6 +459,11 @@ async function draftCreateOrganizationAction(
   return {
     applyState: "disabled",
     candidates: [...duplicateCandidates, ...personMatch.candidates],
+    clarification: clarificationForDraft(parsed, resolution, [
+      ...(parsed.linkPersonName && personMatch.confidence === "needs_clarification"
+        ? [{ candidateType: "person" as const, key: "person" as const, label: `Choose the contact to link after ${parsed.name || "the organization"} exists` }]
+        : [])
+    ]),
     confidence: missingInfo.length === 0 && duplicateCandidates.length === 0 ? "high" : "needs_clarification",
     evidence: [`User-provided request: ${cleaned}`],
     fields,
@@ -409,9 +490,12 @@ async function draftCreateOrganizationAction(
 async function draftUpdateOrganizationAction(
   actor: WorkspaceActor,
   cleaned: string,
-  parsed: Extract<CrmRecordChangeParseResult, { kind: "update_organization" }>
+  parsed: Extract<CrmRecordChangeParseResult, { kind: "update_organization" }>,
+  resolution: CrmRecordChangeResolution = {}
 ): Promise<AssistantDraftAction> {
-  const organizationMatch = parsed.targetName ? await matchOrganizations(actor, parsed.targetName) : emptyMatch();
+  const organizationMatch = resolution.organizationId
+    ? await matchResolvedOrganization(actor, resolution.organizationId)
+    : parsed.targetName ? await matchOrganizations(actor, parsed.targetName) : emptyMatch();
   const selectedOrganization = organizationMatch.selected ? await loadOrganizationProposalSnapshot(actor, organizationMatch.selected.id) : null;
   const supportedFields = selectedOrganization ? supportedOrganizationUpdateFields(parsed, selectedOrganization) : {};
   const fields = selectedOrganization
@@ -426,6 +510,11 @@ async function draftUpdateOrganizationAction(
   return {
     applyState: "disabled",
     candidates: organizationMatch.candidates,
+    clarification: clarificationForDraft(parsed, resolution, [
+      ...(parsed.targetName && organizationMatch.confidence === "needs_clarification"
+        ? [{ candidateType: "organization" as const, key: "organization" as const, label: `Choose the organization to update for ${parsed.targetName}` }]
+        : [])
+    ]),
     confidence: missingInfo.length === 0 ? "high" : "needs_clarification",
     evidence: [`User-provided request: ${cleaned}`],
     fields,
@@ -450,11 +539,12 @@ async function draftUpdateOrganizationAction(
 async function draftLinkContactOrganizationAction(
   actor: WorkspaceActor,
   cleaned: string,
-  parsed: Extract<CrmRecordChangeParseResult, { kind: "link_contact_organization" }>
+  parsed: Extract<CrmRecordChangeParseResult, { kind: "link_contact_organization" }>,
+  resolution: CrmRecordChangeResolution = {}
 ): Promise<AssistantDraftAction> {
   const [personMatch, organizationMatch] = await Promise.all([
-    parsed.personName ? matchPeople(actor, parsed.personName) : Promise.resolve(emptyMatch()),
-    parsed.organizationName ? matchOrganizations(actor, parsed.organizationName) : Promise.resolve(emptyMatch())
+    resolution.personId ? matchResolvedPerson(actor, resolution.personId) : parsed.personName ? matchPeople(actor, parsed.personName) : Promise.resolve(emptyMatch()),
+    resolution.organizationId ? matchResolvedOrganization(actor, resolution.organizationId) : parsed.organizationName ? matchOrganizations(actor, parsed.organizationName) : Promise.resolve(emptyMatch())
   ]);
   const [selectedPerson, selectedOrganization] = await Promise.all([
     personMatch.selected ? loadPersonProposalSnapshot(actor, personMatch.selected.id) : Promise.resolve(null),
@@ -475,6 +565,14 @@ async function draftLinkContactOrganizationAction(
   return {
     applyState: "disabled",
     candidates: [...personMatch.candidates, ...organizationMatch.candidates],
+    clarification: clarificationForDraft(parsed, resolution, [
+      ...(parsed.personName && personMatch.confidence === "needs_clarification"
+        ? [{ candidateType: "person" as const, key: "person" as const, label: `Choose the contact for ${parsed.personName}` }]
+        : []),
+      ...(parsed.organizationName && organizationMatch.confidence === "needs_clarification"
+        ? [{ candidateType: "organization" as const, key: "organization" as const, label: `Choose the organization for ${parsed.organizationName}` }]
+        : [])
+    ]),
     confidence: missingInfo.length === 0 ? "high" : "needs_clarification",
     evidence: [`User-provided request: ${cleaned}`],
     fields,
@@ -561,7 +659,7 @@ function parseOrganizationContactCommand(input: string) {
   };
 }
 
-type CrmRecordChangeParseResult =
+export type CrmRecordChangeParseResult =
   | {
       email: string;
       firstName: string;
@@ -574,7 +672,7 @@ type CrmRecordChangeParseResult =
     }
   | {
       email: string;
-      field: "email" | "firstName" | "lastName" | "phone" | "unsupported";
+      field: "email" | "firstName" | "lastName" | "phone" | "title" | "unsupported";
       kind: "update_contact";
       phone: string;
       requestedValue: string;
@@ -601,6 +699,11 @@ type CrmRecordChangeParseResult =
       personName: string;
     }
   | { kind: "unsupported" };
+
+type CrmRecordChangeResolution = {
+  organizationId?: string;
+  personId?: string;
+};
 
 function parseCrmRecordChangeCommand(input: string): CrmRecordChangeParseResult {
   const cleaned = cleanTrailingPunctuation(input);
@@ -652,17 +755,27 @@ function parseUpdateContactCommand(input: string): Extract<CrmRecordChangeParseR
   }
   if (!match) return null;
   const rawField = cleanTrailingPunctuation(match[2] ?? "");
-  const requestedValue = cleanTrailingPunctuation(match[3] ?? "");
+  const rawRequestedValue = cleanTrailingPunctuation(match[3] ?? "");
   const field = contactFieldFromText(rawField);
+  const requestedValue = normalizedContactRequestedValue(field, rawRequestedValue);
   return {
-    email: field === "email" ? extractEmail(requestedValue) || requestedValue : "",
+    email: field === "email" ? extractEmail(rawRequestedValue) || requestedValue : "",
     field,
     kind: "update_contact",
-    phone: field === "phone" ? extractPhone(requestedValue) || requestedValue : "",
+    phone: field === "phone" ? extractPhone(rawRequestedValue) || requestedValue : "",
     requestedValue,
     targetName: cleanPersonName(match[1] ?? ""),
     unsupportedFields: field === "unsupported" ? [rawField] : []
   };
+}
+
+function normalizedContactRequestedValue(
+  field: Extract<CrmRecordChangeParseResult, { kind: "update_contact" }>["field"],
+  value: string
+) {
+  if (field === "phone") return extractPhone(value) || sanitizeEvidence(value);
+  if (field === "email") return extractEmail(value) || sanitizeEvidence(value);
+  return sanitizeEvidence(value);
 }
 
 function parseCreateOrganizationCommand(input: string): Extract<CrmRecordChangeParseResult, { kind: "create_organization" }> | null {
@@ -706,10 +819,11 @@ function supportedContactUpdateFields(
   parsed: Extract<CrmRecordChangeParseResult, { kind: "update_contact" }>,
   current: PersonProposalSnapshot
 ): Record<string, string | null> {
-  if (parsed.field === "email") return proposalFieldRecord("email", parsed.email || parsed.requestedValue);
-  if (parsed.field === "phone") return proposalFieldRecord("phone", parsed.phone || parsed.requestedValue);
-  if (parsed.field === "firstName") return proposalFieldRecord("firstName", parsed.requestedValue);
-  if (parsed.field === "lastName") return proposalFieldRecord("lastName", parsed.requestedValue || null);
+  if (parsed.field === "email") return changedProposalFieldRecord("email", parsed.email || parsed.requestedValue, current.email);
+  if (parsed.field === "phone") return changedProposalFieldRecord("phone", parsed.phone || parsed.requestedValue, current.phone);
+  if (parsed.field === "firstName") return changedProposalFieldRecord("firstName", parsed.requestedValue, current.firstName);
+  if (parsed.field === "lastName") return changedProposalFieldRecord("lastName", parsed.requestedValue || null, current.lastName);
+  if (parsed.field === "title") return changedProposalFieldRecord("title", parsed.requestedValue, current.title);
   return {};
 }
 
@@ -717,12 +831,14 @@ function supportedOrganizationUpdateFields(
   parsed: Extract<CrmRecordChangeParseResult, { kind: "update_organization" }>,
   current: OrganizationProposalSnapshot
 ): Record<string, string | null> {
-  if (parsed.field === "domain") return proposalFieldRecord("domain", parsed.domain || parsed.requestedValue || null);
-  if (parsed.field === "name") return proposalFieldRecord("name", parsed.name || parsed.requestedValue);
+  if (parsed.field === "domain") return changedProposalFieldRecord("domain", parsed.domain || parsed.requestedValue || null, current.domain);
+  if (parsed.field === "name") return changedProposalFieldRecord("name", parsed.name || parsed.requestedValue, current.name);
   return {};
 }
 
-function proposalFieldRecord(key: string, value: string | null): Record<string, string | null> {
+function changedProposalFieldRecord(key: string, value: string | null, currentValue: string | null): Record<string, string | null> {
+  const normalizedValue = normalizeComparableFieldValue(value);
+  if (normalizedValue && normalizedValue === normalizeComparableFieldValue(currentValue)) return {};
   return { [key]: value };
 }
 
@@ -756,6 +872,7 @@ function contactCurrentValue(key: string, current: PersonProposalSnapshot) {
   if (key === "lastName") return current.lastName;
   if (key === "organizationId") return current.organizationId;
   if (key === "phone") return current.phone;
+  if (key === "title") return current.title;
   return null;
 }
 
@@ -771,6 +888,7 @@ function contactFieldLabel(key: string) {
   if (key === "lastName") return "Last name";
   if (key === "organizationId") return "Organization";
   if (key === "phone") return "Phone";
+  if (key === "title") return "Title";
   return "Unsupported field";
 }
 
@@ -786,6 +904,7 @@ function contactFieldFromText(value: string): Extract<CrmRecordChangeParseResult
   if (normalized === "phone" || normalized === "phone number") return "phone";
   if (normalized === "first name") return "firstName";
   if (normalized === "last name") return "lastName";
+  if (normalized === "title" || normalized === "role" || normalized === "job title") return "title";
   if (normalized === "name") return "firstName";
   return "unsupported";
 }
@@ -799,7 +918,6 @@ function organizationFieldFromText(value: string): Extract<CrmRecordChangeParseR
 
 function unsupportedContactFields(input: string) {
   const fields: string[] = [];
-  if (/\b(title|role|job title)\b/i.test(input)) fields.push("title/role");
   return fields;
 }
 
@@ -964,7 +1082,9 @@ async function matchPeople(actor: WorkspaceActor, target: string) {
       firstName: true,
       id: true,
       lastName: true,
-      organization: { select: { name: true } }
+      organization: { select: { name: true } },
+      owner: { select: userDisplaySelect },
+      phone: true
     },
     take: 6,
     where: {
@@ -984,7 +1104,7 @@ async function matchOrganizations(actor: WorkspaceActor, target: string) {
   if (explicit) return { candidates: [explicit], confidence: "high" as const, selected: explicit, warnings: [] };
   const organizations = await prisma.organization.findMany({
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    select: { domain: true, id: true, name: true },
+    select: { domain: true, id: true, name: true, owner: { select: userDisplaySelect } },
     take: 6,
     where: {
       workspaceId: actor.workspaceId,
@@ -1052,6 +1172,7 @@ type PersonProposalSnapshot = {
   organizationId: string | null;
   organizationName: string | null;
   phone: string | null;
+  title: string | null;
 };
 
 type OrganizationProposalSnapshot = {
@@ -1069,7 +1190,9 @@ async function explicitPersonCandidate(actor: WorkspaceActor, target: string): P
       firstName: true,
       id: true,
       lastName: true,
-      organization: { select: { name: true } }
+      organization: { select: { name: true } },
+      owner: { select: userDisplaySelect },
+      phone: true
     },
     where: { id, workspaceId: actor.workspaceId, ...activeWhere }
   });
@@ -1081,11 +1204,37 @@ async function explicitOrganizationCandidate(actor: WorkspaceActor, target: stri
   const id = explicitRecordId(target, "organizations");
   if (!id) return null;
   const organization = await prisma.organization.findFirst({
-    select: { domain: true, id: true, name: true },
+    select: { domain: true, id: true, name: true, owner: { select: userDisplaySelect } },
     where: { id, workspaceId: actor.workspaceId, ...activeWhere }
   });
   if (!organization) return null;
   return organizationCandidate(organization);
+}
+
+async function matchResolvedPerson(actor: WorkspaceActor, personId: string) {
+  const candidate = await explicitPersonCandidate(actor, personId);
+  if (!candidate) {
+    return {
+      candidates: [] as AssistantDraftActionCandidate[],
+      confidence: "needs_clarification" as const,
+      selected: undefined,
+      warnings: ["Selected contact is no longer available. Choose another candidate before continuing."]
+    };
+  }
+  return { candidates: [candidate], confidence: "high" as const, selected: candidate, warnings: [] };
+}
+
+async function matchResolvedOrganization(actor: WorkspaceActor, organizationId: string) {
+  const candidate = await explicitOrganizationCandidate(actor, organizationId);
+  if (!candidate) {
+    return {
+      candidates: [] as AssistantDraftActionCandidate[],
+      confidence: "needs_clarification" as const,
+      selected: undefined,
+      warnings: ["Selected organization is no longer available. Choose another candidate before continuing."]
+    };
+  }
+  return { candidates: [candidate], confidence: "high" as const, selected: candidate, warnings: [] };
 }
 
 async function loadPersonProposalSnapshot(actor: WorkspaceActor, personId: string): Promise<PersonProposalSnapshot | null> {
@@ -1097,7 +1246,8 @@ async function loadPersonProposalSnapshot(actor: WorkspaceActor, personId: strin
       lastName: true,
       organization: { select: { name: true, workspaceId: true, deletedAt: true } },
       organizationId: true,
-      phone: true
+      phone: true,
+      title: true
     },
     where: { id: personId, workspaceId: actor.workspaceId, ...activeWhere }
   });
@@ -1109,7 +1259,8 @@ async function loadPersonProposalSnapshot(actor: WorkspaceActor, personId: strin
     lastName: person.lastName,
     organizationId: person.organizationId,
     organizationName: person.organization?.workspaceId === actor.workspaceId && !person.organization.deletedAt ? person.organization.name : null,
-    phone: person.phone
+    phone: person.phone,
+    title: person.title
   };
 }
 
@@ -1133,7 +1284,9 @@ async function findDuplicateContactCandidates(
       firstName: true,
       id: true,
       lastName: true,
-      organization: { select: { name: true } }
+      organization: { select: { name: true } },
+      owner: { select: userDisplaySelect },
+      phone: true
     },
     take: 6,
     where: {
@@ -1159,7 +1312,7 @@ async function findDuplicateOrganizationCandidates(
   if (!input.name && !input.domain) return [];
   const organizations = await prisma.organization.findMany({
     orderBy: [{ updatedAt: "desc" }],
-    select: { domain: true, id: true, name: true },
+    select: { domain: true, id: true, name: true, owner: { select: userDisplaySelect } },
     take: 6,
     where: {
       workspaceId: actor.workspaceId,
@@ -1179,10 +1332,12 @@ function personCandidate(person: {
   id: string;
   lastName: string | null;
   organization?: { name: string } | null;
+  owner?: { email: string; name: string | null } | null;
+  phone?: string | null;
 }): AssistantDraftActionCandidate {
   const label = formatPersonName(person) ?? person.email ?? "Unnamed contact";
   return {
-    detail: [person.email, person.organization?.name].filter(Boolean).join(" · ") || undefined,
+    detail: [person.email, person.phone, person.organization?.name, userLabel(person.owner)].filter(Boolean).join(" · ") || undefined,
     href: `/contacts/${person.id}`,
     id: person.id,
     label,
@@ -1190,14 +1345,18 @@ function personCandidate(person: {
   };
 }
 
-function organizationCandidate(organization: { domain: string | null; id: string; name: string }): AssistantDraftActionCandidate {
+function organizationCandidate(organization: { domain: string | null; id: string; name: string; owner?: { email: string; name: string | null } | null }): AssistantDraftActionCandidate {
   return {
-    detail: organization.domain ?? undefined,
+    detail: [organization.domain, userLabel(organization.owner)].filter(Boolean).join(" · ") || undefined,
     href: `/organizations/${organization.id}`,
     id: organization.id,
     label: organization.name,
     type: "organization"
   };
+}
+
+function userLabel(user: { email: string; name: string | null } | null | undefined) {
+  return user ? `Owner: ${user.name || user.email}` : "";
 }
 
 function matchResult(candidates: AssistantDraftActionCandidate[], target: string, label: string) {
@@ -1256,6 +1415,46 @@ function emptyMatch() {
   };
 }
 
+function clarificationForDraft(
+  intent: CrmRecordChangeParseResult,
+  resolved: CrmRecordChangeResolution,
+  slots: AssistantDraftClarificationSlot[]
+): AssistantDraftActionClarification | undefined {
+  const resolvedSlots = slots;
+  if (resolvedSlots.length === 0 && !resolved.personId && !resolved.organizationId) return undefined;
+  return {
+    intent,
+    resolved: Object.keys(resolved).length > 0 ? resolved : undefined,
+    resolutionKey: resolutionKeyForIntent(intent, resolved),
+    slots: resolvedSlots,
+    status: resolvedSlots.some((slot) => !slot.selectedRecordId) ? "needs_selection" : "resolved"
+  };
+}
+
+function unavailableClarificationDraft(draft: AssistantDraftAction, message: string): AssistantDraftAction {
+  return {
+    applyState: "disabled",
+    candidates: [],
+    clarification: draft.clarification ? { ...draft.clarification, status: "needs_selection" } : undefined,
+    confidence: "needs_clarification",
+    evidence: draft.evidence,
+    fields: draft.fields.length > 0 ? draft.fields : [{ label: "Requested change", value: draft.title }],
+    id: `${draft.id}-clarification-unavailable`,
+    kind: draft.kind,
+    missingInfo: [message],
+    reviewLabel: "Draft only",
+    targetHref: undefined,
+    targetKind: draft.targetKind,
+    targetLabel: draft.targetLabel,
+    title: draft.title,
+    warnings: ["No CRM Change Proposal was created."]
+  };
+}
+
+function resolutionKeyForIntent(intent: CrmRecordChangeParseResult, resolved: CrmRecordChangeResolution) {
+  return `assistant-clarification:${createHash("sha256").update(JSON.stringify({ intent, resolved })).digest("hex")}`;
+}
+
 function sanitizeEvidence(value: string) {
   return redactSensitiveText(value).trim().replace(/\s+/g, " ").slice(0, 500);
 }
@@ -1290,6 +1489,10 @@ function sentenceCase(value: string) {
 
 function normalize(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeComparableFieldValue(value: string | null | undefined) {
+  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function escapeRegExp(value: string) {

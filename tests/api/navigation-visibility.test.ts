@@ -156,6 +156,9 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("label: \"Products\"");
     expect(navigation).toContain("helper: \"Sellable catalog\"");
     expect(navigation).toContain("Manage products, services, packages, and reusable pricing used in deals and quotes.");
+    expect(navigation).toContain("href: \"/reports\"");
+    expect(navigation).toContain("label: \"Reports\"");
+    expect(navigation).toContain("helper: \"Metrics\"");
     expect(quotesPage).toContain("export default async function QuotesPage");
     expect(quotesPage).toContain("listQuotesPage");
     expect(quotesPage).toContain("resetHref=\"/quotes\"");
@@ -195,6 +198,7 @@ describe("main navigation visibility", () => {
     expect(navigation).toContain("href: \"/organizations\"");
     expect(navigation).toContain("href: \"/leads\"");
     expect(navigation).toContain("href: \"/activities\"");
+    expect(navigation).toContain("href: \"/reports\"");
     expect(navigation).toContain("href: \"/products\"");
     expect(primaryNav).toContain("aria-current={isActive ? \"page\" : undefined}");
     expect(globalStyles).toContain(".sidebar-search");

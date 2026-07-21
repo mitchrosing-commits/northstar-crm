@@ -95,6 +95,7 @@ async function extractWithMediaProvider(
       providerName: result.providerName,
       requiredProvider: providerSourceType === "audio" ? "transcription" : providerSourceType === "video" ? "media_processing" : "ocr_or_vision",
       sourceType: outputSourceType,
+      transcriptionConfidence: result.confidence,
       warnings: result.warnings,
       wordCount: wordCount(rawText)
     },

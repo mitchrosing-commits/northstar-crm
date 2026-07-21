@@ -5,6 +5,7 @@ import { ContactForm } from "@/components/contact-form";
 import { FormHeaderActions } from "@/components/form-header-actions";
 import { PageHeader } from "@/components/page-header";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { parseReturnToHref } from "@/lib/return-to";
 import { getWorkspace, listOrganizations } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ export default async function NewContactPage({
   const defaultEmail = firstSearchParam(resolvedSearchParams?.email);
   const defaultName = firstSearchParam(resolvedSearchParams?.name);
   const defaultOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId);
-  const returnTo = leadReturnToParam(resolvedSearchParams?.returnTo);
+  const returnTo = leadOrActivityReturnToParam(resolvedSearchParams?.returnTo);
   const organizationOptions = organizations.map((organization) => ({ id: organization.id, name: organization.name }));
   const hasPrefill = Boolean(defaultEmail || defaultName || defaultOrganizationId);
 
@@ -51,7 +52,7 @@ export default async function NewContactPage({
         owners={owners}
         prefillNotice={
           returnTo
-            ? "Create this contact, then Northstar will return to the lead form with the contact selected."
+            ? "Create this contact, then Northstar will return to the source form with the contact selected."
             : hasPrefill
             ? "We prefilled this contact from your search or related-record shortcut. Review the details, then add the person."
             : undefined
@@ -68,10 +69,12 @@ function firstSearchParam(value: string | string[] | undefined) {
   return first?.slice(0, 160);
 }
 
-function leadReturnToParam(value: string | string[] | undefined) {
+function leadOrActivityReturnToParam(value: string | string[] | undefined) {
   const first = Array.isArray(value) ? value[0] : value;
   const returnTo = first?.slice(0, 700);
   if (!returnTo) return null;
+  const activityReturnTo = parseReturnToHref(returnTo, "/contacts");
+  if (String(activityReturnTo).startsWith("/activities/new")) return activityReturnTo;
   if (returnTo === "/leads/new" || returnTo.startsWith("/leads/new?")) return returnTo;
   if (/^\/leads\/[^/?#]+\/edit(?:\?.*)?$/.test(returnTo)) return returnTo;
   return null;

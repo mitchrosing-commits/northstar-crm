@@ -263,108 +263,127 @@ async function exportQuotes(actor: WorkspaceActor): Promise<ExportResult> {
 }
 
 const dealColumns = [
-  { header: "title", value: (deal) => deal.title },
-  { header: "status", value: (deal) => deal.status },
-  { header: "value", value: (deal) => centsToDecimal(deal.valueCents) },
-  { header: "currency", value: (deal) => deal.currency },
-  { header: "pipeline", value: (deal) => deal.pipeline.name },
-  { header: "stage", value: (deal) => deal.stage.name },
-  { header: "expectedCloseAt", value: (deal) => deal.expectedCloseAt },
-  { header: "contactName", value: (deal) => workspacePersonName(deal.workspaceId, deal.person) },
-  { header: "contactEmail", value: (deal) => workspacePersonEmail(deal.workspaceId, deal.person) },
-  { header: "organizationName", value: (deal) => workspaceOrganizationName(deal.workspaceId, deal.organization) },
-  { header: "ownerEmail", value: (deal) => deal.owner?.email },
-  { header: "lineItemCount", value: (deal) => deal._count.lineItems },
-  { header: "quoteCount", value: (deal) => deal._count.quotes },
-  { header: "latestQuoteNumber", value: (deal) => deal.quotes[0]?.number },
-  { header: "latestQuoteStatus", value: (deal) => deal.quotes[0]?.status },
-  { header: "latestQuoteTotal", value: (deal) => centsToDecimal(deal.quotes[0]?.totalCents ?? null) },
-  { header: "createdAt", value: (deal) => deal.createdAt },
-  { header: "updatedAt", value: (deal) => deal.updatedAt }
+  { header: "Deal Title", value: (deal) => deal.title },
+  { header: "Status", value: (deal) => formatExportStatus(deal.status) },
+  { header: "Deal Value", value: (deal) => centsToDecimal(deal.valueCents) },
+  { header: "Currency", value: (deal) => deal.currency },
+  { header: "Pipeline", value: (deal) => deal.pipeline.name },
+  { header: "Stage", value: (deal) => deal.stage.name },
+  { header: "Expected Close", value: (deal) => formatExportDate(deal.expectedCloseAt) },
+  { header: "Contact Name", value: (deal) => workspacePersonName(deal.workspaceId, deal.person) },
+  { header: "Contact Email", value: (deal) => workspacePersonEmail(deal.workspaceId, deal.person) },
+  { header: "Organization Name", value: (deal) => workspaceOrganizationName(deal.workspaceId, deal.organization) },
+  { header: "Owner Email", value: (deal) => deal.owner?.email },
+  { header: "Line Item Count", value: (deal) => deal._count.lineItems },
+  { header: "Quote Count", value: (deal) => deal._count.quotes },
+  { header: "Latest Quote Number", value: (deal) => deal.quotes[0]?.number },
+  { header: "Latest Quote Status", value: (deal) => formatExportStatus(deal.quotes[0]?.status) },
+  { header: "Latest Quote Total", value: (deal) => centsToDecimal(deal.quotes[0]?.totalCents ?? null) },
+  { header: "Created At", value: (deal) => formatExportDateTime(deal.createdAt) },
+  { header: "Updated At", value: (deal) => formatExportDateTime(deal.updatedAt) }
 ] satisfies Array<CsvColumn<ExportDeal>>;
 
 const contactColumns = [
-  { header: "firstName", value: (person) => person.firstName },
-  { header: "lastName", value: (person) => person.lastName },
-  { header: "email", value: (person) => person.email },
-  { header: "phone", value: (person) => person.phone },
-  { header: "organizationName", value: (person) => workspaceOrganizationName(person.workspaceId, person.organization) },
-  { header: "ownerEmail", value: (person) => person.owner?.email },
-  { header: "createdAt", value: (person) => person.createdAt },
-  { header: "updatedAt", value: (person) => person.updatedAt }
+  { header: "First Name", value: (person) => person.firstName },
+  { header: "Last Name", value: (person) => person.lastName },
+  { header: "Email", value: (person) => person.email },
+  { header: "Phone", value: (person) => person.phone },
+  { header: "Organization Name", value: (person) => workspaceOrganizationName(person.workspaceId, person.organization) },
+  { header: "Owner Email", value: (person) => person.owner?.email },
+  { header: "Created At", value: (person) => formatExportDateTime(person.createdAt) },
+  { header: "Updated At", value: (person) => formatExportDateTime(person.updatedAt) }
 ] satisfies Array<CsvColumn<ExportContact>>;
 
 const organizationColumns = [
-  { header: "name", value: (organization) => organization.name },
-  { header: "domain", value: (organization) => organization.domain },
-  { header: "ownerEmail", value: (organization) => organization.owner?.email },
-  { header: "peopleCount", value: (organization) => organization._count.people },
-  { header: "dealsCount", value: (organization) => organization._count.deals },
-  { header: "createdAt", value: (organization) => organization.createdAt },
-  { header: "updatedAt", value: (organization) => organization.updatedAt }
+  { header: "Organization Name", value: (organization) => organization.name },
+  { header: "Domain", value: (organization) => organization.domain },
+  { header: "Owner Email", value: (organization) => organization.owner?.email },
+  { header: "People Count", value: (organization) => organization._count.people },
+  { header: "Deal Count", value: (organization) => organization._count.deals },
+  { header: "Created At", value: (organization) => formatExportDateTime(organization.createdAt) },
+  { header: "Updated At", value: (organization) => formatExportDateTime(organization.updatedAt) }
 ] satisfies Array<CsvColumn<ExportOrganization>>;
 
 const leadColumns = [
-  { header: "title", value: (lead) => lead.title },
-  { header: "status", value: (lead) => lead.status },
-  { header: "source", value: (lead) => lead.source },
-  { header: "contactName", value: (lead) => workspacePersonName(lead.workspaceId, lead.person) },
-  { header: "contactEmail", value: (lead) => workspacePersonEmail(lead.workspaceId, lead.person) },
-  { header: "organizationName", value: (lead) => workspaceOrganizationName(lead.workspaceId, lead.organization) },
-  { header: "ownerEmail", value: (lead) => lead.owner?.email },
-  { header: "createdAt", value: (lead) => lead.createdAt },
-  { header: "updatedAt", value: (lead) => lead.updatedAt }
+  { header: "Lead Title", value: (lead) => lead.title },
+  { header: "Status", value: (lead) => formatExportStatus(lead.status) },
+  { header: "Source", value: (lead) => lead.source },
+  { header: "Contact Name", value: (lead) => workspacePersonName(lead.workspaceId, lead.person) },
+  { header: "Contact Email", value: (lead) => workspacePersonEmail(lead.workspaceId, lead.person) },
+  { header: "Organization Name", value: (lead) => workspaceOrganizationName(lead.workspaceId, lead.organization) },
+  { header: "Owner Email", value: (lead) => lead.owner?.email },
+  { header: "Created At", value: (lead) => formatExportDateTime(lead.createdAt) },
+  { header: "Updated At", value: (lead) => formatExportDateTime(lead.updatedAt) }
 ] satisfies Array<CsvColumn<ExportLead>>;
 
 const activityColumns = [
-  { header: "title", value: (activity) => activity.title },
-  { header: "type", value: (activity) => activity.type },
-  { header: "status", value: (activity) => (activity.completedAt ? "COMPLETED" : "OPEN") },
-  { header: "dueAt", value: (activity) => activity.dueAt },
-  { header: "completedAt", value: (activity) => activity.completedAt },
-  { header: "dealTitle", value: (activity) => workspaceDealTitle(activity.workspaceId, activity.deal) },
-  { header: "leadTitle", value: (activity) => workspaceLeadTitle(activity.workspaceId, activity.lead) },
-  { header: "contactName", value: (activity) => workspacePersonName(activity.workspaceId, activity.person) },
-  { header: "contactEmail", value: (activity) => workspacePersonEmail(activity.workspaceId, activity.person) },
-  { header: "organizationName", value: (activity) => workspaceOrganizationName(activity.workspaceId, activity.organization) },
-  { header: "ownerEmail", value: (activity) => activity.owner?.email },
-  { header: "description", value: (activity) => activity.description },
-  { header: "createdAt", value: (activity) => activity.createdAt },
-  { header: "updatedAt", value: (activity) => activity.updatedAt }
+  { header: "Activity Title", value: (activity) => activity.title },
+  { header: "Type", value: (activity) => formatExportStatus(activity.type) },
+  { header: "Status", value: (activity) => (activity.completedAt ? "Completed" : "Open") },
+  { header: "Due At", value: (activity) => formatExportDateTime(activity.dueAt) },
+  { header: "Completed At", value: (activity) => formatExportDateTime(activity.completedAt) },
+  { header: "Deal Title", value: (activity) => workspaceDealTitle(activity.workspaceId, activity.deal) },
+  { header: "Lead Title", value: (activity) => workspaceLeadTitle(activity.workspaceId, activity.lead) },
+  { header: "Contact Name", value: (activity) => workspacePersonName(activity.workspaceId, activity.person) },
+  { header: "Contact Email", value: (activity) => workspacePersonEmail(activity.workspaceId, activity.person) },
+  { header: "Organization Name", value: (activity) => workspaceOrganizationName(activity.workspaceId, activity.organization) },
+  { header: "Owner Email", value: (activity) => activity.owner?.email },
+  { header: "Description", value: (activity) => activity.description },
+  { header: "Created At", value: (activity) => formatExportDateTime(activity.createdAt) },
+  { header: "Updated At", value: (activity) => formatExportDateTime(activity.updatedAt) }
 ] satisfies Array<CsvColumn<ExportActivity>>;
 
 const productColumns = [
-  { header: "name", value: (product) => product.name },
-  { header: "description", value: (product) => product.description },
-  { header: "unitPrice", value: (product) => centsToDecimal(product.unitPriceCents) },
-  { header: "currency", value: (product) => product.currency },
-  { header: "active", value: (product) => (product.active ? "Yes" : "No") },
-  { header: "createdAt", value: (product) => product.createdAt },
-  { header: "updatedAt", value: (product) => product.updatedAt }
+  { header: "Product Name", value: (product) => product.name },
+  { header: "Description", value: (product) => product.description },
+  { header: "Unit Price", value: (product) => centsToDecimal(product.unitPriceCents) },
+  { header: "Currency", value: (product) => product.currency },
+  { header: "Active", value: (product) => (product.active ? "Yes" : "No") },
+  { header: "Created At", value: (product) => formatExportDateTime(product.createdAt) },
+  { header: "Updated At", value: (product) => formatExportDateTime(product.updatedAt) }
 ] satisfies Array<CsvColumn<ExportProduct>>;
 
 const quoteColumns = [
-  { header: "number", value: (quote) => quote.number },
-  { header: "status", value: (quote) => quote.status },
-  { header: "dealTitle", value: (quote) => quote.deal.title },
-  { header: "contactName", value: (quote) => workspacePersonName(quote.workspaceId, quote.deal.person) },
-  { header: "contactEmail", value: (quote) => workspacePersonEmail(quote.workspaceId, quote.deal.person) },
-  { header: "organizationName", value: (quote) => workspaceOrganizationName(quote.workspaceId, quote.deal.organization) },
-  { header: "currency", value: (quote) => quote.currency },
-  { header: "subtotal", value: (quote) => centsToDecimal(quote.subtotalCents) },
-  { header: "discountType", value: (quote) => quote.discountType },
-  { header: "discount", value: (quote) => centsToDecimal(quote.discountCents) },
-  { header: "taxType", value: (quote) => quote.taxType },
-  { header: "tax", value: (quote) => centsToDecimal(quote.taxCents) },
-  { header: "total", value: (quote) => centsToDecimal(quote.totalCents) },
-  { header: "itemCount", value: (quote) => quote.items.length },
-  { header: "createdAt", value: (quote) => quote.createdAt },
-  { header: "updatedAt", value: (quote) => quote.updatedAt }
+  { header: "Quote Number", value: (quote) => quote.number },
+  { header: "Status", value: (quote) => formatExportStatus(quote.status) },
+  { header: "Deal Title", value: (quote) => quote.deal.title },
+  { header: "Contact Name", value: (quote) => workspacePersonName(quote.workspaceId, quote.deal.person) },
+  { header: "Contact Email", value: (quote) => workspacePersonEmail(quote.workspaceId, quote.deal.person) },
+  { header: "Organization Name", value: (quote) => workspaceOrganizationName(quote.workspaceId, quote.deal.organization) },
+  { header: "Currency", value: (quote) => quote.currency },
+  { header: "Subtotal", value: (quote) => centsToDecimal(quote.subtotalCents) },
+  { header: "Discount Type", value: (quote) => formatExportStatus(quote.discountType) },
+  { header: "Discount", value: (quote) => centsToDecimal(quote.discountCents) },
+  { header: "Tax Type", value: (quote) => formatExportStatus(quote.taxType) },
+  { header: "Tax", value: (quote) => centsToDecimal(quote.taxCents) },
+  { header: "Total", value: (quote) => centsToDecimal(quote.totalCents) },
+  { header: "Item Count", value: (quote) => quote.items.length },
+  { header: "Created At", value: (quote) => formatExportDateTime(quote.createdAt) },
+  { header: "Updated At", value: (quote) => formatExportDateTime(quote.updatedAt) }
 ] satisfies Array<CsvColumn<ExportQuote>>;
 
 function centsToDecimal(valueCents: number | null) {
   if (valueCents === null) return "";
   return (valueCents / 100).toFixed(2);
+}
+
+function formatExportDate(value: Date | string | null | undefined) {
+  if (!value) return "";
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function formatExportDateTime(value: Date | string | null | undefined) {
+  if (!value) return "";
+  return new Date(value).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+}
+
+function formatExportStatus(value: string | null | undefined) {
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function personName(person: { firstName: string; lastName: string | null } | null) {

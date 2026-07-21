@@ -6,6 +6,8 @@ import { FormEvent, useState } from "react";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSection } from "@/components/form-section";
+import { FormSuccessMessage } from "@/components/form-success-message";
 
 type ProductCreateFormProps = {
   workspaceId: string;
@@ -29,11 +31,13 @@ export function ProductCreateForm({ workspaceId, mode = "create", variant = "car
   );
   const [currency, setCurrency] = useState(initialProduct?.currency ?? "USD");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSuccess(null);
 
     const unitPriceCents = parseMoneyToCents(unitPrice);
     if (unitPriceCents === "INVALID") {
@@ -70,6 +74,7 @@ export function ProductCreateForm({ workspaceId, mode = "create", variant = "car
       setUnitPrice("");
       setCurrency("USD");
     }
+    setSuccess(mode === "create" ? "Product created. It is available for new deal line items." : "Product saved.");
     setIsSaving(false);
     router.refresh();
   }
@@ -77,39 +82,50 @@ export function ProductCreateForm({ workspaceId, mode = "create", variant = "car
   return (
     <form className={variant === "compact" ? "inline-form product-edit-form" : "form-card"} onSubmit={onSubmit}>
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
-      <div className="form-grid">
-        <label className="form-field">
-          <FormFieldLabel required>Name</FormFieldLabel>
-          <input onChange={(event) => setName(event.target.value)} required value={name} />
-        </label>
-        <label className="form-field">
-          <FormFieldLabel required>Unit price</FormFieldLabel>
-          <input
-            inputMode="decimal"
-            min="0"
-            onChange={(event) => setUnitPrice(event.target.value)}
-            placeholder="0"
-            required
-            step="0.01"
-            type="number"
-            value={unitPrice}
-          />
-        </label>
-        <label className="form-field">
-          <FormFieldLabel required>Currency</FormFieldLabel>
-          <input
-            maxLength={3}
-            onChange={(event) => setCurrency(event.target.value.toUpperCase())}
-            pattern="[A-Z]{3}"
-            required
-            value={currency}
-          />
-        </label>
-        <label className="form-field">
-          <FormFieldLabel>Description</FormFieldLabel>
-          <input onChange={(event) => setDescription(event.target.value)} value={description} />
-        </label>
-      </div>
+      {success ? <FormSuccessMessage compact={variant === "compact"}>{success}</FormSuccessMessage> : null}
+      <FormSection
+        className={variant === "compact" ? "form-section-compact" : undefined}
+        description={
+          variant === "compact"
+            ? undefined
+            : "Products become reusable line items for deals and quote drafts. Pricing stays editable until applied to a draft."
+        }
+        title={mode === "create" ? "Product details" : "Edit product"}
+      >
+        <div className="form-grid">
+          <label className="form-field">
+            <FormFieldLabel required>Name</FormFieldLabel>
+            <input onChange={(event) => setName(event.target.value)} required value={name} />
+          </label>
+          <label className="form-field">
+            <FormFieldLabel required>Unit price</FormFieldLabel>
+            <input
+              inputMode="decimal"
+              min="0"
+              onChange={(event) => setUnitPrice(event.target.value)}
+              placeholder="0"
+              required
+              step="0.01"
+              type="number"
+              value={unitPrice}
+            />
+          </label>
+          <label className="form-field">
+            <FormFieldLabel required>Currency</FormFieldLabel>
+            <input
+              maxLength={3}
+              onChange={(event) => setCurrency(event.target.value.toUpperCase())}
+              pattern="[A-Z]{3}"
+              required
+              value={currency}
+            />
+          </label>
+          <label className="form-field">
+            <FormFieldLabel>Description</FormFieldLabel>
+            <input onChange={(event) => setDescription(event.target.value)} value={description} />
+          </label>
+        </div>
+      </FormSection>
       <FormActionBar
         compact={variant === "compact"}
         disabledHint="Add a product name and unit price before saving."

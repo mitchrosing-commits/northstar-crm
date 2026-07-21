@@ -13,12 +13,17 @@ import type { AssistantTonePreset } from "@/lib/services/ai-preferences-service"
 import type { AssistantCommandResult } from "@/lib/services/assistant/assistant-command-service";
 import type { AssistantActionRequestView } from "@/lib/services/assistant/assistant-action-request-service";
 import {
+  assistantCrmProposalIdempotencyKey,
+  isAssistantCrmChangeProposalDraft
+} from "@/lib/services/assistant/assistant-crm-change-proposal-service";
+import {
   assistantConversationStarterPrompts,
   type AssistantConversationMessageView,
   type AssistantConversationSource,
   type AssistantConversationView
 } from "@/lib/services/assistant/assistant-conversation-service";
 import type { AssistantTodayCommandCenter as AssistantTodayCommandCenterView } from "@/lib/services/assistant/assistant-today-command-center-service";
+import type { CrmChangeProposalView } from "@/lib/services/crm-change-proposal-service";
 
 type AssistantConsoleProps = {
   actionRequestQueue: "all" | "applied" | "pending" | "rejected";
@@ -29,6 +34,7 @@ type AssistantConsoleProps = {
   assistantTone: AssistantTonePreset;
   command: string;
   conversation: AssistantConversationView | null;
+  crmChangeProposals: CrmChangeProposalView[];
   pendingActionRequests: AssistantActionRequestView[];
   todayCommandCenter: AssistantTodayCommandCenterView;
   todayCommandCenterStatus: string;
@@ -43,6 +49,7 @@ export function AssistantConsole({
   assistantTone,
   command,
   conversation,
+  crmChangeProposals,
   pendingActionRequests,
   todayCommandCenter,
   todayCommandCenterStatus
@@ -70,7 +77,13 @@ export function AssistantConsole({
             ) : null}
           </div>
         </div>
-        <AssistantChatThread answer={answer} assistantName={assistantName} command={command} conversation={conversation} />
+        <AssistantChatThread
+          answer={answer}
+          assistantName={assistantName}
+          command={command}
+          conversation={conversation}
+          crmChangeProposals={crmChangeProposals}
+        />
         <AssistantStarterPrompts conversationId={conversation?.id ?? ""} />
         <AssistantCommandForm
           assistantChatStatus={assistantChatStatus}
@@ -82,10 +95,15 @@ export function AssistantConsole({
         <AssistantPermissionSummary />
       </section>
 
-      {answer ? <AssistantAnswerCard answer={answer} /> : null}
+      {answer ? <AssistantAnswerCard answer={answer} crmChangeProposals={crmChangeProposals} /> : null}
       <section className="assistant-workspace-panels" aria-label="Assistant workspace panels">
         <AssistantTodayCommandCenter commandCenter={todayCommandCenter} status={todayCommandCenterStatus} />
-        <AssistantActionReviewQueue queue={actionRequestQueue} requests={pendingActionRequests} status={actionRequestStatus} />
+        <AssistantActionReviewQueue
+          crmChangeProposals={crmChangeProposals}
+          queue={actionRequestQueue}
+          requests={pendingActionRequests}
+          status={actionRequestStatus}
+        />
       </section>
     </section>
   );
@@ -100,12 +118,14 @@ function AssistantChatThread({
   answer,
   assistantName,
   command,
-  conversation
+  conversation,
+  crmChangeProposals
 }: {
   answer: AssistantCommandResult | null;
   assistantName: string;
   command: string;
   conversation: AssistantConversationView | null;
+  crmChangeProposals: CrmChangeProposalView[];
 }) {
   const hasMessages = Boolean(conversation?.messages.length);
   return (
@@ -116,6 +136,7 @@ function AssistantChatThread({
             conversationId={conversation.id}
             key={message.id}
             message={message}
+            crmChangeProposals={crmChangeProposals}
             sourceCommand={previousSourceCommand(conversation.messages, message)}
           />
         ))
@@ -123,6 +144,7 @@ function AssistantChatThread({
         <>
           <AssistantMessageBubble
             conversationId=""
+            crmChangeProposals={crmChangeProposals}
             message={{
               content: command,
               createdAt: answer.generatedAt,
@@ -136,7 +158,7 @@ function AssistantChatThread({
             }}
             sourceCommand={command}
           />
-          <AssistantTransientAnswer answer={answer} />
+          <AssistantTransientAnswer answer={answer} crmChangeProposals={crmChangeProposals} />
         </>
       ) : (
         <div className="assistant-chat-empty">
@@ -150,7 +172,13 @@ function AssistantChatThread({
   );
 }
 
-function AssistantTransientAnswer({ answer }: { answer: AssistantCommandResult }) {
+function AssistantTransientAnswer({
+  answer,
+  crmChangeProposals
+}: {
+  answer: AssistantCommandResult;
+  crmChangeProposals: CrmChangeProposalView[];
+}) {
   const message: AssistantConversationMessageView = {
     content: [
       answer.summary,
@@ -180,15 +208,17 @@ function AssistantTransientAnswer({ answer }: { answer: AssistantCommandResult }
     ],
     title: answer.title
   };
-  return <AssistantMessageBubble conversationId="" message={message} sourceCommand={answer.query} />;
+  return <AssistantMessageBubble conversationId="" crmChangeProposals={crmChangeProposals} message={message} sourceCommand={answer.query} />;
 }
 
 function AssistantMessageBubble({
   conversationId,
+  crmChangeProposals,
   message,
   sourceCommand
 }: {
   conversationId: string;
+  crmChangeProposals: CrmChangeProposalView[];
   message: AssistantConversationMessageView;
   sourceCommand: string;
 }) {
@@ -201,11 +231,18 @@ function AssistantMessageBubble({
       </div>
       {message.title ? <h3>{message.title}</h3> : null}
       <p className="assistant-chat-message-content">{message.content}</p>
+      <AssistantMessageLifecycleNotice message={message} />
       {message.sources.length > 0 ? <AssistantSourceList sources={message.sources} /> : null}
       {message.draftActions.length > 0 ? (
         <div className="assistant-draft-list" aria-label="Assistant draft actions">
           {message.draftActions.map((draft) => (
-            <AssistantDraftActionCard draft={draft} key={draft.id} sourceCommand={sourceCommand} />
+            <AssistantDraftActionCard
+              conversationId={conversationId}
+              crmProposal={proposalForDraft(draft, crmChangeProposals)}
+              draft={draft}
+              key={draft.id}
+              sourceCommand={sourceCommand}
+            />
           ))}
         </div>
       ) : null}
@@ -220,6 +257,34 @@ function AssistantMessageBubble({
       ) : null}
     </article>
   );
+}
+
+function AssistantMessageLifecycleNotice({ message }: { message: AssistantConversationMessageView }) {
+  if (message.title === "Clarification canceled") {
+    return (
+      <div className="assistant-lifecycle-row" aria-label="Assistant lifecycle status">
+        <Badge>Clarification canceled</Badge>
+        <span>No CRM Change Proposal was created. Next action: retry safely or dismiss.</span>
+      </div>
+    );
+  }
+  if (message.title === "Clarification applied") {
+    return (
+      <div className="assistant-lifecycle-row" aria-label="Assistant lifecycle status">
+        <Badge>Clarification resolved</Badge>
+        <span>Selected record is now attached to the draft. Next action: review the proposal preview.</span>
+      </div>
+    );
+  }
+  if (message.title === "Clarification still needed") {
+    return (
+      <div className="assistant-lifecycle-row" aria-label="Assistant lifecycle status">
+        <Badge>Candidate stale or deleted</Badge>
+        <span>The selected record was unavailable. Next action: choose another candidate or retry safely.</span>
+      </div>
+    );
+  }
+  return null;
 }
 
 function AssistantSourceList({ sources }: { sources: AssistantConversationSource[] }) {
@@ -269,7 +334,13 @@ function previousSourceCommand(messages: AssistantConversationMessageView[], mes
   return message.content;
 }
 
-function AssistantAnswerCard({ answer }: { answer: AssistantCommandResult }) {
+function AssistantAnswerCard({
+  answer,
+  crmChangeProposals
+}: {
+  answer: AssistantCommandResult;
+  crmChangeProposals: CrmChangeProposalView[];
+}) {
   return (
     <section className="data-card assistant-answer-card" id="assistant-answer" aria-label="Assistant answer">
       <PanelTitleRow
@@ -304,7 +375,12 @@ function AssistantAnswerCard({ answer }: { answer: AssistantCommandResult }) {
       {answer.draftActions?.length ? (
         <div className="assistant-draft-list" aria-label="Assistant draft actions">
           {answer.draftActions.map((draft) => (
-            <AssistantDraftActionCard draft={draft} key={draft.id} sourceCommand={answer.query} />
+            <AssistantDraftActionCard
+              crmProposal={proposalForDraft(draft, crmChangeProposals)}
+              draft={draft}
+              key={draft.id}
+              sourceCommand={answer.query}
+            />
           ))}
         </div>
       ) : null}
@@ -323,6 +399,16 @@ function AssistantAnswerCard({ answer }: { answer: AssistantCommandResult }) {
       ) : null}
     </section>
   );
+}
+
+function proposalForDraft(draft: AssistantConversationMessageView["draftActions"][number], proposals: CrmChangeProposalView[]) {
+  if (!isAssistantCrmChangeProposalDraft(draft) || !draft.proposal) return null;
+  try {
+    const idempotencyKey = assistantCrmProposalIdempotencyKey(draft);
+    return proposals.find((proposal) => proposal.idempotencyKey === idempotencyKey) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function AssistantPermissionSummary() {

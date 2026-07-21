@@ -60,6 +60,7 @@ describe("lead create and update behavior", () => {
     expect(newLeadPage).toContain("const defaultTitle = firstSearchParam(resolvedSearchParams?.title)");
     expect(newLeadPage).toContain("const requestedPersonId = firstSearchParam(resolvedSearchParams?.personId)");
     expect(newLeadPage).toContain("const requestedOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId)");
+    expect(newLeadPage).toContain("const returnHref = parseReturnToHref(resolvedSearchParams?.returnTo, \"/leads\")");
     expect(newLeadPage).toContain("const defaultPersonId = people.some((person) => person.id === requestedPersonId) ? requestedPersonId : undefined;");
     expect(newLeadPage).toContain("const defaultOrganizationId = organizations.some((organization) => organization.id === requestedOrganizationId) ? requestedOrganizationId : undefined;");
     expect(newLeadPage).toContain("defaultSource={defaultSource}");
@@ -69,6 +70,7 @@ describe("lead create and update behavior", () => {
     expect(newLeadPage).toContain("leadStatusSearchParam");
     expect(newLeadPage).toContain("We linked the newly created record to this lead draft.");
     expect(newLeadPage).toContain("We prefilled this lead from your search shortcut.");
+    expect(newLeadPage).toContain("Create this lead, then Northstar will return to your activity draft with the lead selected.");
     expect(newLeadPage).toContain('import { formatPersonName } from "@/lib/person-name"');
     expect(newLeadPage).toContain('formatPersonName(person) ?? "Unnamed contact"');
     expect(newLeadPage).not.toContain("function formatPersonName");
@@ -82,7 +84,7 @@ describe("lead create and update behavior", () => {
     expect(editLeadPage).not.toContain("function formatPersonName");
     expect(personName).toContain("export function formatPersonName");
     expect(form).toContain("/api/v1/workspaces/${workspaceId}/leads");
-    expect(form).toContain("router.push(`/leads/${lead.id}`)");
+    expect(form).toContain("router.push((mode === \"create\" && returnTo ? appendReturnParam(returnTo.href, returnTo.paramName, lead.id) : `/leads/${lead.id}`) as Route)");
     expect(form).toContain("QUALIFIED");
     expect(form).toContain("DISQUALIFIED");
     expect(form).toContain("defaultSource?: string");
@@ -91,6 +93,8 @@ describe("lead create and update behavior", () => {
     expect(form).toContain("defaultStatus?: LeadStatus");
     expect(form).toContain("defaultTitle?: string");
     expect(form).toContain("prefillNotice?: string");
+    expect(form).toContain("returnTo?: {");
+    expect(form).toContain("paramName: \"leadId\";");
     expect(form).toContain("FormPrefillNotice");
     expect(form).toContain("<FormPrefillNotice>{prefillNotice}</FormPrefillNotice>");
     expect(form).toContain("buildLeadReturnTo");
@@ -99,14 +103,14 @@ describe("lead create and update behavior", () => {
     expect(form).toContain("Create contact");
     expect(form).toContain("Create organization");
     expect(form).toContain("returnTo: leadReturnTo");
-    expect(newContactPage).toContain("leadReturnToParam");
+    expect(newContactPage).toContain("leadOrActivityReturnToParam");
     expect(newContactPage).toContain("returnTo={returnTo ? { href: returnTo, paramName: \"personId\" } : undefined}");
-    expect(newContactPage).toContain("Northstar will return to the lead form with the contact selected.");
+    expect(newContactPage).toContain("Northstar will return to the source form with the contact selected.");
     expect(contactForm).toContain("returnTo?:");
     expect(contactForm).toContain("appendReturnParam(returnTo.href, returnTo.paramName, contact.id)");
-    expect(newOrganizationPage).toContain("leadReturnToParam");
+    expect(newOrganizationPage).toContain("leadOrActivityReturnToParam");
     expect(newOrganizationPage).toContain("returnTo={returnTo ? { href: returnTo, paramName: \"organizationId\" } : undefined}");
-    expect(newOrganizationPage).toContain("Northstar will return to the lead form with the company selected.");
+    expect(newOrganizationPage).toContain("Northstar will return to the source form with the company selected.");
     expect(organizationForm).toContain("returnTo?:");
     expect(organizationForm).toContain("appendReturnParam(returnTo.href, returnTo.paramName, organization.id)");
   });

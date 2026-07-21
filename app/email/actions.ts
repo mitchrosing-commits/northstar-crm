@@ -11,10 +11,12 @@ import {
   classifyEmailLog,
   createEmailFollowUpActivity,
   disconnectEmailConnection,
+  enqueueAllGmailInboxSyncJobs,
+  enqueueGmailInboxSyncJob,
+  enqueueGmailInboxSyncJobForSelectedConnection,
   generateEmailReplyDraft,
+  linkEmailLogToCrmRecord,
   refreshGmailInboxThread,
-  runAllGmailInboxSyncNow,
-  runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog,
   syncOlderGmailInboxMessages,
   syncRecentGmailMessages,
@@ -59,15 +61,16 @@ export async function syncGmailInboxFromEmailPageAction(formData?: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
   const selectedAccount = normalizeInboxAccountSelection(formData?.get("account"));
   const returnTo = normalizeEmailPageReturnTo(formData?.get("returnTo"));
-  let result: Awaited<ReturnType<typeof runGmailInboxSyncNow>>;
+  let queued: number;
 
   try {
-    result =
+    const result =
       selectedAccount === "all"
-        ? await runAllGmailInboxSyncNow(actor)
+        ? await enqueueAllGmailInboxSyncJobs(actor)
         : selectedAccount
-          ? await runGmailInboxSyncNow(actor, { connectionId: selectedAccount })
-          : await runGmailInboxSyncNow(actor);
+          ? { jobs: [await enqueueGmailInboxSyncJobForSelectedConnection(actor, selectedAccount)], queued: 1 }
+          : { jobs: [await enqueueGmailInboxSyncJob(actor)], queued: 1 };
+    queued = result.queued;
   } catch (error) {
     const params = new URLSearchParams({
       emailConnection: "gmail-sync-error",
@@ -79,15 +82,10 @@ export async function syncGmailInboxFromEmailPageAction(formData?: FormData) {
   }
 
   const params = new URLSearchParams({
-    created: String(result.created),
-    duplicates: String(result.skippedDuplicates),
-    emailConnection: "gmail-synced",
-    messageSkips: String(result.skippedMessageFailures ?? 0),
-    skipped: String(result.skippedUnmatched),
-    syncStatus: "1",
-    total: String(result.totalFetched)
+    emailConnection: "gmail-sync-queued",
+    queued: String(queued),
+    syncStatus: "1"
   });
-  if (result.syncWarning) params.set("syncWarning", result.syncWarning);
   addSelectedInboxAccountParam(params, selectedAccount);
   redirect(emailActionRedirectHref(params, returnTo, "gmail-sync-progress"));
 }
@@ -267,6 +265,24 @@ export async function disconnectEmailProviderFromEmailPageAction(formData: FormD
   }
 
   redirect(`/email?emailConnection=${status}` as Route);
+}
+
+export async function linkEmailLogToCrmRecordFromEmailPageAction(formData: FormData) {
+  const emailLogId = String(formData.get("emailLogId") ?? "").trim();
+  const recordId = String(formData.get("recordId") ?? "").trim();
+  const recordType = String(formData.get("recordType") ?? "").trim();
+  const returnTo = normalizeEmailPageReturnTo(formData.get("returnTo"));
+
+  try {
+    const { actor } = await getCurrentWorkspaceContext();
+    await linkEmailLogToCrmRecord(actor, { emailLogId, recordId, recordType });
+  } catch {
+    const params = new URLSearchParams({ emailConnection: "crm-link-error" });
+    redirect(emailActionRedirectHref(params, returnTo, `email-card-${emailLogId}`));
+  }
+
+  const params = new URLSearchParams({ emailConnection: "crm-linked" });
+  redirect(emailActionRedirectHref(params, returnTo, `email-card-${emailLogId}`));
 }
 
 function normalizeInboxAccountSelection(value: unknown) {

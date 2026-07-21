@@ -123,7 +123,6 @@ describe("database-backed CRM service workflows", () => {
 
   it("creates workspace-scoped products and deal line items without changing deal value", async () => {
     const fx = currentFixture();
-    const initialReport = await crm.getDealReport(fx.actorA);
     const initialProductCount = await fx.prisma.product.count({ where: { workspaceId: fx.workspaceA.id } });
     await expect(crm.createProduct(fx.actorA, null as never)).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
@@ -720,16 +719,16 @@ describe("database-backed CRM service workflows", () => {
       currency: "USD",
       lineTotalCents: 375000
     });
-    expect(dealWithLineItems.valueCents).toBe(fx.recordsA.deal.valueCents);
-    expect(reportAfterLineItem.metrics.openPipelineValueCents).toBe(initialReport.metrics.openPipelineValueCents);
+    expect(dealWithLineItems.valueCents).toBe(354375);
+    expect(reportAfterLineItem.metrics.openPipelineValueCents).toBe(354375);
     const dealAfterPublicAcceptance = await crm.getDeal(fx.actorA, fx.recordsA.deal.id);
-    expect(dealAfterPublicAcceptance.valueCents).toBe(fx.recordsA.deal.valueCents);
+    expect(dealAfterPublicAcceptance.valueCents).toBe(354375);
     const syncResult = await crm.syncAcceptedQuoteToDealValue(fx.actorA, quote.id);
     const repeatSyncResult = await crm.syncAcceptedQuoteToDealValue(fx.actorA, quote.id);
     const dealAfterSync = await crm.getDeal(fx.actorA, fx.recordsA.deal.id);
     const reportAfterSync = await crm.getDealReport(fx.actorA);
     expect(syncResult).toMatchObject({
-      synced: true,
+      synced: false,
       deal: {
         id: fx.recordsA.deal.id,
         valueCents: 354375,
@@ -779,6 +778,12 @@ describe("database-backed CRM service workflows", () => {
       status: 404
     });
     await expect(crm.syncAcceptedQuoteToDealValue(fx.actorB, quote.id)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      status: 404
+    });
+    await expect(
+      crm.reviewQuoteDealValueSync(fx.actorB, quote.id, { resolution: "KEEP_CURRENT_DEAL" })
+    ).rejects.toMatchObject({
       code: "NOT_FOUND",
       status: 404
     });
@@ -1107,6 +1112,413 @@ describe("database-backed CRM service workflows", () => {
     expect(results.every((result) => result.quote.id === quote.id)).toBe(true);
     expect(acceptedQuote.status).toBe("ACCEPTED");
     expect(publicAcceptedAuditCount).toBe(1);
+  });
+
+  it("auto-syncs accepted quote totals to the deal when the deal value is unchanged since send", async () => {
+    const fx = currentFixture();
+    const product = await crm.createProduct(fx.actorA, {
+      name: "Auto Sync Acceptance Package",
+      unitPriceCents: 175000,
+      currency: "USD"
+    });
+    const deal = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      title: "Auto sync accepted quote deal",
+      valueCents: 50000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: deal.id,
+      productId: product.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, deal.id);
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "SENT");
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "ACCEPTED");
+
+    const [syncedDeal, acceptedQuote, syncAuditCount] = await Promise.all([
+      fx.prisma.deal.findUniqueOrThrow({ where: { id: deal.id } }),
+      fx.prisma.quote.findUniqueOrThrow({ where: { id: quote.id } }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Deal",
+          entityId: deal.id,
+          action: "deal.value_synced_from_quote"
+        }
+      })
+    ]);
+
+    expect(syncedDeal).toMatchObject({ valueCents: 175000, currency: "USD" });
+    expect(acceptedQuote.status).toBe("ACCEPTED");
+    expect(acceptedQuote.sentDealValueCents).toBe(50000);
+    expect(acceptedQuote.sentDealCurrency).toBe("USD");
+    expect(acceptedQuote.dealValueSyncedAt).toBeTruthy();
+    expect(acceptedQuote.dealValueSyncConflict).toBeNull();
+    expect(syncAuditCount).toBe(1);
+  });
+
+  it("surfaces an accepted quote sync conflict when the deal changed after send", async () => {
+    const fx = currentFixture();
+    const product = await crm.createProduct(fx.actorA, {
+      name: "Changed Deal Conflict Package",
+      unitPriceCents: 210000,
+      currency: "USD"
+    });
+    const deal = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      title: "Changed after sent deal",
+      valueCents: 80000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: deal.id,
+      productId: product.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, deal.id);
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "SENT");
+    await fx.prisma.deal.update({
+      where: { id: deal.id },
+      data: { valueCents: 99000 }
+    });
+
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "ACCEPTED");
+    const [unchangedDeal, acceptedQuote, syncAuditCount, conflictAuditCount] = await Promise.all([
+      fx.prisma.deal.findUniqueOrThrow({ where: { id: deal.id } }),
+      fx.prisma.quote.findUniqueOrThrow({ where: { id: quote.id } }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Deal",
+          entityId: deal.id,
+          action: "deal.value_synced_from_quote"
+        }
+      }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Quote",
+          entityId: quote.id,
+          action: "quote.deal_value_sync_conflict"
+        }
+      })
+    ]);
+
+    expect(unchangedDeal.valueCents).toBe(99000);
+    expect(acceptedQuote.status).toBe("ACCEPTED");
+    expect(acceptedQuote.dealValueSyncedAt).toBeNull();
+    expect(acceptedQuote.dealValueSyncConflict).toContain("Deal value changed after this quote was sent");
+    expect(syncAuditCount).toBe(0);
+    expect(conflictAuditCount).toBe(1);
+  });
+
+  it("reviews a quote sync conflict without overwriting the current deal value", async () => {
+    const fx = currentFixture();
+    const product = await crm.createProduct(fx.actorA, {
+      name: "Keep Current Conflict Package",
+      unitPriceCents: 240000,
+      currency: "USD"
+    });
+    const deal = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      title: "Keep current reviewed conflict",
+      valueCents: 70000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: deal.id,
+      productId: product.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, deal.id);
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "SENT");
+    await fx.prisma.deal.update({
+      where: { id: deal.id },
+      data: { valueCents: 99000 }
+    });
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "ACCEPTED");
+
+    const firstReview = await crm.reviewQuoteDealValueSync(fx.actorA, quote.id, { resolution: "KEEP_CURRENT_DEAL" });
+    const duplicateReview = await crm.reviewQuoteDealValueSync(fx.actorA, quote.id, { resolution: "KEEP_CURRENT_DEAL" });
+    const [reviewedDeal, reviewedQuote, reviewAuditCount, dealSyncAuditCount] = await Promise.all([
+      fx.prisma.deal.findUniqueOrThrow({ where: { id: deal.id } }),
+      fx.prisma.quote.findUniqueOrThrow({ where: { id: quote.id } }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Quote",
+          entityId: quote.id,
+          action: "quote.deal_value_sync_reviewed"
+        }
+      }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Deal",
+          entityId: deal.id,
+          action: "deal.value_synced_from_quote"
+        }
+      })
+    ]);
+
+    expect(firstReview).toMatchObject({ reviewed: true, synced: false });
+    expect(duplicateReview).toMatchObject({ reviewed: false, synced: false });
+    expect(reviewedDeal.valueCents).toBe(99000);
+    expect(reviewedQuote.dealValueSyncedAt).toBeNull();
+    expect(reviewedQuote.dealValueSyncReviewedAt).toBeTruthy();
+    expect(reviewedQuote.dealValueSyncResolution).toBe("KEEP_CURRENT_DEAL");
+    expect(reviewedQuote.dealValueSyncConflict).toContain("Deal value changed after this quote was sent");
+    expect(reviewAuditCount).toBe(1);
+    expect(dealSyncAuditCount).toBe(0);
+  });
+
+  it("requires confirmation before updating the deal from a reviewed quote sync conflict", async () => {
+    const fx = currentFixture();
+    const product = await crm.createProduct(fx.actorA, {
+      name: "Confirmed Conflict Update Package",
+      unitPriceCents: 310000,
+      currency: "USD"
+    });
+    const deal = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      title: "Confirmed conflict update",
+      valueCents: 125000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: deal.id,
+      productId: product.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, deal.id);
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "SENT");
+    await fx.prisma.deal.update({
+      where: { id: deal.id },
+      data: { valueCents: 175000 }
+    });
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "ACCEPTED");
+
+    await expect(
+      crm.reviewQuoteDealValueSync(fx.actorA, quote.id, { resolution: "UPDATE_DEAL_TO_QUOTE" })
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      status: 422
+    });
+
+    const reviewed = await crm.reviewQuoteDealValueSync(fx.actorA, quote.id, {
+      resolution: "UPDATE_DEAL_TO_QUOTE",
+      confirmation: "UPDATE_DEAL_TO_ACCEPTED_QUOTE"
+    });
+    const duplicateReview = await crm.reviewQuoteDealValueSync(fx.actorA, quote.id, {
+      resolution: "UPDATE_DEAL_TO_QUOTE",
+      confirmation: "UPDATE_DEAL_TO_ACCEPTED_QUOTE"
+    });
+    const [updatedDeal, updatedQuote, dealSyncAuditCount, reviewAuditEvents, detailedQuote] = await Promise.all([
+      fx.prisma.deal.findUniqueOrThrow({ where: { id: deal.id } }),
+      fx.prisma.quote.findUniqueOrThrow({ where: { id: quote.id } }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Deal",
+          entityId: deal.id,
+          action: "deal.value_synced_from_quote"
+        }
+      }),
+      fx.prisma.auditLog.findMany({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Quote",
+          entityId: quote.id,
+          action: "quote.deal_value_sync_reviewed"
+        }
+      }),
+      crm.getQuote(fx.actorA, deal.id, quote.id)
+    ]);
+
+    expect(reviewed).toMatchObject({ reviewed: true, synced: true });
+    expect(duplicateReview).toMatchObject({ reviewed: false, synced: true });
+    expect(updatedDeal).toMatchObject({ valueCents: 310000, currency: "USD" });
+    expect(updatedQuote.sentDealValueCents).toBe(125000);
+    expect(updatedQuote.dealValueSyncedAt).toBeTruthy();
+    expect(updatedQuote.dealValueSyncReviewedAt).toBeTruthy();
+    expect(updatedQuote.dealValueSyncResolution).toBe("UPDATE_DEAL_TO_QUOTE");
+    expect(dealSyncAuditCount).toBe(1);
+    expect(reviewAuditEvents).toHaveLength(1);
+    expect(reviewAuditEvents[0]?.metadata).toMatchObject({
+      changedDealValue: true,
+      previousDealValueCents: 175000,
+      acceptedQuoteTotalCents: 310000,
+      resolution: "UPDATE_DEAL_TO_QUOTE"
+    });
+    expect(detailedQuote.auditLogs.map((event) => event.action)).toEqual(
+      expect.arrayContaining([
+        "quote.sent",
+        "quote.accepted",
+        "quote.deal_value_sync_conflict",
+        "quote.deal_value_sync_reviewed",
+        "deal.value_synced_from_quote"
+      ])
+    );
+  });
+
+  it("keeps public double acceptance idempotent while auto-syncing the deal only once", async () => {
+    const fx = currentFixture();
+    const product = await crm.createProduct(fx.actorA, {
+      name: "Public Auto Sync Package",
+      unitPriceCents: 66000,
+      currency: "USD"
+    });
+    const deal = await crm.createDeal(fx.actorA, {
+      pipelineId: fx.recordsA.pipeline.id,
+      stageId: fx.recordsA.stageOne.id,
+      title: "Public auto sync deal",
+      valueCents: 1000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: deal.id,
+      productId: product.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, deal.id);
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "SENT");
+    const publicLink = await crm.createQuotePublicLink(fx.actorA, quote.id);
+
+    const [first, second] = await Promise.all([
+      crm.acceptPublicQuoteByToken(publicLink.token),
+      crm.acceptPublicQuoteByToken(publicLink.token)
+    ]);
+    const [syncedDeal, acceptedQuote, dealSyncAuditCount, publicAcceptedAuditCount] = await Promise.all([
+      fx.prisma.deal.findUniqueOrThrow({ where: { id: deal.id } }),
+      fx.prisma.quote.findUniqueOrThrow({ where: { id: quote.id } }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Deal",
+          entityId: deal.id,
+          action: "deal.value_synced_from_quote"
+        }
+      }),
+      fx.prisma.auditLog.count({
+        where: {
+          workspaceId: fx.workspaceA.id,
+          entityType: "Quote",
+          entityId: quote.id,
+          action: "quote.public_accepted"
+        }
+      })
+    ]);
+
+    expect([first.accepted, second.accepted].filter(Boolean)).toHaveLength(1);
+    expect([first.alreadyAccepted, second.alreadyAccepted].filter(Boolean)).toHaveLength(1);
+    expect(syncedDeal.valueCents).toBe(66000);
+    expect(acceptedQuote.dealValueSyncedAt).toBeTruthy();
+    expect(dealSyncAuditCount).toBe(1);
+    expect(publicAcceptedAuditCount).toBe(1);
+  });
+
+  it("edits draft quote snapshot items without changing deal line items and locks accepted snapshots", async () => {
+    const fx = currentFixture();
+    const baseProduct = await crm.createProduct(fx.actorA, {
+      name: "Draft Snapshot Base Package",
+      unitPriceCents: 30000,
+      currency: "USD"
+    });
+    const addOnProduct = await crm.createProduct(fx.actorA, {
+      name: "Draft Snapshot Add-on",
+      unitPriceCents: 12000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: fx.recordsA.deal.id,
+      productId: baseProduct.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, fx.recordsA.deal.id);
+    const added = await crm.createQuoteItem(fx.actorA, quote.id, {
+      productId: addOnProduct.id,
+      quantity: 2,
+      description: "Quote-only add-on"
+    });
+    const updated = await crm.updateQuoteItem(fx.actorA, added.item.id, {
+      quantity: 3,
+      description: "Reviewed quote-only add-on"
+    });
+    const dealLineItemsBeforeRemove = await fx.prisma.dealLineItem.count({ where: { dealId: fx.recordsA.deal.id } });
+    await crm.removeQuoteItem(fx.actorA, updated.item.id);
+    const quoteAfterRemove = await fx.prisma.quote.findUniqueOrThrow({
+      where: { id: quote.id },
+      include: { items: true }
+    });
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "SENT");
+    await crm.updateQuoteStatus(fx.actorA, quote.id, "ACCEPTED");
+
+    await expect(
+      crm.createQuoteItem(fx.actorA, quote.id, { productId: addOnProduct.id, quantity: 1 })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 422 });
+    await expect(crm.updateQuoteItem(fx.actorA, quote.items[0]?.id ?? "", { quantity: 2 })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      status: 422
+    });
+    await expect(crm.removeQuoteItem(fx.actorA, quote.items[0]?.id ?? "")).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      status: 422
+    });
+    await expect(fx.prisma.dealLineItem.count({ where: { dealId: fx.recordsA.deal.id } })).resolves.toBe(
+      dealLineItemsBeforeRemove
+    );
+    const detailedQuote = await crm.getQuote(fx.actorA, fx.recordsA.deal.id, quote.id);
+    expect(detailedQuote.auditLogs.map((event) => event.action)).toEqual(
+      expect.arrayContaining(["quote_item.created", "quote_item.updated", "quote_item.removed"])
+    );
+    expect(
+      detailedQuote.auditLogs
+        .filter((event) => event.action.startsWith("quote_item."))
+        .every((event) => (event.metadata as { quoteId?: string } | null)?.quoteId === quote.id)
+    ).toBe(true);
+    expect(added.quote.totalCents).toBe(54000);
+    expect(updated.quote.totalCents).toBe(66000);
+    expect(quoteAfterRemove.items).toHaveLength(1);
+    expect(quoteAfterRemove.totalCents).toBe(30000);
+  });
+
+  it("keeps quote item mutations workspace-scoped", async () => {
+    const fx = currentFixture();
+    const productA = await crm.createProduct(fx.actorA, {
+      name: "Scoped Quote Item Product A",
+      unitPriceCents: 45000,
+      currency: "USD"
+    });
+    const productB = await crm.createProduct(fx.actorB, {
+      name: "Scoped Quote Item Product B",
+      unitPriceCents: 45000,
+      currency: "USD"
+    });
+    await crm.createDealLineItem(fx.actorA, {
+      dealId: fx.recordsA.deal.id,
+      productId: productA.id,
+      quantity: 1
+    });
+    const quote = await crm.createQuoteFromDeal(fx.actorA, fx.recordsA.deal.id);
+    const quoteItemId = quote.items[0]?.id ?? "";
+
+    await expect(crm.createQuoteItem(fx.actorB, quote.id, { productId: productB.id, quantity: 1 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      status: 404
+    });
+    await expect(crm.updateQuoteItem(fx.actorB, quoteItemId, { quantity: 2 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      status: 404
+    });
+    await expect(crm.removeQuoteItem(fx.actorB, quoteItemId)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      status: 404
+    });
   });
 
   it("rejects public quote tokens when persisted workspace relationships are inconsistent", async () => {
@@ -2210,7 +2622,7 @@ describe("database-backed CRM service workflows", () => {
     });
     await expect(fx.prisma.deal.findUnique({ where: { id: deal.id } })).resolves.toMatchObject({
       status: "WON",
-      valueCents: 100000,
+      valueCents: 250000,
       currency: "USD"
     });
   });

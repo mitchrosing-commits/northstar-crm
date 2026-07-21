@@ -9,6 +9,7 @@ import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { FormPrefillNotice } from "@/components/form-prefill-notice";
+import { FormSection } from "@/components/form-section";
 import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 import { formatPersonName } from "@/lib/person-name";
 
@@ -125,48 +126,60 @@ export function ContactForm({
       {mode === "create" && prefillNotice ? (
         <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
       ) : null}
-      <div className="form-grid">
-        <label className="form-field form-field-wide">
-          <FormFieldLabel required>Name</FormFieldLabel>
-          <input onChange={(event) => setName(event.target.value)} required value={name} />
-        </label>
+      <FormSection
+        description="Store the person details you know now. You can enrich the relationship brief and activity history later."
+        title="Contact details"
+      >
+        <div className="form-grid">
+          <label className="form-field form-field-wide">
+            <FormFieldLabel required>Name</FormFieldLabel>
+            <input onChange={(event) => setName(event.target.value)} required value={name} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Email</FormFieldLabel>
-          <input onChange={(event) => setEmail(event.target.value)} type="email" value={email} />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Email</FormFieldLabel>
+            <input onChange={(event) => setEmail(event.target.value)} type="email" value={email} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Phone</FormFieldLabel>
-          <input onChange={(event) => setPhone(event.target.value)} value={phone} />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Phone</FormFieldLabel>
+            <input onChange={(event) => setPhone(event.target.value)} value={phone} />
+          </label>
+        </div>
+      </FormSection>
 
-        <label className="form-field">
-          <FormFieldLabel>Organization</FormFieldLabel>
-          <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-            <option value="">{organizations.length === 0 ? "No organizations yet - save without one" : "None"}</option>
-            {organizations.map((organization) => (
-              <option key={organization.id} value={organization.id}>
-                {organization.name}
-              </option>
-            ))}
-          </select>
-          {organizations.length === 0 ? <small className="form-hint">You can create or import organizations later.</small> : null}
-        </label>
+      <FormSection
+        description="Optional account and ownership context keeps this person visible in the right CRM workspace."
+        title="Organization and owner"
+      >
+        <div className="form-grid">
+          <label className="form-field">
+            <FormFieldLabel>Organization</FormFieldLabel>
+            <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
+              <option value="">{organizations.length === 0 ? "No organizations yet - save without one" : "None"}</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+            {organizations.length === 0 ? <small className="form-hint">You can create or import organizations later.</small> : null}
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Assigned to</FormFieldLabel>
-          <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
-            {owners.map((owner) => (
-              <option key={owner.id} value={owner.id}>
-                {owner.name}
-              </option>
-            ))}
-          </select>
-          <OwnerAssignmentHint owners={owners} />
-        </label>
-      </div>
+          <label className="form-field">
+            <FormFieldLabel>Assigned to</FormFieldLabel>
+            <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
+              <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
+              {owners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name}
+                </option>
+              ))}
+            </select>
+            <OwnerAssignmentHint owners={owners} />
+          </label>
+        </div>
+      </FormSection>
 
       <FormActionBar
         cancelHref={cancelHref}

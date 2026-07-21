@@ -128,7 +128,7 @@ export function DealLineItemsPanel({
     <section className="data-card section-spaced" id="line-items">
       <PanelTitleRow
         actions={<Badge label={`Line item total: ${totalLabel}`}>{totalLabel}</Badge>}
-        description="Line items start from active Products: the products, services, or packages your company sells. They snapshot product pricing when added and stay separate from deal value until an accepted quote is manually synced."
+        description="Line items start from active Products: the products, services, or packages your company sells. They seed draft quotes, while accepted quote totals update deal value automatically when the deal has not changed since send."
         title="Line Items"
       />
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}

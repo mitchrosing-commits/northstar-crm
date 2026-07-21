@@ -9,6 +9,7 @@ import { Badge } from "@/components/badge";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSuccessMessage } from "@/components/form-success-message";
 import { LockedPanelNotice } from "@/components/locked-panel-notice";
 import { PanelTitleRow } from "@/components/panel-title-row";
 
@@ -52,6 +53,7 @@ export function ManualEmailLogPanel({
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const activeTemplates = templates.filter((template) => template.active !== false);
   const emailWorkspaceLabel = "Open Inbox to connect or sync email";
@@ -70,6 +72,7 @@ export function ManualEmailLogPanel({
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSuccess(null);
 
     if (!subject.trim() || !body.trim() || !occurredAt) {
       setError("Add subject, body, and email date before saving.");
@@ -102,7 +105,9 @@ export function ManualEmailLogPanel({
     setSubject("");
     setBody("");
     setCcText("");
+    setSuccess("Email log saved. Timeline and email history refreshed.");
     setIsSaving(false);
+    router.replace(currentPathWithHash(id), { scroll: true });
     router.refresh();
   }
 
@@ -126,6 +131,7 @@ export function ManualEmailLogPanel({
       {showForm ? (
         <form className="inline-form" onSubmit={onSubmit}>
           {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+          {success ? <FormSuccessMessage compact>{success}</FormSuccessMessage> : null}
           {activeTemplates.length > 0 ? (
             <label className="form-field">
               <FormFieldLabel>Template</FormFieldLabel>
@@ -192,4 +198,8 @@ export function ManualEmailLogPanel({
 
 function defaultDateTimeLocal() {
   return new Date().toISOString().slice(0, 16);
+}
+
+function currentPathWithHash(hash: string) {
+  return `${window.location.pathname}${window.location.search}#${hash}` as Route;
 }

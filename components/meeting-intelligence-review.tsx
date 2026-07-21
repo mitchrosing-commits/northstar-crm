@@ -39,6 +39,7 @@ import {
 import { relationshipBriefUsageItems } from "@/lib/relationship-brief-usage";
 
 type Option = { id: string; label: string };
+const emptyTranscriptSegments: NonNullable<MeetingIntelligenceDraft["transcriptSegments"]> = [];
 
 type MeetingIntelligenceReviewProps = {
   applyResult?: ApplyMeetingIntelligenceResult | null;
@@ -80,9 +81,18 @@ export function MeetingIntelligenceReview({
   );
   const relationshipFactIncludeTouched = useRef<Set<string>>(new Set());
   const isApplied = status === "APPLIED";
+  const [transcriptSearch, setTranscriptSearch] = useState("");
   const relationshipBriefPreviewBlocked = relationshipBriefTargetStates.some((state, index) =>
     Boolean(selectedRelationshipTargets[index]) && (state.status === "loading" || state.status === "failed")
   );
+  const transcriptSegments = draft.transcriptSegments ?? emptyTranscriptSegments;
+  const visibleTranscriptSegments = useMemo(() => {
+    const query = transcriptSearch.trim().toLowerCase();
+    if (!query) return transcriptSegments;
+    return transcriptSegments.filter((segment) =>
+      `${segment.startTime ?? ""} ${segment.speaker ?? ""} ${segment.text}`.toLowerCase().includes(query)
+    );
+  }, [transcriptSearch, transcriptSegments]);
   const warningCount = meetingReviewWarningCount(draft);
   const matchedObjectGroups = matchGroups(draft.matchedObjects);
   const hasMatchReviewSignals = Boolean(draft.sourceMetadata) ||
@@ -263,6 +273,13 @@ export function MeetingIntelligenceReview({
         warningCount={warningCount}
       />
       <ProposalCategoryOverview draft={draft} />
+      <TranscriptReview
+        query={transcriptSearch}
+        segments={transcriptSegments}
+        setQuery={setTranscriptSearch}
+        sourceMetadata={draft.sourceMetadata}
+        visibleSegments={visibleTranscriptSegments}
+      />
 
       <section className="panel meeting-review-section" aria-labelledby="meeting-proposal-heading">
         <PanelTitleRow
@@ -407,6 +424,8 @@ export function MeetingIntelligenceReview({
           />
         )}
       </section>
+
+      <AssociationConfidenceReview draft={draft} intakeId={intakeId} options={targetOptions} workspaceId={workspaceId} />
 
       <section className="panel meeting-review-section" aria-labelledby="notes-heading">
         <PanelTitleRow
@@ -637,6 +656,8 @@ export function MeetingIntelligenceReview({
           )}
         </div>
       </section>
+
+      <CrmChangeProposalReviewList proposals={draft.crmChangeProposals ?? []} />
 
       <section className="panel meeting-review-section" aria-labelledby="next-steps-heading">
         <PanelTitleRow
@@ -901,6 +922,303 @@ function MeetingSummaryBlock({
   );
 }
 
+function TranscriptReview({
+  query,
+  segments,
+  setQuery,
+  sourceMetadata,
+  visibleSegments
+}: {
+  query: string;
+  segments: NonNullable<MeetingIntelligenceDraft["transcriptSegments"]>;
+  setQuery: (value: string) => void;
+  sourceMetadata?: MeetingSourceMetadata;
+  visibleSegments: NonNullable<MeetingIntelligenceDraft["transcriptSegments"]>;
+}) {
+  const lowConfidence = sourceMetadata?.transcriptionConfidence === "low" ||
+    segments.some((segment) => segment.confidence === "low" || (segment.warnings ?? []).some((warning) => /low|confidence/i.test(warning)));
+  return (
+    <section className="panel meeting-review-section" aria-labelledby="meeting-transcript-heading">
+      <PanelTitleRow
+        actions={<CountBadge className="badge">{segments.length} segments</CountBadge>}
+        description="Review speaker labels, timestamps, and source wording separately from summaries, facts, notes, activities, and CRM changes."
+        title="Transcript Review"
+        titleId="meeting-transcript-heading"
+      />
+      {lowConfidence ? (
+        <p className="form-hint form-hint-danger">
+          Transcription confidence is low or uncertain. Verify speaker labels and source snippets before applying CRM updates.
+        </p>
+      ) : null}
+      {segments.length > 0 ? (
+        <div className="inline-form">
+          <label className="form-field">
+            <FormFieldLabel>Search transcript</FormFieldLabel>
+            <input
+              aria-label="Search transcript"
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="Find speaker, timestamp, or phrase"
+              type="search"
+              value={query}
+            />
+          </label>
+          <div className="meeting-transcript-nav" aria-label="Transcript segment navigation">
+            {visibleSegments.slice(0, 12).map((segment) => (
+              <a className="button-secondary button-compact" href={`#${segment.id}`} key={`nav-${segment.id}`}>
+                {segment.startTime ?? segment.speaker ?? segment.id.replace("segment-", "#")}
+              </a>
+            ))}
+          </div>
+          <CompactList className="meeting-transcript-list">
+            {visibleSegments.map((segment) => (
+              <CompactListItem key={segment.id}>
+                <span id={segment.id} />
+                <strong>{segment.speaker ?? "Unlabeled speaker"}</strong>
+                <span className="meeting-review-badges">
+                  {segment.startTime ? <Badge>{segment.startTime}</Badge> : null}
+                  {segment.confidence ? <Badge>{`Confidence: ${segment.confidence}`}</Badge> : null}
+                </span>
+                <span className="muted">{segment.text}</span>
+                {(segment.warnings ?? []).map((warning) => (
+                  <Badge className="badge badge-lost" key={warning}>{warning}</Badge>
+                ))}
+              </CompactListItem>
+            ))}
+          </CompactList>
+        </div>
+      ) : (
+        <EmptyState
+          className="empty-state-compact empty-state-panel"
+          description="No speaker or timestamp segments were detected. Use the source preview below to inspect the normalized markdown."
+          title="No transcript segments detected"
+        />
+      )}
+    </section>
+  );
+}
+
+function AssociationConfidenceReview({
+  draft,
+  intakeId,
+  options,
+  workspaceId
+}: {
+  draft: MeetingIntelligenceDraft;
+  intakeId: string;
+  options: TargetOption[];
+  workspaceId: string;
+}) {
+  const reviews = draft.associationReviews ?? [];
+  return (
+    <section className="panel meeting-review-section" aria-labelledby="association-confidence-heading">
+      <PanelTitleRow
+        actions={<CountBadge className="badge">{reviews.length} mentions</CountBadge>}
+        description="Check selected records, match evidence, confidence, and alternatives before applying any proposed output targets below."
+        title="Association Confidence"
+        titleId="association-confidence-heading"
+      />
+      {reviews.length > 0 ? (
+        <CompactList className="meeting-association-confidence-list">
+          {reviews.map((review) => (
+            <AssociationCorrectionRow
+              draft={draft}
+              intakeId={intakeId}
+              key={review.id}
+              options={options}
+              review={review}
+              workspaceId={workspaceId}
+            />
+          ))}
+        </CompactList>
+      ) : (
+        <EmptyState
+          className="empty-state-compact empty-state-panel"
+          description="No CRM association candidates were detected. Choose targets manually in the proposal sections if needed."
+          title="No association candidates"
+        />
+      )}
+      <p className="form-hint">
+        Confirmed corrections update meeting output targets in this draft. Contact and organization data changes remain separate CRM Change Proposals for review.
+      </p>
+    </section>
+  );
+}
+
+function AssociationCorrectionRow({
+  draft,
+  intakeId,
+  options,
+  review,
+  workspaceId
+}: {
+  draft: MeetingIntelligenceDraft;
+  intakeId: string;
+  options: TargetOption[];
+  review: NonNullable<MeetingIntelligenceDraft["associationReviews"]>[number];
+  workspaceId: string;
+}) {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [selectedValue, setSelectedValue] = useState(review.selectedTarget ? targetValue(review.selectedTarget) : "");
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canCorrect = review.targetType === "person" || review.targetType === "organization" || selectedValue.startsWith("person:") || selectedValue.startsWith("organization:");
+  const sameTypeOptions = associationSelectableOptions(review, options);
+  const visibleOptions = sameTypeOptions.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  const alternatives = associationAlternatives(review.targetType, options, review.selectedTarget);
+  const selectedTarget = selectedValue ? targetFromOptionValue(selectedValue, options) : null;
+  const impact = associationImpactSummary(draft, review);
+  const status = associationResolutionStatus(review, options);
+
+  async function confirmCorrection(target: CrmTarget | null) {
+    setError(null);
+    setMessage(null);
+    setIsSaving(true);
+    const response = await fetch(`/api/v1/workspaces/${workspaceId}/meeting-intakes/${intakeId}/associations`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ associationId: review.id, target })
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setError(body?.error?.message ?? "Could not save the association correction.");
+      setIsSaving(false);
+      return;
+    }
+    setMessage(target ? "Association correction saved." : "Association marked unmatched.");
+    router.refresh();
+    setIsSaving(false);
+  }
+
+  return (
+    <CompactListItem>
+      <strong>{review.mention}</strong>
+      <span className="meeting-review-badges">
+        <Badge>{status}</Badge>
+        <Badge>{review.confidence === "unmatched" ? "Unmatched" : `Confidence: ${review.confidence}`}</Badge>
+        <Badge>{review.selectedTarget ? targetDisplayLabel(review.selectedTarget) : "No selected record"}</Badge>
+      </span>
+      {review.matchedReason ? <span className="muted">{review.matchedReason}</span> : null}
+      <span className="muted">Evidence: {review.evidence}</span>
+      {review.warning ? <Badge className="badge badge-lost">{review.warning}</Badge> : null}
+      {status === "Stale" ? (
+        <Badge className="badge badge-lost">Selected record is unavailable. Choose another workspace record or mark unmatched.</Badge>
+      ) : null}
+      <span className="muted">{impact}</span>
+      <span className="muted">
+        Meeting output target changes update notes, activities, and Relationship Memory defaults. Contact or organization field changes stay in CRM Change Proposals.
+      </span>
+      {canCorrect ? (
+        <div className="inline-form">
+          <details>
+            <summary>Choose association</summary>
+            {alternatives.length > 0 ? (
+              <p className="form-hint">Plausible alternatives: {alternatives.map((option) => option.label).join("; ")}</p>
+            ) : (
+              <p className="form-hint">No same-type alternatives were detected. Search existing workspace records below.</p>
+            )}
+            <label className="form-field">
+              <FormFieldLabel>Search existing CRM records</FormFieldLabel>
+              <input
+                aria-label={`Search CRM records for ${review.mention}`}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                placeholder="Search contacts or organizations"
+                type="search"
+                value={query}
+              />
+            </label>
+            <label className="form-field">
+              <FormFieldLabel>Selected association</FormFieldLabel>
+              <select
+                aria-label={`Selected association for ${review.mention}`}
+                onChange={(event) => setSelectedValue(event.currentTarget.value)}
+                value={selectedValue}
+              >
+                <option value="">Unmatched</option>
+                {visibleOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <ActionGroup className="form-actions" label={`Association correction actions for ${review.mention}`}>
+              <button
+                className="button-secondary"
+                disabled={isSaving}
+                onClick={() => {
+                  setSelectedValue("");
+                  void confirmCorrection(null);
+                }}
+                type="button"
+              >
+                Mark unmatched
+              </button>
+              <button
+                className="button-primary"
+                disabled={isSaving || (!selectedTarget && selectedValue !== "")}
+                onClick={() => void confirmCorrection(selectedTarget)}
+                type="button"
+              >
+                Confirm correction
+              </button>
+            </ActionGroup>
+            {message ? <p className="form-hint">{message}</p> : null}
+            {error ? <p className="form-hint form-hint-danger">{error}</p> : null}
+          </details>
+        </div>
+      ) : (
+        <span className="muted">This mention is not a contact or organization association.</span>
+      )}
+    </CompactListItem>
+  );
+}
+
+function CrmChangeProposalReviewList({ proposals }: { proposals: NonNullable<MeetingIntelligenceDraft["crmChangeProposals"]> }) {
+  return (
+    <section className="panel meeting-review-section" aria-labelledby="crm-change-proposals-heading">
+      <PanelTitleRow
+        actions={<CountBadge className="badge">{proposals.length} proposals</CountBadge>}
+        description="Contact and organization changes are saved as separate review-first CRM Change Proposals. Applying this meeting intake does not apply these records."
+        title="CRM Change Proposals"
+        titleId="crm-change-proposals-heading"
+      />
+      {proposals.length > 0 ? (
+        <CompactList className="meeting-crm-change-proposal-list">
+          {proposals.map((proposal) => (
+            <CompactListItem key={proposal.id}>
+              <strong>
+                <Link className="inline-link" href={proposal.href as Route}>
+                  {proposal.title}
+                </Link>
+              </strong>
+              <span className="meeting-review-badges">
+                <Badge>{proposal.status}</Badge>
+                <Badge>{proposal.permissionLevel}</Badge>
+                {proposal.confidence ? <Badge>{`Confidence: ${proposal.confidence}`}</Badge> : null}
+              </span>
+              <span className="muted">{proposal.rationale ?? "Review proposed CRM values before apply."}</span>
+              <span className="muted">Target: {proposal.targetLabel}</span>
+              <span className="muted">Permission: {proposal.permissionLabel}. {proposal.permissionReason}</span>
+              {proposal.evidence.slice(0, 3).map((item) => (
+                <span className="muted" key={`${proposal.id}-${item}`}>Evidence: {item}</span>
+              ))}
+              {[...proposal.warnings, ...proposal.duplicateWarnings].map((warning) => (
+                <Badge className="badge badge-lost" key={`${proposal.id}-${warning}`}>{warning}</Badge>
+              ))}
+            </CompactListItem>
+          ))}
+        </CompactList>
+      ) : (
+        <EmptyState
+          className="empty-state-compact empty-state-panel"
+          description="No explicit supported contact or organization changes were found. Narrative context remains in notes or Relationship Memory suggestions."
+          title="No CRM change proposals"
+        />
+      )}
+    </section>
+  );
+}
+
 function UnmatchedEntityActions({ entity }: { entity: UnmatchedEntity }) {
   const actions = unmatchedEntityActions(entity);
   if (actions.length === 0) return null;
@@ -977,6 +1295,69 @@ function buildTargetOptions(options: MeetingIntelligenceReviewProps["options"]):
     ...options.organizations.map((option) => ({ label: `Organization: ${option.label}`, value: `organization:${option.id}` })),
     ...options.people.map((option) => ({ label: `Contact: ${option.label}`, value: `person:${option.id}` }))
   ];
+}
+
+function associationAlternatives(
+  targetType: string,
+  options: TargetOption[],
+  selectedTarget: CrmTarget | null
+) {
+  if (targetType !== "deal" && targetType !== "lead" && targetType !== "organization" && targetType !== "person") return [];
+  const prefix = targetType === "person" ? "Contact" : targetType[0]?.toUpperCase() + targetType.slice(1);
+  const selectedValue = selectedTarget ? targetValue(selectedTarget) : "";
+  return options
+    .filter((option) => option.value.startsWith(`${targetType}:`))
+    .filter((option) => option.value !== selectedValue)
+    .map((option) => ({ ...option, label: option.label.replace(new RegExp(`^${prefix}:\\s*`), "") }))
+    .slice(0, 5);
+}
+
+function associationSelectableOptions(
+  review: NonNullable<MeetingIntelligenceDraft["associationReviews"]>[number],
+  options: TargetOption[]
+) {
+  const type = review.targetType === "person" || review.targetType === "organization"
+    ? review.targetType
+    : review.selectedTarget?.type;
+  if (type !== "person" && type !== "organization") return options.filter((option) => option.value.startsWith("person:") || option.value.startsWith("organization:"));
+  return options.filter((option) => option.value.startsWith(`${type}:`));
+}
+
+function targetFromOptionValue(value: string, options: TargetOption[]): CrmTarget | null {
+  const target = parseTarget(value);
+  if (!target) return null;
+  const label = options.find((option) => option.value === value)?.label.replace(/^(Contact|Organization|Deal|Lead):\s*/, "");
+  return { ...target, label };
+}
+
+function associationResolutionStatus(
+  review: NonNullable<MeetingIntelligenceDraft["associationReviews"]>[number],
+  options: TargetOption[]
+) {
+  const selectedTarget = review.selectedTarget;
+  if (selectedTarget && !options.some((option) => option.value === targetValue(selectedTarget))) return "Stale";
+  if (review.resolutionStatus === "user_corrected") return "User corrected";
+  if (review.resolutionStatus === "unmatched" || !review.selectedTarget) return "Unmatched";
+  if (review.resolutionStatus === "ambiguous" || review.confidence === "ambiguous" || review.confidence === "low") return "Ambiguous";
+  return "Confirmed";
+}
+
+function associationImpactSummary(
+  draft: MeetingIntelligenceDraft,
+  review: NonNullable<MeetingIntelligenceDraft["associationReviews"]>[number]
+) {
+  const target = review.selectedTarget;
+  const mentions = (values: string[]) => values.some((value) => value && value.toLowerCase().includes(review.mention.toLowerCase()));
+  const targetMatches = (candidate: CrmTarget | null, evidence: string[] = []) =>
+    target ? targetValue(candidate ?? { id: "", type: "deal" }) === targetValue(target) : !candidate && mentions(evidence);
+  const counts = {
+    activities: draft.nextStepActivities.filter((activity) => targetMatches(activity.target, activity.evidence)).length,
+    meetingAssociations: draft.meetingActivity?.associatedTargets?.filter((candidate) => targetMatches(candidate, draft.meetingActivity?.evidence ?? [])).length ?? 0,
+    notes: draft.notes.filter((note) => targetMatches(note.target, note.evidence)).length,
+    proposals: (draft.crmChangeProposals ?? []).filter((proposal) => proposal.evidence.some((item) => item.includes(review.mention))).length,
+    relationship: (draft.relationshipBriefUpdates ?? []).filter((update) => targetMatches(update.target, update.evidence)).length
+  };
+  return `Affected if confirmed: ${counts.notes} notes, ${counts.activities + counts.meetingAssociations} activities/associations, ${counts.relationship} Relationship Memory updates, ${counts.proposals} CRM Change Proposals.`;
 }
 
 function relationshipTargetOptions(options: MeetingIntelligenceReviewProps["options"]): TargetOption[] {

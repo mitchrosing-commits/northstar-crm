@@ -875,6 +875,1000 @@ describe("read-only Assistant command service integration", () => {
     await expect(readOnlyCounts(fx)).resolves.toEqual(before);
   });
 
+  it("summarizes a deal from scoped CRM context without leaking provider ids or mutating records", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await fx.prisma.deal.update({
+      data: {
+        expectedCloseAt: new Date("2030-01-07T00:00:00.000Z"),
+        stageId: fx.recordsA.stageTwo.id,
+        updatedAt: new Date("2029-12-15T00:00:00.000Z"),
+        valueCents: 450000
+      },
+      where: { id: fx.recordsA.deal.id }
+    });
+    const product = await fx.prisma.product.create({
+      data: {
+        currency: "USD",
+        name: "Deal Assistant Platform",
+        unitPriceCents: 450000,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.dealLineItem.create({
+      data: {
+        currency: "USD",
+        dealId: fx.recordsA.deal.id,
+        lineTotalCents: 450000,
+        productId: product.id,
+        productName: product.name,
+        quantity: 1,
+        unitPriceCents: 450000,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const quote = await fx.prisma.quote.create({
+      data: {
+        dealId: fx.recordsA.deal.id,
+        number: `DEAL-BRIEF-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 450000,
+        totalCents: 450000,
+        updatedAt: new Date("2030-01-01T00:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.note.create({
+      data: {
+        authorId: fx.userA.id,
+        body: "Procurement asked for a final implementation timeline.",
+        dealId: fx.recordsA.deal.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.createMany({
+      data: [
+        {
+          body: "token=access token should be redacted; buyer asked for launch timing.",
+          dealId: fx.recordsA.deal.id,
+          direction: "INBOUND",
+          fromText: "buyer@alpha.example",
+          occurredAt: new Date("2030-01-03T12:00:00.000Z"),
+          providerMessageId: "provider-message-secret-deal",
+          providerSnippet: "Buyer asked for launch timing.",
+          providerThreadId: "provider-thread-secret-deal",
+          subject: "Launch timing",
+          toText: "sales@example.test",
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          body: "Cross workspace deal email should remain hidden.",
+          dealId: fx.recordsB.deal.id,
+          direction: "INBOUND",
+          fromText: "hidden@example.test",
+          occurredAt: new Date("2030-01-03T12:00:00.000Z"),
+          subject: "Hidden workspace deal email",
+          toText: "sales@example.test",
+          workspaceId: fx.workspaceB.id
+        }
+      ]
+    });
+    const meetingActivity = await fx.prisma.activity.create({
+      data: {
+        completedAt: new Date("2030-01-02T13:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        ownerId: fx.userA.id,
+        title: "Deal Assistant completed meeting",
+        type: "MEETING",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const meeting = await fx.prisma.meetingIntake.create({
+      data: {
+        markdownText: "Meeting summary: buyer needs procurement owner and launch timeline.",
+        sourceType: "MARKDOWN",
+        status: "READY_FOR_REVIEW",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.meetingActivityAssociation.create({
+      data: {
+        activityId: meetingActivity.id,
+        dealId: fx.recordsA.deal.id,
+        meetingIntakeId: meeting.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const before = await readOnlyCounts(fx);
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `Summarize this deal /deals/${fx.recordsA.deal.id}.`, { now });
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.title).toContain(fx.recordsA.deal.title);
+    expect(answer.items.map((item) => item.label)).toContain("Current state");
+    expect(answer.items.map((item) => item.label)).toContain("Commercial context");
+    expect(serialized).toContain("expected close is in 2 days");
+    expect(serialized).toContain(`Latest quote ${quote.number}`);
+    expect(serialized).toContain("Meeting Intelligence");
+    expect(serialized).toContain("Procurement asked");
+    expect(serialized).not.toContain("Hidden workspace deal email");
+    expect(serialized).not.toContain("provider-message-secret-deal");
+    expect(serialized).not.toContain("provider-thread-secret-deal");
+    expect(serialized).not.toMatch(secretOrRawProviderTerms);
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("prepares deal follow-up activity and situation note drafts through the existing review queue without duplicates", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_follow_up_activity: "require_confirmation",
+        create_note: "require_confirmation"
+      })
+    });
+    await fx.prisma.deal.update({
+      data: {
+        expectedCloseAt: new Date("2030-01-07T00:00:00.000Z"),
+        stageId: fx.recordsA.stageTwo.id,
+        valueCents: 300000
+      },
+      where: { id: fx.recordsA.deal.id }
+    });
+    const activityAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Create a reviewed next-step activity for this deal /deals/${fx.recordsA.deal.id}.`,
+      { now }
+    );
+    const activityDraft = activityAnswer.draftActions?.[0];
+    if (!activityDraft) throw new Error("Expected a deal activity draft.");
+    const sameRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: activityAnswer.query });
+    const duplicateRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: activityAnswer.query });
+
+    expect(activityAnswer.command).toBe("deal_brief");
+    expect(activityDraft).toMatchObject({
+      kind: "activity",
+      targetHref: `/deals/${fx.recordsA.deal.id}`,
+      title: "Draft deal follow-up activity"
+    });
+    expect(activityDraft.fields.find((field) => field.label === "Description")?.value).toContain("Evidence:");
+    expect(duplicateRequest.id).toBe(sameRequest.id);
+
+    const applied = await crm.applyAssistantActionRequest(fx.actorA, sameRequest.id);
+    const createdActivity = await fx.prisma.activity.findUniqueOrThrow({ where: { id: applied.activityId ?? "" } });
+    expect(createdActivity).toMatchObject({
+      dealId: fx.recordsA.deal.id,
+      description: expect.stringContaining("Evidence:"),
+      title: expect.stringContaining(fx.recordsA.deal.title)
+    });
+
+    const afterOpenFollowUp = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Create a reviewed next-step activity for this deal /deals/${fx.recordsA.deal.id}.`,
+      { now }
+    );
+    expect(afterOpenFollowUp.draftActions).toBeUndefined();
+    expect(afterOpenFollowUp.summary).toContain("did not create a duplicate draft");
+
+    const noteAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Draft a concise CRM note summarizing this deal /deals/${fx.recordsA.deal.id}.`,
+      { now }
+    );
+    const noteDraft = noteAnswer.draftActions?.[0];
+    if (!noteDraft) throw new Error("Expected a deal note draft.");
+    const noteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: noteAnswer.query });
+    const appliedNote = await crm.applyAssistantActionRequest(fx.actorA, noteRequest.id);
+    const createdNote = await fx.prisma.note.findUniqueOrThrow({ where: { id: appliedNote.noteId ?? "" } });
+    expect(createdNote).toMatchObject({
+      dealId: fx.recordsA.deal.id,
+      body: expect.stringContaining("Source: Assistant deal brief")
+    });
+
+    const duplicateNoteAnswer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Draft a concise CRM note summarizing this deal /deals/${fx.recordsA.deal.id}.`,
+      { now }
+    );
+    expect(duplicateNoteAnswer.draftActions).toBeUndefined();
+    expect(duplicateNoteAnswer.summary).toContain("did not create a duplicate note draft");
+  });
+
+  it("respects permission changes before applying deal-generated follow-up drafts", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Create a reviewed next-step activity for this deal /deals/${fx.recordsA.deal.id}.`,
+      { now }
+    );
+    const draft = answer.draftActions?.[0];
+    if (!draft) throw new Error("Expected a deal activity draft.");
+    const request = await crm.createAssistantActionRequest(fx.actorA, { draftAction: draft, sourceCommand: answer.query });
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ create_follow_up_activity: "never_allow" })
+    });
+    const before = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    await expect(crm.applyAssistantActionRequest(fx.actorA, request.id)).rejects.toThrow(/never allow|AI Preferences/i);
+    const blockedView = (await crm.listAssistantActionRequests(fx.actorA)).find((item) => item.id === request.id);
+
+    expect(blockedView).toMatchObject({
+      permissionActionKey: "create_follow_up_activity",
+      permissionState: "blocked",
+      status: "PENDING"
+    });
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(before);
+  });
+
+  it("builds a grouped deal action plan from scoped evidence without mutations or provider leaks", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await fx.prisma.deal.update({
+      data: {
+        expectedCloseAt: new Date("2030-01-07T00:00:00.000Z"),
+        stageId: fx.recordsA.stageTwo.id,
+        updatedAt: new Date("2029-12-20T00:00:00.000Z"),
+        valueCents: 550000
+      },
+      where: { id: fx.recordsA.deal.id }
+    });
+    await fx.prisma.person.update({
+      data: {
+        relationshipBusinessConcerns: "Procurement may slow signature.",
+        relationshipFollowUpReminders: "Confirm implementation owner."
+      },
+      where: { id: fx.recordsA.person.id }
+    });
+    const quote = await fx.prisma.quote.create({
+      data: {
+        dealId: fx.recordsA.deal.id,
+        number: `PLAN-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 550000,
+        totalCents: 550000,
+        updatedAt: new Date("2030-01-02T00:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "refresh token should redact; customer asked for quote next steps.",
+        dealId: fx.recordsA.deal.id,
+        direction: "INBOUND",
+        fromText: "buyer@alpha.example",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        providerMessageId: "provider-message-secret-plan",
+        providerSnippet: "Customer asked for quote next steps.",
+        providerThreadId: "provider-thread-secret-plan",
+        subject: "Quote next steps",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Hidden workspace action plan email.",
+        dealId: fx.recordsB.deal.id,
+        direction: "INBOUND",
+        fromText: "hidden@example.test",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        subject: "Hidden action plan email",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const before = await readOnlyCounts(fx);
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `Build an action plan for this deal /deals/${fx.recordsA.deal.id}.`, { now });
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.title).toContain("Deal action plan");
+    expect(answer.items.map((item) => item.label)).toEqual([
+      "Immediate follow-ups",
+      "Customer commitments",
+      "Internal actions",
+      "Missing information",
+      "Relationship risks",
+      "Commercial attention",
+      "Longer-term next steps"
+    ]);
+    expect(serialized).toContain(`quote ${quote.number}`);
+    expect(serialized).toContain("Recommendation:");
+    expect(serialized).toContain("Confirmed");
+    expect(serialized).toContain("Can prepare activity draft");
+    expect(serialized).toContain("Can prepare CRM note draft");
+    expect(answer.draftActions?.map((draft) => draft.kind)).toEqual(["activity", "note"]);
+    expect(serialized).not.toContain("Hidden action plan email");
+    expect(serialized).not.toContain("provider-message-secret-plan");
+    expect(serialized).not.toContain("provider-thread-secret-plan");
+    expect(serialized).not.toMatch(secretOrRawProviderTerms);
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("lets users selectively prepare action-plan drafts through the existing review queue and suppresses duplicates", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_follow_up_activity: "require_confirmation",
+        create_note: "require_confirmation"
+      })
+    });
+    await fx.prisma.deal.update({
+      data: {
+        expectedCloseAt: new Date("2030-01-07T00:00:00.000Z"),
+        stageId: fx.recordsA.stageTwo.id,
+        valueCents: 420000
+      },
+      where: { id: fx.recordsA.deal.id }
+    });
+    await fx.prisma.quote.create({
+      data: {
+        dealId: fx.recordsA.deal.id,
+        number: `SELECT-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 420000,
+        totalCents: 420000,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const beforeActivities = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } });
+    const beforeNotes = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } });
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `Build an action plan for this deal /deals/${fx.recordsA.deal.id}.`, { now });
+    const activityDraft = answer.draftActions?.find((draft) => draft.kind === "activity");
+    const noteDraft = answer.draftActions?.find((draft) => draft.kind === "note");
+    if (!activityDraft || !noteDraft) throw new Error("Expected selectable activity and note drafts.");
+
+    const activityRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: answer.query });
+    const duplicateActivityRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: answer.query });
+    expect(duplicateActivityRequest.id).toBe(activityRequest.id);
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } })).resolves.toBe(beforeActivities);
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } })).resolves.toBe(beforeNotes);
+
+    const appliedActivity = await crm.applyAssistantActionRequest(fx.actorA, activityRequest.id);
+    const createdActivity = await fx.prisma.activity.findUniqueOrThrow({ where: { id: appliedActivity.activityId ?? "" } });
+    expect(createdActivity).toMatchObject({
+      dealId: fx.recordsA.deal.id,
+      description: expect.stringContaining("Due date is an Assistant recommendation"),
+      title: expect.stringContaining("Follow up")
+    });
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } })).resolves.toBe(beforeNotes);
+
+    const afterActivity = await crm.answerAssistantCommand(fx.actorA, `Build an action plan for this deal /deals/${fx.recordsA.deal.id}.`, { now });
+    expect(afterActivity.draftActions?.some((draft) => draft.kind === "activity")).toBe(false);
+    expect(JSON.stringify(afterActivity)).toContain("No duplicate draft prepared");
+
+    const noteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: answer.query });
+    const duplicateNoteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: answer.query });
+    expect(duplicateNoteRequest.id).toBe(noteRequest.id);
+    const appliedNote = await crm.applyAssistantActionRequest(fx.actorA, noteRequest.id);
+    const createdNote = await fx.prisma.note.findUniqueOrThrow({ where: { id: appliedNote.noteId ?? "" } });
+    expect(createdNote).toMatchObject({
+      dealId: fx.recordsA.deal.id,
+      body: expect.stringContaining("Source: Assistant deal action plan")
+    });
+
+    const afterNote = await crm.answerAssistantCommand(fx.actorA, `Build an action plan for this deal /deals/${fx.recordsA.deal.id}.`, { now });
+    expect(afterNote.draftActions).toBeUndefined();
+    expect(JSON.stringify(afterNote)).toContain("No duplicate note draft prepared");
+  });
+
+  it("keeps weak-context and cross-workspace deal action plans conservative", async () => {
+    const fx = currentFixture();
+    const weakDeal = await fx.prisma.deal.create({
+      data: {
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        status: "WON",
+        title: "Weak context action plan deal",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const before = await readOnlyCounts(fx);
+
+    const weak = await crm.answerAssistantCommand(fx.actorA, `Build an action plan for this deal /deals/${weakDeal.id}.`, {
+      now: new Date("2030-01-05T12:00:00.000Z")
+    });
+    const crossWorkspace = await crm.answerAssistantCommand(fx.actorA, `Build an action plan for this deal /deals/${fx.recordsB.deal.id}.`, {
+      now: new Date("2030-01-05T12:00:00.000Z")
+    });
+
+    expect(weak.command).toBe("deal_brief");
+    expect(weak.draftActions).toBeUndefined();
+    expect(JSON.stringify(weak)).toContain("Missing information");
+    expect(JSON.stringify(weak)).toContain("No supported draft was prepared");
+    expect(crossWorkspace.title).toBe("Clarify the deal");
+    expect(JSON.stringify(crossWorkspace)).not.toContain(fx.recordsB.deal.title);
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("honors permission denial for action-plan activity drafts before apply", async () => {
+    const fx = currentFixture();
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Build an action plan for this deal /deals/${fx.recordsA.deal.id}.`,
+      { now: new Date("2030-01-05T12:00:00.000Z") }
+    );
+    const activityDraft = answer.draftActions?.find((draft) => draft.kind === "activity");
+    if (!activityDraft) throw new Error("Expected action-plan activity draft.");
+    const request = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: answer.query });
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ create_follow_up_activity: "never_allow" })
+    });
+    const before = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    await expect(crm.applyAssistantActionRequest(fx.actorA, request.id)).rejects.toThrow(/never allow|AI Preferences/i);
+    const blocked = (await crm.listAssistantActionRequests(fx.actorA)).find((item) => item.id === request.id);
+
+    expect(blocked).toMatchObject({
+      permissionActionKey: "create_follow_up_activity",
+      permissionState: "blocked",
+      status: "PENDING"
+    });
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(before);
+  });
+
+  it("builds a deal change brief from material scoped evidence without mutations or provider leaks", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await fx.prisma.deal.update({
+      data: {
+        expectedCloseAt: new Date("2030-01-12T00:00:00.000Z"),
+        stageId: fx.recordsA.stageTwo.id,
+        updatedAt: new Date("2029-12-20T00:00:00.000Z"),
+        valueCents: 640000
+      },
+      where: { id: fx.recordsA.deal.id }
+    });
+    await fx.prisma.person.update({
+      data: {
+        relationshipBusinessConcerns: "Executive sponsor has not confirmed rollout date.",
+        updatedAt: new Date("2030-01-03T12:00:00.000Z")
+      },
+      where: { id: fx.recordsA.person.id }
+    });
+    const quote = await fx.prisma.quote.create({
+      data: {
+        createdAt: new Date("2030-01-02T10:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        number: `CHANGE-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 640000,
+        totalCents: 640000,
+        updatedAt: new Date("2030-01-02T10:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.dealLineItem.create({
+      data: {
+        createdAt: new Date("2030-01-02T09:00:00.000Z"),
+        currency: "USD",
+        dealId: fx.recordsA.deal.id,
+        lineTotalCents: 640000,
+        productName: "Enterprise platform",
+        quantity: 1,
+        unitPriceCents: 640000,
+        updatedAt: new Date("2030-01-02T09:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.note.create({
+      data: {
+        authorId: fx.userA.id,
+        body: "Customer asked procurement to review latest pricing.",
+        createdAt: new Date("2030-01-03T12:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "refresh token should not appear; customer asked for pricing approval.",
+        dealId: fx.recordsA.deal.id,
+        direction: "INBOUND",
+        fromText: "buyer@alpha.example",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        providerMessageId: "provider-message-secret-change",
+        providerSnippet: "Customer asked for pricing approval.",
+        providerThreadId: "provider-thread-secret-change",
+        subject: "Pricing approval",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Hidden workspace change brief email.",
+        dealId: fx.recordsB.deal.id,
+        direction: "INBOUND",
+        fromText: "hidden@example.test",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        subject: "Hidden change brief email",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    await fx.prisma.auditLog.create({
+      data: {
+        action: "deal.stage_moved",
+        actorId: fx.userA.id,
+        createdAt: new Date("2030-01-02T08:00:00.000Z"),
+        entityId: fx.recordsA.deal.id,
+        entityType: "Deal",
+        metadata: { from: "Qualified", providerMessageId: "raw-secret-audit" },
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const before = await readOnlyCounts(fx);
+
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `What changed on this deal since last week /deals/${fx.recordsA.deal.id}?`,
+      { now }
+    );
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.title).toContain("Deal change brief");
+    expect(answer.items.map((item) => item.label)).toEqual(expect.arrayContaining([
+      "Since when",
+      "Material changes",
+      "Customer signals",
+      "Internal actions",
+      "Commercial changes",
+      "Relationship changes",
+      "Recommended follow-up",
+      "Missing/uncertain context"
+    ]));
+    expect(serialized).toContain("last 7 days");
+    expect(serialized).toContain("Confirmed");
+    expect(serialized).toContain("Assistant interpretation");
+    expect(serialized).toContain(`Quote ${quote.number}`);
+    expect(serialized).toContain(`/deals/${fx.recordsA.deal.id}/quotes/${quote.id}`);
+    expect(serialized).toContain("/email#email-card-");
+    expect(serialized).not.toContain("Hidden change brief email");
+    expect(serialized).not.toContain("provider-message-secret-change");
+    expect(serialized).not.toContain("provider-thread-secret-change");
+    expect(serialized).not.toContain("raw-secret-audit");
+    expect(serialized).not.toMatch(secretOrRawProviderTerms);
+    expect(answer.draftActions?.map((draft) => draft.kind)).toEqual(["activity", "note"]);
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("supports since-last-meeting and since-quote-sent comparison points without repeating anchor records", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    const meetingActivity = await fx.prisma.activity.create({
+      data: {
+        completedAt: new Date("2030-01-02T15:00:00.000Z"),
+        createdAt: new Date("2030-01-02T14:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        description: "Baseline meeting that should not repeat as a new change.",
+        ownerId: fx.userA.id,
+        title: "Baseline renewal meeting",
+        type: "MEETING",
+        updatedAt: new Date("2030-01-02T15:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const meeting = await fx.prisma.meetingIntake.create({
+      data: {
+        contextText: "Baseline meeting summary.",
+        markdownText: "Baseline meeting summary.",
+        sourceType: "PASTED_TEXT",
+        status: "APPLIED",
+        updatedAt: new Date("2030-01-02T15:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.meetingActivityAssociation.create({
+      data: {
+        activityId: meetingActivity.id,
+        dealId: fx.recordsA.deal.id,
+        meetingIntakeId: meeting.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const quote = await fx.prisma.quote.create({
+      data: {
+        createdAt: new Date("2030-01-03T09:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        number: `SENT-${Date.now()}`,
+        status: "SENT",
+        subtotalCents: 210000,
+        totalCents: 210000,
+        updatedAt: new Date("2030-01-03T09:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.note.create({
+      data: {
+        authorId: fx.userA.id,
+        body: "Old before meeting note should not appear.",
+        createdAt: new Date("2030-01-01T12:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Buyer asked what changed after the quote.",
+        dealId: fx.recordsA.deal.id,
+        direction: "INBOUND",
+        fromText: "buyer@alpha.example",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        providerSnippet: "Buyer asked what changed after the quote.",
+        subject: "After quote question",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    const sinceMeeting = await crm.answerAssistantCommand(
+      fx.actorA,
+      `What happened since the last meeting on this deal /deals/${fx.recordsA.deal.id}?`,
+      { now }
+    );
+    const sinceQuote = await crm.answerAssistantCommand(
+      fx.actorA,
+      `What changed since the quote was sent on this deal /deals/${fx.recordsA.deal.id}?`,
+      { now }
+    );
+
+    expect(JSON.stringify(sinceMeeting)).toContain("last meeting");
+    expect(JSON.stringify(sinceMeeting)).toContain("After quote question");
+    expect(JSON.stringify(sinceMeeting)).not.toContain("Old before meeting note");
+    expect(JSON.stringify(sinceQuote)).toContain(`quote ${quote.number}`);
+    expect(JSON.stringify(sinceQuote)).toContain("After quote question");
+    expect(JSON.stringify(sinceQuote)).not.toContain(`Quote ${quote.number}: Confirmed`);
+  });
+
+  it("prepares change-brief drafts through the existing review queue and suppresses duplicates", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_follow_up_activity: "require_confirmation",
+        create_note: "require_confirmation"
+      })
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Buyer needs a reviewed next step.",
+        dealId: fx.recordsA.deal.id,
+        direction: "INBOUND",
+        fromText: "buyer@alpha.example",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        providerSnippet: "Buyer needs a reviewed next step.",
+        subject: "Need next step",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const beforeActivities = await fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } });
+    const beforeNotes = await fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } });
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `Give me the latest deal update /deals/${fx.recordsA.deal.id}.`, { now });
+    const activityDraft = answer.draftActions?.find((draft) => draft.kind === "activity");
+    const noteDraft = answer.draftActions?.find((draft) => draft.kind === "note");
+    if (!activityDraft || !noteDraft) throw new Error("Expected change-brief activity and note drafts.");
+
+    const activityRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: answer.query });
+    const duplicateActivityRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: activityDraft, sourceCommand: answer.query });
+    expect(duplicateActivityRequest.id).toBe(activityRequest.id);
+    await expect(fx.prisma.activity.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } })).resolves.toBe(beforeActivities);
+    await expect(fx.prisma.note.count({ where: { workspaceId: fx.workspaceA.id, dealId: fx.recordsA.deal.id } })).resolves.toBe(beforeNotes);
+
+    const appliedActivity = await crm.applyAssistantActionRequest(fx.actorA, activityRequest.id);
+    const createdActivity = await fx.prisma.activity.findUniqueOrThrow({ where: { id: appliedActivity.activityId ?? "" } });
+    expect(createdActivity).toMatchObject({
+      dealId: fx.recordsA.deal.id,
+      description: expect.stringContaining("Assistant recommendation for review"),
+      title: expect.stringContaining("latest changes")
+    });
+
+    const noteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: answer.query });
+    const duplicateNoteRequest = await crm.createAssistantActionRequest(fx.actorA, { draftAction: noteDraft, sourceCommand: answer.query });
+    expect(duplicateNoteRequest.id).toBe(noteRequest.id);
+    const appliedNote = await crm.applyAssistantActionRequest(fx.actorA, noteRequest.id);
+    const createdNote = await fx.prisma.note.findUniqueOrThrow({ where: { id: appliedNote.noteId ?? "" } });
+    expect(createdNote).toMatchObject({
+      dealId: fx.recordsA.deal.id,
+      body: expect.stringContaining("Source: Assistant deal change brief")
+    });
+
+    const repeated = await crm.answerAssistantCommand(fx.actorA, `Give me the latest deal update /deals/${fx.recordsA.deal.id}.`, { now });
+    expect(repeated.draftActions).toBeUndefined();
+    expect(JSON.stringify(repeated)).toContain("review that commitment before adding another follow-up");
+  });
+
+  it("handles sparse change briefs honestly and stays workspace scoped", async () => {
+    const fx = currentFixture();
+    const quietDeal = await fx.prisma.deal.create({
+      data: {
+        pipelineId: fx.recordsA.pipeline.id,
+        stageId: fx.recordsA.stageOne.id,
+        status: "OPEN",
+        title: "Quiet change brief deal",
+        updatedAt: new Date("2029-12-01T00:00:00.000Z"),
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Hidden sparse deal email.",
+        dealId: fx.recordsB.deal.id,
+        direction: "INBOUND",
+        fromText: "hidden@example.test",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        subject: "Hidden sparse update",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const before = await readOnlyCounts(fx);
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `Give me the latest deal update /deals/${quietDeal.id}.`, {
+      now: new Date("2030-01-05T12:00:00.000Z")
+    });
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.title).toContain("Deal change brief");
+    expect(serialized).toContain("No material change found");
+    expect(serialized).toContain("No new customer signal");
+    expect(serialized).not.toContain("Hidden sparse deal email");
+    expect(answer.draftActions).toBeUndefined();
+    await expect(readOnlyCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("surfaces explicit contact CRM updates from deal change briefs as review-first proposals", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_contact: "require_confirmation" })
+    });
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    await fx.prisma.note.create({
+      data: {
+        authorId: fx.userA.id,
+        body: `${contactName}'s title changed to VP of Sales. ${contactName}'s email changed to alpha.changed@example.test. ${contactName}'s phone changed to 555-0182.`,
+        createdAt: new Date("2030-01-04T12:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    await fx.prisma.emailLog.create({
+      data: {
+        body: "Hidden workspace contact update.",
+        dealId: fx.recordsB.deal.id,
+        direction: "INBOUND",
+        fromText: "hidden@example.test",
+        occurredAt: new Date("2030-01-04T12:00:00.000Z"),
+        providerSnippet: "Hidden workspace contact update.",
+        subject: "Hidden CRM update",
+        toText: "sales@example.test",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const before = await crmRecordCounts(fx);
+
+    const answer = await crm.answerAssistantCommand(
+      fx.actorA,
+      `Give me the latest deal update /deals/${fx.recordsA.deal.id}. Also, ${contactName}'s email changed to alpha.changed@example.test.`,
+      { now }
+    );
+    const serialized = JSON.stringify(answer);
+    const crmDrafts = answer.draftActions?.filter((draft) => draft.kind === "contact_update") ?? [];
+    const titleDraft = crmDrafts.find((draft) => draft.fields.some((field) => field.label === "Title"));
+    if (!titleDraft) throw new Error("Expected title update proposal draft.");
+
+    expect(serialized).toContain("CRM updates found");
+    expect(serialized).toContain("CRM note on Jan 4, 2030");
+    expect(serialized).toContain("Permission state");
+    expect(serialized).not.toContain("Hidden workspace contact update");
+    expect(crmDrafts.length).toBeGreaterThanOrEqual(3);
+    await expect(crmRecordCounts(fx)).resolves.toEqual(before);
+
+    const proposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: titleDraft,
+      sourceCommand: answer.query
+    });
+    const sameProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: titleDraft,
+      sourceCommand: answer.query
+    });
+    expect(sameProposal.id).toBe(proposal.id);
+    await expect(crm.getCrmChangeProposal(fx.actorA, proposal.id)).resolves.toMatchObject({
+      permissionState: "requires_confirmation",
+      proposalType: "UPDATE_PERSON",
+      sourceType: "assistant",
+      status: "PENDING"
+    });
+    await crm.applyCrmChangeProposal(fx.actorA, proposal.id);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      title: "VP of Sales"
+    });
+
+    const afterApply = await crm.answerAssistantCommand(fx.actorA, `Give me the latest deal update /deals/${fx.recordsA.deal.id}.`, { now });
+    expect(JSON.stringify(afterApply)).not.toContain("Title: blank -> VP of Sales");
+  });
+
+  it("creates one compound contact update and organization link proposal from explicit deal evidence", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        link_contact_organization: "require_confirmation",
+        update_contact: "require_confirmation"
+      })
+    });
+    const targetOrganization = await fx.prisma.organization.create({
+      data: {
+        domain: "northwind-labs.example",
+        name: "Northwind Labs",
+        ownerId: fx.userA.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    await fx.prisma.note.create({
+      data: {
+        authorId: fx.userA.id,
+        body: `${contactName} is now VP Partnerships at Northwind Labs.`,
+        createdAt: new Date("2030-01-04T12:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `What changed on this deal since last week /deals/${fx.recordsA.deal.id}?`, { now });
+    const compoundDraft = answer.draftActions?.find((draft) => draft.title === "Propose updating contact and linking organization");
+    if (!compoundDraft) throw new Error("Expected compound CRM proposal draft.");
+    const proposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: compoundDraft,
+      sourceCommand: answer.query
+    });
+    const stored = await crm.getCrmChangeProposal(fx.actorA, proposal.id);
+
+    expect(compoundDraft).toMatchObject({
+      kind: "contact_update",
+      targetKind: "Contact + organization"
+    });
+    expect(stored).toMatchObject({
+      proposalType: "COMPOUND_PERSON_ORGANIZATION",
+      status: "PENDING"
+    });
+    expect(stored.changeGroups.map((group) => group.title)).toEqual(expect.arrayContaining([
+      "Update contact",
+      "Link contact to organization"
+    ]));
+
+    await crm.applyCrmChangeProposal(fx.actorA, proposal.id);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: fx.recordsA.person.id } })).resolves.toMatchObject({
+      organizationId: targetOrganization.id,
+      title: "VP Partnerships"
+    });
+  });
+
+  it("warns on conflicting structured deal evidence and leaves narrative facts out of CRM proposals", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    await fx.prisma.note.createMany({
+      data: [
+        {
+          authorId: fx.userA.id,
+          body: `${contactName}'s title changed to VP Sales. ${contactName} prefers short renewal recaps.`,
+          createdAt: new Date("2030-01-03T12:00:00.000Z"),
+          dealId: fx.recordsA.deal.id,
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          authorId: fx.userA.id,
+          body: `${contactName}'s title changed to Chief Revenue Officer.`,
+          createdAt: new Date("2030-01-04T12:00:00.000Z"),
+          dealId: fx.recordsA.deal.id,
+          workspaceId: fx.workspaceA.id
+        }
+      ]
+    });
+
+    const answer = await crm.answerAssistantCommand(fx.actorA, `Give me the latest deal update /deals/${fx.recordsA.deal.id}.`, { now });
+    const serialized = JSON.stringify(answer);
+
+    expect(serialized).toContain("Conflicting structured evidence");
+    expect(serialized).toContain("No proposal was created for that field");
+    expect(serialized).not.toContain("prefers short renewal recaps. Permission state");
+    expect(answer.draftActions?.some((draft) => draft.kind === "contact_update")).toBe(false);
+  });
+
+  it("reuses clarification for ambiguous CRM updates and enforces proposal permissions and stale checks", async () => {
+    const fx = currentFixture();
+    const now = new Date("2030-01-05T12:00:00.000Z");
+    const [jordanOne, jordanTwo] = await Promise.all([
+      fx.prisma.person.create({
+        data: {
+          email: "jordan.one@example.test",
+          firstName: "Jordan",
+          lastName: "Smith",
+          workspaceId: fx.workspaceA.id
+        }
+      }),
+      fx.prisma.person.create({
+        data: {
+          email: "jordan.two@example.test",
+          firstName: "Jordan",
+          lastName: "Smith",
+          workspaceId: fx.workspaceA.id
+        }
+      })
+    ]);
+    await fx.prisma.note.create({
+      data: {
+        authorId: fx.userA.id,
+        body: "Update Jordan Smith's phone to 555-0190.",
+        createdAt: new Date("2030-01-04T12:00:00.000Z"),
+        dealId: fx.recordsA.deal.id,
+        workspaceId: fx.workspaceA.id
+      }
+    });
+
+    const ambiguous = await crm.answerAssistantCommand(fx.actorA, "Update Jordan Smith's phone to 555-0190.", { now });
+    const ambiguousDraft = ambiguous.draftActions?.find((draft) => draft.kind === "contact_update");
+    if (!ambiguousDraft) throw new Error("Expected ambiguous contact update draft.");
+
+    expect(ambiguousDraft).toMatchObject({
+      confidence: "needs_clarification",
+      kind: "contact_update"
+    });
+    expect(ambiguousDraft.candidates.map((candidate) => candidate.id)).toEqual(expect.arrayContaining([jordanOne.id, jordanTwo.id]));
+    await expect(crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: ambiguousDraft,
+      sourceCommand: ambiguous.query
+    })).rejects.toThrow(/must include at least one supported field|Target record id|required|not a supported CRM change proposal/i);
+
+    const conversation = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Update Jordan Smith's phone to 555-0190.",
+      now
+    });
+    const conversationDraft = conversation.messages.at(-1)?.draftActions.find((draft) => draft.kind === "contact_update");
+    if (!conversationDraft) throw new Error("Expected conversation clarification draft.");
+    const clarified = await crm.clarifyAssistantConversationDraft(fx.actorA, {
+      candidateId: jordanOne.id,
+      candidateType: "person",
+      conversationId: conversation.id,
+      draftAction: conversationDraft
+    });
+    const clarifiedDraft = clarified.messages.at(-1)?.draftActions.find((draft) => draft.kind === "contact_update");
+    if (!clarifiedDraft) throw new Error("Expected clarified contact update draft.");
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_contact: "never_allow" })
+    });
+    await expect(crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: clarifiedDraft,
+      sourceCommand: clarified.messages.at(-1)?.content
+    })).rejects.toThrow(/never allow|AI Preferences/i);
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_contact: "require_confirmation" })
+    });
+    const proposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: clarifiedDraft,
+      sourceCommand: clarified.messages.at(-1)?.content
+    });
+    await fx.prisma.person.update({
+      data: { phone: "555-0000" },
+      where: { id: jordanOne.id }
+    });
+    await expect(crm.applyCrmChangeProposal(fx.actorA, proposal.id)).rejects.toThrow(/changed after this proposal was created|stale/i);
+  });
+
   it("drafts an activity from a command without creating activities or crossing workspaces", async () => {
     const fx = currentFixture();
     const now = new Date("2030-01-02T12:00:00.000Z");
@@ -1034,6 +2028,104 @@ describe("read-only Assistant command service integration", () => {
     });
   });
 
+  it("surfaces Assistant CRM proposal lifecycle from durable proposal state without duplicate proposals", async () => {
+    const fx = currentFixture();
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        create_organization: "require_confirmation",
+        update_contact: "require_confirmation",
+        update_organization: "require_confirmation"
+      })
+    });
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+
+    const updateAnswer = await crm.answerAssistantCommand(fx.actorA, `Update ${contactName}'s phone to 555-0301.`);
+    const updateDraft = updateAnswer.draftActions?.[0];
+    if (!updateDraft) throw new Error("Expected contact update draft.");
+    const pendingProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: updateDraft,
+      sourceCommand: "Update contact with token=proposal-secret"
+    });
+    const samePendingProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: updateDraft,
+      sourceCommand: "Retry update contact with token=different-secret"
+    });
+    expect(samePendingProposal.id).toBe(pendingProposal.id);
+
+    let proposals = await crm.listCrmChangeProposals(fx.actorA);
+    const pendingView = proposals.proposals.find((proposal) => proposal.id === pendingProposal.id);
+    expect(pendingView).toMatchObject({
+      idempotencyKey: expect.stringMatching(/^assistant:/),
+      permissionState: "requires_confirmation",
+      sourceType: "assistant",
+      status: "PENDING",
+      targetHref: `/contacts/${fx.recordsA.person.id}`
+    });
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_contact: "never_allow" })
+    });
+    proposals = await crm.listCrmChangeProposals(fx.actorA);
+    const deniedView = proposals.proposals.find((proposal) => proposal.id === pendingProposal.id);
+    expect(deniedView).toMatchObject({
+      canApply: false,
+      permissionLevel: "Never allow",
+      permissionState: "blocked",
+      status: "PENDING"
+    });
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({
+        update_contact: "require_confirmation",
+        update_organization: "require_confirmation"
+      })
+    });
+    const applied = await crm.applyCrmChangeProposal(fx.actorA, pendingProposal.id);
+    proposals = await crm.listCrmChangeProposals(fx.actorA);
+    expect(proposals.proposals.find((proposal) => proposal.id === pendingProposal.id)).toMatchObject({
+      appliedHref: `/contacts/${applied.appliedEntityId}`,
+      appliedLabel: "Applied contact",
+      status: "APPLIED"
+    });
+
+    const createOrgAnswer = await crm.answerAssistantCommand(fx.actorA, "Create an organization for Lifecycle Reject with domain lifecycle-reject.example.");
+    const createOrgDraft = createOrgAnswer.draftActions?.[0];
+    if (!createOrgDraft) throw new Error("Expected organization create draft.");
+    const rejectedProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: createOrgDraft,
+      sourceCommand: createOrgAnswer.query
+    });
+    await crm.rejectCrmChangeProposal(fx.actorA, rejectedProposal.id);
+    proposals = await crm.listCrmChangeProposals(fx.actorA);
+    expect(proposals.proposals.find((proposal) => proposal.id === rejectedProposal.id)).toMatchObject({
+      status: "REJECTED",
+      targetLabel: "New organization"
+    });
+
+    const staleAnswer = await crm.answerAssistantCommand(fx.actorA, `Update ${fx.recordsA.organization.name}'s domain to stale-lifecycle.example.`);
+    const staleDraft = staleAnswer.draftActions?.[0];
+    if (!staleDraft) throw new Error("Expected stale organization update draft.");
+    const staleProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: staleDraft,
+      sourceCommand: staleAnswer.query
+    });
+    await fx.prisma.organization.update({
+      data: { domain: "changed-before-proposal-apply.example" },
+      where: { id: fx.recordsA.organization.id }
+    });
+    await expect(crm.applyCrmChangeProposal(fx.actorA, staleProposal.id)).rejects.toThrow(/changed after this proposal was created|stale/i);
+    proposals = await crm.listCrmChangeProposals(fx.actorA);
+    expect(proposals.proposals.find((proposal) => proposal.id === staleProposal.id)).toMatchObject({
+      conflictInfo: expect.objectContaining({ code: "STALE_TARGET" }),
+      status: "FAILED"
+    });
+
+    const serialized = JSON.stringify(proposals);
+    expect(serialized).not.toContain("proposal-secret");
+    expect(serialized).not.toContain("different-secret");
+    await expect(fx.prisma.crmChangeProposal.count({ where: { id: pendingProposal.id, workspaceId: fx.workspaceA.id } })).resolves.toBe(1);
+  });
+
   it("returns candidates and requires review when draft record matches are ambiguous", async () => {
     const fx = currentFixture();
     await fx.prisma.person.createMany({
@@ -1066,7 +2158,7 @@ describe("read-only Assistant command service integration", () => {
     await expect(readOnlyCounts(fx)).resolves.toEqual(before);
   });
 
-  it("does not guess ambiguous contact updates or invent unsupported contact title fields", async () => {
+  it("does not guess ambiguous contact updates and supports reviewed contact title fields", async () => {
     const fx = currentFixture();
     await fx.prisma.person.createMany({
       data: [
@@ -1099,12 +2191,207 @@ describe("read-only Assistant command service integration", () => {
       sourceCommand: ambiguous.query
     })).rejects.toThrow(/not a supported CRM change proposal|must include at least one supported field|Target record id|required/i);
 
-    const unsupported = await crm.answerAssistantCommand(fx.actorA, `Update ${fx.recordsA.person.firstName}'s title to VP of Sales.`);
-    const unsupportedDraft = unsupported.draftActions?.[0];
-    if (!unsupportedDraft) throw new Error("Expected unsupported field draft.");
-    expect(JSON.stringify(unsupportedDraft)).toContain("Unsupported contact field ignored: title");
-    expect(unsupportedDraft.missingInfo).toContain("No supported contact field change was detected.");
+    const contactName = `${fx.recordsA.person.firstName} ${fx.recordsA.person.lastName}`;
+    const titleUpdate = await crm.answerAssistantCommand(fx.actorA, `Update ${contactName}'s title to VP of Sales.`);
+    const titleDraft = titleUpdate.draftActions?.[0];
+    if (!titleDraft) throw new Error("Expected supported title field draft.");
+    expect(titleDraft).toMatchObject({
+      confidence: "high",
+      kind: "contact_update",
+      proposal: expect.objectContaining({
+        fields: { title: "VP of Sales" },
+        targetRecordId: fx.recordsA.person.id
+      })
+    });
     await expect(crmRecordCounts(fx)).resolves.toEqual(before);
+  });
+
+  it("lets users clarify ambiguous contact updates and creates one final CRM change proposal", async () => {
+    const fx = currentFixture();
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_contact: "require_confirmation" })
+    });
+    const [samOne, samTwo] = await fx.prisma.person.createManyAndReturn({
+      data: [
+        {
+          email: "sam.one@example.test",
+          firstName: "Sam",
+          lastName: "Lane",
+          ownerId: fx.userA.id,
+          phone: "555-0100",
+          workspaceId: fx.workspaceA.id
+        },
+        {
+          email: "sam.two@example.test",
+          firstName: "Sam",
+          lastName: "Lane",
+          phone: "555-0102",
+          workspaceId: fx.workspaceA.id
+        }
+      ],
+      select: { id: true }
+    });
+    await fx.prisma.person.create({
+      data: {
+        email: "sam.secret@example.test",
+        firstName: "Sam",
+        lastName: "Lane",
+        workspaceId: fx.workspaceB.id
+      }
+    });
+    const beforeProposalCount = await fx.prisma.crmChangeProposal.count({ where: { workspaceId: fx.workspaceA.id } });
+
+    const conversation = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Update Sam Lane's phone to 555-0199 with token=super-secret."
+    });
+    const ambiguousDraft = conversation.messages.at(-1)?.draftActions[0];
+    if (!ambiguousDraft) throw new Error("Expected ambiguous contact draft.");
+
+    expect(ambiguousDraft).toMatchObject({
+      confidence: "needs_clarification",
+      kind: "contact_update"
+    });
+    expect(ambiguousDraft.clarification).toMatchObject({
+      status: "needs_selection",
+      slots: [{ candidateType: "person", key: "person" }]
+    });
+    expect(ambiguousDraft.candidates).toHaveLength(2);
+    expect(JSON.stringify(conversation)).not.toContain("super-secret");
+    expect(JSON.stringify(conversation)).not.toContain("sam.secret@example.test");
+    expect(JSON.stringify(ambiguousDraft.candidates)).toContain("sam.one@example.test");
+
+    const clarified = await crm.clarifyAssistantConversationDraft(fx.actorA, {
+      candidateId: samOne.id,
+      candidateType: "person",
+      conversationId: conversation.id,
+      draftAction: ambiguousDraft
+    });
+    const clarifiedDraft = clarified.messages.at(-1)?.draftActions[0];
+    if (!clarifiedDraft) throw new Error("Expected clarified draft.");
+
+    expect(clarifiedDraft).toMatchObject({
+      confidence: "high",
+      kind: "contact_update",
+      targetHref: `/contacts/${samOne.id}`
+    });
+    expect(clarifiedDraft.clarification).toMatchObject({
+      status: "resolved",
+      resolved: { personId: samOne.id }
+    });
+    expect(JSON.stringify(clarifiedDraft)).toContain("555-0199");
+
+    const clarifiedAgain = await crm.clarifyAssistantConversationDraft(fx.actorA, {
+      candidateId: samOne.id,
+      candidateType: "person",
+      conversationId: conversation.id,
+      draftAction: ambiguousDraft
+    });
+    expect(clarifiedAgain.messages).toHaveLength(clarified.messages.length);
+
+    const proposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: clarifiedDraft,
+      sourceCommand: "Update Sam Lane's phone to 555-0199 with token=super-secret."
+    });
+    const sameProposal = await crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: clarifiedDraft,
+      sourceCommand: "Update Sam Lane's phone to 555-0199 with different wording."
+    });
+    expect(sameProposal.id).toBe(proposal.id);
+    await expect(fx.prisma.crmChangeProposal.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(beforeProposalCount + 1);
+    await expect(fx.prisma.person.findUniqueOrThrow({ where: { id: samTwo.id } })).resolves.toMatchObject({ phone: "555-0102" });
+  });
+
+  it("clarifies ambiguous organization updates, respects permission changes, and supports canceling", async () => {
+    const fx = currentFixture();
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_organization: "require_confirmation" })
+    });
+    const [northwindOne, northwindTwo] = await fx.prisma.organization.createManyAndReturn({
+      data: [
+        { domain: "northwind-one.example", name: "Northwind", ownerId: fx.userA.id, workspaceId: fx.workspaceA.id },
+        { domain: "northwind-two.example", name: "Northwind", workspaceId: fx.workspaceA.id }
+      ],
+      select: { id: true }
+    });
+    const conversation = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Update Northwind's domain to northwind-reviewed.example."
+    });
+    const ambiguousDraft = conversation.messages.at(-1)?.draftActions[0];
+    if (!ambiguousDraft) throw new Error("Expected ambiguous organization draft.");
+    expect(ambiguousDraft).toMatchObject({ confidence: "needs_clarification", kind: "organization_update" });
+    expect(ambiguousDraft.candidates).toHaveLength(2);
+    expect(JSON.stringify(ambiguousDraft.candidates)).toContain("northwind-one.example");
+
+    const canceled = await crm.cancelAssistantConversationDraftClarification(fx.actorA, {
+      conversationId: conversation.id,
+      draftAction: ambiguousDraft
+    });
+    expect(canceled.messages.at(-1)).toMatchObject({
+      draftActions: [],
+      role: "assistant",
+      title: "Clarification canceled"
+    });
+    await expect(fx.prisma.crmChangeProposal.count({ where: { workspaceId: fx.workspaceA.id } })).resolves.toBe(0);
+
+    const clarified = await crm.clarifyAssistantConversationDraft(fx.actorA, {
+      candidateId: northwindTwo.id,
+      candidateType: "organization",
+      conversationId: conversation.id,
+      draftAction: ambiguousDraft
+    });
+    const clarifiedDraft = clarified.messages.at(-1)?.draftActions[0];
+    if (!clarifiedDraft) throw new Error("Expected clarified organization draft.");
+    expect(clarifiedDraft).toMatchObject({
+      confidence: "high",
+      kind: "organization_update",
+      targetHref: `/organizations/${northwindTwo.id}`
+    });
+
+    await crm.updateAiPreferences(fx.actorA, {
+      assistantActionPermissions: permissionMap({ update_organization: "never_allow" })
+    });
+    await expect(crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: clarifiedDraft,
+      sourceCommand: "Update Northwind's domain to northwind-reviewed.example."
+    })).rejects.toThrow(/never allow|AI Preferences/i);
+    await expect(fx.prisma.organization.findUniqueOrThrow({ where: { id: northwindOne.id } })).resolves.toMatchObject({
+      domain: "northwind-one.example"
+    });
+  });
+
+  it("keeps stale clarified candidates blocked instead of creating proposals", async () => {
+    const fx = currentFixture();
+    await fx.prisma.person.createMany({
+      data: [
+        { email: "stale.one@example.test", firstName: "Taylor", lastName: "Stale", workspaceId: fx.workspaceA.id },
+        { email: "stale.two@example.test", firstName: "Taylor", lastName: "Stale", workspaceId: fx.workspaceA.id }
+      ]
+    });
+    const candidates = await fx.prisma.person.findMany({
+      where: { firstName: "Taylor", lastName: "Stale", workspaceId: fx.workspaceA.id },
+      select: { id: true }
+    });
+    const conversation = await crm.sendAssistantConversationMessage(fx.actorA, {
+      message: "Update Taylor Stale's phone to 555-0202."
+    });
+    const ambiguousDraft = conversation.messages.at(-1)?.draftActions[0];
+    if (!ambiguousDraft) throw new Error("Expected ambiguous stale draft.");
+    await fx.prisma.person.update({ where: { id: candidates[0].id }, data: { deletedAt: new Date() } });
+
+    const clarified = await crm.clarifyAssistantConversationDraft(fx.actorA, {
+      candidateId: candidates[0].id,
+      candidateType: "person",
+      conversationId: conversation.id,
+      draftAction: ambiguousDraft
+    });
+    const staleDraft = clarified.messages.at(-1)?.draftActions[0];
+    if (!staleDraft) throw new Error("Expected stale clarification draft.");
+    expect(staleDraft.confidence).toBe("needs_clarification");
+    expect(JSON.stringify(staleDraft)).toContain("Selected contact is no longer available");
+    await expect(crm.createCrmChangeProposalFromAssistantDraft(fx.actorA, {
+      draftAction: staleDraft,
+      sourceCommand: "Update Taylor Stale's phone to 555-0202."
+    })).rejects.toThrow(/not a supported CRM change proposal|Target record id|required/i);
   });
 
   it("saves draft actions as user-scoped pending requests without touching CRM records", async () => {

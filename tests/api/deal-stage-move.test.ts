@@ -25,8 +25,12 @@ describe("deal stage movement UI", () => {
     expect(moveForm).toContain("pipelineId");
     expect(moveForm).toContain("stageId");
     expect(moveForm).toContain("FormActionBar");
+    expect(moveForm).toContain('import { FormSuccessMessage } from "@/components/form-success-message"');
+    expect(moveForm).toContain("Deal moved to ${movedStageName}.");
+    expect(moveForm).toContain("<FormSuccessMessage compact>{success}</FormSuccessMessage>");
     expect(moveForm).toContain("import { FormFieldLabel }");
     expect(moveForm).toContain("<FormFieldLabel required>Move to stage</FormFieldLabel>");
+    expect(moveForm).toContain('router.replace(currentPathWithHash("overview"), { scroll: true })');
     expect(moveForm).toContain("submitDisabled={stageId === currentStageId || selectedStageRequiresCloseOutcome}");
   });
 

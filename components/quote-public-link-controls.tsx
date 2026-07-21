@@ -8,7 +8,7 @@ import { Badge } from "@/components/badge";
 import { EmptyState } from "@/components/empty-state";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
-import { FormIntroCallout } from "@/components/form-intro-callout";
+import { FormSuccessMessage } from "@/components/form-success-message";
 import { PanelTitleRow } from "@/components/panel-title-row";
 
 type QuotePublicLinkControlsProps = {
@@ -32,12 +32,14 @@ export function QuotePublicLinkControls({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
   const publicLinkActionsLabel = `${quoteNumber} public quote link actions`;
   const publicLinkStatus = publicUrl ? "Active" : "Not shared";
 
   async function generateLink() {
     setError(null);
     setNotice(null);
+    if (isSaving) return;
     setIsSaving(true);
     const response = await fetch(`/api/v1/workspaces/${workspaceId}/quotes/${quoteId}/public-link`, {
       method: "POST"
@@ -52,12 +54,14 @@ export function QuotePublicLinkControls({
 
     setNotice("Public quote link is active.");
     setIsSaving(false);
+    preservePublicLinkAnchor();
     router.refresh();
   }
 
   async function revokeLink() {
     setError(null);
     setNotice(null);
+    if (isSaving) return;
     setIsSaving(true);
     const response = await fetch(`/api/v1/workspaces/${workspaceId}/quotes/${quoteId}/public-link`, {
       method: "DELETE"
@@ -72,13 +76,23 @@ export function QuotePublicLinkControls({
 
     setNotice("Public quote link was revoked.");
     setIsSaving(false);
+    preservePublicLinkAnchor();
     router.refresh();
   }
 
   async function copyLink() {
-    if (!publicUrl) return;
-    await navigator.clipboard.writeText(publicUrl);
-    setNotice("Public quote link copied.");
+    setError(null);
+    setNotice(null);
+    if (!publicUrl || isCopying) return;
+    setIsCopying(true);
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setNotice("Public quote link copied.");
+    } catch {
+      setError("Could not copy the public quote link. Select and copy the URL manually.");
+    } finally {
+      setIsCopying(false);
+    }
   }
 
   return (
@@ -89,11 +103,7 @@ export function QuotePublicLinkControls({
         title="Public Quote Link"
       />
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
-      {notice ? (
-        <FormIntroCallout className="quote-public-link-notice" title="Link status">
-          {notice}
-        </FormIntroCallout>
-      ) : null}
+      {notice ? <FormSuccessMessage className="quote-public-link-notice" compact>{notice}</FormSuccessMessage> : null}
       {publicUrl ? (
         <>
           <label className="form-field panel-field-spaced">
@@ -104,11 +114,12 @@ export function QuotePublicLinkControls({
             <button
               aria-label={`Copy public quote link for ${quoteNumber}`}
               className="button-secondary button-compact"
+              disabled={isCopying || isSaving}
               onClick={copyLink}
               title={`Copy public quote link for ${quoteNumber}`}
               type="button"
             >
-              Copy link
+              {isCopying ? "Copying..." : "Copy link"}
             </button>
             <button
               aria-label={`Revoke public quote link for ${quoteNumber}`}
@@ -142,4 +153,8 @@ export function QuotePublicLinkControls({
       )}
     </section>
   );
+}
+
+function preservePublicLinkAnchor() {
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#public-link`);
 }

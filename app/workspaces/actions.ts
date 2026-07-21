@@ -16,7 +16,7 @@ import {
   revokeWorkspaceInvitation,
   transferWorkspaceOwnership,
   updateWorkspaceMemberRole
-} from "@/lib/services/crm";
+} from "@/lib/services/workspace-service";
 
 export type CreateWorkspaceActionState = {
   name: string;

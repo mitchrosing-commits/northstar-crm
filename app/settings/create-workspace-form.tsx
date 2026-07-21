@@ -6,6 +6,7 @@ import { createWorkspaceAction, type CreateWorkspaceActionState } from "@/app/wo
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSection } from "@/components/form-section";
 import { workspaceNameMaxLength } from "@/lib/workspace-validation";
 
 const initialState: CreateWorkspaceActionState = {
@@ -17,18 +18,23 @@ export function CreateWorkspaceForm() {
 
   return (
     <form action={formAction} className="inline-form">
-      <label className="form-field" htmlFor="workspace-name">
-        <FormFieldLabel required>Workspace name</FormFieldLabel>
-        <input
-          aria-describedby={state.error ? "workspace-create-error" : undefined}
-          autoComplete="organization"
-          defaultValue={state.name}
-          id="workspace-name"
-          maxLength={workspaceNameMaxLength}
-          name="name"
-          required
-        />
-      </label>
+      <FormSection
+        description="Create a separate workspace for a different company, team, or book of business."
+        title="Workspace details"
+      >
+        <label className="form-field" htmlFor="workspace-name">
+          <FormFieldLabel required>Workspace name</FormFieldLabel>
+          <input
+            aria-describedby={state.error ? "workspace-create-error" : undefined}
+            autoComplete="organization"
+            defaultValue={state.name}
+            id="workspace-name"
+            maxLength={workspaceNameMaxLength}
+            name="name"
+            required
+          />
+        </label>
+      </FormSection>
       {state.error ? (
         <FormErrorMessage id="workspace-create-error">
           {state.error}

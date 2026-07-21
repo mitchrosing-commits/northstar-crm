@@ -17,6 +17,7 @@ import {
   createPipeline,
   createProduct,
   createCrmChangeProposal,
+  createQuoteItem,
   createQuotePublicLink,
   createQuoteFromDeal,
   createDealLineItem,
@@ -45,12 +46,15 @@ import {
   listPipelines,
   listProducts,
   listStages,
+  removeQuoteItem,
   removeDealLineItem,
+  reviewQuoteDealValueSync,
   rejectCrmChangeProposal,
   reopenDeal,
   revokeQuotePublicLink,
   applyCrmChangeProposal,
   applyMeetingIntake,
+  updateMeetingIntakeAssociation,
   abortMeetingIntakeMultipartUploadSession,
   completeMeetingIntakeMultipartUploadSession,
   createMeetingIntakeDirectUploadSession,
@@ -82,6 +86,7 @@ import {
   updatePerson,
   updatePipeline,
   updateProduct,
+  updateQuoteItem,
   updateQuoteStatus,
   updateStage
 } from "@/lib/services/crm";
@@ -99,6 +104,7 @@ import {
   createPipelineSchema,
   createProductSchema,
   createDealLineItemSchema,
+  createQuoteItemSchema,
   createStageSchema,
   closeDealSchema,
   convertLeadSchema,
@@ -112,7 +118,9 @@ import {
   updatePersonSchema,
   updatePipelineSchema,
   updateProductSchema,
+  updateQuoteItemSchema,
   updateQuoteAdjustmentsSchema,
+  reviewQuoteDealValueSyncSchema,
   updateStageSchema
 } from "@/lib/validators/crm";
 
@@ -249,8 +257,21 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
       if (method === "POST") return json(await syncAcceptedQuoteToDealValue(actor, idOrNested));
     }
 
+    if (resource === "quotes" && idOrNested && nestedResource === "sync-review" && !extraSegment) {
+      if (method === "POST") return json(await reviewQuoteDealValueSync(actor, idOrNested, reviewQuoteDealValueSyncSchema.parse(await body(request))));
+    }
+
     if (resource === "quotes" && idOrNested && nestedResource === "adjustments" && !extraSegment) {
       if (method === "PATCH") return json(await updateQuoteAdjustments(actor, idOrNested, updateQuoteAdjustmentsSchema.parse(await body(request))));
+    }
+
+    if (resource === "quotes" && idOrNested && nestedResource === "items" && !extraSegment) {
+      if (method === "POST") return created(await createQuoteItem(actor, idOrNested, createQuoteItemSchema.parse(await body(request))));
+    }
+
+    if (resource === "quote-items" && idOrNested && !nestedResource) {
+      if (method === "PATCH") return json(await updateQuoteItem(actor, idOrNested, updateQuoteItemSchema.parse(await body(request))));
+      if (method === "DELETE") return json(await removeQuoteItem(actor, idOrNested));
     }
 
     if (resource === "quotes" && idOrNested && nestedResource === "public-link" && !extraSegment) {
@@ -370,6 +391,10 @@ async function handle(request: NextRequest, context: RouteContext, method: strin
 
     if (resource === "meeting-intakes" && idOrNested && nestedResource === "apply" && !extraSegment) {
       if (method === "POST") return json(await applyMeetingIntake(actor, idOrNested, await body(request)));
+    }
+
+    if (resource === "meeting-intakes" && idOrNested && nestedResource === "associations" && !extraSegment) {
+      if (method === "PATCH") return json(await updateMeetingIntakeAssociation(actor, idOrNested, await body(request)));
     }
 
     if (resource === "meeting-intake-upload-capabilities" && !idOrNested) {

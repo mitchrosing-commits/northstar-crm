@@ -48,7 +48,7 @@ vi.mock("@/lib/db/prisma", () => ({
   }
 }));
 
-vi.mock("@/lib/services/crm", () => ({
+vi.mock("@/lib/services/workspace-service", () => ({
   acceptWorkspaceInvitation: mocks.acceptWorkspaceInvitation,
   createWorkspaceFromName: mocks.createWorkspaceFromName,
   createWorkspaceInvitation: mocks.createWorkspaceInvitation,

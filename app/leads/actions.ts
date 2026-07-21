@@ -7,7 +7,8 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { leadListStateOptions } from "@/lib/lead-list-state";
 import { parseListViewState, type ListSearchParams } from "@/lib/list-page-query";
 import { ignoreMissingSavedView } from "@/lib/saved-view-action-utils";
-import { createAutomationTemplateActivity, createLeadSavedView, deleteLeadSavedView } from "@/lib/services/crm";
+import { createAutomationTemplateActivity } from "@/lib/services/automation-template-service";
+import { createLeadSavedView, deleteLeadSavedView } from "@/lib/services/saved-view-service";
 
 export async function createLeadSavedViewAction(formData: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
@@ -35,7 +36,7 @@ export async function createLeadAutomationActivityAction(formData: FormData) {
   await createAutomationTemplateActivity(actor, { templateId: "lead-first-outreach", leadId });
   revalidatePath(`/leads/${leadId}`);
   revalidatePath("/dashboard");
-  redirect(`/leads/${leadId}?automation=activity-created`);
+  redirect(`/leads/${leadId}?automation=activity-created#activities`);
 }
 
 function formDataToSearchParams(formData: FormData): ListSearchParams {

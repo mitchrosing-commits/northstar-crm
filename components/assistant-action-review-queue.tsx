@@ -5,8 +5,10 @@ import { applyAssistantActionRequestAction, rejectAssistantActionRequestAction }
 import { Badge } from "@/components/badge";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import type { AssistantActionRequestView } from "@/lib/services/assistant/assistant-action-request-service";
+import type { CrmChangeProposalView } from "@/lib/services/crm-change-proposal-service";
 
 type AssistantActionReviewQueueProps = {
+  crmChangeProposals: CrmChangeProposalView[];
   queue: AssistantReviewQueueFilter;
   requests: AssistantActionRequestView[];
   status: string;
@@ -14,23 +16,37 @@ type AssistantActionReviewQueueProps = {
 
 type AssistantReviewQueueFilter = "all" | "applied" | "pending" | "rejected";
 
-export function AssistantActionReviewQueue({ queue, requests, status }: AssistantActionReviewQueueProps) {
+export function AssistantActionReviewQueue({ crmChangeProposals, queue, requests, status }: AssistantActionReviewQueueProps) {
   const pendingCount = requests.filter((request) => request.status === "PENDING").length;
   const appliedCount = requests.filter((request) => request.status === "APPLIED").length;
   const rejectedCount = requests.filter((request) => request.status === "REJECTED").length;
   const visibleRequests = requests.filter((request) => requestMatchesQueue(request, queue));
+  const visibleProposals = crmChangeProposals.filter((proposal) => proposalMatchesQueue(proposal, queue));
+  const pendingProposalCount = crmChangeProposals.filter((proposal) => proposal.status === "PENDING" || proposal.status === "FAILED" || proposal.status === "SUPERSEDED").length;
+  const appliedProposalCount = crmChangeProposals.filter((proposal) => proposal.status === "APPLIED").length;
+  const rejectedProposalCount = crmChangeProposals.filter((proposal) => proposal.status === "REJECTED").length;
   return (
     <section className="data-card assistant-review-queue" id="assistant-review-queue" aria-labelledby="assistant-review-queue-title">
       <PanelTitleRow
-        actions={<Badge>{pendingCount} pending</Badge>}
-        description="Saved Assistant drafts wait here for review. Filters hide completed requests from view without deleting audit history or CRM records."
+        actions={
+          <>
+            <Badge>{pendingCount} pending requests</Badge>
+            <Badge>{pendingProposalCount} pending proposals</Badge>
+          </>
+        }
+        description="Saved Assistant drafts and CRM Change Proposals wait here for review. Filters hide completed items from view without deleting audit history or CRM records."
         eyebrow="Assistant action requests"
         title="Review queue"
         titleId="assistant-review-queue-title"
       />
       {statusMessage(status) ? <p className="compact-success">{statusMessage(status)}</p> : null}
       <nav aria-label="Assistant review queue filters" className="assistant-review-queue-tabs">
-        {queueTabs({ appliedCount, pendingCount, rejectedCount, totalCount: requests.length }).map((tab) => (
+        {queueTabs({
+          appliedCount: appliedCount + appliedProposalCount,
+          pendingCount: pendingCount + pendingProposalCount,
+          rejectedCount: rejectedCount + rejectedProposalCount,
+          totalCount: requests.length + crmChangeProposals.length
+        }).map((tab) => (
           <Link
             aria-current={queue === tab.id ? "page" : undefined}
             className={queue === tab.id ? "button-primary button-compact" : "button-secondary button-compact"}
@@ -50,10 +66,14 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
           </Link>
         </p>
       ) : null}
-      {visibleRequests.length > 0 ? (
-        <div className="assistant-review-request-list">
-          {visibleRequests.map((request) => (
-            <article className={`assistant-review-request assistant-review-request-${request.status.toLowerCase()}`} key={request.id}>
+      {visibleRequests.length > 0 || visibleProposals.length > 0 ? (
+        <>
+          {visibleRequests.length > 0 ? (
+            <div className="assistant-review-request-list">
+              {visibleRequests.map((request) => {
+                const lifecycle = requestLifecycle(request);
+                return (
+                  <article className={`assistant-review-request assistant-review-request-${request.status.toLowerCase()}`} key={request.id}>
               <header className="assistant-review-request-header">
                 <div>
                   <span className="assistant-draft-eyebrow">{actionTypeLabel(request)}</span>
@@ -64,6 +84,14 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
                   <Badge>{request.riskLevel} risk</Badge>
                 </span>
               </header>
+              <div className={`assistant-lifecycle-row assistant-lifecycle-row-${lifecycle.tone}`} aria-label={`${request.title} lifecycle status`}>
+                <Badge>{lifecycle.label}</Badge>
+                <span>
+                  {lifecycle.reason}
+                  {" "}
+                  Next action: {lifecycle.nextAction}.
+                </span>
+              </div>
               <dl className="assistant-draft-meta">
                 <div>
                   <dt>Created</dt>
@@ -145,9 +173,13 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
                   </form>
                 </div>
               ) : null}
-            </article>
-          ))}
-        </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+          {visibleProposals.length > 0 ? <AssistantCrmProposalOutcomeList proposals={visibleProposals} /> : null}
+        </>
       ) : (
         <p className="assistant-answer-summary">{emptyQueueMessage(queue)}</p>
       )}
@@ -158,6 +190,12 @@ export function AssistantActionReviewQueue({ queue, requests, status }: Assistan
 function requestMatchesQueue(request: AssistantActionRequestView, queue: AssistantReviewQueueFilter) {
   if (queue === "all") return true;
   return request.status === queue.toUpperCase();
+}
+
+function proposalMatchesQueue(proposal: CrmChangeProposalView, queue: AssistantReviewQueueFilter) {
+  if (queue === "all") return true;
+  if (queue === "pending") return proposal.status === "PENDING" || proposal.status === "FAILED" || proposal.status === "SUPERSEDED";
+  return proposal.status === queue.toUpperCase();
 }
 
 function queueTabs({
@@ -244,6 +282,171 @@ function applyExplanation(request: AssistantActionRequestView) {
     return "Contact and organization creation is review-only for now.";
   }
   return "Apply is currently limited to eligible activity, note, contact, and organization requests.";
+}
+
+function requestLifecycle(request: AssistantActionRequestView) {
+  if (request.status === "APPLIED") {
+    return {
+      label: "Request applied",
+      nextAction: "open the created CRM record from its timeline or dismiss",
+      reason: "This Assistant request was applied after review.",
+      tone: "success" as const
+    };
+  }
+  if (request.status === "REJECTED") {
+    return {
+      label: "Request rejected",
+      nextAction: "dismiss or draft a fresh request",
+      reason: "This request was rejected and cannot apply changes.",
+      tone: "neutral" as const
+    };
+  }
+  if (request.permissionState === "blocked") {
+    return {
+      label: "Permission denied",
+      nextAction: "review AI Preferences or reject the request",
+      reason: request.permissionReason,
+      tone: "danger" as const
+    };
+  }
+  if (request.confidence === "needs_clarification" || request.missingInfo.length > 0) {
+    return {
+      label: "Awaiting clarification",
+      nextAction: "retry safely with a clear target or reject the request",
+      reason: request.missingInfo[0] ?? "This request needs a clear target before apply is available.",
+      tone: "warning" as const
+    };
+  }
+  return {
+    label: "Pending review",
+    nextAction: request.canApply ? `apply ${applyNoun(request)} or reject` : "review or reject",
+    reason: request.canApply ? "This saved request can apply only after explicit review." : applyExplanation(request),
+    tone: "neutral" as const
+  };
+}
+
+function AssistantCrmProposalOutcomeList({ proposals }: { proposals: CrmChangeProposalView[] }) {
+  return (
+    <section className="assistant-proposal-outcomes" aria-label="CRM proposal outcomes">
+      <div className="assistant-proposal-outcomes-header">
+        <span className="assistant-draft-eyebrow">CRM Change Proposals</span>
+        <strong>Proposal outcomes</strong>
+      </div>
+      <div className="assistant-proposal-outcome-list">
+        {proposals.map((proposal) => {
+          const lifecycle = proposalLifecycle(proposal);
+          return (
+            <article className={`assistant-proposal-outcome assistant-proposal-outcome-${proposal.status.toLowerCase()}`} key={proposal.id}>
+              <header className="assistant-review-request-header">
+                <div>
+                  <span className="assistant-draft-eyebrow">{proposalTypeLabel(proposal.proposalType)}</span>
+                  <h3>{proposal.title}</h3>
+                </div>
+                <span className="assistant-draft-badges">
+                  <Badge>{lifecycle.label}</Badge>
+                  <Badge>{proposal.permissionLevel}</Badge>
+                </span>
+              </header>
+              <div className={`assistant-lifecycle-row assistant-lifecycle-row-${lifecycle.tone}`} aria-label={`${proposal.title} lifecycle status`}>
+                <Badge>{lifecycle.label}</Badge>
+                <span>
+                  {lifecycle.reason}
+                  {" "}
+                  Next action: {lifecycle.nextAction}.
+                </span>
+              </div>
+              <dl className="assistant-draft-meta">
+                <div>
+                  <dt>Requested action</dt>
+                  <dd>{proposal.title}</dd>
+                </div>
+                <div>
+                  <dt>Selected record</dt>
+                  <dd>
+                    {proposal.targetHref ? (
+                      <Link className="inline-link" href={proposal.targetHref as Route}>
+                        {proposal.targetLabel}
+                      </Link>
+                    ) : (
+                      proposal.targetLabel
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Proposal</dt>
+                  <dd>
+                    <Link className="inline-link" href={`/crm-change-proposals/${proposal.id}` as Route}>
+                      {proposal.status === "PENDING" ? "Review proposal" : "Open proposal"}
+                    </Link>
+                  </dd>
+                </div>
+                {proposal.appliedHref ? (
+                  <div>
+                    <dt>Applied record</dt>
+                    <dd>
+                      <Link className="inline-link" href={proposal.appliedHref as Route}>
+                        {proposal.appliedLabel ?? "Applied CRM record"}
+                      </Link>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function proposalLifecycle(proposal: CrmChangeProposalView) {
+  if (proposal.status === "APPLIED") {
+    return {
+      label: "Proposal applied",
+      nextAction: proposal.appliedHref ? "open the applied CRM record" : "open the proposal",
+      reason: "This CRM Change Proposal was applied after review.",
+      tone: "success" as const
+    };
+  }
+  if (proposal.status === "REJECTED") {
+    return {
+      label: "Proposal rejected",
+      nextAction: "open the proposal or dismiss",
+      reason: "This CRM Change Proposal was rejected and will not apply changes.",
+      tone: "neutral" as const
+    };
+  }
+  if (proposal.status === "FAILED" || proposal.status === "SUPERSEDED") {
+    return {
+      label: "Proposal failed or stale",
+      nextAction: "open the proposal and retry safely if still needed",
+      reason: proposal.conflictInfo?.message ?? proposal.warnings[0] ?? "This proposal could not be applied in its current state.",
+      tone: "danger" as const
+    };
+  }
+  if (proposal.permissionState === "blocked") {
+    return {
+      label: "Permission denied",
+      nextAction: "review AI Preferences or open the proposal",
+      reason: proposal.permissionReason,
+      tone: "danger" as const
+    };
+  }
+  return {
+    label: "CRM Change Proposal pending review",
+    nextAction: "review proposal",
+    reason: "This proposal is saved for review. It will not mutate records until explicitly applied.",
+    tone: "neutral" as const
+  };
+}
+
+function proposalTypeLabel(type: CrmChangeProposalView["proposalType"]) {
+  if (type === "CREATE_PERSON") return "Contact creation";
+  if (type === "UPDATE_PERSON") return "Contact update";
+  if (type === "LINK_PERSON_ORGANIZATION") return "Contact organization link";
+  if (type === "CREATE_ORGANIZATION") return "Organization creation";
+  if (type === "UPDATE_ORGANIZATION") return "Organization update";
+  return "Contact and organization proposal";
 }
 
 function applyFormId(request: AssistantActionRequestView) {

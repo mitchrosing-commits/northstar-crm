@@ -10,6 +10,7 @@ type FollowUpRelatedRecord = {
 export function buildActivityFollowUpHref({
   description,
   dueInDays = 1,
+  now,
   related,
   returnTo,
   title = "Follow up",
@@ -17,6 +18,7 @@ export function buildActivityFollowUpHref({
 }: {
   description?: string;
   dueInDays?: number;
+  now?: Date | string;
   related: FollowUpRelatedRecord;
   returnTo?: Route | string;
   title?: string;
@@ -26,7 +28,7 @@ export function buildActivityFollowUpHref({
   params.set("related", `${related.type}:${related.id}`);
   params.set("title", title);
   params.set("type", type);
-  params.set("due", formatFutureDateParam(dueInDays));
+  params.set("due", formatFutureDateParam(dueInDays, now ? new Date(now) : undefined));
   if (description) params.set("description", description);
   if (returnTo) params.set("returnTo", returnTo);
   return `/activities/new?${params.toString()}` as Route;

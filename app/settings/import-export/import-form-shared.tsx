@@ -263,7 +263,7 @@ export function ImportCsvInputGroup({
   rows = 8,
 }: ImportCsvInputGroupProps) {
   return (
-    <>
+    <div className="form-field import-csv-field">
       <label className="form-label" htmlFor={id}>
         <FormFieldLabel required>{label}</FormFieldLabel>
       </label>
@@ -276,7 +276,7 @@ export function ImportCsvInputGroup({
         rows={rows}
       />
       <ImportFormGuidance>{guidance}</ImportFormGuidance>
-    </>
+    </div>
   );
 }
 

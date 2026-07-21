@@ -76,6 +76,7 @@ export type MeetingSourceMetadata = {
   requiredProvider?: MeetingSourceProviderRequirement;
   sourceType: MeetingSourceType;
   statusMessage?: string;
+  transcriptionConfidence?: "high" | "low" | "medium";
   warnings?: string[];
   wordCount?: number;
 };
@@ -103,6 +104,29 @@ export type MatchedCrmObject = {
   matchedReason: string;
   objectType: CrmObjectType;
   status?: string;
+  warning?: string;
+};
+
+export type TranscriptSegment = {
+  confidence?: "high" | "low" | "medium";
+  id: string;
+  speaker?: string;
+  startTime?: string;
+  text: string;
+  warnings?: string[];
+};
+
+export type MeetingAssociationReview = {
+  correctionUpdatedAt?: string;
+  confidence: MatchConfidence | "unmatched";
+  evidence: string;
+  id: string;
+  matchedReason?: string;
+  mention: string;
+  originalTarget?: CrmTarget | null;
+  resolutionStatus?: "ambiguous" | "confirmed" | "stale" | "unmatched" | "user_corrected";
+  selectedTarget: CrmTarget | null;
+  targetType: CrmObjectType | "unknown";
   warning?: string;
 };
 
@@ -241,7 +265,27 @@ export type MeetingSummarySection = {
   title: string;
 };
 
+export type MeetingCrmChangeProposalSummary = {
+  canApply: boolean;
+  confidence: string | null;
+  duplicateWarnings: string[];
+  evidence: string[];
+  href: string;
+  id: string;
+  permissionLabel: string;
+  permissionLevel: string;
+  permissionReason: string;
+  proposalType: string;
+  rationale: string | null;
+  status: string;
+  targetLabel: string;
+  title: string;
+  warnings: string[];
+};
+
 export type MeetingIntelligenceDraft = {
+  associationReviews?: MeetingAssociationReview[];
+  crmChangeProposals?: MeetingCrmChangeProposalSummary[];
   markdown: string;
   matchedObjects: MatchedCrmObject[];
   meetingActivity: ProposedMeetingActivity | null;
@@ -251,6 +295,7 @@ export type MeetingIntelligenceDraft = {
   sourceMetadata?: MeetingSourceMetadata;
   summary: string;
   summarySections?: MeetingSummarySection[];
+  transcriptSegments?: TranscriptSegment[];
   unmatchedEntities: UnmatchedEntity[];
   warnings: string[];
 };

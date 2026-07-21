@@ -4,6 +4,7 @@ import { LeadForm } from "@/components/lead-form";
 import { PageHeader } from "@/components/page-header";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { formatPersonName } from "@/lib/person-name";
+import { parseReturnToHref, returnToLabel } from "@/lib/return-to";
 import { getWorkspace, listOrganizations, listPeople } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ export default async function NewLeadPage({
     organizationId?: string;
     ownerId?: string;
     personId?: string;
+    returnTo?: string;
     source?: string;
     status?: string;
     title?: string;
@@ -37,6 +39,9 @@ export default async function NewLeadPage({
   const requestedPersonId = firstSearchParam(resolvedSearchParams?.personId);
   const requestedOrganizationId = firstSearchParam(resolvedSearchParams?.organizationId);
   const requestedOwnerId = firstSearchParam(resolvedSearchParams?.ownerId);
+  const returnHref = parseReturnToHref(resolvedSearchParams?.returnTo, "/leads");
+  const hasReturnTo = returnHref !== "/leads";
+  const returnLabel = returnToLabel(returnHref);
   const defaultPersonId = people.some((person) => person.id === requestedPersonId) ? requestedPersonId : undefined;
   const defaultOrganizationId = organizations.some((organization) => organization.id === requestedOrganizationId) ? requestedOrganizationId : undefined;
   const defaultOwnerId = owners.some((owner) => owner.id === requestedOwnerId) ? requestedOwnerId : actorUserId;
@@ -47,13 +52,13 @@ export default async function NewLeadPage({
   return (
     <AppShell workspace={workspace}>
       <PageHeader
-        actions={<FormHeaderActions backHref="/leads" backLabel="Back to leads" />}
+        actions={<FormHeaderActions backHref={returnHref} backLabel={returnLabel} />}
         eyebrow="Leads"
         subtitle="Capture an early opportunity before it is qualified into the active deal pipeline."
         title="New lead"
       />
       <LeadForm
-        cancelHref="/leads"
+        cancelHref={returnHref}
         defaultOrganizationId={defaultOrganizationId}
         defaultOwnerId={defaultOwnerId}
         defaultPersonId={defaultPersonId}
@@ -67,10 +72,13 @@ export default async function NewLeadPage({
         prefillNotice={
           hasSearchPrefill
             ? "We prefilled this lead from your search shortcut. Review the details, then capture the opportunity."
+            : hasReturnTo
+              ? "Create this lead, then Northstar will return to your activity draft with the lead selected."
             : hasRelatedRecordPrefill
               ? "We linked the newly created record to this lead draft. Review the details, then capture the opportunity."
             : undefined
         }
+        returnTo={hasReturnTo ? { href: returnHref, paramName: "leadId" } : undefined}
         workspaceId={workspace.id}
       />
     </AppShell>

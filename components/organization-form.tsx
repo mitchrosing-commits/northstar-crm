@@ -9,6 +9,7 @@ import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { FormPrefillNotice } from "@/components/form-prefill-notice";
+import { FormSection } from "@/components/form-section";
 import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type EntityOption = {
@@ -113,30 +114,35 @@ export function OrganizationForm({
       {mode === "create" && prefillNotice ? (
         <FormPrefillNotice>{prefillNotice}</FormPrefillNotice>
       ) : null}
-      <div className="form-grid">
-        <label className="form-field form-field-wide">
-          <FormFieldLabel required>Name</FormFieldLabel>
-          <input onChange={(event) => setName(event.target.value)} required value={name} />
-        </label>
+      <FormSection
+        description="Use the company name as the primary record label, then add web and ownership context if available."
+        title="Organization details"
+      >
+        <div className="form-grid">
+          <label className="form-field form-field-wide">
+            <FormFieldLabel required>Name</FormFieldLabel>
+            <input onChange={(event) => setName(event.target.value)} required value={name} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Domain</FormFieldLabel>
-          <input onChange={(event) => setDomain(event.target.value)} placeholder="example.com" value={domain} />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Domain</FormFieldLabel>
+            <input onChange={(event) => setDomain(event.target.value)} placeholder="example.com" value={domain} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Assigned to</FormFieldLabel>
-          <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
-            {owners.map((owner) => (
-              <option key={owner.id} value={owner.id}>
-                {owner.name}
-              </option>
-            ))}
-          </select>
-          <OwnerAssignmentHint owners={owners} />
-        </label>
-      </div>
+          <label className="form-field">
+            <FormFieldLabel>Assigned to</FormFieldLabel>
+            <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
+              <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
+              {owners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name}
+                </option>
+              ))}
+            </select>
+            <OwnerAssignmentHint owners={owners} />
+          </label>
+        </div>
+      </FormSection>
 
       <FormActionBar
         cancelHref={cancelHref}

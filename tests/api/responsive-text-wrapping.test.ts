@@ -37,6 +37,7 @@ describe("responsive text wrapping safeguards", () => {
     const providerBodyCss = cssBlock(".provider-card p");
     const providerBadgeCss = cssBlock(".provider-card .badge");
     const providerButtonCss = cssBlock(".provider-card .button-primary,\n.provider-card .button-secondary");
+    const assistantLifecycleBadgeCss = cssBlock(".assistant-lifecycle-row .badge");
     const sharedSafeguardsCss = globals.match(/\/\* Shared text wrapping safeguards[\s\S]*?\.northstar-assistant-footer span \{[\s\S]*?\n\}/)?.[0] ?? "";
 
     expect(providerBodyCss).toContain("overflow-wrap: anywhere;");
@@ -45,6 +46,8 @@ describe("responsive text wrapping safeguards", () => {
     expect(providerBadgeCss).toContain("word-break: normal;");
     expect(providerButtonCss).toContain("overflow-wrap: break-word;");
     expect(providerButtonCss).toContain("word-break: normal;");
+    expect(assistantLifecycleBadgeCss).toContain("overflow-wrap: break-word;");
+    expect(assistantLifecycleBadgeCss).toContain("word-break: normal;");
     expect(sharedSafeguardsCss).toContain("overflow-wrap: break-word;");
     expect(sharedSafeguardsCss).toContain("word-break: normal;");
     expect(sharedSafeguardsCss).not.toContain("overflow-wrap: anywhere;");

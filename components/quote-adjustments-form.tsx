@@ -7,6 +7,8 @@ import { Badge } from "@/components/badge";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSection } from "@/components/form-section";
+import { FormSuccessMessage } from "@/components/form-success-message";
 import { PanelTitleRow } from "@/components/panel-title-row";
 
 type AdjustmentType = "NONE" | "PERCENT" | "FIXED";
@@ -36,11 +38,15 @@ export function QuoteAdjustmentsForm({
   const [taxType, setTaxType] = useState<AdjustmentType>(initialTaxType);
   const [taxValue, setTaxValue] = useState(formatAdjustmentInput(initialTaxType, initialTaxValue));
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setNotice(null);
+
+    if (isSaving) return;
 
     const parsedDiscountValue = parseAdjustmentInput(discountType, discountValue);
     const parsedTaxValue = parseAdjustmentInput(taxType, taxValue);
@@ -69,6 +75,8 @@ export function QuoteAdjustmentsForm({
     }
 
     setIsSaving(false);
+    setNotice("Quote adjustments saved. Draft totals refreshed.");
+    preserveQuoteAdjustmentsAnchor();
     router.refresh();
   }
 
@@ -80,33 +88,43 @@ export function QuoteAdjustmentsForm({
         title="Quote Adjustments"
       />
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
+      {notice ? <FormSuccessMessage compact>{notice}</FormSuccessMessage> : null}
       <form className="inline-form" onSubmit={onSubmit}>
-        <div className="form-grid">
-          <AdjustmentFields
-            label="Discount"
-            onTypeChange={(value) => {
-              setDiscountType(value);
-              setDiscountValue("");
-            }}
-            onValueChange={setDiscountValue}
-            type={discountType}
-            value={discountValue}
-          />
-          <AdjustmentFields
-            label="Tax"
-            onTypeChange={(value) => {
-              setTaxType(value);
-              setTaxValue("");
-            }}
-            onValueChange={setTaxValue}
-            type={taxType}
-            value={taxValue}
-          />
-        </div>
+        <FormSection
+          description="Use None for no adjustment, Percent for percentage-based changes, or Fixed amount for currency values."
+          title="Adjustment inputs"
+        >
+          <div className="form-grid">
+            <AdjustmentFields
+              label="Discount"
+              onTypeChange={(value) => {
+                setDiscountType(value);
+                setDiscountValue("");
+              }}
+              onValueChange={setDiscountValue}
+              type={discountType}
+              value={discountValue}
+            />
+            <AdjustmentFields
+              label="Tax"
+              onTypeChange={(value) => {
+                setTaxType(value);
+                setTaxValue("");
+              }}
+              onValueChange={setTaxValue}
+              type={taxType}
+              value={taxValue}
+            />
+          </div>
+        </FormSection>
         <FormActionBar isSaving={isSaving} submitLabel="Save adjustments" />
       </form>
     </section>
   );
+}
+
+function preserveQuoteAdjustmentsAnchor() {
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#quote-adjustments`);
 }
 
 function AdjustmentFields({

@@ -335,6 +335,8 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("href={provider.href as Route}");
     expect(emailPage).toContain("Connected account: {provider.accountEmail}");
     expect(emailPage).toContain("Last sync: {formatDate(provider.lastSyncAt)}");
+    expect(emailPage).toContain("emailSyncMetricText(provider)");
+    expect(emailPage).toContain("emailSyncModeLabel(source.lastSyncMode)");
     expect(emailPage).toContain("Last sync issue: {provider.lastError}");
     expect(emailPage).toContain("Sync status: {provider.syncStatusLabel}");
     expect(emailPage).toContain(
@@ -419,21 +421,18 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).not.toContain("Yahoo OAuth");
   });
 
-  it("runs manual Gmail sync from the email page and reports matched, duplicate, and skipped counts", () => {
+  it("queues manual Gmail sync from the email page and reports progress without provider work in the request", () => {
     expect(emailActions).toContain('"use server"');
-    expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
-    expect(emailActions).toContain("runAllGmailInboxSyncNow(actor)");
+    expect(emailActions).toContain("enqueueGmailInboxSyncJob(actor)");
+    expect(emailActions).toContain("enqueueAllGmailInboxSyncJobs(actor)");
     expect(emailActions).toContain(
-      "runGmailInboxSyncNow(actor, { connectionId: selectedAccount })",
+      "enqueueGmailInboxSyncJobForSelectedConnection(actor, selectedAccount)",
     );
-    expect(emailActions).toContain('emailConnection: "gmail-synced"');
+    expect(emailActions).toContain('emailConnection: "gmail-sync-queued"');
+    expect(emailActions).toContain("queued: String(queued)");
     expect(emailActions).toContain('syncStatus: "1"');
-    expect(emailActions).toContain(
-      "messageSkips: String(result.skippedMessageFailures ?? 0)",
-    );
-    expect(emailActions).toContain(
-      'params.set("syncWarning", result.syncWarning)',
-    );
+    expect(emailActions).not.toContain("runGmailInboxSyncNow(actor)");
+    expect(emailActions).not.toContain("runAllGmailInboxSyncNow(actor)");
     expect(emailActions).toContain("safeGmailSyncActionError(error)");
     expect(emailActions).toContain("redactSensitiveText(message)");
     expect(emailActions).toContain("normalizeEmailPageReturnTo");
@@ -513,7 +512,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("background worker has not picked it up yet");
     expect(emailPage).toContain("RAILWAY_SERVICE_ROLE=worker");
     expect(emailPage).toContain(
-      "run one explicit bounded sync through the same job record",
+      "queues work through the same durable job path",
     );
     expect(emailPage).toContain('id="gmail-sync-progress"');
     expect(emailPage).toContain("Waiting to start Gmail sync");
@@ -573,7 +572,7 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("EmailInboxEmptyShell");
   });
 
-  it("surfaces account-aware inbox freshness without enabling recurring sync", () => {
+  it("surfaces account-aware inbox freshness with conservative job-backed sync", () => {
     expect(emailPage).toContain("const inboxFreshness = inboxFreshnessState({");
     expect(emailPage).toContain("selectedAccount: selectedInboxAccount");
     expect(emailPage).toContain("threadCount: workInbox.items.length");
@@ -582,13 +581,13 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("newestAccountSyncAt(accounts)");
     expect(emailPage).toContain("InboxFreshnessStrip");
     expect(emailPage).toContain('aria-label="Inbox freshness"');
-    expect(emailPage).toContain("Manual refresh only");
+    expect(emailPage).toContain("Job-backed refresh");
     expect(emailPage).toContain(
-      "Northstar does not run aggressive recurring Gmail sync yet",
+      "Northstar uses the background job path for conservative Gmail refresh",
     );
     expect(emailPage).toContain("Refresh recommended");
     expect(emailPage).toContain("Recently synced");
-    expect(emailPage).toContain("Future auto-sync readiness");
+    expect(emailPage).toContain("Inbox auto-sync readiness");
     expect(emailPage).toContain("per-account throttling");
     expect(emailPage).toContain("job dedupe");
     expect(emailPage).toContain("High-priority dashboard alert eligibility");
@@ -604,6 +603,35 @@ describe("Email UX v1 discoverability", () => {
     expect(emailPage).toContain("Stored Email History");
     expect(emailPage).toContain("Suggested Follow-ups");
     expect(emailPage).toContain("EmailLogCard");
+    expect(emailPage).toContain("listEmailCrmLinkSuggestions");
+    expect(emailPage).toContain("buildEmailCrmLinkReviewQueue");
+    expect(emailPage).toContain("buildEmailCrmLinkReviewSummary");
+    expect(emailPage).toContain("normalizeEmailCrmLinkReviewFilter");
+    expect(emailPage).toContain("Unlinked Email Review");
+    expect(emailPage).toContain("crmLinkReviewSummary");
+    expect(emailPage).toContain("EmailCrmLinkReviewQueueRow");
+    expect(emailPage).toContain("emailCrmLinkReviewFilterHref");
+    expect(emailPage).toContain("emailReturnToCrmLinkPanel");
+    expect(emailPage).toContain("Review card");
+    expect(emailPage).toContain("Linked emails leave this queue");
+    expect(emailPage).toContain("EmailCrmLinkSuggestionPanel");
+    expect(emailPage).toContain("CRM Link Assistance");
+    expect(emailPage).toContain("Northstar found deterministic CRM evidence");
+    expect(emailPage).toContain("No reliable CRM match found.");
+    expect(emailPage).toContain("linkEmailLogToCrmRecordFromEmailPageAction");
+    expect(emailPage).toContain('name="recordType"');
+    expect(emailPage).toContain('name="recordId"');
+    expect(emailPage).toContain("currentEmailPageReturnHref");
+    expect(emailService).toContain("export async function listEmailCrmLinkSuggestions");
+    expect(emailService).toContain("export const emailCrmLinkReviewFilters");
+    expect(emailService).toContain("export function buildEmailCrmLinkReviewQueue");
+    expect(emailService).toContain("export function buildEmailCrmLinkReviewSummary");
+    expect(emailService).toContain("export async function linkEmailLogToCrmRecord");
+    expect(emailService).toContain("writeAuditLog(actor, \"email_log.linked\"");
+    expect(globalCss).toContain(".email-crm-link-suggestions");
+    expect(globalCss).toContain(".email-crm-link-candidate");
+    expect(globalCss).toContain(".email-crm-link-review-row");
+    expect(globalCss).toContain(".email-crm-link-review-grid");
     expect(emailPage).toContain("emailNeedsAttention");
     expect(emailService).toContain("options: { limit?: number } = {}");
     expect(emailService).toContain("defaultEmailLogListLimit = 25");
@@ -944,9 +972,12 @@ describe("Email UX v1 discoverability", () => {
     );
     expect(settingsPage).toContain("const providerSyncLabel =");
     expect(settingsPage).toContain('provider.syncLabel ?? "Sync recent Gmail"');
-    expect(settingsPage).toContain(
-      "const providerSyncActionLabel = `${providerSyncLabel}: import recent matched ${provider.name} messages`",
-    );
+    expect(settingsPage).toContain("providerSyncHealth.canRetryNow");
+    expect(settingsPage).toContain("GmailSyncHealthDetails");
+    expect(settingsPage).toContain("Gmail Sync Health");
+    expect(settingsPage).toContain("queue Full Inbox sync for ${provider.name}");
+    expect(settingsPage).toContain("syncRecentGmailAction");
+    expect(settingsPage).toContain('name="connectionId"');
     expect(settingsPage).toContain("aria-label={providerPrimaryActionLabel}");
     expect(settingsPage).toContain("title={providerPrimaryActionLabel}");
     expect(settingsPage).toContain("aria-label={providerSyncActionLabel}");
@@ -955,6 +986,39 @@ describe("Email UX v1 discoverability", () => {
     expect(settingsPage).not.toContain("<h3>{provider.name}</h3>");
     expect(emailPage).toContain('href="/settings#email-connections"');
     expect(emailPage).toContain("Email settings");
+  });
+
+  it("surfaces compact Gmail sync health without leaking provider internals", () => {
+    const gmailHealthDetails = readFileSync(
+      join(process.cwd(), "components/gmail-sync-health-details.tsx"),
+      "utf8",
+    );
+    expect(emailConnectionService).toContain("export type EmailSyncHealth =");
+    expect(emailConnectionService).toContain("currentState: EmailSyncHealthState");
+    expect(emailConnectionService).toContain("nextAutoSyncEligibleAt");
+    expect(emailConnectionService).toContain("retryAt");
+    expect(emailConnectionService).toContain("activeDuplicateMessage");
+    expect(emailConnectionService).toContain("staleWorkerDetail");
+    expect(emailConnectionService).toContain("gmailSyncWorkerStaleDetail");
+    expect(emailConnectionService).toContain("gmailSyncFailureCategory");
+    expect(emailConnectionService).toContain("gmailSyncJobSourceFromPayload");
+    expect(emailConnectionService).toContain("\"automatic\"");
+    expect(emailConnectionService).toContain("\"legacy\"");
+    expect(emailConnectionService).toContain("\"manual\"");
+    expect(emailConnectionService).toContain("safeProviderLastError(job.lastError)");
+    expect(gmailHealthDetails).toContain("Sync history and health");
+    expect(gmailHealthDetails).toContain("Latest Gmail sync result counts");
+    expect(gmailHealthDetails).toContain("Recent attempts");
+    expect(gmailHealthDetails).toContain("Safe latest issue");
+    expect(gmailHealthDetails).toContain("Safe issue");
+    expect(gmailHealthDetails).not.toContain("payload");
+    expect(gmailHealthDetails).not.toContain("access_token");
+    expect(gmailHealthDetails).not.toContain("email body");
+    expect(emailPage).toContain("providerSyncHealth.canRetryNow");
+    expect(emailPage).toContain("account.syncHealth.canRetryNow");
+    expect(emailPage).toContain("GmailSyncHealthDetails");
+    expect(globalCss).toContain(".gmail-sync-health");
+    expect(globalCss).toContain(".email-connection-health-list");
   });
 
   it("renders Full Inbox threads as dense inbox rows instead of email cards", () => {

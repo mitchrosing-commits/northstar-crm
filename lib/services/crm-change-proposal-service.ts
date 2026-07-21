@@ -31,9 +31,33 @@ type ProposalCreateInput = {
   warnings?: unknown;
 };
 
+type CompoundContactOrganizationProposalInput = Omit<ProposalCreateInput, "proposalType" | "proposedPayload" | "targetEntityId"> & {
+  contact?: unknown;
+  linkContactToOrganization?: unknown;
+  organization?: unknown;
+};
+
 type CrmProposalPayload = {
   fields?: Record<string, string>;
   organizationId?: string;
+};
+
+type CompoundCrmProposalPayload = {
+  contact: CompoundContactStep;
+  linkContactToOrganization: boolean;
+  organization: CompoundOrganizationStep;
+};
+
+type CompoundContactStep = {
+  action: "create" | "existing" | "update";
+  fields?: Record<string, string>;
+  id?: string;
+};
+
+type CompoundOrganizationStep = {
+  action: "create" | "existing" | "update";
+  fields?: Record<string, string>;
+  id?: string;
 };
 
 type DuplicateCandidate = {
@@ -50,10 +74,15 @@ type ConflictInfo = {
   candidates?: DuplicateCandidate[];
 };
 
+type ProposalPermissionDecision = AssistantActionPermissionDecision & {
+  checks: AssistantActionPermissionDecision[];
+};
+
 const proposalLimit = 50;
 const supportedPersonFields = [
   "firstName",
   "lastName",
+  "title",
   "email",
   "phone",
   "organizationId",
@@ -82,10 +111,27 @@ export type CrmChangeProposalView = {
   conflictInfo: ConflictInfo | null;
   createdAt: string;
   duplicateCandidates: DuplicateCandidate[];
-  editableFields: Array<{ currentValue: string | null; key: string; label: string; proposedValue: string }>;
+  changeGroups: Array<{
+    description: string | null;
+    fields: Array<{ currentValue: string | null; inputName: string; key: string; label: string; proposedValue: string }>;
+    key: string;
+    targetHref: string | null;
+    targetLabel: string;
+    title: string;
+  }>;
+  editableFields: Array<{ currentValue: string | null; inputName: string; key: string; label: string; proposedValue: string }>;
   evidence: string[];
   id: string;
+  idempotencyKey: string;
   permissionActionKey: AiActionPermissionKey | null;
+  permissionChecks: Array<{
+    actionKey: AiActionPermissionKey | null;
+    canApply: boolean;
+    label: string;
+    level: string;
+    reason: string;
+    state: AssistantActionPermissionDecision["state"];
+  }>;
   permissionLabel: string;
   permissionLevel: string;
   permissionReason: string;
@@ -106,9 +152,10 @@ export type CrmChangeProposalView = {
 export async function createCrmChangeProposal(actor: WorkspaceActor, data: unknown) {
   await ensureWorkspaceAccess(actor);
   const input = normalizeCreateProposalInput(data);
-  const permission = await proposalPermissionDecision(actor, input.proposalType, "PENDING");
-  if (permission.level === "never_allow") {
-    throw new ApiError("FORBIDDEN", `AI Preferences currently never allow ${permissionActionLabel(permission.actionKey ?? "update_contact_or_organization")}.`, 403);
+  const permission = await proposalPermissionDecisionForPayload(actor, input.proposalType, "PENDING", input.proposedPayload);
+  const blockedCheck = permission.checks.find((check) => check.level === "never_allow");
+  if (blockedCheck) {
+    throw new ApiError("FORBIDDEN", `AI Preferences currently never allow ${permissionActionLabel(blockedCheck.actionKey ?? "update_contact_or_organization")}.`, 403);
   }
 
   const existing = await prisma.crmChangeProposal.findFirst({
@@ -117,7 +164,9 @@ export async function createCrmChangeProposal(actor: WorkspaceActor, data: unkno
   if (existing) return crmChangeProposalView(existing, permission);
 
   const currentSnapshot = await currentSnapshotForProposal(actor, input);
-  const duplicateCandidates = await duplicateCandidatesForProposal(actor, input.proposalType, input.proposedPayload);
+  const duplicateCandidates = await duplicateCandidatesForProposal(actor, input.proposalType, input.proposedPayload, {
+    targetEntityId: input.targetEntityId
+  });
   const proposal = await prisma.crmChangeProposal.create({
     data: {
       confidence: input.confidence,
@@ -140,12 +189,28 @@ export async function createCrmChangeProposal(actor: WorkspaceActor, data: unkno
   });
   await writeAuditLog(actor, "crm_change_proposal.created", "CrmChangeProposal", proposal.id, {
     duplicateCandidates: duplicateCandidates.length,
-    permissionActionKey: permission.actionKey,
+    permissionActionKeys: permission.checks.map((check) => check.actionKey).filter(Boolean),
     proposalType: proposal.proposalType,
     sourceType: proposal.sourceType,
     targetEntityId: proposal.targetEntityId
   });
   return crmChangeProposalView(proposal, permission);
+}
+
+export async function createContactOrganizationChangeProposal(
+  actor: WorkspaceActor,
+  data: CompoundContactOrganizationProposalInput
+) {
+  return createCrmChangeProposal(actor, {
+    ...data,
+    proposedPayload: {
+      contact: data.contact,
+      linkContactToOrganization: data.linkContactToOrganization,
+      organization: data.organization
+    },
+    proposalType: CrmChangeProposalType.COMPOUND_PERSON_ORGANIZATION,
+    targetEntityId: undefined
+  });
 }
 
 export async function listCrmChangeProposals(actor: WorkspaceActor, filters: { status?: unknown } = {}) {
@@ -159,10 +224,10 @@ export async function listCrmChangeProposals(actor: WorkspaceActor, filters: { s
       ...(status ? { status } : {})
     }
   });
-  const permissions = await permissionMapForProposalTypes(actor, proposals.map((proposal) => proposal.proposalType));
+  const permissions = await Promise.all(proposals.map((proposal) => permissionDecisionForStoredProposal(actor, proposal)));
   return {
     proposalLimit,
-    proposals: proposals.map((proposal) => crmChangeProposalView(proposal, permissions.get(proposal.proposalType) ?? blockedPermission())),
+    proposals: proposals.map((proposal, index) => crmChangeProposalView(proposal, permissions[index] ?? blockedPermission())),
     status
   };
 }
@@ -173,7 +238,7 @@ export async function getCrmChangeProposal(actor: WorkspaceActor, proposalId: st
     where: { id: normalizeId(proposalId), workspaceId: actor.workspaceId }
   });
   if (!proposal) throw new ApiError("NOT_FOUND", "CRM change proposal was not found.", 404);
-  return crmChangeProposalView(proposal, await proposalPermissionDecision(actor, proposal.proposalType, proposal.status));
+  return crmChangeProposalView(proposal, await permissionDecisionForStoredProposal(actor, proposal));
 }
 
 export async function rejectCrmChangeProposal(actor: WorkspaceActor, proposalId: string) {
@@ -190,7 +255,7 @@ export async function rejectCrmChangeProposal(actor: WorkspaceActor, proposalId:
     proposalType: proposal.proposalType,
     sourceType: proposal.sourceType
   });
-  return crmChangeProposalView(proposal, await proposalPermissionDecision(actor, proposal.proposalType, proposal.status));
+  return crmChangeProposalView(proposal, await permissionDecisionForStoredProposal(actor, proposal));
 }
 
 export async function applyCrmChangeProposal(actor: WorkspaceActor, proposalId: string, data: unknown = {}) {
@@ -203,17 +268,17 @@ export async function applyCrmChangeProposal(actor: WorkspaceActor, proposalId: 
     return {
       appliedEntityId: existing.appliedEntityId,
       appliedEntityType: existing.appliedEntityType,
-      proposal: crmChangeProposalView(existing, await proposalPermissionDecision(actor, existing.proposalType, existing.status))
+      proposal: crmChangeProposalView(existing, await permissionDecisionForStoredProposal(actor, existing))
     };
   }
   if (existing.status !== CrmChangeProposalStatus.PENDING) {
     throw new ApiError("CONFLICT", "CRM change proposal is no longer pending.", 409);
   }
 
-  const permission = await proposalPermissionDecision(actor, existing.proposalType, existing.status);
+  const permission = await permissionDecisionForStoredProposal(actor, existing);
   if (!permission.canApply || permission.level !== "require_confirmation") {
     await writeAuditLog(actor, "crm_change_proposal.apply_rejected", "CrmChangeProposal", existing.id, {
-      permissionActionKey: permission.actionKey,
+      permissionActionKeys: permission.checks.map((check) => check.actionKey).filter(Boolean),
       permissionLevel: permission.level,
       proposalType: existing.proposalType,
       reason: permission.reason
@@ -222,7 +287,9 @@ export async function applyCrmChangeProposal(actor: WorkspaceActor, proposalId: 
   }
 
   const editedPayload = normalizeApplyPayload(existing.proposalType, existing.proposedPayload, data);
-  const duplicateCandidates = await duplicateCandidatesForProposal(actor, existing.proposalType, editedPayload);
+  const duplicateCandidates = await duplicateCandidatesForProposal(actor, existing.proposalType, editedPayload, {
+    targetEntityId: existing.targetEntityId
+  });
   if (duplicateCandidates.length > 0) {
     const proposal = await failProposal(actor, existing.id, {
       candidates: duplicateCandidates,
@@ -238,7 +305,11 @@ export async function applyCrmChangeProposal(actor: WorkspaceActor, proposalId: 
     throw new ApiError("CONFLICT", crmChangeProposalView(proposal, permission).conflictInfo?.message ?? "CRM change proposal is stale.", 409);
   }
 
-  const applied = await applyProposalPayload(actor, existing.proposalType, existing.targetEntityId, editedPayload, existing.id);
+  if (isCompoundProposalType(existing.proposalType)) {
+    return applyCompoundProposalPayload(actor, existing, editedPayload as CompoundCrmProposalPayload, permission);
+  }
+
+  const applied = await applyProposalPayload(actor, existing.proposalType, existing.targetEntityId, editedPayload as CrmProposalPayload, existing.id);
   const proposal = await prisma.crmChangeProposal.update({
     data: {
       appliedAt: new Date(),
@@ -261,7 +332,7 @@ export async function applyCrmChangeProposal(actor: WorkspaceActor, proposalId: 
   return {
     appliedEntityId: applied.id,
     appliedEntityType: applied.entityType,
-    proposal: crmChangeProposalView(proposal, await proposalPermissionDecision(actor, proposal.proposalType, proposal.status))
+    proposal: crmChangeProposalView(proposal, await permissionDecisionForStoredProposal(actor, proposal))
   };
 }
 
@@ -297,6 +368,9 @@ function normalizeApplyPayload(proposalType: CrmChangeProposalType, storedPayloa
   if (Object.keys(editedFields).length === 0 && input.organizationId === undefined) {
     return normalizePayloadForProposal(proposalType, storedPayload, { creating: false });
   }
+  if (isCompoundProposalType(proposalType)) {
+    return normalizeCompoundApplyPayload(storedPayload, editedFields);
+  }
   if (proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) {
     return normalizePayloadForProposal(proposalType, { organizationId: input.organizationId }, { creating: false });
   }
@@ -307,8 +381,11 @@ function normalizePayloadForProposal(
   proposalType: CrmChangeProposalType,
   payload: unknown,
   options: { creating: boolean }
-): CrmProposalPayload {
+): CrmProposalPayload | CompoundCrmProposalPayload {
   const input = objectInput(payload);
+  if (isCompoundProposalType(proposalType)) {
+    return normalizeCompoundPayload(input, options);
+  }
   if (proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) {
     return { organizationId: normalizeRequiredText(input.organizationId, "Organization id is required for contact linking.", 160) };
   }
@@ -341,8 +418,110 @@ function normalizePayloadForProposal(
   return { fields: normalized };
 }
 
+function normalizeCompoundApplyPayload(storedPayload: Prisma.JsonValue, editedFields: Record<string, unknown>) {
+  const payload = normalizeCompoundPayload(objectInput(storedPayload), { creating: false });
+  const contactFields = payload.contact.fields ? { ...payload.contact.fields } : undefined;
+  const organizationFields = payload.organization.fields ? { ...payload.organization.fields } : undefined;
+
+  for (const [key, value] of Object.entries(editedFields)) {
+    const [scope, fieldKey] = key.split(".");
+    if (scope === "contact" && contactFields && fieldKey) {
+      contactFields[fieldKey] = normalizeFieldValue(fieldKey, value);
+    }
+    if (scope === "organization" && organizationFields && fieldKey) {
+      organizationFields[fieldKey] = normalizeFieldValue(fieldKey, value);
+    }
+  }
+
+  return normalizeCompoundPayload({
+    contact: { ...payload.contact, fields: contactFields },
+    linkContactToOrganization: payload.linkContactToOrganization,
+    organization: { ...payload.organization, fields: organizationFields }
+  }, { creating: false });
+}
+
+function normalizeCompoundPayload(payload: Record<string, unknown>, _options: { creating: boolean }): CompoundCrmProposalPayload {
+  const contact = normalizeCompoundContactStep(payload.contact);
+  const organization = normalizeCompoundOrganizationStep(payload.organization);
+  const linkContactToOrganization = payload.linkContactToOrganization === undefined ? true : payload.linkContactToOrganization === true;
+  if (payload.linkContactToOrganization !== undefined && typeof payload.linkContactToOrganization !== "boolean") {
+    throw new ApiError("VALIDATION_ERROR", "Compound proposal link flag must be true or false.", 422);
+  }
+  if (
+    contact.action === "existing" &&
+    organization.action === "existing" &&
+    !linkContactToOrganization
+  ) {
+    throw new ApiError("VALIDATION_ERROR", "Compound proposal must include at least one reviewed CRM change.", 422);
+  }
+  if (linkContactToOrganization && contact.action === "existing" && organization.action === "existing") {
+    return { contact, linkContactToOrganization, organization };
+  }
+  return { contact, linkContactToOrganization, organization };
+}
+
+function normalizeCompoundContactStep(value: unknown): CompoundContactStep {
+  const input = objectInput(value);
+  const action = normalizeCompoundAction(input.action, "Contact compound action is required.");
+  const id = action === "create" ? undefined : normalizeRequiredText(input.id, "Contact id is required for this compound proposal.", 160);
+  const fields = action === "existing"
+    ? undefined
+    : normalizeFieldsForProposal(CrmChangeProposalType.UPDATE_PERSON, input.fields, {
+      creating: action === "create",
+      entityLabel: "Contact"
+    });
+  if (action === "create" && !fields?.firstName) throw new ApiError("VALIDATION_ERROR", "Contact first name is required.", 422);
+  return omitUndefined({ action, fields, id });
+}
+
+function normalizeCompoundOrganizationStep(value: unknown): CompoundOrganizationStep {
+  const input = objectInput(value);
+  const action = normalizeCompoundAction(input.action, "Organization compound action is required.");
+  const id = action === "create" ? undefined : normalizeRequiredText(input.id, "Organization id is required for this compound proposal.", 160);
+  const fields = action === "existing"
+    ? undefined
+    : normalizeFieldsForProposal(CrmChangeProposalType.UPDATE_ORGANIZATION, input.fields, {
+      creating: action === "create",
+      entityLabel: "Organization"
+    });
+  if (action === "create" && !fields?.name) throw new ApiError("VALIDATION_ERROR", "Organization name is required.", 422);
+  return omitUndefined({ action, fields, id });
+}
+
+function normalizeCompoundAction(value: unknown, message: string): "create" | "existing" | "update" {
+  if (value === "create" || value === "existing" || value === "update") return value;
+  throw new ApiError("VALIDATION_ERROR", message, 422);
+}
+
+function normalizeFieldsForProposal(
+  proposalType: CrmChangeProposalType,
+  fieldsInput: unknown,
+  _options: { creating: boolean; entityLabel: string }
+) {
+  const fields = objectInput(fieldsInput);
+  const allowed = proposalType === CrmChangeProposalType.CREATE_PERSON || proposalType === CrmChangeProposalType.UPDATE_PERSON
+    ? supportedPersonFields
+    : supportedOrganizationFields;
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (!(allowed as readonly string[]).includes(key)) {
+      throw new ApiError("VALIDATION_ERROR", `${fieldLabel(key)} is not supported for this CRM proposal.`, 422);
+    }
+    const text = normalizeFieldValue(key, value);
+    if (!text) {
+      throw new ApiError("VALIDATION_ERROR", "CRM change proposals cannot blank existing fields.", 422);
+    }
+    normalized[key] = text;
+  }
+  if (Object.keys(normalized).length === 0) throw new ApiError("VALIDATION_ERROR", "CRM change proposal must include at least one supported field.", 422);
+  return normalized;
+}
+
 async function currentSnapshotForProposal(actor: WorkspaceActor, input: ReturnType<typeof normalizeCreateProposalInput>) {
   if (input.proposalType === CrmChangeProposalType.CREATE_PERSON || input.proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return null;
+  if (isCompoundProposalType(input.proposalType)) {
+    return currentSnapshotForCompoundProposal(actor, input.proposedPayload as CompoundCrmProposalPayload);
+  }
   if (input.proposalType === CrmChangeProposalType.UPDATE_PERSON || input.proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) {
     const person = await prisma.person.findFirst({
       where: { id: input.targetEntityId ?? "", workspaceId: actor.workspaceId, ...activeWhere },
@@ -350,7 +529,7 @@ async function currentSnapshotForProposal(actor: WorkspaceActor, input: ReturnTy
     });
     if (!person) throw new ApiError("NOT_FOUND", "Target contact was not found.", 404);
     if (input.proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) {
-      await assertActiveOrganization(actor.workspaceId, input.proposedPayload.organizationId ?? "");
+      await assertActiveOrganization(actor.workspaceId, (input.proposedPayload as CrmProposalPayload).organizationId ?? "");
     }
     return personSnapshot(person);
   }
@@ -362,13 +541,50 @@ async function currentSnapshotForProposal(actor: WorkspaceActor, input: ReturnTy
   return organizationSnapshot(organization);
 }
 
-async function duplicateCandidatesForProposal(actor: WorkspaceActor, proposalType: CrmChangeProposalType, payload: CrmProposalPayload): Promise<DuplicateCandidate[]> {
+async function currentSnapshotForCompoundProposal(actor: WorkspaceActor, payload: CompoundCrmProposalPayload) {
+  const [person, organization] = await Promise.all([
+    payload.contact.action === "create"
+      ? null
+      : prisma.person.findFirst({
+        where: { id: payload.contact.id ?? "", workspaceId: actor.workspaceId, ...activeWhere },
+        select: personSnapshotSelect
+      }),
+    payload.organization.action === "create"
+      ? null
+      : prisma.organization.findFirst({
+        where: { id: payload.organization.id ?? "", workspaceId: actor.workspaceId, ...activeWhere },
+        select: organizationSnapshotSelect
+      })
+  ]);
+  if (payload.contact.action !== "create" && !person) throw new ApiError("NOT_FOUND", "Target contact was not found.", 404);
+  if (payload.organization.action !== "create" && !organization) throw new ApiError("NOT_FOUND", "Target organization was not found.", 404);
+  return {
+    contact: person ? personSnapshot(person) : null,
+    organization: organization ? organizationSnapshot(organization) : null
+  };
+}
+
+async function duplicateCandidatesForProposal(
+  actor: WorkspaceActor,
+  proposalType: CrmChangeProposalType,
+  payload: CrmProposalPayload | CompoundCrmProposalPayload,
+  options: { targetEntityId?: string | null } = {}
+): Promise<DuplicateCandidate[]> {
+  if (isCompoundProposalType(proposalType)) {
+    return duplicateCandidatesForCompoundProposal(actor, payload as CompoundCrmProposalPayload);
+  }
+  const simplePayload = payload as CrmProposalPayload;
   const candidates: DuplicateCandidate[] = [];
-  if (proposalType === CrmChangeProposalType.CREATE_PERSON) {
-    const email = payload.fields?.email;
+  if (proposalType === CrmChangeProposalType.CREATE_PERSON || proposalType === CrmChangeProposalType.UPDATE_PERSON) {
+    const email = simplePayload.fields?.email;
     if (email) {
       const people = await prisma.person.findMany({
-        where: { email: { equals: email, mode: "insensitive" }, workspaceId: actor.workspaceId, ...activeWhere },
+        where: {
+          email: { equals: email, mode: "insensitive" },
+          id: options.targetEntityId ? { not: options.targetEntityId } : undefined,
+          workspaceId: actor.workspaceId,
+          ...activeWhere
+        },
         select: { email: true, firstName: true, id: true, lastName: true },
         take: 5
       });
@@ -381,14 +597,19 @@ async function duplicateCandidatesForProposal(actor: WorkspaceActor, proposalTyp
       })));
     }
   }
-  if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) {
-    const fields = payload.fields ?? {};
+  if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION || proposalType === CrmChangeProposalType.UPDATE_ORGANIZATION) {
+    const fields = simplePayload.fields ?? {};
     const OR: Prisma.OrganizationWhereInput[] = [];
     if (fields.domain) OR.push({ domain: { equals: normalizeDomain(fields.domain), mode: "insensitive" } });
     if (fields.name) OR.push({ name: { equals: fields.name, mode: "insensitive" } });
     if (OR.length > 0) {
       const organizations = await prisma.organization.findMany({
-        where: { OR, workspaceId: actor.workspaceId, ...activeWhere },
+        where: {
+          OR,
+          id: options.targetEntityId ? { not: options.targetEntityId } : undefined,
+          workspaceId: actor.workspaceId,
+          ...activeWhere
+        },
         select: { domain: true, id: true, name: true },
         take: 5
       });
@@ -404,12 +625,33 @@ async function duplicateCandidatesForProposal(actor: WorkspaceActor, proposalTyp
   return candidates;
 }
 
+async function duplicateCandidatesForCompoundProposal(actor: WorkspaceActor, payload: CompoundCrmProposalPayload) {
+  const contactTargetId = payload.contact.action === "create" ? null : payload.contact.id ?? null;
+  const organizationTargetId = payload.organization.action === "create" ? null : payload.organization.id ?? null;
+  const [contactCandidates, organizationCandidates] = await Promise.all([
+    payload.contact.action === "existing"
+      ? Promise.resolve([])
+      : duplicateCandidatesForProposal(actor, payload.contact.action === "create" ? CrmChangeProposalType.CREATE_PERSON : CrmChangeProposalType.UPDATE_PERSON, {
+        fields: payload.contact.fields ?? {}
+      }, { targetEntityId: contactTargetId }),
+    payload.organization.action === "existing"
+      ? Promise.resolve([])
+      : duplicateCandidatesForProposal(actor, payload.organization.action === "create" ? CrmChangeProposalType.CREATE_ORGANIZATION : CrmChangeProposalType.UPDATE_ORGANIZATION, {
+        fields: payload.organization.fields ?? {}
+      }, { targetEntityId: organizationTargetId })
+  ]);
+  return [...contactCandidates, ...organizationCandidates];
+}
+
 async function staleConflictForProposal(
   actor: WorkspaceActor,
   proposal: { currentSnapshot: Prisma.JsonValue; proposalType: CrmChangeProposalType; targetEntityId: string | null },
-  payload: CrmProposalPayload
+  payload: CrmProposalPayload | CompoundCrmProposalPayload
 ): Promise<ConflictInfo | null> {
   if (proposal.proposalType === CrmChangeProposalType.CREATE_PERSON || proposal.proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return null;
+  if (isCompoundProposalType(proposal.proposalType)) {
+    return staleConflictForCompoundProposal(actor, proposal.currentSnapshot, payload as CompoundCrmProposalPayload);
+  }
   const snapshot = objectInput(proposal.currentSnapshot);
   const updatedAt = typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : null;
   if (!updatedAt) return null;
@@ -420,7 +662,7 @@ async function staleConflictForProposal(
     });
     if (!current) return { code: "TARGET_UNAVAILABLE", message: "Target contact is unavailable or deleted." };
     if (current.updatedAt.toISOString() !== updatedAt) return { code: "STALE_TARGET", message: "Target contact changed after this proposal was created." };
-    if (proposal.proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) await assertActiveOrganization(actor.workspaceId, payload.organizationId ?? "");
+    if (proposal.proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) await assertActiveOrganization(actor.workspaceId, (payload as CrmProposalPayload).organizationId ?? "");
     return null;
   }
   const current = await prisma.organization.findFirst({
@@ -429,6 +671,39 @@ async function staleConflictForProposal(
   });
   if (!current) return { code: "TARGET_UNAVAILABLE", message: "Target organization is unavailable or deleted." };
   if (current.updatedAt.toISOString() !== updatedAt) return { code: "STALE_TARGET", message: "Target organization changed after this proposal was created." };
+  return null;
+}
+
+async function staleConflictForCompoundProposal(
+  actor: WorkspaceActor,
+  currentSnapshot: Prisma.JsonValue,
+  payload: CompoundCrmProposalPayload
+): Promise<ConflictInfo | null> {
+  const snapshot = objectInput(currentSnapshot);
+  const contactSnapshot = objectInput(snapshot.contact);
+  const organizationSnapshot = objectInput(snapshot.organization);
+  if (payload.contact.action !== "create") {
+    const updatedAt = typeof contactSnapshot.updatedAt === "string" ? contactSnapshot.updatedAt : null;
+    const current = await prisma.person.findFirst({
+      where: { id: payload.contact.id ?? "", workspaceId: actor.workspaceId, ...activeWhere },
+      select: { updatedAt: true }
+    });
+    if (!current) return { code: "TARGET_UNAVAILABLE", message: "Target contact is unavailable or deleted." };
+    if (updatedAt && current.updatedAt.toISOString() !== updatedAt) {
+      return { code: "STALE_TARGET", message: "Target contact changed after this proposal was created." };
+    }
+  }
+  if (payload.organization.action !== "create") {
+    const updatedAt = typeof organizationSnapshot.updatedAt === "string" ? organizationSnapshot.updatedAt : null;
+    const current = await prisma.organization.findFirst({
+      where: { id: payload.organization.id ?? "", workspaceId: actor.workspaceId, ...activeWhere },
+      select: { updatedAt: true }
+    });
+    if (!current) return { code: "TARGET_UNAVAILABLE", message: "Target organization is unavailable or deleted." };
+    if (updatedAt && current.updatedAt.toISOString() !== updatedAt) {
+      return { code: "STALE_TARGET", message: "Target organization changed after this proposal was created." };
+    }
+  }
   return null;
 }
 
@@ -465,6 +740,109 @@ async function applyProposalPayload(
   return { entityType: "Person", id: person.id };
 }
 
+async function applyCompoundProposalPayload(
+  actor: WorkspaceActor,
+  existing: {
+    id: string;
+    proposalType: CrmChangeProposalType;
+    sourceType: string;
+  },
+  payload: CompoundCrmProposalPayload,
+  permission: ProposalPermissionDecision
+) {
+  const applied = await prisma.$transaction(async (tx) => {
+    let organizationId = payload.organization.id ?? "";
+    let organizationChanged = false;
+
+    if (payload.organization.action === "create") {
+      await assertOwnerInWorkspaceTx(tx, actor.workspaceId, payload.organization.fields?.ownerId);
+      const organization = await tx.organization.create({
+        data: { ...(payload.organization.fields ?? {}), workspaceId: actor.workspaceId } as Prisma.OrganizationUncheckedCreateInput
+      });
+      organizationId = organization.id;
+      organizationChanged = true;
+      await writeAuditLogTx(tx, actor, "organization.created", "Organization", organization.id, {
+        name: organization.name,
+        source: "crm_change_proposal",
+        proposalId: existing.id
+      });
+    } else if (payload.organization.action === "update") {
+      await assertOwnerInWorkspaceTx(tx, actor.workspaceId, payload.organization.fields?.ownerId);
+      const organization = await tx.organization.update({
+        data: payload.organization.fields ?? {},
+        where: { id: payload.organization.id }
+      });
+      organizationId = organization.id;
+      organizationChanged = true;
+      await writeAuditLogTx(tx, actor, "organization.updated", "Organization", organization.id, {
+        changedFields: Object.keys(payload.organization.fields ?? {}),
+        source: "crm_change_proposal",
+        proposalId: existing.id
+      });
+    }
+
+    let contactId = payload.contact.id ?? "";
+    const contactFields = { ...(payload.contact.fields ?? {}) };
+    if (payload.linkContactToOrganization) contactFields.organizationId = organizationId;
+
+    if (payload.contact.action === "create") {
+      await assertOwnerInWorkspaceTx(tx, actor.workspaceId, contactFields.ownerId);
+      if (contactFields.organizationId) await assertOrganizationInWorkspaceTx(tx, actor.workspaceId, contactFields.organizationId);
+      const person = await tx.person.create({
+        data: { ...contactFields, workspaceId: actor.workspaceId } as Prisma.PersonUncheckedCreateInput
+      });
+      contactId = person.id;
+      await writeAuditLogTx(tx, actor, "person.created", "Person", person.id, {
+        email: person.email,
+        linkedOrganizationId: payload.linkContactToOrganization ? organizationId : undefined,
+        source: "crm_change_proposal",
+        proposalId: existing.id
+      });
+    } else if (payload.contact.action === "update" || payload.linkContactToOrganization) {
+      await assertOwnerInWorkspaceTx(tx, actor.workspaceId, contactFields.ownerId);
+      if (contactFields.organizationId) await assertOrganizationInWorkspaceTx(tx, actor.workspaceId, contactFields.organizationId);
+      const person = await tx.person.update({
+        data: contactFields,
+        where: { id: payload.contact.id }
+      });
+      contactId = person.id;
+      await writeAuditLogTx(tx, actor, "person.updated", "Person", person.id, {
+        changedFields: Object.keys(contactFields),
+        linkedOrganizationId: payload.linkContactToOrganization ? organizationId : undefined,
+        source: "crm_change_proposal",
+        proposalId: existing.id
+      });
+    }
+
+    const proposal = await tx.crmChangeProposal.update({
+      data: {
+        appliedAt: new Date(),
+        appliedById: actor.actorUserId,
+        appliedEntityId: contactId || (organizationChanged ? organizationId : null),
+        appliedEntityType: contactId ? "Person" : organizationChanged ? "Organization" : null,
+        conflictInfo: Prisma.JsonNull,
+        proposedPayload: toJson(payload),
+        status: CrmChangeProposalStatus.APPLIED
+      },
+      where: { id: existing.id }
+    });
+    await writeAuditLogTx(tx, actor, "crm_change_proposal.applied", "CrmChangeProposal", proposal.id, {
+      appliedContactId: contactId || null,
+      appliedOrganizationId: organizationId || null,
+      permissionActionKeys: permission.checks.map((check) => check.actionKey).filter(Boolean),
+      proposalType: proposal.proposalType,
+      sourceType: proposal.sourceType
+    });
+    return { contactId, organizationId, proposal };
+  });
+
+  return {
+    appliedEntityId: applied.proposal.appliedEntityId,
+    appliedEntityType: applied.proposal.appliedEntityType,
+    proposal: crmChangeProposalView(applied.proposal, await permissionDecisionForStoredProposal(actor, applied.proposal))
+  };
+}
+
 async function failProposal(actor: WorkspaceActor, proposalId: string, conflict: ConflictInfo) {
   const proposal = await prisma.crmChangeProposal.update({
     data: { conflictInfo: toJson(conflict), status: CrmChangeProposalStatus.FAILED },
@@ -477,24 +855,45 @@ async function failProposal(actor: WorkspaceActor, proposalId: string, conflict:
   return proposal;
 }
 
-async function proposalPermissionDecision(
+async function permissionDecisionForStoredProposal(
+  actor: WorkspaceActor,
+  proposal: { proposedPayload: Prisma.JsonValue; proposalType: CrmChangeProposalType; status: CrmChangeProposalStatus | "PENDING" }
+) {
+  const payload = normalizePayloadForProposal(proposal.proposalType, proposal.proposedPayload, { creating: false });
+  return proposalPermissionDecisionForPayload(actor, proposal.proposalType, proposal.status, payload);
+}
+
+async function proposalPermissionDecisionForPayload(
   actor: WorkspaceActor,
   proposalType: CrmChangeProposalType,
-  status: CrmChangeProposalStatus | "PENDING"
-) {
+  status: CrmChangeProposalStatus | "PENDING",
+  payload: CrmProposalPayload | CompoundCrmProposalPayload
+): Promise<ProposalPermissionDecision> {
   const preferences = await getAiPreferences(actor);
-  return decideAssistantActionPermission({
-    actionType: actionTypeForProposal(proposalType),
+  const actionTypes = actionTypesForProposal(proposalType, payload);
+  const checks = actionTypes.map((actionType) => decideAssistantActionPermission({
+    actionType,
     permissions: preferences.assistantActionPermissions,
     status,
     technicallyCanApply: true
-  });
+  }));
+  return aggregatePermissionDecision(checks);
 }
 
-async function permissionMapForProposalTypes(actor: WorkspaceActor, proposalTypes: CrmChangeProposalType[]) {
-  const uniqueTypes = Array.from(new Set(proposalTypes));
-  const entries = await Promise.all(uniqueTypes.map(async (proposalType) => [proposalType, await proposalPermissionDecision(actor, proposalType, "PENDING")] as const));
-  return new Map(entries);
+function aggregatePermissionDecision(checks: AssistantActionPermissionDecision[]): ProposalPermissionDecision {
+  const firstBlocked = checks.find((check) => !check.canApply || check.level !== "require_confirmation");
+  const primary = firstBlocked ?? checks[0] ?? blockedPermission();
+  const allRequireConfirmation = checks.length > 0 && checks.every((check) => check.canApply && check.level === "require_confirmation");
+  return {
+    actionKey: checks.length === 1 ? checks[0].actionKey : null,
+    canApply: allRequireConfirmation,
+    checks,
+    level: allRequireConfirmation ? "require_confirmation" : primary.level,
+    reason: allRequireConfirmation
+      ? "All included CRM actions require explicit confirmation and can be applied after review."
+      : primary.reason,
+    state: allRequireConfirmation ? "requires_confirmation" : primary.state
+  };
 }
 
 function crmChangeProposalView(
@@ -509,6 +908,7 @@ function crmChangeProposalView(
     duplicateCandidates: Prisma.JsonValue;
     evidence: Prisma.JsonValue;
     id: string;
+    idempotencyKey: string;
     proposedPayload: Prisma.JsonValue;
     proposalType: CrmChangeProposalType;
     rationale: string | null;
@@ -520,10 +920,19 @@ function crmChangeProposalView(
     targetEntityId: string | null;
     warnings: Prisma.JsonValue;
   },
-  permission: AssistantActionPermissionDecision
+  permission: ProposalPermissionDecision
 ): CrmChangeProposalView {
   const payload = normalizePayloadForProposal(proposal.proposalType, proposal.proposedPayload, { creating: false });
   const snapshot = objectInput(proposal.currentSnapshot);
+  const changeGroups = editableChangeGroups(proposal.proposalType, payload, snapshot);
+  const permissionChecks = permission.checks.map((check) => ({
+    actionKey: check.actionKey,
+    canApply: check.canApply,
+    label: check.actionKey ? permissionActionLabel(check.actionKey) : "Unsupported CRM action",
+    level: permissionLevelLabel(check.level),
+    reason: check.reason,
+    state: check.state
+  }));
   return {
     appliedAt: proposal.appliedAt?.toISOString() ?? null,
     appliedHref: appliedHref(proposal.appliedEntityType, proposal.appliedEntityId),
@@ -533,11 +942,14 @@ function crmChangeProposalView(
     conflictInfo: conflictFromJson(proposal.conflictInfo),
     createdAt: proposal.createdAt.toISOString(),
     duplicateCandidates: duplicateCandidatesFromJson(proposal.duplicateCandidates),
-    editableFields: editableFields(proposal.proposalType, payload, snapshot),
+    changeGroups,
+    editableFields: changeGroups.flatMap((group) => group.fields),
     evidence: normalizeStringArray(proposal.evidence),
     id: proposal.id,
+    idempotencyKey: proposal.idempotencyKey,
     permissionActionKey: permission.actionKey,
-    permissionLabel: permission.actionKey ? permissionActionLabel(permission.actionKey) : "Unsupported CRM action",
+    permissionChecks,
+    permissionLabel: permissionChecks.length > 1 ? permissionChecks.map((check) => check.label).join(", ") : permissionChecks[0]?.label ?? "Unsupported CRM action",
     permissionLevel: permissionLevelLabel(permission.level),
     permissionReason: permission.reason,
     permissionState: permission.state,
@@ -555,21 +967,99 @@ function crmChangeProposalView(
   };
 }
 
-function editableFields(proposalType: CrmChangeProposalType, payload: CrmProposalPayload, snapshot: Record<string, unknown>) {
+function editableChangeGroups(
+  proposalType: CrmChangeProposalType,
+  payload: CrmProposalPayload | CompoundCrmProposalPayload,
+  snapshot: Record<string, unknown>
+) {
+  if (isCompoundProposalType(proposalType)) {
+    return compoundChangeGroups(payload as CompoundCrmProposalPayload, snapshot);
+  }
   if (proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) {
     return [{
-      currentValue: snapshot.organizationId ? String(snapshot.organizationId) : null,
-      key: "organizationId",
-      label: "Organization",
-      proposedValue: payload.organizationId ?? ""
+      description: "Existing contact will be linked to the reviewed organization.",
+      fields: [{
+        currentValue: snapshot.organizationId ? String(snapshot.organizationId) : null,
+        inputName: "organizationId",
+        key: "organizationId",
+        label: "Organization",
+        proposedValue: (payload as CrmProposalPayload).organizationId ?? ""
+      }],
+      key: "contact-link",
+      targetHref: targetHref(proposalType, typeof snapshot.id === "string" ? snapshot.id : null),
+      targetLabel: targetLabel(proposalType, snapshot),
+      title: "Contact link"
     }];
   }
-  return Object.entries(payload.fields ?? {}).map(([key, value]) => ({
-    currentValue: currentFieldValue(snapshot, key),
-    key,
-    label: fieldLabel(key),
-    proposedValue: value
-  }));
+  return [{
+    description: null,
+    fields: Object.entries((payload as CrmProposalPayload).fields ?? {}).map(([key, value]) => ({
+      currentValue: currentFieldValue(snapshot, key),
+      inputName: `field.${key}`,
+      key,
+      label: fieldLabel(key),
+      proposedValue: value
+    })),
+    key: "record",
+    targetHref: targetHref(proposalType, typeof snapshot.id === "string" ? snapshot.id : null),
+    targetLabel: targetLabel(proposalType, snapshot),
+    title: targetLabel(proposalType, snapshot)
+  }];
+}
+
+function compoundChangeGroups(payload: CompoundCrmProposalPayload, snapshot: Record<string, unknown>) {
+  const contactSnapshot = objectInput(snapshot.contact);
+  const organizationSnapshot = objectInput(snapshot.organization);
+  const groups: CrmChangeProposalView["changeGroups"] = [];
+  if (payload.organization.action !== "existing") {
+    groups.push({
+      description: payload.organization.action === "create" ? "Create the reviewed organization first." : "Update the existing organization.",
+      fields: Object.entries(payload.organization.fields ?? {}).map(([key, value]) => ({
+        currentValue: payload.organization.action === "create" ? null : currentFieldValue(organizationSnapshot, key),
+        inputName: `field.organization.${key}`,
+        key,
+        label: fieldLabel(key),
+        proposedValue: value
+      })),
+      key: "organization",
+      targetHref: payload.organization.id ? `/organizations/${payload.organization.id}` : null,
+      targetLabel: payload.organization.action === "create" ? "New organization" : targetLabel(CrmChangeProposalType.UPDATE_ORGANIZATION, organizationSnapshot),
+      title: payload.organization.action === "create" ? "Create organization" : "Update organization"
+    });
+  }
+  if (payload.contact.action !== "existing") {
+    groups.push({
+      description: payload.contact.action === "create" ? "Create the reviewed contact." : "Update the existing contact.",
+      fields: Object.entries(payload.contact.fields ?? {}).map(([key, value]) => ({
+        currentValue: payload.contact.action === "create" ? null : currentFieldValue(contactSnapshot, key),
+        inputName: `field.contact.${key}`,
+        key,
+        label: fieldLabel(key),
+        proposedValue: value
+      })),
+      key: "contact",
+      targetHref: payload.contact.id ? `/contacts/${payload.contact.id}` : null,
+      targetLabel: payload.contact.action === "create" ? "New contact" : targetLabel(CrmChangeProposalType.UPDATE_PERSON, contactSnapshot),
+      title: payload.contact.action === "create" ? "Create contact" : "Update contact"
+    });
+  }
+  if (payload.linkContactToOrganization) {
+    groups.push({
+      description: "Link the reviewed contact and organization after both records are available.",
+      fields: [{
+        currentValue: payload.contact.action === "create" ? null : currentFieldValue(contactSnapshot, "organizationId"),
+        inputName: "",
+        key: "organizationId",
+        label: "Organization",
+        proposedValue: payload.organization.id ?? "Created organization"
+      }],
+      key: "link",
+      targetHref: payload.contact.id ? `/contacts/${payload.contact.id}` : null,
+      targetLabel: payload.contact.action === "create" ? "New contact" : targetLabel(CrmChangeProposalType.UPDATE_PERSON, contactSnapshot),
+      title: "Link contact to organization"
+    });
+  }
+  return groups;
 }
 
 function currentFieldValue(snapshot: Record<string, unknown>, key: string) {
@@ -590,7 +1080,7 @@ function normalizeStatusFilter(value: unknown) {
 }
 
 function normalizeTargetEntityId(proposalType: CrmChangeProposalType, value: unknown) {
-  if (proposalType === CrmChangeProposalType.CREATE_PERSON || proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return null;
+  if (proposalType === CrmChangeProposalType.CREATE_PERSON || proposalType === CrmChangeProposalType.CREATE_ORGANIZATION || isCompoundProposalType(proposalType)) return null;
   return normalizeRequiredText(value, "Target record id is required.", 160);
 }
 
@@ -631,6 +1121,12 @@ function objectInput(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function omitUndefined<T extends Record<string, unknown>>(input: T) {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as {
+    [K in keyof T as T[K] extends undefined ? never : K]: Exclude<T[K], undefined>;
+  };
+}
+
 function normalizeId(value: string) {
   const id = value.trim();
   if (!id) throw new ApiError("VALIDATION_ERROR", "CRM change proposal id is required.", 422);
@@ -645,25 +1141,42 @@ function derivedIdempotencyKey(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function actionTypeForProposal(proposalType: CrmChangeProposalType) {
-  if (proposalType === CrmChangeProposalType.CREATE_PERSON) return "crm_change_create_person";
-  if (proposalType === CrmChangeProposalType.UPDATE_PERSON) return "crm_change_update_person";
-  if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return "crm_change_create_organization";
-  if (proposalType === CrmChangeProposalType.UPDATE_ORGANIZATION) return "crm_change_update_organization";
-  return "crm_change_link_person_organization";
+function isCompoundProposalType(proposalType: CrmChangeProposalType) {
+  return proposalType === CrmChangeProposalType.COMPOUND_PERSON_ORGANIZATION;
 }
 
-function blockedPermission(): AssistantActionPermissionDecision {
-  return {
+function actionTypesForProposal(proposalType: CrmChangeProposalType, payload: CrmProposalPayload | CompoundCrmProposalPayload) {
+  if (proposalType === CrmChangeProposalType.CREATE_PERSON) return ["crm_change_create_person"];
+  if (proposalType === CrmChangeProposalType.UPDATE_PERSON) return ["crm_change_update_person"];
+  if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return ["crm_change_create_organization"];
+  if (proposalType === CrmChangeProposalType.UPDATE_ORGANIZATION) return ["crm_change_update_organization"];
+  if (proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) return ["crm_change_link_person_organization"];
+  const compound = payload as CompoundCrmProposalPayload;
+  return Array.from(new Set([
+    ...(compound.organization.action === "create" ? ["crm_change_create_organization"] : []),
+    ...(compound.organization.action === "update" ? ["crm_change_update_organization"] : []),
+    ...(compound.contact.action === "create" ? ["crm_change_create_person"] : []),
+    ...(compound.contact.action === "update" ? ["crm_change_update_person"] : []),
+    ...(compound.linkContactToOrganization ? ["crm_change_link_person_organization"] : [])
+  ]));
+}
+
+function blockedPermission(): ProposalPermissionDecision {
+  const check = {
     actionKey: assistantActionPermissionKeyForRequest("crm_change_update_person"),
     canApply: false,
-    level: "suggest_only",
+    level: "suggest_only" as const,
     reason: "CRM change proposal permission is unavailable.",
-    state: "blocked"
+    state: "blocked" as const
+  };
+  return {
+    ...check,
+    checks: [check]
   };
 }
 
 function targetEntityType(proposalType: CrmChangeProposalType) {
+  if (isCompoundProposalType(proposalType)) return "PersonOrganization";
   if (proposalType === CrmChangeProposalType.UPDATE_PERSON || proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) return "Person";
   if (proposalType === CrmChangeProposalType.UPDATE_ORGANIZATION) return "Organization";
   return null;
@@ -671,6 +1184,7 @@ function targetEntityType(proposalType: CrmChangeProposalType) {
 
 function targetHref(proposalType: CrmChangeProposalType, targetEntityId: string | null) {
   if (!targetEntityId) return null;
+  if (isCompoundProposalType(proposalType)) return null;
   if (proposalType === CrmChangeProposalType.UPDATE_PERSON || proposalType === CrmChangeProposalType.LINK_PERSON_ORGANIZATION) return `/contacts/${targetEntityId}`;
   if (proposalType === CrmChangeProposalType.UPDATE_ORGANIZATION) return `/organizations/${targetEntityId}`;
   return null;
@@ -690,18 +1204,33 @@ function appliedLabel(entityType: string | null) {
 }
 
 function targetLabel(proposalType: CrmChangeProposalType, snapshot: Record<string, unknown>) {
+  if (isCompoundProposalType(proposalType)) return "Related contact and organization";
   if (proposalType === CrmChangeProposalType.CREATE_PERSON) return "New contact";
   if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return "New organization";
   const label = typeof snapshot.label === "string" ? snapshot.label : "";
   return label || "Existing CRM record";
 }
 
-function titleForProposal(proposalType: CrmChangeProposalType, payload: CrmProposalPayload, snapshot: Record<string, unknown>) {
-  if (proposalType === CrmChangeProposalType.CREATE_PERSON) return `Create contact: ${payload.fields?.firstName ?? "Unnamed contact"}`;
+function titleForProposal(proposalType: CrmChangeProposalType, payload: CrmProposalPayload | CompoundCrmProposalPayload, snapshot: Record<string, unknown>) {
+  if (isCompoundProposalType(proposalType)) return titleForCompoundProposal(payload as CompoundCrmProposalPayload, snapshot);
+  const simplePayload = payload as CrmProposalPayload;
+  if (proposalType === CrmChangeProposalType.CREATE_PERSON) return `Create contact: ${simplePayload.fields?.firstName ?? "Unnamed contact"}`;
   if (proposalType === CrmChangeProposalType.UPDATE_PERSON) return `Update contact: ${targetLabel(proposalType, snapshot)}`;
-  if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return `Create organization: ${payload.fields?.name ?? "Unnamed organization"}`;
+  if (proposalType === CrmChangeProposalType.CREATE_ORGANIZATION) return `Create organization: ${simplePayload.fields?.name ?? "Unnamed organization"}`;
   if (proposalType === CrmChangeProposalType.UPDATE_ORGANIZATION) return `Update organization: ${targetLabel(proposalType, snapshot)}`;
   return `Link contact to organization: ${targetLabel(proposalType, snapshot)}`;
+}
+
+function titleForCompoundProposal(payload: CompoundCrmProposalPayload, snapshot: Record<string, unknown>) {
+  const contactSnapshot = objectInput(snapshot.contact);
+  const organizationSnapshot = objectInput(snapshot.organization);
+  const contactLabel = payload.contact.action === "create"
+    ? [payload.contact.fields?.firstName, payload.contact.fields?.lastName].filter(Boolean).join(" ") || "new contact"
+    : targetLabel(CrmChangeProposalType.UPDATE_PERSON, contactSnapshot);
+  const organizationLabel = payload.organization.action === "create"
+    ? payload.organization.fields?.name ?? "new organization"
+    : targetLabel(CrmChangeProposalType.UPDATE_ORGANIZATION, organizationSnapshot);
+  return `Review contact + organization: ${contactLabel} at ${organizationLabel}`;
 }
 
 function fieldLabel(key: string) {
@@ -710,6 +1239,7 @@ function fieldLabel(key: string) {
     email: "Email",
     firstName: "First name",
     lastName: "Last name",
+    title: "Title",
     organizationId: "Organization",
     ownerId: "Owner",
     phone: "Phone",
@@ -746,6 +1276,44 @@ function isDuplicateCandidate(value: unknown): value is DuplicateCandidate {
   return typeof input.id === "string" && typeof input.href === "string" && typeof input.label === "string" && typeof input.reason === "string";
 }
 
+async function assertOwnerInWorkspaceTx(tx: Prisma.TransactionClient, workspaceId: string, ownerId: string | undefined) {
+  if (!ownerId) return;
+  const membership = await tx.workspaceMembership.findFirst({
+    where: { userId: ownerId, user: { deletedAt: null }, workspaceId },
+    select: { id: true }
+  });
+  if (!membership) throw new ApiError("NOT_FOUND", "User was not found in this workspace.", 404);
+}
+
+async function assertOrganizationInWorkspaceTx(tx: Prisma.TransactionClient, workspaceId: string, organizationId: string | undefined) {
+  if (!organizationId) return;
+  const organization = await tx.organization.findFirst({
+    where: { id: organizationId, workspaceId, ...activeWhere },
+    select: { id: true }
+  });
+  if (!organization) throw new ApiError("NOT_FOUND", "Target organization was not found.", 404);
+}
+
+async function writeAuditLogTx(
+  tx: Prisma.TransactionClient,
+  actor: WorkspaceActor,
+  action: string,
+  entityType: string,
+  entityId: string,
+  metadata?: unknown
+) {
+  await tx.auditLog.create({
+    data: {
+      action,
+      actorId: actor.actorUserId,
+      entityId,
+      entityType,
+      metadata: metadata === undefined ? undefined : toJson(metadata),
+      workspaceId: actor.workspaceId
+    }
+  });
+}
+
 async function assertActiveOrganization(workspaceId: string, organizationId: string) {
   const organization = await prisma.organization.findFirst({
     where: { id: organizationId, workspaceId, ...activeWhere },
@@ -767,6 +1335,7 @@ const personSnapshotSelect = {
   relationshipFollowUpReminders: true,
   relationshipInternalGuidance: true,
   relationshipPersonalContext: true,
+  title: true,
   updatedAt: true
 } satisfies Prisma.PersonSelect;
 
@@ -791,7 +1360,8 @@ function personSnapshot(person: Prisma.PersonGetPayload<{ select: typeof personS
       relationshipCommunicationStyle: person.relationshipCommunicationStyle,
       relationshipFollowUpReminders: person.relationshipFollowUpReminders,
       relationshipInternalGuidance: person.relationshipInternalGuidance,
-      relationshipPersonalContext: person.relationshipPersonalContext
+      relationshipPersonalContext: person.relationshipPersonalContext,
+      title: person.title
     },
     id: person.id,
     label: [person.firstName, person.lastName].filter(Boolean).join(" "),

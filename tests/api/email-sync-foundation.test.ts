@@ -17,6 +17,13 @@ const migration = readFileSync(
   ),
   "utf8",
 );
+const syncMetricsMigration = readFileSync(
+  join(
+    process.cwd(),
+    "prisma/migrations/20260713190000_email_connection_sync_metrics/migration.sql",
+  ),
+  "utf8",
+);
 const emailConnectionService = readFileSync(
   join(process.cwd(), "lib/services/email-connection-service.ts"),
   "utf8",
@@ -49,8 +56,21 @@ describe("email sync provider foundation", () => {
     expect(schema).toContain("IMAP_SMTP");
     expect(schema).toContain("enum EmailConnectionStatus");
     expect(schema).toContain("lastSyncAt");
+    expect(schema).toContain("lastSyncAttemptedAt");
     expect(schema).toContain("lastSyncCursor");
+    expect(schema).toContain("lastSyncImportedCount");
+    expect(schema).toContain("lastSyncDuplicateCount");
+    expect(schema).toContain("lastSyncSkippedCount");
+    expect(schema).toContain("lastSyncMessageSkipCount");
+    expect(schema).toContain("lastSyncTotalFetched");
+    expect(schema).toContain("lastSyncMode");
     expect(schema).toContain("lastError");
+    expect(syncMetricsMigration).toContain(
+      'ADD COLUMN "lastSyncAttemptedAt"',
+    );
+    expect(syncMetricsMigration).toContain(
+      'ADD COLUMN "lastSyncImportedCount"',
+    );
     expect(schema).not.toMatch(/\n\s+accessToken\s+String/);
     expect(schema).not.toMatch(/\n\s+refreshToken\s+String/);
     expect(schema).not.toContain("clientSecret");
@@ -299,8 +319,11 @@ describe("email sync provider foundation", () => {
     expect(emailPage).toContain("Send Gmail reply");
     expect(emailPage).toContain("Disconnect");
     expect(emailActions).toContain("syncGmailInboxFromEmailPageAction");
-    expect(emailActions).toContain("runGmailInboxSyncNow(actor)");
-    expect(emailActions).toContain("runAllGmailInboxSyncNow(actor)");
+    expect(emailActions).toContain("enqueueGmailInboxSyncJob(actor)");
+    expect(emailActions).toContain("enqueueAllGmailInboxSyncJobs(actor)");
+    expect(emailActions).toContain(
+      "enqueueGmailInboxSyncJobForSelectedConnection(actor, selectedAccount)",
+    );
     expect(emailActions).toContain("sendGmailReplyFromEmailPageAction");
     expect(emailActions).toContain(
       "disconnectEmailProviderFromEmailPageAction",

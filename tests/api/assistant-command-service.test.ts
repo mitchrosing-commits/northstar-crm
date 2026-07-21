@@ -9,6 +9,7 @@ import {
 } from "@/lib/services/assistant/assistant-conversation-service";
 import {
   buildDraftActionAssistantAnswer,
+  buildDealBriefAssistantAnswer,
   buildDealRiskAssistantAnswer,
   buildEmailReplyAssistantAnswer,
   buildTodayAssistantAnswer,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/services/assistant/assistant-command-service";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
 import type {
+  AssistantDealBriefContext,
   AssistantDealRiskContext,
   AssistantEmailReplyContext,
   AssistantTodayContext
@@ -25,6 +27,7 @@ import type {
 
 const assistantPage = readFileSync(join(process.cwd(), "app/assistant/page.tsx"), "utf8");
 const assistantActions = readFileSync(join(process.cwd(), "app/assistant/actions.ts"), "utf8");
+const dealDetailPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/page.tsx"), "utf8");
 const assistantCommandForm = readFileSync(join(process.cwd(), "components/assistant-command-form.tsx"), "utf8");
 const assistantConsole = readFileSync(join(process.cwd(), "components/assistant-console.tsx"), "utf8");
 const assistantDraftCard = readFileSync(join(process.cwd(), "components/assistant-draft-action-card.tsx"), "utf8");
@@ -52,6 +55,51 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
   it("parses supported deterministic commands", () => {
     expect(parseAssistantCommand("Tell me what I have to do today.")).toEqual({ kind: "today" });
     expect(parseAssistantCommand("Show me the highest-risk deals this week.")).toEqual({ kind: "deal_risk" });
+    expect(parseAssistantCommand("Summarize this deal /deals/deal_12345678.")).toEqual({
+      intent: "summary",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("Build an action plan for this deal /deals/deal_12345678.")).toEqual({
+      intent: "action_plan",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("What changed on this deal since last week /deals/deal_12345678?")).toEqual({
+      intent: "change_brief",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("What happened since the last meeting on this deal /deals/deal_12345678?")).toEqual({
+      intent: "change_brief",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("What changed since the quote was sent on this deal /deals/deal_12345678?")).toEqual({
+      intent: "change_brief",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("What should I know before I call them about this deal /deals/deal_12345678?")).toEqual({
+      intent: "change_brief",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("What is blocking this deal /deals/deal_12345678?")).toEqual({
+      intent: "blockers",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("Create a reviewed next-step activity for this deal /deals/deal_12345678.")).toEqual({
+      intent: "activity",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
+    expect(parseAssistantCommand("Draft a concise CRM note summarizing this deal /deals/deal_12345678.")).toEqual({
+      intent: "note",
+      kind: "deal_brief",
+      target: "deal_12345678"
+    });
     expect(parseAssistantCommand("Check whether Mike Fox replied to my recent email.")).toEqual({
       kind: "email_reply_check",
       target: "Mike Fox"
@@ -77,6 +125,106 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(answer.items.map((item) => item.label)).toEqual(["Overdue", "Due today", "Upcoming", "No due date"]);
     expect(answer.sources.map((source) => source.label)).toContain("Activity queue");
     expect(JSON.stringify(answer)).not.toMatch(secretOrRawProviderTerms);
+  });
+
+  it("builds an evidence-grounded deal brief with optional reviewed drafts", () => {
+    const answer = buildDealBriefAssistantAnswer(
+      sampleDealBriefContext(),
+      "Create a reviewed next-step activity for this deal /deals/deal_brief.",
+      "activity",
+      fixedNow()
+    );
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.reviewFirst).toBe(true);
+    expect(answer.title).toBe("Deal brief: Alpha renewal");
+    expect(answer.items.map((item) => item.label)).toEqual(["Current state", "Risks/blockers", "Open commitments", "Recommended next steps"]);
+    expect(answer.items.find((item) => item.label === "Risks/blockers")?.detail).toContain("no open next-step activity");
+    expect(answer.draftActions?.[0]).toMatchObject({
+      kind: "activity",
+      targetHref: "/deals/deal_brief",
+      title: "Draft deal follow-up activity"
+    });
+    expect(answer.draftActions?.[0].fields.map((field) => field.label)).toContain("Description");
+    expect(answer.summary).toContain("nothing was saved or applied");
+    expect(answer.safetyNotice).toContain("review");
+    expect(JSON.stringify(answer)).not.toMatch(secretOrRawProviderTerms);
+    expect(JSON.stringify(answer)).not.toContain("providerMessageId");
+  });
+
+  it("builds a compact deal action plan with selectable reviewed draft previews", () => {
+    const answer = buildDealBriefAssistantAnswer(
+      sampleDealBriefContext(),
+      "Build an action plan for this deal /deals/deal_brief.",
+      "action_plan",
+      fixedNow()
+    );
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.title).toBe("Deal action plan: Alpha renewal");
+    expect(answer.summary).toContain("Save only the items you choose");
+    expect(answer.items.map((item) => item.label)).toEqual([
+      "Immediate follow-ups",
+      "Customer commitments",
+      "Internal actions",
+      "Missing information",
+      "Relationship risks",
+      "Commercial attention",
+      "Longer-term next steps"
+    ]);
+    expect(answer.items[0].detail).toContain("Can prepare activity draft");
+    expect(answer.items[0].detail).toContain("Recommendation:");
+    expect(answer.items.some((item) => item.detail.includes("Confirmed"))).toBe(true);
+    expect(answer.draftActions?.map((draft) => draft.title)).toEqual([
+      "Prepare action-plan activity",
+      "Prepare action-plan CRM note"
+    ]);
+    expect(answer.draftActions?.[0]).toMatchObject({
+      kind: "activity",
+      targetHref: "/deals/deal_brief"
+    });
+    expect(answer.draftActions?.[1]).toMatchObject({
+      kind: "note",
+      targetHref: "/deals/deal_brief"
+    });
+    expect(JSON.stringify(answer)).not.toMatch(secretOrRawProviderTerms);
+  });
+
+  it("builds an explicit deal change brief with source links and review-first drafts", () => {
+    const answer = buildDealBriefAssistantAnswer(
+      sampleDealBriefContext(),
+      "What changed on this deal since last week /deals/deal_brief?",
+      "change_brief",
+      fixedNow()
+    );
+    const serialized = JSON.stringify(answer);
+
+    expect(answer.command).toBe("deal_brief");
+    expect(answer.title).toBe("Deal change brief: Alpha renewal");
+    expect(answer.summary).toContain("explicit point");
+    expect(answer.items.map((item) => item.label)).toEqual([
+      "Since when",
+      "Material changes",
+      "Customer signals",
+      "Internal actions",
+      "Commercial changes",
+      "Relationship changes",
+      "Recommended follow-up",
+      "Missing/uncertain context"
+    ]);
+    expect(answer.items[0].detail).toContain("last 7 days");
+    expect(serialized).toContain("Confirmed");
+    expect(serialized).toContain("Assistant interpretation");
+    expect(serialized).toContain("/email#email-card-email_1");
+    expect(serialized).toContain("/deals/deal_brief/quotes/quote_1");
+    expect(serialized).not.toContain("Updated Jan 1, 2030 · Value");
+    expect(answer.draftActions?.map((draft) => draft.title)).toEqual([
+      "Prepare change-brief follow-up",
+      "Prepare change-brief CRM note"
+    ]);
+    expect(answer.draftActions?.[0]).toMatchObject({ kind: "activity", id: "deal-change-brief-activity-deal_brief" });
+    expect(answer.draftActions?.[1]).toMatchObject({ kind: "note", id: "deal-change-brief-note-deal_brief" });
+    expect(serialized).not.toMatch(secretOrRawProviderTerms);
   });
 
   it("ranks highest-risk deals without editing deals", () => {
@@ -118,7 +266,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(answer.command).toBe("unsupported");
     expect(answer.reviewFirst).toBe(true);
     expect(answer.summary).toContain("draft a small set of review-first actions");
-    expect(answer.items).toHaveLength(5);
+    expect(answer.items).toHaveLength(9);
     expect(answer.safetyNotice).toContain("does not create, update, delete");
   });
 
@@ -126,11 +274,15 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect([...assistantSuggestedCommands]).toEqual([
       "Tell me what I have to do today.",
       "Show me the highest-risk deals this week.",
+      "Summarize the Acme renewal deal.",
+      "Build a deal action plan for this deal.",
+      "Give me the latest deal update for this deal.",
+      "Create a reviewed next-step activity for this deal.",
       "Check whether Mike Fox replied to my recent email.",
       "Remind me to follow up with Jane Doe next Tuesday.",
       "Add a note for Jane Doe: she prefers concise email updates."
     ]);
-    expect(assistantSuggestedCommands.join(" ")).not.toMatch(/\b(create|send|convert|close|delete)\b/i);
+    expect(assistantSuggestedCommands.join(" ")).not.toMatch(/\b(send|convert|close|delete)\b/i);
     expect(assistantSuggestedCommands.join(" ")).not.toMatch(/\b(organization|quote|relationship memory|AI preference|sync)\b/i);
   });
 
@@ -182,7 +334,15 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantPage).toContain("answerAssistantCommand(actor, command)");
     expect(assistantPage).toContain("getAssistantConversation(actor, conversationId)");
     expect(assistantPage).toContain("listAssistantActionRequests(actor)");
+    expect(assistantPage).toContain("listCrmChangeProposals(actor)");
+    expect(assistantPage).toContain('proposal.sourceType === "assistant"');
     expect(assistantPage).toContain("buildAssistantTodayCommandCenter(actor, new Date(), { showHidden: showHiddenTodayItems })");
+    expect(dealDetailPage).toContain("Ask Assistant about this deal");
+    expect(dealDetailPage).toContain("Summarize this deal /deals/${deal.id}");
+    expect(dealDetailPage).toContain("Action plan");
+    expect(dealDetailPage).toContain("Build an action plan for this deal /deals/${deal.id}");
+    expect(dealDetailPage).toContain("Latest changes");
+    expect(dealDetailPage).toContain("Give me the latest deal update /deals/${deal.id}");
     expect(assistantPage).toContain("getAiPreferences(actor)");
     expect(assistantPage).toContain("assistantDisplayName");
     expect(assistantPage).toContain("showHiddenTodayItems");
@@ -200,6 +360,12 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantConsole).toContain("AssistantChatThread");
     expect(assistantConsole).toContain("AssistantStarterPrompts");
     expect(assistantConsole).toContain("AssistantSourceList");
+    expect(assistantConsole).toContain("AssistantMessageLifecycleNotice");
+    expect(assistantConsole).toContain("Clarification canceled");
+    expect(assistantConsole).toContain("Clarification resolved");
+    expect(assistantConsole).toContain("Candidate stale or deleted");
+    expect(assistantConsole).toContain("proposalForDraft");
+    expect(assistantConsole).toContain("assistantCrmProposalIdempotencyKey");
     expect(assistantConsole.indexOf("assistant-command-panel")).toBeLessThan(assistantConsole.indexOf("<AssistantTodayCommandCenter"));
     expect(assistantConsole).toContain("AssistantPermissionSummary");
     expect(assistantConsole).toContain("Available now");
@@ -222,6 +388,8 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantActions).toContain("saveAssistantDraftActionRequest");
     expect(assistantActions).toContain("createCrmChangeProposalFromAssistantDraft");
     expect(assistantActions).toContain("isAssistantCrmChangeProposalDraft");
+    expect(assistantActions).toContain("clarifyAssistantDraftAction");
+    expect(assistantActions).toContain("cancelAssistantDraftClarificationAction");
     expect(assistantActions).toContain("applyAssistantActionRequestAction");
     expect(assistantActions).toContain("rejectAssistantActionRequestAction");
     expect(assistantActions).toContain("hideAssistantTodayCommandCenterItemAction");
@@ -234,10 +402,31 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantDraftCard).toContain("Needs clearer target");
     expect(assistantDraftCard).toContain("Review-only for now");
     expect(assistantDraftCard).toContain("Save to review queue");
+    expect(assistantDraftCard).toContain("Use this");
+    expect(assistantDraftCard).toContain("Cancel clarification");
+    expect(assistantDraftCard).toContain("Awaiting clarification");
+    expect(assistantDraftCard).toContain("Clarification resolved");
+    expect(assistantDraftCard).toContain("CRM Change Proposal pending review");
+    expect(assistantDraftCard).toContain("Proposal applied");
+    expect(assistantDraftCard).toContain("Proposal rejected");
+    expect(assistantDraftCard).toContain("Proposal failed or stale");
+    expect(assistantDraftCard).toContain("Permission denied");
+    expect(assistantDraftCard).toContain("Open record");
+    expect(assistantDraftCard).toContain("clarifyAssistantDraftAction");
+    expect(assistantDraftCard).toContain("cancelAssistantDraftClarificationAction");
     expect(assistantReviewQueue).toContain("Review queue");
     expect(assistantReviewQueue).toContain("Assistant review queue filters");
+    expect(assistantReviewQueue).toContain("CRM proposal outcomes");
+    expect(assistantReviewQueue).toContain("Requested action");
+    expect(assistantReviewQueue).toContain("Selected record");
+    expect(assistantReviewQueue).toContain("Applied record");
+    expect(assistantReviewQueue).toContain("Proposal outcomes");
+    expect(assistantReviewQueue).toContain("Proposal applied");
+    expect(assistantReviewQueue).toContain("Proposal rejected");
+    expect(assistantReviewQueue).toContain("Proposal failed or stale");
+    expect(assistantReviewQueue).toContain("Permission denied");
     expect(assistantReviewQueue).toContain("Hide completed requests");
-    expect(assistantReviewQueue).toContain("Filters hide completed requests from view without deleting audit history or CRM records.");
+    expect(assistantReviewQueue).toContain("Filters hide completed items from view without deleting audit history or CRM records.");
     expect(assistantReviewQueue).toContain("Created");
     expect(assistantReviewQueue).toContain("Action type");
     expect(assistantReviewQueue).toContain("Apply availability");
@@ -313,6 +502,9 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(draftActionService).toContain("await ensureWorkspaceAccess(actor)");
     expect(draftActionService).toContain("workspaceId: actor.workspaceId");
     expect(draftActionService).toContain("redactSensitiveText");
+    expect(draftActionService).toContain("resolveAssistantCrmDraftClarification");
+    expect(draftActionService).toContain("clarificationForDraft");
+    expect(draftActionService).toContain("Selected contact is no longer available");
     expect(draftActionService).not.toMatch(/prisma\.(create|update|delete|upsert|createMany|deleteMany|updateMany)\b/);
     expect(todayCommandCenterService).toContain("await ensureWorkspaceAccess(actor)");
     expect(todayCommandCenterService).toContain("workspaceId: actor.workspaceId");
@@ -339,6 +531,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(actionRequestService).toContain("applyAssistantActionRequest");
     expect(actionRequestService).toContain("isSupportedAssistantActionApply");
     expect(actionRequestService).toContain("createActivity(actor, activityInput)");
+    expect(actionRequestService).toContain('fieldValue(fields, "Description")');
     expect(actionRequestService).toContain("createNote(actor, noteInput)");
     expect(actionRequestService).toContain("AssistantActionRequestStatus.APPLIED");
     expect(actionRequestService).toContain("assistant_action_request.applied");
@@ -349,6 +542,7 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(assistantCrmProposalService).toContain("CrmChangeProposalType.LINK_PERSON_ORGANIZATION");
     expect(assistantCrmProposalService).toContain("idempotencyKey");
     expect(assistantCrmProposalService).toContain("createHash(\"sha256\")");
+    expect(assistantCrmProposalService).toContain("export function assistantCrmProposalIdempotencyKey");
     expect(actionRequestService).not.toContain("updateAiPreferences");
     expect(commandService).not.toContain("sendGmailReplyFromEmailLog");
     expect(commandService).not.toContain("runGmailInboxSyncNow");
@@ -362,6 +556,9 @@ describe("read-only and draft-only Northstar Assistant command service", () => {
     expect(conversationService).toContain("redactSensitiveText");
     expect(conversationService).toContain("assistantConversation.create");
     expect(conversationService).toContain("assistantConversationMessage.create");
+    expect(conversationService).toContain("clarifyAssistantConversationDraft");
+    expect(conversationService).toContain("conversationAlreadyHasClarificationDraft");
+    expect(conversationService).toContain("Clarification canceled");
     expect(conversationService).not.toMatch(/sendGmail|syncGmail|refreshGmail|providerMessageId|providerThreadId|raw provider|raw Gmail/i);
     expect(conversationService).not.toMatch(/prisma\.(activity|deal|lead|quote|note|emailLog|aiPreference)\.(create|update|delete|upsert|createMany|deleteMany|updateMany)\b/);
   });
@@ -468,6 +665,98 @@ function sampleDealRiskContext(): AssistantDealRiskContext {
     ],
     generatedAt: fixedNow().toISOString(),
     lookedAt: ["Open deals", "Open follow-up activities"]
+  };
+}
+
+function sampleDealBriefContext(): AssistantDealBriefContext {
+  return {
+    candidates: [{
+      href: "/deals/deal_brief",
+      id: "deal_brief",
+      label: "Alpha renewal",
+      relatedLabel: "Alpha Orbit",
+      stageName: "Proposal",
+      status: "OPEN"
+    }],
+    deal: {
+      activities: [],
+      auditEvents: [{ action: "deal.updated", actorLabel: "Sam Seller", createdAt: "2029-12-28T12:00:00.000Z" }],
+      commercial: {
+        currency: "USD",
+        expectedCloseAt: "2030-01-05T12:00:00.000Z",
+        lineItems: [{
+          createdAt: "2029-12-31T12:00:00.000Z",
+          description: "Annual subscription",
+          lineTotalCents: 120000,
+          productName: "Northstar",
+          quantity: 1,
+          updatedAt: "2029-12-31T12:00:00.000Z"
+        }],
+        quotes: [{
+          createdAt: "2029-12-31T12:00:00.000Z",
+          href: "/deals/deal_brief/quotes/quote_1",
+          number: "Q-100",
+          status: "SENT",
+          totalCents: 120000,
+          updatedAt: "2029-12-31T12:00:00.000Z"
+        }],
+        valueCents: 120000
+      },
+      createdAt: "2029-12-01T12:00:00.000Z",
+      emails: [{
+        direction: "OUTBOUND",
+        href: "/email#email-card-email_1",
+        occurredAt: "2030-01-01T12:00:00.000Z",
+        participantSummary: "To buyer@example.test",
+        snippet: "Sent pricing recap",
+        subject: "Pricing recap"
+      }],
+      expectedCloseAt: "2030-01-05T12:00:00.000Z",
+      href: "/deals/deal_brief",
+      id: "deal_brief",
+      meetings: [{
+        activityHref: "/activities/activity_meeting/edit",
+        activityTitle: "Implementation timing call",
+        detail: "Buyer asked for implementation timing.",
+        status: "ANALYZED",
+        updatedAt: "2030-01-01T13:00:00.000Z"
+      }],
+      notes: [{
+        body: "Procurement wants a final quote review.",
+        createdAt: "2030-01-01T14:00:00.000Z",
+        id: "note_1"
+      }],
+      organization: {
+        domain: "alpha.example",
+        href: "/organizations/org_1",
+        id: "org_1",
+        name: "Alpha Orbit",
+        ownerLabel: "Sam Seller",
+        updatedAt: "2029-12-31T12:00:00.000Z"
+      },
+      ownerLabel: "Sam Seller",
+      person: {
+        email: "buyer@example.test",
+        href: "/contacts/person_1",
+        id: "person_1",
+        label: "Avery Buyer",
+        organizationLabel: "Alpha Orbit",
+        phone: "555-0100",
+        relationshipBusinessConcerns: "Needs legal review before signature",
+        relationshipCommunicationStyle: "Prefers concise recap emails",
+        relationshipFollowUpReminders: "Confirm procurement owner",
+        title: "VP Sales",
+        updatedAt: "2029-12-31T12:00:00.000Z"
+      },
+      stageName: "Proposal",
+      status: "OPEN",
+      title: "Alpha renewal",
+      updatedAt: "2029-12-20T12:00:00.000Z"
+    },
+    generatedAt: fixedNow().toISOString(),
+    lookedAt: ["Deal fields", "Stored email context", "Recent deal audit events"],
+    missingInfo: [],
+    target: "deal_brief"
   };
 }
 

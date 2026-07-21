@@ -12,6 +12,8 @@ const timelineBodyText = readFileSync(join(process.cwd(), "components/timeline-b
 const panelTitleRow = readFileSync(join(process.cwd(), "components/panel-title-row.tsx"), "utf8");
 const detailFieldGrid = readFileSync(join(process.cwd(), "components/detail-field-grid.tsx"), "utf8");
 const recordPanelJumpNav = readFileSync(join(process.cwd(), "components/record-panel-jump-nav.tsx"), "utf8");
+const recordContextStrip = readFileSync(join(process.cwd(), "components/record-context-strip.tsx"), "utf8");
+const auditHistoryPanel = readFileSync(join(process.cwd(), "components/audit-history-panel.tsx"), "utf8");
 const recordSummary = readFileSync(join(process.cwd(), "components/record-summary.tsx"), "utf8");
 const globalStyles = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
 const dealPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/page.tsx"), "utf8");
@@ -261,7 +263,7 @@ describe("unified record timeline", () => {
     expect(panelTitleRow).toContain("className=\"panel-title\"");
     expect(panelTitleRow).toContain("id={resolvedTitleId}");
     expect(panelTitleRow).toContain("className=\"page-kicker\"");
-    expect(panelTitleRow).toContain("className=\"form-hint\"");
+    expect(panelTitleRow).toContain("className=\"form-hint panel-title-description\"");
     expect(panelTitleRow).toContain("actionsLabel = \"Panel actions\"");
     expect(panelTitleRow).toContain("const resolvedActionsLabel");
     expect(panelTitleRow).toContain("actionsLabel === \"Panel actions\" && typeof title === \"string\" ? `${title} actions` : actionsLabel");
@@ -521,16 +523,34 @@ describe("unified record timeline", () => {
       expect(page).toContain("RecordTimeline");
       expect(page).toContain("getRecordTimeline");
       expect(page).toContain("RecordPanelJumpNav");
+      expect(page).toContain("RecordContextStrip");
       expect(page).toContain("counts={{");
       expect(page).toContain('formId="add-activity"');
       expect(page).toContain("NotesPanel");
       expect(page).toContain("RecordActivitiesPanel");
       expect(page).toContain("ManualEmailLogPanel");
       expect(page).toContain("AuditHistoryPanel");
+      expect(page).not.toContain('from "@/lib/services/crm"');
     }
     for (const page of [leadPage, contactPage, organizationPage]) {
       expect(page).toContain("const emailLogCount = timelineItems.filter((item) => item.type === \"email\").length");
       expect(page).toContain("emailLog: emailLogCount");
     }
+    expect(recordContextStrip).toContain("export function RecordContextStrip");
+    expect(recordContextStrip).toContain("export function recordContextCount");
+    expect(recordContextStrip).toContain('className="record-context-strip"');
+    expect(recordContextStrip).toContain("record-context-strip-item-${item.tone}");
+    expect(globalStyles).toContain(".record-context-strip");
+    expect(globalStyles).toContain(".record-context-strip-value");
+    expect(globalStyles).toContain(".record-context-strip-item-warning");
+    expect(globalStyles).toContain("scroll-snap-type: x proximity");
+    expect(globalStyles).toContain("flex: 0 0 min(82vw, 260px)");
+    expect(auditHistoryPanel).toContain('className="record-history-disclosure"');
+    expect(auditHistoryPanel).toContain("<summary>Show audit events</summary>");
+    expect(globalStyles).toContain(".record-history-disclosure summary");
+    expect(dealPage).toContain('label: "Meeting prep"');
+    expect(contactPage).toContain('label: "Relationship brief"');
+    expect(organizationPage).toContain('label: "People"');
+    expect(leadPage).toContain('label: "Conversion"');
   });
 });

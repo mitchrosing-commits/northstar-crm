@@ -5,12 +5,13 @@ import type { ComponentType, ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/badge";
 import { CompactTitleRow } from "@/components/compact-title-row";
+import { DownloadAction } from "@/components/download-action";
 import { FieldMetric } from "@/components/field-metric";
 import {
   buildListExportHref,
   exportRowCountLabel,
   fullWorkspaceExportHelperText
-} from "@/components/list-export-link";
+} from "@/lib/list-export-href";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
@@ -119,17 +120,19 @@ export default async function ImportExportPage() {
             const label = exportResourceDetails[resource];
             const overview = exportOverview[resource];
             const exportActionLabel = `Download ${label.title} full workspace CSV`;
+            const exportHref = buildListExportHref(workspace.id, resource, {}) as Route;
             return (
               <DataTransferCard
                 action={
-                  <Link
-                    aria-label={exportActionLabel}
+                  <DownloadAction
+                    actionLabel={exportActionLabel}
                     className="button-primary"
-                    href={buildListExportHref(workspace.id, resource, {}) as Route}
-                    title={exportActionLabel}
-                  >
-                    Download CSV
-                  </Link>
+                    filename={`northstar-${resource}.csv`}
+                    href={exportHref}
+                    label="Download CSV"
+                    pendingLabel="Preparing CSV..."
+                    preparedLabel="Export prepared"
+                  />
                 }
                 description={label.description}
                 helper={fullWorkspaceExportHelperText(overview)}

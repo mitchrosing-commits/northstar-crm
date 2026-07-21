@@ -16,6 +16,7 @@ import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { RecordContextStrip, recordContextCount } from "@/components/record-context-strip";
 import { getNextOpenActivity, RecordNextActivitySummary } from "@/components/record-next-activity-summary";
 import { RecordHeaderActions } from "@/components/record-header-actions";
 import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
@@ -29,18 +30,15 @@ import { formatPersonName } from "@/lib/person-name";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { convertedLeadLockedLabel, convertedLeadLockMessage } from "@/lib/record-lock-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
-import {
-  buildAiRecordBrief,
-  buildLeadAssistantContext,
-  buildNorthstarAssistantInsight,
-  getAiPreferences,
-  getLead,
-  getRecordTimeline,
-  getWorkspace,
-  listEmailTemplates,
-  listLeadCustomFields,
-  listPipelines
-} from "@/lib/services/crm";
+import { getAiPreferences } from "@/lib/services/ai-preferences-service";
+import { buildAiRecordBrief } from "@/lib/services/ai-record-brief-service";
+import { listLeadCustomFields } from "@/lib/services/custom-field-service";
+import { listEmailTemplates } from "@/lib/services/email-service";
+import { getLead } from "@/lib/services/lead-service";
+import { buildLeadAssistantContext, buildNorthstarAssistantInsight } from "@/lib/services/northstar-ai-service";
+import { listPipelines } from "@/lib/services/pipeline-service";
+import { getRecordTimeline } from "@/lib/services/timeline-service";
+import { getWorkspace } from "@/lib/services/workspace-service";
 
 export const dynamic = "force-dynamic";
 
@@ -180,6 +178,36 @@ export default async function LeadDetailPage({ params }: PageProps) {
           }
         ]}
         title="Lead workspace"
+      />
+
+      <RecordContextStrip
+        ariaLabel={`${lead.title} current lead context`}
+        items={[
+          {
+            href: nextActivity ? undefined : "#activities" as Route,
+            label: "Next follow-up",
+            tone: nextActivity ? "default" : lead.status === "CONVERTED" ? "muted" : "warning",
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel={lead.status === "CONVERTED" ? undefined : "Needs follow-up"} emptyLabel="No open lead follow-up" />
+          },
+          {
+            href: "#convert-lead" as Route,
+            label: "Conversion",
+            tone: lead.status === "CONVERTED" ? "success" : "default",
+            value: lead.status === "CONVERTED" ? "Converted" : "Ready when qualified"
+          },
+          {
+            href: "#notes" as Route,
+            label: "Recent notes",
+            tone: lead.notes.length > 0 ? "default" : "muted",
+            value: recordContextCount(lead.notes.length, "note", "notes")
+          },
+          {
+            href: "#ai-record-brief" as Route,
+            label: "Relationship context",
+            tone: northstarInsight.findings.length > 0 ? "default" : "muted",
+            value: recordContextCount(northstarInsight.findings.length, "finding", "findings")
+          }
+        ]}
       />
 
       <AiRecordBriefCard brief={aiRecordBrief} />

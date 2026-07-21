@@ -179,8 +179,7 @@ export const appShellNavigationManifest: readonly AppNavigationItem[] = [
     icon: "BarChart3",
     group: "Work",
     helper: "Metrics",
-    commandJump: false,
-    primary: false,
+    commandJump: true,
     searchDescription: "Review sales operating metrics.",
     searchJump: true
   },

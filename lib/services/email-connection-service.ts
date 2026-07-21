@@ -45,6 +45,9 @@ const defaultRecentEmailSyncMaxResults = 10;
 const maxRecentEmailSyncMaxResults = 25;
 const defaultGmailInboxSyncMaxResults = 75;
 const maxGmailInboxSyncMaxResults = 100;
+export const defaultGmailInboxAutoSyncIntervalMs = 15 * 60 * 1000;
+const gmailSyncHealthHistoryLimit = 5;
+const gmailSyncWorkerStaleAfterMs = 5 * 60 * 1000;
 const emailAddressPattern =
   /[A-Z0-9._%+-]+@(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?/gi;
 
@@ -60,9 +63,17 @@ export type EmailProviderCard = {
   href?: string;
   lastError?: string | null;
   lastSyncAt?: Date | null;
+  lastSyncAttemptedAt?: Date | null;
+  lastSyncDuplicateCount?: number | null;
+  lastSyncImportedCount?: number | null;
+  lastSyncMessageSkipCount?: number | null;
+  lastSyncMode?: string | null;
+  lastSyncSkippedCount?: number | null;
+  lastSyncTotalFetched?: number | null;
   name: string;
   provider: EmailConnectionProvider;
   scopes: string[];
+  syncHealth?: EmailSyncHealth | null;
   syncAvailable?: boolean;
   syncJobRef?: string | null;
   syncStatusUpdatedAt?: Date | null;
@@ -80,7 +91,15 @@ export type GmailInboxAccountSummary = {
   displayName: string | null;
   lastError: string | null;
   lastSyncAt: Date | null;
+  lastSyncAttemptedAt: Date | null;
+  lastSyncDuplicateCount: number | null;
+  lastSyncImportedCount: number | null;
+  lastSyncMessageSkipCount: number | null;
+  lastSyncMode: string | null;
+  lastSyncSkippedCount: number | null;
+  lastSyncTotalFetched: number | null;
   status: string;
+  syncHealth: EmailSyncHealth;
   syncAvailable: boolean;
   syncStatusDetail: string | null;
   syncStatusLabel: string | null;
@@ -451,9 +470,75 @@ export type EmailReplySendResult = {
   providerThreadId: string | null;
 };
 
+export type GmailInboxSyncJobSource = "automatic" | "legacy" | "manual";
+
 export type GmailInboxSyncJobPayload = {
   connectionId: string;
+  source?: GmailInboxSyncJobSource;
   workspaceId: string;
+};
+
+export type EmailSyncHealthState =
+  | "dead_lettered"
+  | "delayed"
+  | "failed"
+  | "idle"
+  | "queued"
+  | "reconnect_required"
+  | "running"
+  | "succeeded";
+
+export type EmailSyncHealthJob = {
+  attempts: number;
+  completedAt: Date | null;
+  createdAt: Date;
+  failedAt: Date | null;
+  failureCategory: string | null;
+  jobRef: string;
+  lastError: string | null;
+  nextRunAt: Date | null;
+  source: GmailInboxSyncJobSource;
+  sourceLabel: string;
+  status: JobStatus;
+  statusLabel: string;
+  updatedAt: Date;
+};
+
+export type EmailSyncHealth = {
+  activeDuplicateJobRef: string | null;
+  activeDuplicateMessage: string | null;
+  canRetryNow: boolean;
+  connectionRef: string;
+  currentState: EmailSyncHealthState;
+  currentStateDetail: string;
+  currentStateLabel: string;
+  currentStateTone: "attention" | "danger" | "info" | "success" | "warning";
+  failureCategory: string | null;
+  lastAttemptedAt: Date | null;
+  lastError: string | null;
+  lastSuccessfulAt: Date | null;
+  latestJobSource: GmailInboxSyncJobSource | null;
+  latestJobSourceLabel: string | null;
+  nextAutoSyncEligibleAt: Date | null;
+  recentJobs: EmailSyncHealthJob[];
+  recoveryAction: "reconnect_gmail" | "retry_now" | "wait" | null;
+  recoveryDetail: string;
+  retryAt: Date | null;
+  staleWorker: boolean;
+  staleWorkerDetail: string | null;
+  syncCounts: {
+    duplicates: number | null;
+    fetched: number | null;
+    imported: number | null;
+    mode: string | null;
+    skipped: number | null;
+    skippedMessages: number | null;
+  };
+};
+
+export type GmailInboxSyncEnqueueResult = {
+  jobs: Array<{ id: string; connectionId: string }>;
+  queued: number;
 };
 
 export const gmailOAuthScopes = [
@@ -531,23 +616,24 @@ export async function listEmailConnectionProviderCards(
   const tokenEncryptionReady = isTokenEncryptionConfigured(env);
 
   const gmailConnection = latestConnectionByProvider.get("GOOGLE_WORKSPACE");
-  const gmailSyncJob = gmailConnection
-    ? await prisma.job.findFirst({
+  const gmailSyncJobs = gmailConnection
+    ? await prisma.job.findMany({
         where: {
           dedupeKey: gmailInboxSyncJobDedupeKey(gmailConnection.id),
           type: gmailInboxSyncJobType,
           workspaceId: actor.workspaceId,
         },
         orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+        take: gmailSyncHealthHistoryLimit,
       })
-    : null;
+    : [];
 
   return [
     googleProviderCard({
       connection: gmailConnection,
       config: resolveGoogleOAuthConfig(env),
       provider: "GOOGLE_WORKSPACE",
-      syncJob: gmailSyncJob,
+      syncJobs: gmailSyncJobs,
       tokenEncryptionReady,
     }),
     microsoftProviderCard({
@@ -597,19 +683,29 @@ export async function listGmailInboxAccounts(
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
   const latestJobByDedupeKey = new Map<string, (typeof syncJobs)[number]>();
+  const recentJobsByDedupeKey = new Map<string, typeof syncJobs>();
   for (const job of syncJobs) {
-    if (job.dedupeKey && !latestJobByDedupeKey.has(job.dedupeKey))
+    if (!job.dedupeKey) continue;
+    if (!latestJobByDedupeKey.has(job.dedupeKey))
       latestJobByDedupeKey.set(job.dedupeKey, job);
+    const jobs = recentJobsByDedupeKey.get(job.dedupeKey) ?? [];
+    if (jobs.length < gmailSyncHealthHistoryLimit) jobs.push(job);
+    recentJobsByDedupeKey.set(job.dedupeKey, jobs);
   }
 
   return connections.map((connection) => {
+    const dedupeKey = gmailInboxSyncJobDedupeKey(connection.id);
     const syncJob =
-      latestJobByDedupeKey.get(gmailInboxSyncJobDedupeKey(connection.id)) ??
-      null;
+      latestJobByDedupeKey.get(dedupeKey) ?? null;
     const fullInboxScopesReady =
       hasProviderScopes(connection.scopes, gmailOAuthScopes) ||
       hasProviderScopes(connection.secret?.scopes, gmailOAuthScopes);
     const syncStatus = gmailSyncJobStatus(syncJob, connection.id);
+    const syncHealth = buildGmailSyncHealth({
+      connection,
+      fullInboxScopesReady,
+      recentJobs: recentJobsByDedupeKey.get(dedupeKey) ?? [],
+    });
     return {
       accountDomainType: gmailAccountDomainType(connection.accountEmail),
       accountEmail: connection.accountEmail,
@@ -618,7 +714,15 @@ export async function listGmailInboxAccounts(
       displayName: connection.displayName,
       lastError: safeProviderLastError(connection.lastError),
       lastSyncAt: connection.lastSyncAt,
+      lastSyncAttemptedAt: connection.lastSyncAttemptedAt,
+      lastSyncDuplicateCount: connection.lastSyncDuplicateCount,
+      lastSyncImportedCount: connection.lastSyncImportedCount,
+      lastSyncMessageSkipCount: connection.lastSyncMessageSkipCount,
+      lastSyncMode: connection.lastSyncMode,
+      lastSyncSkippedCount: connection.lastSyncSkippedCount,
+      lastSyncTotalFetched: connection.lastSyncTotalFetched,
       status: emailProviderConnectionStatus(connection, fullInboxScopesReady),
+      syncHealth,
       syncAvailable: connection.status === "CONNECTED" && fullInboxScopesReady,
       syncStatusDetail: syncStatus.detail,
       syncStatusLabel: syncStatus.label,
@@ -1659,6 +1763,9 @@ export async function syncGmailInboxMessages({
     );
   }
 
+  const attemptedAt = new Date();
+  await recordEmailConnectionSyncAttempt(connection.id, attemptedAt);
+
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
     assertConnectionProviderScopes(
@@ -1696,13 +1803,20 @@ export async function syncGmailInboxMessages({
 
     await prisma.emailConnection.update({
       where: { id: connection.id },
-      data: {
-        lastError: syncResult.syncWarning ?? null,
-        lastSyncAt: new Date(),
+      data: emailConnectionSyncSuccessData({
+        attemptedAt,
+        completedAt: new Date(),
+        created: syncResult.created,
         lastSyncCursor: syncResult.historyId
           ? formatGmailHistoryCursor(syncResult.historyId)
           : connection.lastSyncCursor,
-      },
+        skippedDuplicates: syncResult.skippedDuplicates,
+        skippedMessageFailures: syncResult.skippedMessages.length,
+        skippedUnmatched: 0,
+        syncMode: syncResult.syncMode,
+        syncWarning: syncResult.syncWarning,
+        totalFetched: syncResult.totalFetched,
+      }),
     });
     await writeAuditLog(
       actor,
@@ -1734,7 +1848,7 @@ export async function syncGmailInboxMessages({
       unmatchedPreviews: [],
     };
   } catch (error) {
-    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
+    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error, attemptedAt);
     throw error;
   }
 }
@@ -1770,6 +1884,9 @@ export async function syncOlderGmailInboxMessages({
       400,
     );
   }
+
+  const attemptedAt = new Date();
+  await recordEmailConnectionSyncAttempt(connection.id, attemptedAt);
 
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
@@ -1810,10 +1927,17 @@ export async function syncOlderGmailInboxMessages({
 
     await prisma.emailConnection.update({
       where: { id: connection.id },
-      data: {
-        lastError: syncWarning,
-        lastSyncAt: new Date(),
-      },
+      data: emailConnectionSyncSuccessData({
+        attemptedAt,
+        completedAt: new Date(),
+        created: persisted.created,
+        skippedDuplicates: persisted.skippedDuplicates,
+        skippedMessageFailures: loadResult.skippedMessages.length,
+        skippedUnmatched: 0,
+        syncMode: "older",
+        syncWarning,
+        totalFetched: messages.length,
+      }),
     });
     await writeAuditLog(
       actor,
@@ -1845,7 +1969,7 @@ export async function syncOlderGmailInboxMessages({
       unmatchedPreviews: [],
     };
   } catch (error) {
-    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
+    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error, attemptedAt);
     throw error;
   }
 }
@@ -1908,6 +2032,9 @@ export async function refreshGmailInboxThread({
     );
   }
 
+  const attemptedAt = new Date();
+  await recordEmailConnectionSyncAttempt(connection.id, attemptedAt);
+
   try {
     assertEmailConnectionSecretIntegrity(connection, "Gmail");
     assertConnectionProviderScopes(
@@ -1940,10 +2067,17 @@ export async function refreshGmailInboxThread({
 
     await prisma.emailConnection.update({
       where: { id: connection.id },
-      data: {
-        lastError: null,
-        lastSyncAt: new Date(),
-      },
+      data: emailConnectionSyncSuccessData({
+        attemptedAt,
+        completedAt: new Date(),
+        created: persisted.created,
+        skippedDuplicates: persisted.skippedDuplicates,
+        skippedMessageFailures: 0,
+        skippedUnmatched: 0,
+        syncMode: "thread",
+        syncWarning: null,
+        totalFetched: fullMessages.length,
+      }),
     });
     await writeAuditLog(
       actor,
@@ -1969,7 +2103,7 @@ export async function refreshGmailInboxThread({
       unmatchedPreviews: [],
     };
   } catch (error) {
-    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error);
+    await recordEmailConnectionSyncFailure(connection.id, "Gmail", error, attemptedAt);
     throw error;
   }
 }
@@ -1995,6 +2129,130 @@ export async function enqueueGmailInboxSyncJob(actor: WorkspaceActor) {
     "Reconnect Gmail to enable Full Inbox sync and replies.",
   );
   return enqueueGmailInboxSyncJobForConnection(actor, connection.id);
+}
+
+export async function enqueueGmailInboxSyncJobForSelectedConnection(
+  actor: WorkspaceActor,
+  connectionId: string,
+) {
+  await ensureWorkspaceAccess(actor);
+  const connection = await findConnectedEmailConnection(
+    actor.workspaceId,
+    "GOOGLE_WORKSPACE",
+    connectionId,
+    actor.actorUserId,
+  );
+  if (!connection) {
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Selected Gmail inbox connection could not be found.",
+      400,
+    );
+  }
+  assertConnectionProviderScopes(
+    connection,
+    gmailOAuthScopes,
+    "Reconnect Gmail to enable Full Inbox sync and replies.",
+  );
+  return enqueueGmailInboxSyncJobForConnection(actor, connection.id);
+}
+
+export async function enqueueAllGmailInboxSyncJobs(
+  actor: WorkspaceActor,
+  env: EmailConnectionEnv = process.env,
+): Promise<GmailInboxSyncEnqueueResult> {
+  await ensureWorkspaceAccess(actor);
+  const accounts = (await listGmailInboxAccounts(actor, env)).filter(
+    (account) => account.syncAvailable,
+  );
+  if (accounts.length === 0) {
+    throw new ApiError(
+      "EMAIL_CONNECTION_NOT_FOUND",
+      "Connect Gmail or Google Workspace before syncing all inboxes.",
+      400,
+    );
+  }
+
+  const jobs = [];
+  for (const account of accounts) {
+    const job = await enqueueGmailInboxSyncJobForConnection(
+      actor,
+      account.connectionId,
+    );
+    jobs.push({ id: job.id, connectionId: account.connectionId });
+  }
+
+  return { jobs, queued: jobs.length };
+}
+
+export async function enqueueDueGmailInboxSyncJobs(
+  options: {
+    now?: Date;
+    staleAfterMs?: number;
+    workspaceId?: string;
+  } = {},
+): Promise<GmailInboxSyncEnqueueResult> {
+  const now = options.now ?? new Date();
+  const staleAfterMs =
+    Number.isInteger(options.staleAfterMs) && options.staleAfterMs! > 0
+      ? options.staleAfterMs!
+      : defaultGmailInboxAutoSyncIntervalMs;
+  const staleCutoff = new Date(now.getTime() - staleAfterMs);
+  const connections = await prisma.emailConnection.findMany({
+    where: {
+      deletedAt: null,
+      provider: "GOOGLE_WORKSPACE",
+      status: "CONNECTED",
+      createdById: { not: null },
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+      workspace: { deletedAt: null },
+      secret: { isNot: null },
+    },
+    include: { secret: { select: { scopes: true } } },
+    orderBy: [{ updatedAt: "asc" }, { createdAt: "asc" }],
+  });
+  const dedupeKeys = connections.map((connection) =>
+    gmailInboxSyncJobDedupeKey(connection.id),
+  );
+  const syncJobs = dedupeKeys.length
+    ? await prisma.job.findMany({
+        where: {
+          dedupeKey: { in: dedupeKeys },
+          type: gmailInboxSyncJobType,
+      },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: Math.max(50, connections.length * gmailSyncHealthHistoryLimit),
+    })
+    : [];
+  const latestJobByDedupeKey = new Map<string, (typeof syncJobs)[number]>();
+  for (const job of syncJobs) {
+    if (job.dedupeKey && !latestJobByDedupeKey.has(job.dedupeKey)) {
+      latestJobByDedupeKey.set(job.dedupeKey, job);
+    }
+  }
+
+  const jobs: GmailInboxSyncEnqueueResult["jobs"] = [];
+  for (const connection of connections) {
+    if (!connection.createdById) continue;
+    if (!hasConnectionProviderScopes(connection, gmailOAuthScopes)) continue;
+    if (!gmailConnectionNeedsAutoSync(connection.lastSyncAt, staleCutoff))
+      continue;
+
+    const latestJob = latestJobByDedupeKey.get(
+      gmailInboxSyncJobDedupeKey(connection.id),
+    );
+    if (!gmailConnectionLatestSyncJobAllowsAutoEnqueue(latestJob, staleCutoff))
+      continue;
+
+    const job = await enqueueGmailInboxSyncJobForConnection(
+      { actorUserId: connection.createdById, workspaceId: connection.workspaceId },
+      connection.id,
+      "automatic",
+    );
+    jobs.push({ id: job.id, connectionId: connection.id });
+  }
+
+  return { jobs, queued: jobs.length };
 }
 
 export async function runGmailInboxSyncNow(
@@ -2152,10 +2410,15 @@ export function parseGmailInboxSyncJobPayload(
   }
   const connectionId = readNonEmptyValue(payload.connectionId);
   const workspaceId = readNonEmptyValue(payload.workspaceId);
+  const source = readNonEmptyValue(payload.source);
   if (!connectionId || !workspaceId) {
     throw new Error("Invalid Gmail sync job payload.");
   }
-  return { connectionId, workspaceId };
+  return {
+    connectionId,
+    source: source === "automatic" || source === "manual" ? source : "legacy",
+    workspaceId,
+  };
 }
 
 export async function diagnoseGmailConnection(
@@ -2638,6 +2901,7 @@ function safeParseGmailInboxSyncJobPayload(payload: unknown) {
 async function enqueueGmailInboxSyncJobForConnection(
   actor: WorkspaceActor,
   connectionId: string,
+  source: GmailInboxSyncJobSource = "manual",
 ) {
   return enqueueJob({
     type: gmailInboxSyncJobType,
@@ -2645,6 +2909,7 @@ async function enqueueGmailInboxSyncJobForConnection(
     dedupeKey: gmailInboxSyncJobDedupeKey(connectionId),
     payload: {
       connectionId,
+      source,
       workspaceId: actor.workspaceId,
     },
   });
@@ -3559,15 +3824,70 @@ async function recordEmailConnectionSyncFailure(
   connectionId: string,
   providerLabel: "Gmail" | "Microsoft",
   error: unknown,
+  attemptedAt?: Date,
 ) {
   try {
     await prisma.emailConnection.update({
       where: { id: connectionId },
-      data: { lastError: formatEmailConnectionSyncError(providerLabel, error) },
+      data: {
+        lastError: formatEmailConnectionSyncError(providerLabel, error),
+        ...(attemptedAt ? { lastSyncAttemptedAt: attemptedAt } : {}),
+      },
     });
   } catch {
     // Preserve the original sync failure if recording the diagnostic fails.
   }
+}
+
+async function recordEmailConnectionSyncAttempt(
+  connectionId: string,
+  attemptedAt: Date,
+) {
+  try {
+    await prisma.emailConnection.update({
+      where: { id: connectionId },
+      data: { lastSyncAttemptedAt: attemptedAt },
+    });
+  } catch {
+    // Preserve the original sync attempt if recording the timestamp fails.
+  }
+}
+
+function emailConnectionSyncSuccessData({
+  attemptedAt,
+  completedAt,
+  created,
+  lastSyncCursor,
+  skippedDuplicates,
+  skippedMessageFailures,
+  skippedUnmatched,
+  syncMode,
+  syncWarning,
+  totalFetched,
+}: {
+  attemptedAt: Date;
+  completedAt: Date;
+  created: number;
+  lastSyncCursor?: string | null;
+  skippedDuplicates: number;
+  skippedMessageFailures: number;
+  skippedUnmatched: number;
+  syncMode: NonNullable<GmailSyncResult["syncMode"]>;
+  syncWarning: string | null | undefined;
+  totalFetched: number;
+}): Prisma.EmailConnectionUpdateInput {
+  return {
+    lastError: syncWarning ?? null,
+    lastSyncAt: completedAt,
+    lastSyncAttemptedAt: attemptedAt,
+    lastSyncDuplicateCount: skippedDuplicates,
+    lastSyncImportedCount: created,
+    lastSyncMessageSkipCount: skippedMessageFailures,
+    lastSyncMode: syncMode,
+    lastSyncSkippedCount: skippedUnmatched,
+    lastSyncTotalFetched: totalFetched,
+    ...(lastSyncCursor !== undefined ? { lastSyncCursor } : {}),
+  };
 }
 
 function assertEmailConnectionSecretIntegrity(
@@ -5093,7 +5413,7 @@ function googleProviderCard({
   config,
   connection,
   provider,
-  syncJob,
+  syncJobs,
   tokenEncryptionReady,
 }: {
   config: ProviderConfig;
@@ -5102,12 +5422,19 @@ function googleProviderCard({
     accountEmail: string | null;
     lastError: string | null;
     lastSyncAt: Date | null;
+    lastSyncAttemptedAt: Date | null;
+    lastSyncDuplicateCount: number | null;
+    lastSyncImportedCount: number | null;
+    lastSyncMessageSkipCount: number | null;
+    lastSyncMode: string | null;
+    lastSyncSkippedCount: number | null;
+    lastSyncTotalFetched: number | null;
     scopes: Prisma.JsonValue | null;
     secret?: { scopes: Prisma.JsonValue | null } | null;
     status: EmailConnectionStatus;
   };
   provider: "GOOGLE_WORKSPACE";
-  syncJob?: {
+  syncJobs?: Array<{
     attempts: number;
     createdAt: Date;
     failedAt: Date | null;
@@ -5115,18 +5442,27 @@ function googleProviderCard({
     lastError: string | null;
     lockedAt: Date | null;
     lockedBy: string | null;
+    payload: Prisma.JsonValue;
     processedAt: Date | null;
     runAt: Date;
     status: JobStatus;
     updatedAt: Date;
-  } | null;
+  }>;
   tokenEncryptionReady: boolean;
 }): EmailProviderCard {
   const configured = isProviderConfigured(config);
   const fullInboxScopesReady =
     connection?.status === "CONNECTED" &&
     hasConnectionProviderScopes(connection, gmailOAuthScopes);
+  const syncJob = syncJobs?.[0] ?? null;
   const syncStatus = gmailSyncJobStatus(syncJob, connection?.id);
+  const syncHealth = connection
+    ? buildGmailSyncHealth({
+        connection,
+        fullInboxScopesReady,
+        recentJobs: syncJobs ?? [],
+      })
+    : null;
 
   if (!configured) {
     return {
@@ -5174,9 +5510,17 @@ function googleProviderCard({
     href: "/api/email-connections/google/connect",
     lastError: safeProviderLastError(connection?.lastError),
     lastSyncAt: connection?.lastSyncAt,
+    lastSyncAttemptedAt: connection?.lastSyncAttemptedAt,
+    lastSyncDuplicateCount: connection?.lastSyncDuplicateCount,
+    lastSyncImportedCount: connection?.lastSyncImportedCount,
+    lastSyncMessageSkipCount: connection?.lastSyncMessageSkipCount,
+    lastSyncMode: connection?.lastSyncMode,
+    lastSyncSkippedCount: connection?.lastSyncSkippedCount,
+    lastSyncTotalFetched: connection?.lastSyncTotalFetched,
     name: providerLabels[provider],
     provider,
     scopes: [...gmailOAuthScopes],
+    syncHealth,
     syncAvailable: fullInboxScopesReady,
     syncJobRef: syncStatus.jobRef,
     syncStatusDetail: syncStatus.detail,
@@ -5549,6 +5893,457 @@ function emailProviderConnectionStatus(
 
 function gmailInboxSyncJobDedupeKey(connectionId: string) {
   return `gmail-inbox-sync:${connectionId}`;
+}
+
+function gmailConnectionNeedsAutoSync(
+  lastSyncAt: Date | null,
+  staleCutoff: Date,
+) {
+  return !lastSyncAt || lastSyncAt <= staleCutoff;
+}
+
+function gmailConnectionLatestSyncJobAllowsAutoEnqueue(
+  job:
+    | {
+        status: JobStatus;
+        updatedAt: Date;
+      }
+    | null
+    | undefined,
+  staleCutoff: Date,
+) {
+  if (!job) return true;
+  if (
+    job.status === JobStatus.PENDING ||
+    job.status === JobStatus.RUNNING ||
+    job.status === JobStatus.FAILED
+  ) {
+    return false;
+  }
+  if (job.updatedAt > staleCutoff) return false;
+  return true;
+}
+
+function buildGmailSyncHealth({
+  connection,
+  fullInboxScopesReady,
+  now = new Date(),
+  recentJobs,
+}: {
+  connection: {
+    id: string;
+    lastError: string | null;
+    lastSyncAt: Date | null;
+    lastSyncAttemptedAt: Date | null;
+    lastSyncDuplicateCount: number | null;
+    lastSyncImportedCount: number | null;
+    lastSyncMessageSkipCount: number | null;
+    lastSyncMode: string | null;
+    lastSyncSkippedCount: number | null;
+    lastSyncTotalFetched: number | null;
+    status: EmailConnectionStatus;
+  };
+  fullInboxScopesReady: boolean;
+  now?: Date;
+  recentJobs: Array<{
+    attempts: number;
+    createdAt: Date;
+    failedAt: Date | null;
+    id: string;
+    lastError: string | null;
+    lockedAt?: Date | null;
+    payload: Prisma.JsonValue;
+    processedAt: Date | null;
+    runAt: Date;
+    status: JobStatus;
+    updatedAt: Date;
+  }>;
+}): EmailSyncHealth {
+  const latestJob = recentJobs[0] ?? null;
+  const latestJobSource = latestJob
+    ? gmailSyncJobSourceFromPayload(latestJob.payload)
+    : null;
+  const activeDuplicateJobRef =
+    latestJob && gmailSyncJobBlocksDuplicateEnqueue(latestJob.status)
+      ? shortJobRef(latestJob.id)
+      : null;
+  const retryAt = gmailSyncJobRetryAt(latestJob, now);
+  const staleWorkerDetail = gmailSyncWorkerStaleDetail(latestJob, now);
+  const failureCategory = gmailSyncFailureCategory(
+    latestJob?.lastError ?? connection.lastError,
+  );
+  const current = gmailSyncHealthCurrentState({
+    connection,
+    failureCategory,
+    fullInboxScopesReady,
+    latestJob,
+    now,
+  });
+  const canRetryNow =
+    connection.status === "CONNECTED" &&
+    fullInboxScopesReady &&
+    !activeDuplicateJobRef &&
+    failureCategory !== "credentials" &&
+    failureCategory !== "permission";
+  const nextAutoSyncEligibleAt =
+    connection.status === "CONNECTED" && fullInboxScopesReady
+      ? connection.lastSyncAt
+        ? new Date(connection.lastSyncAt.getTime() + defaultGmailInboxAutoSyncIntervalMs)
+        : now
+      : null;
+
+  return {
+    activeDuplicateJobRef,
+    activeDuplicateMessage: activeDuplicateJobRef
+      ? `Active job ${activeDuplicateJobRef} is already queued, running, or waiting to retry, so another sync request will not create duplicate provider work.`
+      : null,
+    canRetryNow,
+    connectionRef: shortJobRef(connection.id),
+    currentState: current.state,
+    currentStateDetail: current.detail,
+    currentStateLabel: current.label,
+    currentStateTone: current.tone,
+    failureCategory,
+    lastAttemptedAt: connection.lastSyncAttemptedAt,
+    lastError: safeProviderLastError(connection.lastError),
+    lastSuccessfulAt: connection.lastSyncAt,
+    latestJobSource,
+    latestJobSourceLabel: latestJobSource
+      ? gmailSyncJobSourceLabel(latestJobSource)
+      : null,
+    nextAutoSyncEligibleAt,
+    recentJobs: recentJobs
+      .slice(0, gmailSyncHealthHistoryLimit)
+      .map((job) => gmailSyncHealthJob(job, now)),
+    recoveryAction: gmailSyncRecoveryAction({
+      canRetryNow,
+      currentState: current.state,
+      failureCategory,
+      fullInboxScopesReady,
+      retryAt,
+    }),
+    recoveryDetail: gmailSyncRecoveryDetail({
+      activeDuplicateJobRef,
+      canRetryNow,
+      currentState: current.state,
+      failureCategory,
+      retryAt,
+    }),
+    retryAt,
+    staleWorker: Boolean(staleWorkerDetail),
+    staleWorkerDetail,
+    syncCounts: {
+      duplicates: connection.lastSyncDuplicateCount,
+      fetched: connection.lastSyncTotalFetched,
+      imported: connection.lastSyncImportedCount,
+      mode: connection.lastSyncMode,
+      skipped: connection.lastSyncSkippedCount,
+      skippedMessages: connection.lastSyncMessageSkipCount,
+    },
+  };
+}
+
+function gmailSyncHealthCurrentState({
+  connection,
+  failureCategory,
+  fullInboxScopesReady,
+  latestJob,
+  now,
+}: {
+  connection: {
+    lastError: string | null;
+    lastSyncAt: Date | null;
+    status: EmailConnectionStatus;
+  };
+  failureCategory: string | null;
+  fullInboxScopesReady: boolean;
+  latestJob:
+    | {
+        attempts: number;
+        lastError: string | null;
+        processedAt: Date | null;
+        runAt: Date;
+        status: JobStatus;
+      }
+    | null;
+  now: Date;
+}): {
+  detail: string;
+  label: string;
+  state: EmailSyncHealthState;
+  tone: EmailSyncHealth["currentStateTone"];
+} {
+  if (connection.status !== "CONNECTED" || !fullInboxScopesReady) {
+    return {
+      detail:
+        "Reconnect Gmail with Full Inbox read/send scopes before Northstar can sync this inbox.",
+      label: "Reconnect required",
+      state: "reconnect_required",
+      tone: "danger",
+    };
+  }
+
+  if (latestJob?.status === JobStatus.RUNNING) {
+    return {
+      detail: "A Gmail sync job is currently claimed by the worker.",
+      label: "Sync running",
+      state: "running",
+      tone: "info",
+    };
+  }
+
+  if (latestJob?.status === JobStatus.PENDING) {
+    const waitingForRetry = latestJob.attempts > 0 || Boolean(latestJob.lastError);
+    if (latestJob.runAt.getTime() > now.getTime()) {
+      return {
+        detail: waitingForRetry
+          ? "A transient failure is waiting for its retry window."
+          : "A Gmail sync job is queued for a future run window.",
+        label: waitingForRetry ? "Retry scheduled" : "Sync delayed",
+        state: "delayed",
+        tone: "warning",
+      };
+    }
+    return {
+      detail: waitingForRetry
+        ? "A retry is due and waiting for the worker to claim it."
+        : "A Gmail sync job is queued and waiting for the worker.",
+      label: waitingForRetry ? "Retry due" : "Sync queued",
+      state: "queued",
+      tone: waitingForRetry ? "warning" : "info",
+    };
+  }
+
+  if (latestJob?.status === JobStatus.FAILED) {
+    return {
+      detail: "The latest Gmail sync attempt failed transiently and is waiting for retry handling.",
+      label: "Transient failure",
+      state: "failed",
+      tone: "warning",
+    };
+  }
+
+  if (latestJob?.status === JobStatus.DEAD) {
+    return {
+      detail: "The latest Gmail sync job exhausted retries or reached a permanent failure.",
+      label: "Dead-lettered",
+      state: "dead_lettered",
+      tone: failureCategory === "credentials" || failureCategory === "permission" ? "danger" : "warning",
+    };
+  }
+
+  if (connection.lastError && !isGmailPartialSyncWarning(connection.lastError)) {
+    return {
+      detail: "The connection has a stored sync issue from the latest provider attempt.",
+      label: "Sync issue",
+      state: "failed",
+      tone: failureCategory === "credentials" || failureCategory === "permission" ? "danger" : "warning",
+    };
+  }
+
+  if (connection.lastSyncAt || latestJob?.status === JobStatus.SUCCEEDED) {
+    return {
+      detail: "The latest provider sync has completed. Counts below describe the latest completed result, not queued work.",
+      label: "Sync succeeded",
+      state: "succeeded",
+      tone: connection.lastError ? "warning" : "success",
+    };
+  }
+
+  return {
+    detail: "This inbox is connected and ready for its first Gmail sync.",
+    label: "Ready for first sync",
+    state: "idle",
+    tone: "info",
+  };
+}
+
+function gmailSyncHealthJob(
+  job: {
+    attempts: number;
+    createdAt: Date;
+    failedAt: Date | null;
+    id: string;
+    lastError: string | null;
+    payload: Prisma.JsonValue;
+    processedAt: Date | null;
+    runAt: Date;
+    status: JobStatus;
+    updatedAt: Date;
+  },
+  now: Date,
+): EmailSyncHealthJob {
+  const source = gmailSyncJobSourceFromPayload(job.payload);
+  return {
+    attempts: job.attempts,
+    completedAt: job.processedAt,
+    createdAt: job.createdAt,
+    failedAt: job.failedAt,
+    failureCategory: gmailSyncFailureCategory(job.lastError),
+    jobRef: shortJobRef(job.id),
+    lastError: safeProviderLastError(job.lastError),
+    nextRunAt: gmailSyncJobRetryAt(job, now),
+    source,
+    sourceLabel: gmailSyncJobSourceLabel(source),
+    status: job.status,
+    statusLabel: gmailSyncJobStatusLabel(job.status),
+    updatedAt: job.updatedAt,
+  };
+}
+
+function gmailSyncJobBlocksDuplicateEnqueue(status: JobStatus) {
+  return (
+    status === JobStatus.PENDING ||
+    status === JobStatus.RUNNING ||
+    status === JobStatus.FAILED
+  );
+}
+
+function gmailSyncJobRetryAt(
+  job:
+    | {
+        attempts: number;
+        lastError: string | null;
+        runAt: Date;
+        status: JobStatus;
+      }
+    | null,
+  now: Date,
+) {
+  if (!job) return null;
+  if (job.status === JobStatus.FAILED) return job.runAt;
+  if (
+    job.status === JobStatus.PENDING &&
+    (job.attempts > 0 || job.lastError) &&
+    job.runAt.getTime() > now.getTime()
+  ) {
+    return job.runAt;
+  }
+  return null;
+}
+
+function gmailSyncWorkerStaleDetail(
+  job:
+    | {
+        lockedAt?: Date | null;
+        runAt: Date;
+        status: JobStatus;
+      }
+    | null,
+  now: Date,
+) {
+  if (!job) return null;
+  const staleCutoff = now.getTime() - gmailSyncWorkerStaleAfterMs;
+  if (
+    job.status === JobStatus.PENDING &&
+    job.runAt.getTime() < staleCutoff
+  ) {
+    return "This Gmail sync has been due for several minutes and has not been claimed. The background worker may be paused or not running.";
+  }
+  if (
+    job.status === JobStatus.RUNNING &&
+    job.lockedAt &&
+    job.lockedAt.getTime() < now.getTime() - defaultStaleJobAfterMs
+  ) {
+    return "This Gmail sync has been running longer than the stale-job threshold. The worker should recover it on the next pass.";
+  }
+  return null;
+}
+
+function gmailSyncRecoveryAction({
+  canRetryNow,
+  currentState,
+  failureCategory,
+  fullInboxScopesReady,
+  retryAt,
+}: {
+  canRetryNow: boolean;
+  currentState: EmailSyncHealthState;
+  failureCategory: string | null;
+  fullInboxScopesReady: boolean;
+  retryAt: Date | null;
+}): EmailSyncHealth["recoveryAction"] {
+  if (!fullInboxScopesReady || failureCategory === "credentials" || failureCategory === "permission")
+    return "reconnect_gmail";
+  if (retryAt) return "wait";
+  if (currentState === "queued" || currentState === "running" || currentState === "delayed")
+    return "wait";
+  if (canRetryNow) return "retry_now";
+  return null;
+}
+
+function gmailSyncRecoveryDetail({
+  activeDuplicateJobRef,
+  canRetryNow,
+  currentState,
+  failureCategory,
+  retryAt,
+}: {
+  activeDuplicateJobRef: string | null;
+  canRetryNow: boolean;
+  currentState: EmailSyncHealthState;
+  failureCategory: string | null;
+  retryAt: Date | null;
+}) {
+  if (failureCategory === "credentials" || failureCategory === "permission")
+    return "Reconnect Gmail to refresh authorization before retrying provider sync.";
+  if (retryAt) return `Retry is scheduled for ${retryAt.toISOString()}.`;
+  if (activeDuplicateJobRef)
+    return `Wait for active sync job ${activeDuplicateJobRef}; duplicate retry clicks reuse the existing job.`;
+  if (canRetryNow) return "Retry now queues a new Gmail sync job through the background worker.";
+  if (currentState === "succeeded") return "No recovery is needed. Sync now remains available as a manual refresh.";
+  return "Review the connection state before retrying.";
+}
+
+function gmailSyncFailureCategory(value: string | null | undefined) {
+  const normalized = (safeProviderLastError(value) ?? "").toLowerCase();
+  if (!normalized) return null;
+  if (
+    normalized.includes("revoked") ||
+    normalized.includes("invalid_grant") ||
+    normalized.includes("invalid token") ||
+    normalized.includes("expired credential") ||
+    normalized.includes("auth")
+  )
+    return "credentials";
+  if (
+    normalized.includes("scope") ||
+    normalized.includes("permission") ||
+    normalized.includes("insufficient")
+  )
+    return "permission";
+  if (normalized.includes("rate") || normalized.includes("quota"))
+    return "rate_limited";
+  if (
+    normalized.includes("unavailable") ||
+    normalized.includes("timeout") ||
+    normalized.includes("network")
+  )
+    return "provider_unavailable";
+  if (normalized.includes("message") || normalized.includes("payload"))
+    return "message_load";
+  return "sync_failed";
+}
+
+function gmailSyncJobSourceFromPayload(payload: Prisma.JsonValue): GmailInboxSyncJobSource {
+  if (!isRecord(payload)) return "legacy";
+  const source = readNonEmptyValue(payload.source);
+  if (source === "automatic" || source === "manual") return source;
+  return "legacy";
+}
+
+function gmailSyncJobSourceLabel(source: GmailInboxSyncJobSource) {
+  if (source === "automatic") return "Automatic";
+  if (source === "manual") return "Manual";
+  return "Legacy";
+}
+
+function gmailSyncJobStatusLabel(status: JobStatus) {
+  if (status === JobStatus.PENDING) return "Queued";
+  if (status === JobStatus.RUNNING) return "Running";
+  if (status === JobStatus.SUCCEEDED) return "Completed";
+  if (status === JobStatus.FAILED) return "Retrying";
+  return "Dead-lettered";
 }
 
 function gmailSyncJobStatus(

@@ -8,11 +8,13 @@ const mocks = vi.hoisted(() => ({
   cookieSet: vi.fn(),
   createEmailFollowUpActivity: vi.fn(),
   disconnectEmailConnection: vi.fn(),
+  enqueueAllGmailInboxSyncJobs: vi.fn(),
+  enqueueGmailInboxSyncJob: vi.fn(),
+  enqueueGmailInboxSyncJobForSelectedConnection: vi.fn(),
   generateEmailReplyDraft: vi.fn(),
   getCurrentWorkspaceContext: vi.fn(),
+  linkEmailLogToCrmRecord: vi.fn(),
   refreshGmailInboxThread: vi.fn(),
-  runAllGmailInboxSyncNow: vi.fn(),
-  runGmailInboxSyncNow: vi.fn(),
   sendGmailReplyFromEmailLog: vi.fn(),
   redirect: vi.fn(),
   syncOlderGmailInboxMessages: vi.fn(),
@@ -38,10 +40,13 @@ vi.mock("@/lib/services/crm", () => ({
   classifyEmailLog: mocks.classifyEmailLog,
   createEmailFollowUpActivity: mocks.createEmailFollowUpActivity,
   disconnectEmailConnection: mocks.disconnectEmailConnection,
+  enqueueAllGmailInboxSyncJobs: mocks.enqueueAllGmailInboxSyncJobs,
+  enqueueGmailInboxSyncJob: mocks.enqueueGmailInboxSyncJob,
+  enqueueGmailInboxSyncJobForSelectedConnection:
+    mocks.enqueueGmailInboxSyncJobForSelectedConnection,
   generateEmailReplyDraft: mocks.generateEmailReplyDraft,
+  linkEmailLogToCrmRecord: mocks.linkEmailLogToCrmRecord,
   refreshGmailInboxThread: mocks.refreshGmailInboxThread,
-  runAllGmailInboxSyncNow: mocks.runAllGmailInboxSyncNow,
-  runGmailInboxSyncNow: mocks.runGmailInboxSyncNow,
   sendGmailReplyFromEmailLog: mocks.sendGmailReplyFromEmailLog,
   syncOlderGmailInboxMessages: mocks.syncOlderGmailInboxMessages,
   syncRecentGmailMessages: mocks.syncRecentGmailMessages,
@@ -53,6 +58,7 @@ import {
   createEmailFollowUpActivityAction,
   disconnectEmailProviderFromEmailPageAction,
   generateEmailReplyDraftAction,
+  linkEmailLogToCrmRecordFromEmailPageAction,
   loadOlderGmailInboxFromEmailPageAction,
   refreshGmailThreadFromEmailPageAction,
   syncGmailInboxFromEmailPageAction,
@@ -89,78 +95,55 @@ describe("email sync server actions", () => {
     });
   });
 
-  it("runs a bounded Full Inbox Gmail sync from the email page without writing a review cookie", async () => {
-    mocks.runGmailInboxSyncNow.mockResolvedValue({
-      created: 2,
-      skippedDuplicates: 1,
-      skippedUnmatched: 0,
-      totalFetched: 3,
-      unmatchedPreviews: []
+  it("queues a Full Inbox Gmail sync from the email page without writing a review cookie", async () => {
+    mocks.enqueueGmailInboxSyncJob.mockResolvedValue({
+      id: "job_queued",
+      payload: { connectionId: "gmail_connection_1", workspaceId: actor.workspaceId }
     });
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?created=2&duplicates=1&emailConnection=gmail-synced&messageSkips=0&skipped=0&syncStatus=1&total=3#gmail-sync-progress"
+      url: "/email?emailConnection=gmail-sync-queued&queued=1&syncStatus=1#gmail-sync-progress"
     });
 
-    expect(mocks.runGmailInboxSyncNow).toHaveBeenCalledWith(actor);
+    expect(mocks.enqueueGmailInboxSyncJob).toHaveBeenCalledWith(actor);
     expect(mocks.cookieSet).not.toHaveBeenCalled();
   });
 
-  it("syncs all connected Gmail inboxes when unified inbox is selected", async () => {
-    mocks.runAllGmailInboxSyncNow.mockResolvedValue({
-      created: 5,
-      skippedDuplicates: 2,
-      skippedUnmatched: 0,
-      totalFetched: 7,
-      unmatchedPreviews: []
+  it("queues all connected Gmail inboxes when unified inbox is selected", async () => {
+    mocks.enqueueAllGmailInboxSyncJobs.mockResolvedValue({
+      jobs: [
+        { connectionId: "gmail_connection_a", id: "job_a" },
+        { connectionId: "gmail_connection_b", id: "job_b" }
+      ],
+      queued: 2
     });
     const formData = new FormData();
     formData.set("account", "all");
 
     await expect(syncGmailInboxFromEmailPageAction(formData)).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?created=5&duplicates=2&emailConnection=gmail-synced&messageSkips=0&skipped=0&syncStatus=1&total=7&account=all#gmail-sync-progress"
+      url: "/email?emailConnection=gmail-sync-queued&queued=2&syncStatus=1&account=all#gmail-sync-progress"
     });
 
-    expect(mocks.runAllGmailInboxSyncNow).toHaveBeenCalledWith(actor);
-    expect(mocks.runGmailInboxSyncNow).not.toHaveBeenCalled();
+    expect(mocks.enqueueAllGmailInboxSyncJobs).toHaveBeenCalledWith(actor);
+    expect(mocks.enqueueGmailInboxSyncJob).not.toHaveBeenCalled();
   });
 
-  it("syncs only the selected Gmail inbox account from the email page", async () => {
-    mocks.runGmailInboxSyncNow.mockResolvedValue({
-      created: 1,
-      skippedDuplicates: 0,
-      skippedUnmatched: 0,
-      totalFetched: 1,
-      unmatchedPreviews: []
+  it("queues only the selected Gmail inbox account from the email page", async () => {
+    mocks.enqueueGmailInboxSyncJobForSelectedConnection.mockResolvedValue({
+      id: "job_selected",
+      payload: { connectionId: "email_connection_selected", workspaceId: actor.workspaceId }
     });
     const formData = new FormData();
     formData.set("account", "email_connection_selected");
 
     await expect(syncGmailInboxFromEmailPageAction(formData)).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
-      url: "/email?created=1&duplicates=0&emailConnection=gmail-synced&messageSkips=0&skipped=0&syncStatus=1&total=1&account=email_connection_selected#gmail-sync-progress"
+      url: "/email?emailConnection=gmail-sync-queued&queued=1&syncStatus=1&account=email_connection_selected#gmail-sync-progress"
     });
 
-    expect(mocks.runGmailInboxSyncNow).toHaveBeenCalledWith(actor, { connectionId: "email_connection_selected" });
-  });
-
-  it("redirects Full Inbox Gmail sync warnings with skipped-message counts", async () => {
-    mocks.runGmailInboxSyncNow.mockResolvedValue({
-      created: 4,
-      skippedDuplicates: 2,
-      skippedMessageFailures: 1,
-      skippedUnmatched: 0,
-      syncWarning: "Gmail sync completed with warnings: 1 Gmail message could not be loaded and was skipped.",
-      totalFetched: 7,
-      unmatchedPreviews: []
-    });
-
-    await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
-      digest: "NEXT_REDIRECT",
-      url: "/email?created=4&duplicates=2&emailConnection=gmail-synced&messageSkips=1&skipped=0&syncStatus=1&total=7&syncWarning=Gmail+sync+completed+with+warnings%3A+1+Gmail+message+could+not+be+loaded+and+was+skipped.#gmail-sync-progress"
-    });
+    expect(mocks.enqueueGmailInboxSyncJobForSelectedConnection).toHaveBeenCalledWith(actor, "email_connection_selected");
   });
 
   it("keeps the legacy matched Gmail sync action available for settings", async () => {
@@ -284,7 +267,7 @@ describe("email sync server actions", () => {
   });
 
   it("redirects Full Inbox Gmail sync failures without writing stale review cookies", async () => {
-    mocks.runGmailInboxSyncNow.mockRejectedValue(new Error("provider token raw-secret-token"));
+    mocks.enqueueGmailInboxSyncJob.mockRejectedValue(new Error("provider token raw-secret-token"));
 
     await expect(syncGmailInboxFromEmailPageAction()).rejects.toMatchObject({
       digest: "NEXT_REDIRECT",
@@ -295,7 +278,7 @@ describe("email sync server actions", () => {
   });
 
   it("redirects Full Inbox Gmail ApiError failures with sanitized actionable detail", async () => {
-    mocks.runGmailInboxSyncNow.mockRejectedValue(
+    mocks.enqueueGmailInboxSyncJob.mockRejectedValue(
       new Error("EMAIL_SYNC_ALREADY_RUNNING: Gmail sync is already running. Refresh status in a moment.")
     );
 
@@ -517,6 +500,40 @@ describe("email sync server actions", () => {
       classification: expect.objectContaining({ providerId: "local_rules" }),
       emailLogId: "email_log_2",
       message: "AI refinement is unavailable right now. Northstar generated local labels instead."
+    });
+  });
+
+  it("links a stored email to a reviewed CRM record and preserves the email view", async () => {
+    mocks.linkEmailLogToCrmRecord.mockResolvedValue({ id: "email_log_7" });
+    const formData = new FormData();
+    formData.set("emailLogId", " email_log_7 ");
+    formData.set("recordType", "PERSON");
+    formData.set("recordId", " person_1 ");
+    formData.set("returnTo", "/email?inbox=potential-leads&q=veridian#email-card-email_log_7");
+
+    await expect(linkEmailLogToCrmRecordFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?inbox=potential-leads&q=veridian&emailConnection=crm-linked#email-card-email_log_7"
+    });
+
+    expect(mocks.linkEmailLogToCrmRecord).toHaveBeenCalledWith(actor, {
+      emailLogId: "email_log_7",
+      recordId: "person_1",
+      recordType: "PERSON"
+    });
+  });
+
+  it("keeps CRM link failures on the email card without leaking service details", async () => {
+    mocks.linkEmailLogToCrmRecord.mockRejectedValue(new Error("workspace token raw-secret-token"));
+    const formData = new FormData();
+    formData.set("emailLogId", "email_log_8");
+    formData.set("recordType", "DEAL");
+    formData.set("recordId", "deal_1");
+    formData.set("returnTo", "/email?inbox=urgent");
+
+    await expect(linkEmailLogToCrmRecordFromEmailPageAction(formData)).rejects.toMatchObject({
+      digest: "NEXT_REDIRECT",
+      url: "/email?inbox=urgent&emailConnection=crm-link-error#email-card-email_log_8"
     });
   });
 

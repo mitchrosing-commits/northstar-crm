@@ -74,6 +74,7 @@ function sourceSection(sourceType: MeetingSourceType, originalFilename?: string 
     metadata?.conversionMode ? `- Conversion: ${conversionLabel(metadata.conversionMode)}` : "",
     metadata?.processor ? `- Processor: ${metadata.processor}` : "",
     metadata?.providerName ? `- Provider: ${metadata.providerName}` : metadata?.providerId ? `- Provider: ${metadata.providerId}` : "",
+    metadata?.transcriptionConfidence ? `- Transcription confidence: ${metadata.transcriptionConfidence}` : "",
     metadata?.statusMessage ? `- Processor status: ${metadata.statusMessage}` : "",
     ...(metadata?.warnings ?? []).map((warning) => `- Warning: ${warning}`)
   ].filter(Boolean);

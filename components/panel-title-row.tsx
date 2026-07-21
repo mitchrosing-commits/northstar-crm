@@ -29,7 +29,7 @@ export function PanelTitleRow({
       <div className="panel-title-copy">
         {eyebrow ? <p className="page-kicker">{eyebrow}</p> : null}
         <h2 className="panel-title" id={resolvedTitleId}>{title}</h2>
-        {description ? <p className="form-hint">{description}</p> : null}
+        {description ? <p className="form-hint panel-title-description">{description}</p> : null}
       </div>
       {actions ? (
         <ActionGroup className="panel-title-actions" label={resolvedActionsLabel}>

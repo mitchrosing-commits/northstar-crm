@@ -53,6 +53,16 @@ export function CrmChangeProposalReview({ proposal, status }: CrmChangeProposalR
           </div>
         </dl>
         <p className="assistant-apply-explanation">{proposal.permissionReason}</p>
+        {proposal.permissionChecks.length > 1 ? (
+          <ul className="compact-list" aria-label="Included CRM action permissions">
+            {proposal.permissionChecks.map((check) => (
+              <li key={check.label}>
+                <strong>{check.label}</strong>
+                <span className="table-secondary-text">{check.level}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       {proposal.conflictInfo ? (
@@ -94,26 +104,39 @@ export function CrmChangeProposalReview({ proposal, status }: CrmChangeProposalR
         <form action={applyCrmChangeProposalAction} className="form-stack">
           <input name="proposalId" type="hidden" value={proposal.id} />
           <div className="meeting-review-group">
-            {proposal.editableFields.map((field) => (
-              <div className="data-card meeting-review-item" key={field.key}>
+            {proposal.changeGroups.map((group) => (
+              <div className="data-card meeting-review-item" key={group.key}>
                 <div className="meeting-review-item-header">
-                  <h3>{field.label}</h3>
-                  <Badge>Supported field</Badge>
+                  <h3>{group.title}</h3>
+                  <Badge>{group.fields.length} field{group.fields.length === 1 ? "" : "s"}</Badge>
                 </div>
-                <div className="relationship-brief-diff-grid">
-                  <div className="relationship-brief-diff-column">
-                    <strong>Current</strong>
-                    <p className="relationship-brief-preview-text">{field.currentValue || "No value"}</p>
-                  </div>
-                  <label className="form-field relationship-brief-diff-column">
-                    <span>Proposed</span>
-                    {field.proposedValue.length > 120 ? (
-                      <textarea defaultValue={field.proposedValue} name={`field.${field.key}`} rows={4} />
+                {group.description ? <p className="table-secondary-text">{group.description}</p> : null}
+                {group.targetHref ? (
+                  <p><Link className="inline-link" href={group.targetHref as Route}>{group.targetLabel}</Link></p>
+                ) : null}
+                {group.fields.map((field) => (
+                  <div className="relationship-brief-diff-grid" key={`${group.key}-${field.key}`}>
+                    <div className="relationship-brief-diff-column">
+                      <strong>{field.label} current</strong>
+                      <p className="relationship-brief-preview-text">{field.currentValue || "No value"}</p>
+                    </div>
+                    {field.inputName ? (
+                      <label className="form-field relationship-brief-diff-column">
+                        <span>{field.label} proposed</span>
+                        {field.proposedValue.length > 120 ? (
+                          <textarea defaultValue={field.proposedValue} name={field.inputName} rows={4} />
+                        ) : (
+                          <input defaultValue={field.proposedValue} name={field.inputName} />
+                        )}
+                      </label>
                     ) : (
-                      <input defaultValue={field.proposedValue} name={field.key === "organizationId" ? "organizationId" : `field.${field.key}`} />
+                      <div className="relationship-brief-diff-column">
+                        <strong>{field.label} proposed</strong>
+                        <p className="relationship-brief-preview-text">{field.proposedValue || "No value"}</p>
+                      </div>
                     )}
-                  </label>
-                </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>

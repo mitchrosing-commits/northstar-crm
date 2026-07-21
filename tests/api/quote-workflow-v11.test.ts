@@ -1,0 +1,165 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const schema = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+const quoteService = readFileSync(join(process.cwd(), "lib/services/quote-service.ts"), "utf8");
+const workspaceRoute = readFileSync(join(process.cwd(), "app/api/v1/workspaces/[workspaceId]/[...segments]/route.ts"), "utf8");
+const validators = readFileSync(join(process.cwd(), "lib/validators/crm.ts"), "utf8");
+const quotesPage = readFileSync(join(process.cwd(), "app/quotes/page.tsx"), "utf8");
+const quoteCreatePanel = readFileSync(join(process.cwd(), "components/quote-create-from-deal-panel.tsx"), "utf8");
+const quoteDetailPage = readFileSync(join(process.cwd(), "app/deals/[dealId]/quotes/[quoteId]/page.tsx"), "utf8");
+const quoteLineItemsPanel = readFileSync(join(process.cwd(), "components/quote-line-items-panel.tsx"), "utf8");
+const quoteDraftsPanel = readFileSync(join(process.cwd(), "components/quote-drafts-panel.tsx"), "utf8");
+const quoteStatusActions = readFileSync(join(process.cwd(), "components/quote-status-actions.tsx"), "utf8");
+const quoteSyncAction = readFileSync(join(process.cwd(), "components/quote-deal-value-sync-action.tsx"), "utf8");
+const quoteLifecycleHistoryPanel = readFileSync(join(process.cwd(), "components/quote-lifecycle-history-panel.tsx"), "utf8");
+const quoteLifecycleTimeline = readFileSync(join(process.cwd(), "lib/quote-lifecycle-timeline.ts"), "utf8");
+const quoteFollowUp = readFileSync(join(process.cwd(), "lib/quote-follow-up.ts"), "utf8");
+const activityNewPage = readFileSync(join(process.cwd(), "app/activities/new/page.tsx"), "utf8");
+const dealLineItemsPanel = readFileSync(join(process.cwd(), "components/deal-line-items-panel.tsx"), "utf8");
+const auditFormat = readFileSync(join(process.cwd(), "lib/audit-format.ts"), "utf8");
+
+describe("quote workflow v1.1 wiring", () => {
+  it("persists sent-time deal value and accepted-quote sync state on quotes", () => {
+    expect(schema).toContain("sentDealValueCents");
+    expect(schema).toContain("sentDealCurrency");
+    expect(schema).toContain("dealValueSyncedAt");
+    expect(schema).toContain("dealValueSyncConflict");
+    expect(schema).toContain("dealValueSyncReviewedAt");
+    expect(schema).toContain("dealValueSyncResolution");
+    expect(schema).toContain("@@index([workspaceId, dealValueSyncedAt])");
+    expect(quoteService).toContain("quoteTransitionData");
+    expect(quoteService).toContain("sentDealValueCents: quote.deal.valueCents");
+    expect(quoteService).toContain("applyAcceptedQuoteDealValueSync");
+    expect(quoteService).toContain("quote.deal_value_sync_conflict");
+    expect(quoteService).toContain("deal.value_synced_from_quote");
+    expect(quoteService).toContain("public-acceptance-auto-sync");
+    expect(quoteService).toContain("internal-acceptance-auto-sync");
+    expect(quoteService).toContain("Deal value changed after this quote was sent");
+  });
+
+  it("exposes draft quote snapshot item mutations through the workspace API", () => {
+    expect(quoteService).toContain("createQuoteItem");
+    expect(quoteService).toContain("updateQuoteItem");
+    expect(quoteService).toContain("removeQuoteItem");
+    expect(quoteService).toContain("Quote line items can only be edited while the quote is DRAFT.");
+    expect(quoteService).toContain("Draft quote line items must use the quote currency.");
+    expect(quoteService).toContain("recalculateQuoteFromItems");
+    expect(quoteService).toContain("quote_item.created");
+    expect(quoteService).toContain("quote_item.updated");
+    expect(quoteService).toContain("quote_item.removed");
+    expect(validators).toContain("createQuoteItemSchema");
+    expect(validators).toContain("updateQuoteItemSchema");
+    expect(workspaceRoute).toContain('nestedResource === "items"');
+    expect(workspaceRoute).toContain("createQuoteItem(actor, idOrNested");
+    expect(workspaceRoute).toContain('resource === "quote-items"');
+    expect(workspaceRoute).toContain("updateQuoteItem(actor, idOrNested");
+    expect(workspaceRoute).toContain("removeQuoteItem(actor, idOrNested)");
+  });
+
+  it("creates quotes from the Quotes page while preserving deal association", () => {
+    expect(quotesPage).toContain("QuoteCreateFromDealPanel");
+    expect(quotesPage).toContain("listDealsPage");
+    expect(quotesPage).toContain('getSearchParam(params, "dealQ")');
+    expect(quoteCreatePanel).toContain("Quotes remain associated with deals");
+    expect(quoteCreatePanel).toContain("/deals/${selectedDeal.id}/quotes");
+    expect(quoteCreatePanel).toContain("router.push(`/deals/${quote.dealId}/quotes/${quote.id}?created=1#quote-items`)");
+    expect(quoteCreatePanel).toContain("Add at least one deal line item before creating a quote.");
+    expect(quoteCreatePanel).not.toContain("token");
+    expect(quoteDraftsPanel).toContain("router.push(`/deals/${dealId}/quotes/${quote.id}?created=1#quote-items`)");
+  });
+
+  it("routes contextual quote actions without exposing public tokens in quote lists", () => {
+    expect(quotesPage).toContain("Manage items");
+    expect(quotesPage).toContain("Edit draft");
+    expect(quotesPage).toContain("Public link");
+    expect(quotesPage).toContain("Review status");
+    expect(quotesPage).toContain("Sync status");
+    expect(quotesPage).toContain("/pdf");
+    expect(quotesPage).not.toContain("publicLink.token");
+    expect(quoteDraftsPanel).toContain("Manage items");
+    expect(quoteDraftsPanel).toContain("Public link");
+    expect(quoteDraftsPanel).toContain("PDF");
+  });
+
+  it("renders quote-context line item management with clear snapshot boundaries", () => {
+    expect(quoteDetailPage).toContain("<QuoteLineItemsPanel");
+    expect(quoteDetailPage).toContain('canEdit={quote.status === "DRAFT" && quote.deal.status === "OPEN"}');
+    expect(quoteLineItemsPanel).toContain("Draft quote item edits change this quote snapshot only");
+    expect(quoteLineItemsPanel).toContain("accepted quote pricing stay unchanged");
+    expect(quoteLineItemsPanel).toContain("/quotes/${quoteId}/items");
+    expect(quoteLineItemsPanel).toContain("/quote-items/${item.id}");
+    expect(quoteLineItemsPanel).toContain("Sent, accepted, and declined quotes preserve their line-item snapshot.");
+    expect(quoteLineItemsPanel).toContain("/deals/${dealId}#line-items");
+    expect(quoteLineItemsPanel).toContain("FormSuccessMessage");
+    expect(quoteLineItemsPanel).toContain("Quote item added. Draft totals refreshed.");
+    expect(quoteLineItemsPanel).toContain("Draft totals refreshed.");
+    expect(quoteLineItemsPanel).toContain("preserveQuoteItemsAnchor()");
+    expect(dealLineItemsPanel).toContain("accepted quote totals update deal value automatically");
+  });
+
+  it("shows automatic deal-value sync and conflict review states", () => {
+    expect(quoteDetailPage).toContain('id="deal-value-sync"');
+    expect(quoteDetailPage).toContain("dealValueSyncConflict={quote.dealValueSyncConflict}");
+    expect(quoteDetailPage).toContain("dealValueSyncReviewedAt={quote.dealValueSyncReviewedAt}");
+    expect(quoteDetailPage).toContain("dealValueSyncResolution={quote.dealValueSyncResolution}");
+    expect(quoteDetailPage).toContain("sentDealValueCents={quote.sentDealValueCents}");
+    expect(quoteDetailPage).toContain("<QuoteLifecycleHistoryPanel");
+    expect(quoteDetailPage).toContain("activeFilter={query?.history}");
+    expect(quoteDetailPage).toContain("quoteState={{");
+    expect(quoteDetailPage).toContain("quoteFollowUpStatus(quote)");
+    expect(quoteDetailPage).toContain("buildQuoteFollowUpHref(quote");
+    expect(quoteDetailPage).toContain("Create reviewed follow-up draft");
+    expect(quoteDetailPage).toContain("#activities");
+    expect(quoteDetailPage).toContain("Open related activity");
+    expect(quoteDetailPage).toContain("dealValueSyncedAt={quote.dealValueSyncedAt}");
+    expect(quoteDraftsPanel).toContain("quoteFollowUpStatus");
+    expect(quoteDraftsPanel).toContain("buildQuoteFollowUpHref");
+    expect(quoteDraftsPanel).toContain("quoteHasSimilarOpenFollowUp");
+    expect(quoteDraftsPanel).toContain("All active quotes covered");
+    expect(quoteDraftsPanel).toContain("awaiting follow-up");
+    expect(quoteDraftsPanel).toContain("overdue quote follow-up");
+    expect(quoteDraftsPanel).toContain("Similar open follow-up exists");
+    expect(quoteDraftsPanel).toContain("Review or reschedule");
+    expect(quoteDraftsPanel).toContain("returnTo: `/deals/${dealId}#quotes`");
+    expect(quoteStatusActions).toContain("Deal value sync was checked automatically.");
+    expect(quoteStatusActions).toContain("if (savingAction !== null) return");
+    expect(quoteStatusActions).toContain("preserveQuoteStatusAnchor()");
+    expect(quoteSyncAction).toContain("sync to the deal automatically");
+    expect(quoteSyncAction).toContain("Update deal value");
+    expect(quoteSyncAction).toContain("Keep current deal value");
+    expect(quoteSyncAction).toContain("if (savingAction !== null) return");
+    expect(quoteSyncAction).toContain("UPDATE_DEAL_TO_ACCEPTED_QUOTE");
+    expect(quoteService).toContain("reviewQuoteDealValueSync");
+    expect(quoteService).toContain("quote.deal_value_sync_reviewed");
+    expect(workspaceRoute).toContain('nestedResource === "sync-review"');
+    expect(validators).toContain("reviewQuoteDealValueSyncSchema");
+    expect(quoteLifecycleHistoryPanel).toContain("Deal sync conflict created");
+    expect(quoteLifecycleHistoryPanel).toContain("Conflict reviewed");
+    expect(quoteLifecycleHistoryPanel).toContain("Quote operational lifecycle timeline");
+    expect(quoteLifecycleHistoryPanel).toContain("quoteLifecycleFilterHref");
+    expect(quoteLifecycleHistoryPanel).toContain("?history=${filter}#quote-lifecycle");
+    expect(quoteLifecycleHistoryPanel).toContain("Create follow-up");
+    expect(quoteLifecycleHistoryPanel).toContain("returnHash: `quote-timeline-${event.id}`");
+    expect(quoteLifecycleTimeline).toContain("quoteLifecycleTimelineFilters");
+    expect(quoteLifecycleTimeline).toContain("Line items changed");
+    expect(quoteLifecycleTimeline).toContain("Deal sync needs review");
+    expect(quoteFollowUp).toContain("buildQuoteFollowUpHref");
+    expect(quoteFollowUp).toContain("quoteFollowUpStatus");
+    expect(quoteFollowUp).toContain("quoteHasSimilarOpenFollowUp");
+    expect(quoteFollowUp).toContain("Resolve accepted quote value conflict");
+    expect(quoteFollowUp).toContain("quoteNumber");
+    expect(activityNewPage).toContain("Suggested quote follow-up draft");
+    expect(activityNewPage).toContain("Similar open follow-up exists");
+    expect(activityNewPage).toContain("Nothing has been created yet");
+    expect(activityNewPage).toContain("quoteEventLabel");
+    expect(quoteLifecycleTimeline).not.toContain("publicLinkId");
+    expect(quoteService).toContain('entityType: "QuoteItem"');
+    expect(quoteService).toContain('metadata: { path: ["quoteId"], equals: quote.id }');
+    expect(auditFormat).toContain("quote.deal_value_sync_reviewed");
+    expect(auditFormat).toContain("quote_item.updated");
+    expect(quoteSyncAction).not.toContain("Public acceptance does not run this step automatically");
+  });
+});

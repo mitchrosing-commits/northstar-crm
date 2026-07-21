@@ -81,7 +81,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   const reviewNeedsAttentionLabel = "Review dashboard needs attention";
   const viewActivitiesLabel = "View activities from reports";
   const createFollowUpLabel = "Create follow-up activity from reports";
-  const findQuotesLabel = "Find deals with quotes from reports";
+  const findQuotesLabel = "Find quotes from reports";
   const viewTopOpenDealsLabel = "View top open deals from reports";
   const createDealLabel = "Create deal from reports";
   const viewOrganizationsLabel = "View organizations from reports";
@@ -307,7 +307,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         <div className="panel">
           <PanelTitleRow
             actions={
-              <Link aria-label={findQuotesLabel} className="inline-link" href="/deals" title={findQuotesLabel}>
+              <Link aria-label={findQuotesLabel} className="inline-link" href="/quotes" title={findQuotesLabel}>
                 Find quotes
               </Link>
             }

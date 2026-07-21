@@ -15,6 +15,7 @@ import { EmailFollowUpPanel } from "@/components/email-follow-up-panel";
 import { EmailSmartLabelPanel } from "@/components/email-smart-label-panel";
 import { formatDate } from "@/components/format";
 import { FormIntroCallout } from "@/components/form-intro-callout";
+import { GmailSyncHealthDetails } from "@/components/gmail-sync-health-details";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { NorthstarAssistantPanel } from "@/components/northstar-assistant-panel";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -25,6 +26,8 @@ import {
   aiReplyToneFromPreferences,
   buildEmailPriorityQueue,
   buildEmailPriorityQueueSummary,
+  buildEmailCrmLinkReviewQueue,
+  buildEmailCrmLinkReviewSummary,
   buildInboxAssistantContext,
   buildNorthstarAssistantInsight,
   buildEmailFollowUpDraftFromEmailLog,
@@ -35,6 +38,7 @@ import {
   emailFollowUpStateLabel,
   emailReplyAssistantReadiness,
   getAiPreferences,
+  listEmailCrmLinkSuggestions,
   listEmailConnectionProviderCards,
   listEmailInboxThreads,
   listEmailPriorityFollowUpDetails,
@@ -49,6 +53,7 @@ import {
   normalizeWorkInboxSort,
   normalizeWorkInboxTab,
   normalizeEmailPriorityQueueFilter,
+  normalizeEmailCrmLinkReviewFilter,
   readEmailSmartClassification,
 } from "@/lib/services/crm";
 import type { EmailClassificationReadiness } from "@/lib/services/email-classification-service";
@@ -71,11 +76,14 @@ import type {
 } from "@/lib/services/email-inbox-intelligence-service";
 import type {
   EmailInboxThreadSummary,
+  EmailSyncHealth,
   EmailSyncPreview,
   GmailInboxAccountSummary,
 } from "@/lib/services/email-connection-service";
+import type { EmailCrmLinkReviewItem, EmailCrmLinkSuggestion, EmailCrmLinkSuggestionResult } from "@/lib/services/email-service";
 import {
   disconnectEmailProviderFromEmailPageAction,
+  linkEmailLogToCrmRecordFromEmailPageAction,
   loadOlderGmailInboxFromEmailPageAction,
   refreshGmailThreadFromEmailPageAction,
   sendGmailReplyFromEmailPageAction,
@@ -101,8 +109,10 @@ type EmailPageProps = {
     page?: string;
     pageSize?: string;
     crm?: string;
+    crmLink?: string;
     priority?: string;
     q?: string;
+    queued?: string;
     skipped?: string;
     sort?: string;
     syncError?: string;
@@ -291,6 +301,31 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
   const priorityExplainersByEmailId = new Map(
     allPriorityQueueItems.map((item) => [item.emailLog.id, item.explainer]),
   );
+  const currentEmailPageReturnHref = emailPageCurrentReturnHref(
+    resolvedSearchParams,
+  );
+  const crmLinkSuggestions = await listEmailCrmLinkSuggestions(
+    actor,
+    recentEmailLogs,
+  );
+  const selectedThreadCrmLinkSuggestions = selectedInboxThread
+    ? await listEmailCrmLinkSuggestions(actor, selectedInboxThread.messages)
+    : new Map<string, EmailCrmLinkSuggestionResult>();
+  const activeCrmLinkReviewFilter = normalizeEmailCrmLinkReviewFilter(
+    resolvedSearchParams?.crmLink,
+  );
+  const crmLinkReviewSummary = buildEmailCrmLinkReviewSummary({
+    emailLogs: recentEmailLogs,
+    suggestions: crmLinkSuggestions,
+  });
+  const crmLinkReviewItems = buildEmailCrmLinkReviewQueue({
+    emailLogs: recentEmailLogs,
+    filter: activeCrmLinkReviewFilter,
+    suggestions: crmLinkSuggestions,
+  });
+  const activeCrmLinkReviewLabel =
+    crmLinkReviewSummary.find((item) => item.id === activeCrmLinkReviewFilter)
+      ?.label ?? "All unlinked";
   const activeInboxFilterLabel =
     priorityQueueSummary.find((item) => item.id === activeInboxFilter)?.label ??
     "All priority";
@@ -328,6 +363,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             backHref={currentInboxReturnHref}
             followUpDetails={selectedInboxFollowUpDetails}
             insight={selectedWorkInboxItem}
+            crmLinkSuggestions={selectedThreadCrmLinkSuggestions}
             returnTo={emailInboxThreadHref(selectedInboxThread.id, {
               account: selectedInboxAccount,
               activeTab: activeWorkInboxTab,
@@ -524,6 +560,16 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                   provider.provider === "MICROSOFT_365"
                     ? `${providerSyncLabel}: import recent matched ${provider.name} messages`
                     : `${providerSyncLabel}: store recent Gmail inbox threads`;
+                const providerSyncMetricText = emailSyncMetricText(provider);
+                const providerSyncHealth = provider.syncHealth ?? null;
+                const providerSyncCanSubmit =
+                  provider.provider !== "GOOGLE_WORKSPACE" ||
+                  !providerSyncHealth ||
+                  providerSyncHealth.canRetryNow;
+                const providerSyncButtonLabel =
+                  provider.provider === "GOOGLE_WORKSPACE" && providerSyncHealth
+                    ? gmailSyncButtonLabel(providerSyncHealth, providerSyncLabel)
+                    : providerSyncLabel;
                 const showDisconnect = shouldShowProviderDisconnect(provider);
                 return (
                   <div className="provider-card" key={provider.name}>
@@ -538,6 +584,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                     {provider.lastSyncAt ? (
                       <p>Last sync: {formatDate(provider.lastSyncAt)}</p>
                     ) : null}
+                    {providerSyncMetricText ? <p>{providerSyncMetricText}</p> : null}
                     {provider.syncStatusLabel ? (
                       <p>
                         Sync status: {provider.syncStatusLabel}
@@ -545,6 +592,9 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                           ? ` · ${formatProviderSyncStatusDetail(provider.syncStatusDetail)}`
                           : ""}
                       </p>
+                    ) : null}
+                    {providerSyncHealth ? (
+                      <GmailSyncHealthDetails health={providerSyncHealth} />
                     ) : null}
                     {provider.lastError ? (
                       <p>Last sync issue: {provider.lastError}</p>
@@ -590,13 +640,21 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                                 value={provider.connectionId ?? "all"}
                               />
                             ) : null}
+                            {provider.provider === "GOOGLE_WORKSPACE" ? (
+                              <input
+                                name="returnTo"
+                                type="hidden"
+                                value={currentEmailPageReturnHref}
+                              />
+                            ) : null}
                             <button
                               aria-label={providerSyncActionLabel}
                               className="button-secondary button-compact"
+                              disabled={!providerSyncCanSubmit}
                               title={providerSyncActionLabel}
                               type="submit"
                             >
-                              {providerSyncLabel}
+                              {providerSyncButtonLabel}
                             </button>
                           </form>
                         ) : null}
@@ -634,6 +692,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
             </div>
             <ConnectedGmailAccountsPanel
               accounts={gmailAccounts}
+              returnTo={currentEmailPageReturnHref}
               selectedAccount={selectedInboxAccount}
             />
             {imapProvider ? (
@@ -712,6 +771,80 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
           ) : null}
 
           <section
+            aria-label="Unlinked stored email CRM review queue"
+            className="data-card section-separated"
+            id="unlinked-email-review"
+          >
+            <PanelTitleRow
+              actions={
+                <ActionGroup
+                  className="filter-actions"
+                  label="Unlinked email review counts"
+                >
+                  <Badge>
+                    {crmLinkReviewSummary[0]?.count ?? 0} unlinked
+                  </Badge>
+                  <Badge>
+                    {crmLinkReviewSummary[1]?.highConfidenceCount ?? 0} high
+                    confidence
+                  </Badge>
+                </ActionGroup>
+              }
+              description="Work unlinked stored emails with deterministic CRM suggestions. Linking remains one email at a time."
+              title="Unlinked Email Review"
+            />
+            <EmailScopeCallout title="Review-first linking">
+              This queue uses exact emails, confirmed organization domains,
+              existing CRM associations, and same-thread links only. It never
+              creates records, auto-applies links, creates follow-ups, or guesses
+              among ambiguous records.
+            </EmailScopeCallout>
+            <ActionGroup
+              className="relationship-inbox-filter-bar"
+              label="Unlinked email review filters"
+            >
+              {crmLinkReviewSummary.map((item) => (
+                <Link
+                  aria-current={
+                    item.id === activeCrmLinkReviewFilter ? "page" : undefined
+                  }
+                  aria-label={`Show ${item.label} unlinked email review items`}
+                  className={
+                    item.id === activeCrmLinkReviewFilter
+                      ? "button-primary button-compact"
+                      : "button-secondary button-compact"
+                  }
+                  href={emailCrmLinkReviewFilterHref(
+                    item.id,
+                    resolvedSearchParams,
+                  )}
+                  key={item.id}
+                  title={`Show ${item.label} unlinked email review items`}
+                >
+                  {item.label} ({item.count})
+                </Link>
+              ))}
+            </ActionGroup>
+            {crmLinkReviewItems.length > 0 ? (
+              <div className="email-crm-link-review-list">
+                {crmLinkReviewItems.map((item) => (
+                  <EmailCrmLinkReviewQueueRow
+                    item={item}
+                    key={item.emailLog.id}
+                    returnTo={currentEmailPageReturnHref}
+                  />
+                ))}
+              </div>
+            ) : (
+              <InlineEmptyStateText>
+                No {activeCrmLinkReviewLabel.toLowerCase()} emails in the
+                current review set. Linked emails leave this queue
+                automatically.
+              </InlineEmptyStateText>
+            )}
+          </section>
+
+          <section
             aria-label="Relationship Inbox CRM priority queue"
             className="data-card section-separated"
             id="relationship-inbox"
@@ -765,6 +898,7 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                   const reviewHref = emailCardHref(emailLog.id);
                   const draftHref = emailDraftReviewHref(emailLog.id);
                   const followUpHref = emailFollowUpReviewHref(emailLog.id);
+                  const crmLinkSuggestion = crmLinkSuggestions.get(emailLog.id);
                   const actionHref = relationshipInboxActionHref(
                     item.nextBestAction,
                     { draftHref, followUpHref, reviewHref },
@@ -811,6 +945,11 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                         ) : (
                           <span>No linked CRM record</span>
                         )}
+                        {!item.linkedRecord && crmLinkSuggestion?.primarySuggestion ? (
+                          <span>
+                            Suggested: {crmLinkSuggestion.primarySuggestion.label}
+                          </span>
+                        ) : null}
                         <span>{emailFollowUpStateLabel(item.followUpState)}</span>
                         <span>Next: {item.nextBestAction.label}</span>
                         {item.followUps.length > 1 ? (
@@ -850,6 +989,18 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                         >
                           Review
                         </Link>
+                        {!item.linkedRecord &&
+                        (crmLinkSuggestion?.primarySuggestion ||
+                          crmLinkSuggestion?.alternativeSuggestions.length) ? (
+                          <Link
+                            aria-label={`Review CRM link suggestions for ${emailLog.subject}`}
+                            className="button-secondary button-compact"
+                            href={reviewHref}
+                            title={`Review CRM link suggestions for ${emailLog.subject}`}
+                          >
+                            Review link
+                          </Link>
+                        ) : null}
                         <Link
                           aria-label={`View full evidence trail for email ${emailLog.subject}`}
                           className="button-secondary button-compact"
@@ -905,10 +1056,12 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                     emailLog={emailLog}
                     key={emailLog.id}
                     followUpDetail={followUpDetails.get(emailLog.id)}
+                    crmLinkSuggestion={crmLinkSuggestions.get(emailLog.id)}
                     smartLabelReadiness={smartLabelReadiness}
                     priorityExplainer={priorityExplainersByEmailId.get(
                       emailLog.id,
                     )}
+                    returnTo={currentEmailPageReturnHref}
                     workspaceId={workspace.id}
                   />
                 ))}
@@ -931,10 +1084,12 @@ export default async function EmailPage({ searchParams }: EmailPageProps) {
                     emailLog={emailLog}
                     key={emailLog.id}
                     followUpDetail={followUpDetails.get(emailLog.id)}
+                    crmLinkSuggestion={crmLinkSuggestions.get(emailLog.id)}
                     smartLabelReadiness={smartLabelReadiness}
                     priorityExplainer={priorityExplainersByEmailId.get(
                       emailLog.id,
                     )}
+                    returnTo={currentEmailPageReturnHref}
                     showEvidenceAnchor
                     workspaceId={workspace.id}
                   />
@@ -1128,18 +1283,18 @@ function AdvancedEmailDiagnostics({
 function InboxAutoSyncReadinessNote() {
   return (
     <section
-      aria-label="Future auto-sync readiness"
+      aria-label="Inbox auto-sync readiness"
       className="inbox-auto-sync-readiness"
     >
       <CompactTitleRow
-        actions={<Badge>Manual refresh only</Badge>}
-        title="Future auto-sync readiness"
+        actions={<Badge>Job-backed refresh</Badge>}
+        title="Inbox auto-sync readiness"
       />
       <p>
-        Northstar does not run aggressive recurring Gmail sync yet. Future
-        auto-sync should reuse the existing job path with account-aware cadence,
-        per-account throttling, job dedupe, bounded history windows, and
-        sanitized provider errors.
+        Northstar uses the background job path for conservative Gmail refresh:
+        account-aware cadence, per-account throttling, job dedupe, bounded
+        history windows, and sanitized provider errors. Sync this inbox remains
+        available as an explicit fallback.
       </p>
       <p>
         High-priority dashboard alert eligibility is prepared from deterministic
@@ -2207,9 +2362,11 @@ function InboxWorkflowItem({
 
 function ConnectedGmailAccountsPanel({
   accounts,
+  returnTo,
   selectedAccount,
 }: {
   accounts: GmailInboxAccountSummary[];
+  returnTo: Route;
   selectedAccount: string;
 }) {
   if (accounts.length === 0) {
@@ -2235,7 +2392,13 @@ function ConnectedGmailAccountsPanel({
         title="Connected inboxes"
       />
       <div className="connected-inbox-list">
-        {accounts.map((account) => (
+        {accounts.map((account) => {
+          const accountSyncMetricText = emailSyncMetricText(account);
+          const syncButtonLabel = gmailSyncButtonLabel(
+            account.syncHealth,
+            "Sync this inbox",
+          );
+          return (
           <div className="connected-inbox-row" key={account.connectionId}>
             <div>
               <strong>{account.accountEmail ?? account.connectionRef}</strong>
@@ -2250,9 +2413,11 @@ function ConnectedGmailAccountsPanel({
                   ? `Last sync ${formatDate(account.lastSyncAt)}`
                   : "Not synced yet"}
               </span>
+              {accountSyncMetricText ? <span>{accountSyncMetricText}</span> : null}
               {account.lastError ? (
                 <span>Last issue: {account.lastError}</span>
               ) : null}
+              <GmailSyncHealthDetails health={account.syncHealth} />
             </div>
             <ActionGroup
               className="filter-actions"
@@ -2270,18 +2435,27 @@ function ConnectedGmailAccountsPanel({
               >
                 View inbox
               </Link>
-              {account.syncAvailable ? (
+              {account.syncHealth.recoveryAction === "reconnect_gmail" ? (
+                <Link
+                  className="button-secondary button-compact"
+                  href="/api/email-connections/google/connect"
+                >
+                  Reconnect
+                </Link>
+              ) : account.syncAvailable ? (
                 <form action={syncGmailInboxFromEmailPageAction}>
                   <input
                     name="account"
                     type="hidden"
                     value={account.connectionId}
                   />
+                  <input name="returnTo" type="hidden" value={returnTo} />
                   <button
                     className="button-secondary button-compact"
+                    disabled={!account.syncHealth.canRetryNow}
                     type="submit"
                   >
-                    Sync this inbox
+                    {syncButtonLabel}
                   </button>
                 </form>
               ) : (
@@ -2308,7 +2482,8 @@ function ConnectedGmailAccountsPanel({
               </form>
             </ActionGroup>
           </div>
-        ))}
+          );
+        })}
       </div>
       {accounts.length > 1 ? (
         <p className="form-hint">
@@ -2736,11 +2911,11 @@ function gmailSyncProgressState({
         : "Your Gmail inbox sync is queued. Northstar will start importing recent inbox threads as soon as the sync runner picks it up.",
       lastUpdateLabel,
       nextStep: syncStatusStale
-        ? "Click Sync Gmail inbox again to run a bounded sync now, or start the Railway worker service"
+        ? "Start the Railway worker service or refresh status after the worker catches up"
         : "Refresh status in a moment",
       statusLabel: "Sync queued",
       technicalHint:
-        "Production Gmail sync needs a running job worker (`npm run jobs:work` or Railway `RAILWAY_SERVICE_ROLE=worker`). The Sync Gmail inbox button can also run one explicit bounded sync through the same job record.",
+        "Production Gmail sync needs a running job worker (`npm run jobs:work` or Railway `RAILWAY_SERVICE_ROLE=worker`). The Sync Gmail inbox button queues work through the same durable job path and does not run provider calls in the page request.",
       title: syncStatusStale
         ? "Gmail sync queued with no worker pickup yet"
         : "Waiting to start Gmail sync",
@@ -3026,6 +3201,62 @@ function numberParam(value: string | undefined, fallback = 0) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+type EmailSyncMetricSource = {
+  lastSyncDuplicateCount?: number | null;
+  lastSyncImportedCount?: number | null;
+  lastSyncMessageSkipCount?: number | null;
+  lastSyncMode?: string | null;
+  lastSyncSkippedCount?: number | null;
+  lastSyncTotalFetched?: number | null;
+};
+
+function emailSyncMetricText(source: EmailSyncMetricSource) {
+  if (
+    source.lastSyncImportedCount === null ||
+    source.lastSyncImportedCount === undefined
+  ) {
+    return null;
+  }
+
+  const skipped =
+    (source.lastSyncSkippedCount ?? 0) +
+    (source.lastSyncMessageSkipCount ?? 0);
+  const parts = [
+    `imported ${source.lastSyncImportedCount}`,
+    `duplicates ${source.lastSyncDuplicateCount ?? 0}`,
+    skipped > 0 ? `skipped ${skipped}` : null,
+  ].filter(Boolean);
+  const fetched =
+    source.lastSyncTotalFetched !== null &&
+    source.lastSyncTotalFetched !== undefined
+      ? ` from ${source.lastSyncTotalFetched} fetched`
+      : "";
+  return `${emailSyncModeLabel(source.lastSyncMode)} result: ${parts.join(", ")}${fetched}.`;
+}
+
+function gmailSyncButtonLabel(
+  health: EmailSyncHealth | null | undefined,
+  defaultLabel: string,
+) {
+  if (!health) return defaultLabel;
+  if (
+    health.currentState === "dead_lettered" ||
+    health.currentState === "failed"
+  ) {
+    return health.canRetryNow ? "Retry now" : "Retry waiting";
+  }
+  if (health.currentState === "running") return "Sync running";
+  if (health.currentState === "queued" || health.currentState === "delayed")
+    return "Sync already queued";
+  return defaultLabel;
+}
+
+function emailSyncModeLabel(mode: string | null | undefined) {
+  if (mode === "older") return "Load older";
+  if (mode === "thread") return "Thread refresh";
+  return "Last sync";
+}
+
 type EmailLog = Awaited<ReturnType<typeof listEmailLogs>>[number];
 type DraftTemplate = {
   body: string;
@@ -3147,6 +3378,7 @@ function EmailInboxEmptyShell({
 function EmailInboxThreadDetail({
   aiReplyReadiness,
   backHref,
+  crmLinkSuggestions,
   defaultAiReplyTone,
   draftTemplates,
   followUpDetails,
@@ -3158,6 +3390,7 @@ function EmailInboxThreadDetail({
 }: {
   aiReplyReadiness: EmailReplyAssistantReadiness;
   backHref: Route;
+  crmLinkSuggestions: Map<string, EmailCrmLinkSuggestionResult>;
   defaultAiReplyTone: string;
   draftTemplates: DraftTemplate[];
   followUpDetails: Map<string, EmailPriorityFollowUpDetail>;
@@ -3325,6 +3558,12 @@ function EmailInboxThreadDetail({
           aria-label={`${thread.subject} AI and CRM insights`}
         >
           <WorkInboxInsightPanel item={insight} />
+          <EmailCrmLinkSuggestionPanel
+            emailLogId={primaryMessage.id}
+            returnTo={returnTo}
+            suggestion={crmLinkSuggestions.get(primaryMessage.id)}
+            subject={primaryMessage.subject}
+          />
           <EmailSmartLabelPanel
             emailLogId={primaryMessage.id}
             initialClassification={smartClassification}
@@ -3511,8 +3750,8 @@ function inboxFreshnessState({
       accountLabel,
       detail:
         threadCount > 0
-          ? "Manual refresh only: stored Gmail threads remain available, but this view has not recorded a completed sync timestamp. Northstar does not run aggressive recurring Gmail sync yet."
-          : "Manual refresh only: use Sync this inbox to pull recent Gmail messages. Northstar does not run aggressive recurring Gmail sync yet.",
+          ? "Stored Gmail threads remain available, but this view has not recorded a completed sync timestamp. Background sync uses the durable job path; use Sync this inbox when you want an explicit refresh."
+          : "Use Sync this inbox to queue an explicit Gmail pull. Background sync uses the same durable job path when connected accounts become due.",
       label: "Not synced yet",
       lastSyncedAt: null,
       stale: true,
@@ -3524,8 +3763,8 @@ function inboxFreshnessState({
   return {
     accountLabel,
     detail: stale
-      ? `Manual refresh only: ${accountLabel} freshness is older than 15 minutes. Sync this inbox to pull recent Gmail messages; Northstar does not run aggressive recurring Gmail sync yet.`
-      : `Manual refresh only: ${accountLabel} was last synced ${formatDate(lastSyncedAt)}. Use Sync this inbox when you need a fresh Gmail pull.`,
+      ? `${accountLabel} freshness is older than 15 minutes. Background sync uses the durable job path; use Sync this inbox when you need an immediate queued refresh.`
+      : `${accountLabel} was last synced ${formatDate(lastSyncedAt)}. Background sync will reuse the job path when this inbox becomes due; Sync this inbox remains available for explicit refresh.`,
     label: stale ? "Refresh recommended" : "Recently synced",
     lastSyncedAt,
     stale,
@@ -3555,6 +3794,29 @@ function appendEmailStatusParams(
     params.set(key, value);
   }
   return `${path}?${params.toString()}` as Route;
+}
+
+function emailCrmLinkReviewFilterHref(
+  filter: string,
+  searchParams: Awaited<EmailPageProps["searchParams"]>,
+) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams ?? {})) {
+    if (typeof value === "string" && value.trim()) params.set(key, value);
+  }
+  params.set("crmLink", filter);
+  return `/email?${params.toString()}#unlinked-email-review` as Route;
+}
+
+function emailPageCurrentReturnHref(
+  searchParams: Awaited<EmailPageProps["searchParams"]>,
+) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams ?? {})) {
+    if (typeof value === "string" && value.trim()) params.set(key, value);
+  }
+  const query = params.toString();
+  return (query ? `/email?${query}` : "/email") as Route;
 }
 
 function inboxAccountHref(
@@ -3814,21 +4076,25 @@ function newestAccountSyncAt(accounts: GmailInboxAccountSummary[]) {
 
 function EmailLogCard({
   aiReplyReadiness,
+  crmLinkSuggestion,
   defaultAiReplyTone,
   draftTemplates,
   emailLog,
   followUpDetail,
   priorityExplainer,
+  returnTo,
   showEvidenceAnchor = false,
   smartLabelReadiness,
   workspaceId,
 }: {
   aiReplyReadiness: EmailReplyAssistantReadiness;
+  crmLinkSuggestion?: EmailCrmLinkSuggestionResult;
   defaultAiReplyTone: string;
   draftTemplates: DraftTemplate[];
   emailLog: EmailLog;
   followUpDetail?: EmailPriorityFollowUpDetail;
   priorityExplainer?: EmailPriorityQueueExplainer;
+  returnTo: Route;
   showEvidenceAnchor?: boolean;
   smartLabelReadiness: EmailClassificationReadiness;
   workspaceId: string;
@@ -3876,6 +4142,12 @@ function EmailLogCard({
         ))}
       </ActionGroup>
       <EmailSourceMessageFacts emailLog={emailLog} />
+      <EmailCrmLinkSuggestionPanel
+        emailLogId={emailLog.id}
+        returnTo={returnTo}
+        suggestion={crmLinkSuggestion}
+        subject={emailLog.subject}
+      />
       <EmailSmartLabelPanel
         emailLogId={emailLog.id}
         initialClassification={smartClassification}
@@ -3982,6 +4254,350 @@ function EmailSourceMessageFacts({ emailLog }: { emailLog: EmailLog }) {
       </dl>
     </section>
   );
+}
+
+function EmailCrmLinkReviewQueueRow({
+  item,
+  returnTo,
+}: {
+  item: EmailCrmLinkReviewItem;
+  returnTo: Route;
+}) {
+  const primary = item.primarySuggestion;
+  const candidates = [
+    primary,
+    ...item.alternativeSuggestions,
+  ].filter((candidate): candidate is EmailCrmLinkSuggestion =>
+    Boolean(candidate),
+  );
+  const sourceParticipant =
+    item.emailLog.direction === "INBOUND"
+      ? (item.emailLog.fromText ?? "Unknown sender")
+      : (item.emailLog.toText ?? "Unknown recipient");
+
+  return (
+    <article className="email-crm-link-review-row">
+      <div className="email-crm-link-review-main">
+        <CompactTitleRow
+          actions={
+            <ActionGroup
+              className="filter-actions"
+              label={`${item.emailLog.subject} CRM link review state`}
+            >
+              <Badge>{item.stateLabel}</Badge>
+              {item.highConfidenceSuggestionCount > 0 ? (
+                <Badge>
+                  {item.highConfidenceSuggestionCount} high confidence
+                </Badge>
+              ) : null}
+            </ActionGroup>
+          }
+          description={`${sourceParticipant} · ${item.emailLog.occurredAt ? formatDate(item.emailLog.occurredAt) : "Date not recorded"}`}
+          title={item.emailLog.subject}
+        />
+        <div className="email-crm-link-review-grid">
+          <div>
+            <span>Source email</span>
+            <strong>{sourceParticipant}</strong>
+          </div>
+          <div>
+            <span>Suggested record</span>
+            <strong>
+              {primary
+                ? primary.label
+                : candidates.length > 0
+                  ? "Multiple plausible records"
+                  : "No reliable match"}
+            </strong>
+          </div>
+          <div>
+            <span>Record type</span>
+            <strong>
+              {primary
+                ? emailCrmRecordTypeLabel(primary.type)
+                : candidates.length > 0
+                  ? "Needs choice"
+                  : "None"}
+            </strong>
+          </div>
+          <div>
+            <span>Confidence</span>
+            <strong>
+              {primary
+                ? primary.confidence
+                : candidates.length > 0
+                  ? "ambiguous"
+                  : "none"}
+            </strong>
+          </div>
+        </div>
+        <p className="form-hint">
+          {primary
+            ? `${primary.why} Evidence: ${primary.evidence}.`
+            : candidates.length > 0
+              ? "Multiple deterministic matches exist. Review the alternatives before choosing one."
+              : "No exact email, confirmed domain, existing association, or same-thread CRM link was found."}
+        </p>
+        {candidates.length > 0 ? (
+          <div className="email-crm-link-review-alternatives">
+            {candidates.map((candidate, index) => (
+              <div
+                className="email-crm-link-review-alternative"
+                key={`${candidate.type}-${candidate.recordId}`}
+              >
+                <div>
+                  <ActionGroup
+                    className="filter-actions"
+                    label={`${candidate.label} review badges`}
+                  >
+                    <Badge>{emailCrmRecordTypeLabel(candidate.type)}</Badge>
+                    <Badge>{candidate.confidence}</Badge>
+                    {index === 0 && primary ? (
+                      <Badge>Suggested</Badge>
+                    ) : (
+                      <Badge>Alternative</Badge>
+                    )}
+                  </ActionGroup>
+                  <strong>{candidate.label}</strong>
+                  <p>{candidate.why}</p>
+                  <p className="form-hint">
+                    {emailCrmLinkSourceLabel(candidate.source)} ·{" "}
+                    {candidate.evidence}
+                  </p>
+                </div>
+                <EmailCrmLinkCandidateActions
+                  candidate={candidate}
+                  emailLogId={item.emailLog.id}
+                  primary={index === 0 && Boolean(primary)}
+                  returnTo={returnTo}
+                  subject={item.emailLog.subject}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <ActionGroup
+        className="filter-actions"
+        label={`${item.emailLog.subject} unlinked review navigation`}
+      >
+        <Link
+          className="button-secondary button-compact"
+          href={emailCrmLinkPanelHref(item.emailLog.id)}
+        >
+          Review card
+        </Link>
+        {primary ? (
+          <Link
+            className="button-secondary button-compact"
+            href={primary.href as Route}
+          >
+            Open record
+          </Link>
+        ) : null}
+      </ActionGroup>
+    </article>
+  );
+}
+
+function EmailCrmLinkSuggestionPanel({
+  emailLogId,
+  returnTo,
+  suggestion,
+  subject,
+}: {
+  emailLogId: string;
+  returnTo: Route;
+  suggestion?: EmailCrmLinkSuggestionResult;
+  subject: string;
+}) {
+  if (!suggestion || suggestion.alreadyLinked) return null;
+  const candidates = [
+    suggestion.primarySuggestion,
+    ...suggestion.alternativeSuggestions,
+  ].filter(
+    (
+      candidate,
+    ): candidate is NonNullable<
+      EmailCrmLinkSuggestionResult["primarySuggestion"]
+    > => Boolean(candidate),
+  );
+  const hasReliableCandidates = candidates.length > 0;
+  const panelLabel = `${subject} CRM link suggestions`;
+
+  return (
+    <section
+      aria-label={panelLabel}
+      className={
+        hasReliableCandidates
+          ? "email-crm-link-suggestions"
+          : "email-crm-link-suggestions email-crm-link-suggestions-empty"
+      }
+      id={`email-crm-link-${emailLogId}`}
+    >
+      <PanelTitleRow
+        actions={
+          <Badge>
+            {hasReliableCandidates ? "Review first" : "No reliable match"}
+          </Badge>
+        }
+        description={
+          hasReliableCandidates
+            ? "Northstar found deterministic CRM evidence. Review the record before linking."
+            : (suggestion.noReliableMatchReason ??
+              "No reliable CRM match found.")
+        }
+        title="CRM Link Assistance"
+      />
+      {hasReliableCandidates ? (
+        <div className="email-crm-link-candidate-list">
+          {candidates.map((candidate, index) => (
+            <div
+              className="email-crm-link-candidate"
+              key={`${candidate.type}-${candidate.recordId}`}
+            >
+              <div className="email-crm-link-candidate-main">
+                <ActionGroup
+                  className="filter-actions"
+                  label={`${candidate.label} match strength`}
+                >
+                  <Badge>{emailCrmRecordTypeLabel(candidate.type)}</Badge>
+                  <Badge>{candidate.confidence} confidence</Badge>
+                  {index === 0 && suggestion.primarySuggestion ? (
+                    <Badge>Suggested</Badge>
+                  ) : (
+                    <Badge>Alternative</Badge>
+                  )}
+                </ActionGroup>
+                <strong>{candidate.label}</strong>
+                <p>{candidate.why}</p>
+                <p className="form-hint">
+                  Evidence: {candidate.evidence} ·{" "}
+                  {emailCrmLinkSourceLabel(candidate.source)}
+                </p>
+              </div>
+              <ActionGroup
+                className="filter-actions"
+                label={`${candidate.label} link actions`}
+              >
+                <Link
+                  className="button-secondary button-compact"
+                  href={candidate.href as Route}
+                >
+                  Open record
+                </Link>
+                <EmailCrmLinkCandidateForm
+                  candidate={candidate}
+                  emailLogId={emailLogId}
+                  primary={index === 0 && Boolean(suggestion.primarySuggestion)}
+                  returnTo={returnTo}
+                  subject={subject}
+                />
+              </ActionGroup>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="form-hint">
+          Use manual CRM review when there is enough context. Northstar will not
+          guess or create a record from this email.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function EmailCrmLinkCandidateActions({
+  candidate,
+  emailLogId,
+  primary,
+  returnTo,
+  subject,
+}: {
+  candidate: EmailCrmLinkSuggestion;
+  emailLogId: string;
+  primary: boolean;
+  returnTo: Route;
+  subject: string;
+}) {
+  return (
+    <ActionGroup
+      className="filter-actions"
+      label={`${candidate.label} link actions`}
+    >
+      <Link
+        className="button-secondary button-compact"
+        href={candidate.href as Route}
+      >
+        Open record
+      </Link>
+      <EmailCrmLinkCandidateForm
+        candidate={candidate}
+        emailLogId={emailLogId}
+        primary={primary}
+        returnTo={returnTo}
+        subject={subject}
+      />
+    </ActionGroup>
+  );
+}
+
+function EmailCrmLinkCandidateForm({
+  candidate,
+  emailLogId,
+  primary,
+  returnTo,
+  subject,
+}: {
+  candidate: EmailCrmLinkSuggestion;
+  emailLogId: string;
+  primary: boolean;
+  returnTo: Route;
+  subject: string;
+}) {
+  return (
+    <form action={linkEmailLogToCrmRecordFromEmailPageAction}>
+      <input name="emailLogId" type="hidden" value={emailLogId} />
+      <input name="recordType" type="hidden" value={candidate.type} />
+      <input name="recordId" type="hidden" value={candidate.recordId} />
+      <input
+        name="returnTo"
+        type="hidden"
+        value={emailReturnToCrmLinkPanel(returnTo, emailLogId)}
+      />
+      <button
+        aria-label={`Link email ${subject} to ${candidate.label}`}
+        className={
+          primary ? "button-primary button-compact" : "button-secondary button-compact"
+        }
+        type="submit"
+      >
+        Link {emailCrmRecordTypeLabel(candidate.type).toLowerCase()}
+      </button>
+    </form>
+  );
+}
+
+function emailCrmRecordTypeLabel(
+  type: NonNullable<
+    EmailCrmLinkSuggestionResult["primarySuggestion"]
+  >["type"],
+) {
+  if (type === "PERSON") return "Contact";
+  if (type === "ORGANIZATION") return "Organization";
+  if (type === "DEAL") return "Deal";
+  return "Lead";
+}
+
+function emailCrmLinkSourceLabel(
+  source: NonNullable<
+    EmailCrmLinkSuggestionResult["primarySuggestion"]
+  >["source"],
+) {
+  if (source === "exact_email") return "exact email match";
+  if (source === "organization_domain") return "confirmed domain match";
+  if (source === "participant_association") return "existing CRM association";
+  return "same-thread CRM context";
 }
 
 function RelationshipInboxEvidenceDetail({
@@ -4498,12 +5114,22 @@ function emailCardHref(emailLogId: string) {
   return `#email-card-${emailLogId}` as Route;
 }
 
+function emailCrmLinkPanelHref(emailLogId: string) {
+  return `#email-crm-link-${emailLogId}` as Route;
+}
+
 function emailDraftReviewHref(emailLogId: string) {
   return `#email-draft-review-${emailLogId}` as Route;
 }
 
 function emailFollowUpReviewHref(emailLogId: string) {
   return `#email-follow-up-review-${emailLogId}` as Route;
+}
+
+function emailReturnToCrmLinkPanel(returnTo: Route, emailLogId: string) {
+  const url = new URL(returnTo, "https://northstar.local");
+  url.hash = emailCrmLinkPanelHref(emailLogId).slice(1);
+  return `${url.pathname}${url.search}${url.hash}` as Route;
 }
 
 function primaryEmailForDraft(
@@ -4572,7 +5198,10 @@ function emailStatusCopy(
       : "Gmail Full Inbox sync was not completed. Google granted Gmail access, but Gmail rejected full-message reads. Run diagnostics or check Google Cloud OAuth/Gmail API configuration.";
   }
   if (searchParams?.emailConnection === "gmail-sync-queued") {
-    return "Gmail inbox sync is queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.";
+    const queued = numberParam(searchParams.queued);
+    return queued > 1
+      ? `${queued} Gmail inbox syncs are queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.`
+      : "Gmail inbox sync is queued. Watch the Gmail sync progress panel for current status, then refresh status to check for synced threads.";
   }
   if (searchParams?.emailConnection === "gmail-loaded-more") {
     const messageSkips = numberParam(searchParams.messageSkips);
@@ -4606,6 +5235,12 @@ function emailStatusCopy(
   }
   if (searchParams?.emailConnection === "gmail-reply-error") {
     return "Gmail reply was not sent. Reconnect Gmail, check the recipient, or try again.";
+  }
+  if (searchParams?.emailConnection === "crm-linked") {
+    return "Email linked to the selected CRM record. Follow-ups and Relationship Inbox state remain review-first.";
+  }
+  if (searchParams?.emailConnection === "crm-link-error") {
+    return "Email was not linked. Refresh the suggestion, confirm the record is still in this workspace, and try again.";
   }
   if (searchParams?.emailConnection === "gmail-disconnected") {
     return "Gmail disconnected. Encrypted OAuth tokens were removed; synced email logs remain available for review.";

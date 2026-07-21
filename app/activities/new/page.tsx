@@ -11,7 +11,7 @@ import { PanelTitleRow } from "@/components/panel-title-row";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { formatPersonName } from "@/lib/person-name";
 import { parseReturnToHref, returnToLabel } from "@/lib/return-to";
-import { getWorkspace, listDeals, listLeads, listOrganizations, listPeople } from "@/lib/services/crm";
+import { getWorkspace, listActivities, listDeals, listLeads, listOrganizations, listPeople } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,12 @@ type PageProps = {
     due?: string;
     leadId?: string;
     organizationId?: string;
+    ownerId?: string;
     personId?: string;
+    quoteContext?: string;
+    quoteEvent?: string;
+    quoteNumber?: string;
+    quoteStatus?: string;
     related?: string;
     returnTo?: string;
     title?: string;
@@ -34,12 +39,19 @@ export default async function NewActivityPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
-  const [workspaceRecord, deals, people, organizations, leads] = await Promise.all([
+  const initialAttachmentValue = parseInitialAttachmentValue(resolvedSearchParams);
+  const quoteNumber = trimParam(resolvedSearchParams?.quoteNumber);
+  const quoteDealId = quoteNumber ? dealIdFromAttachmentValue(initialAttachmentValue) : "";
+  const similarQuoteFollowUpsPromise = quoteNumber && quoteDealId
+    ? listActivities(actor, { relatedType: "deal", relatedId: quoteDealId, status: "open", q: quoteNumber })
+    : Promise.resolve([]);
+  const [workspaceRecord, deals, people, organizations, leads, similarQuoteFollowUps] = await Promise.all([
     getWorkspace(actor),
     listDeals(actor, { status: "OPEN" }),
     listPeople(actor),
     listOrganizations(actor),
-    listLeads(actor)
+    listLeads(actor),
+    similarQuoteFollowUpsPromise
   ]);
   const owners = workspaceRecord.memberships.map((membership) => ({
     id: membership.user.id,
@@ -56,9 +68,12 @@ export default async function NewActivityPage({ searchParams }: PageProps) {
       .filter((lead) => lead.status !== "CONVERTED")
       .map((lead) => ({ label: `Lead: ${lead.title}`, value: `lead:${lead.id}` }))
   ].sort((a, b) => a.label.localeCompare(b.label));
-  const initialAttachmentValue = parseInitialAttachmentValue(resolvedSearchParams);
   const returnHref = parseReturnToHref(resolvedSearchParams?.returnTo, "/activities");
   const returnLabel = returnToLabel(returnHref);
+  const quoteContext = trimParam(resolvedSearchParams?.quoteContext);
+  const quoteStatus = trimParam(resolvedSearchParams?.quoteStatus);
+  const quoteEvent = trimParam(resolvedSearchParams?.quoteEvent);
+  const hasQuotePrefill = Boolean(quoteNumber);
   const hasPrefill =
     Boolean(resolvedSearchParams?.title) ||
     Boolean(resolvedSearchParams?.description) ||
@@ -89,6 +104,19 @@ export default async function NewActivityPage({ searchParams }: PageProps) {
           <FormIntroCallout title="Prefilled follow-up">
             We prefilled this activity from your search or record shortcut. Review the details, then save the
             follow-up.
+          </FormIntroCallout>
+        ) : null}
+        {hasQuotePrefill ? (
+          <FormIntroCallout title="Suggested quote follow-up draft">
+            This is an editable draft for quote {quoteNumber}
+            {quoteStatus ? ` (${quoteStatus})` : ""}. {quoteContext || "Review the suggested details before saving."}
+            {quoteEvent ? ` Source event: ${quoteEventLabel(quoteEvent)}.` : ""} Nothing has been created yet.
+          </FormIntroCallout>
+        ) : null}
+        {similarQuoteFollowUps.length > 0 ? (
+          <FormIntroCallout title="Similar open follow-up exists">
+            {similarQuoteFollowUps[0]?.title ?? "An open quote follow-up"} is already saved for this deal. You can still
+            create another follow-up after reviewing this draft.
           </FormIntroCallout>
         ) : null}
         {attachmentOptions.length === 0 ? (
@@ -140,6 +168,7 @@ export default async function NewActivityPage({ searchParams }: PageProps) {
             cancelHref={returnHref}
             cancelLabel={returnLabel}
             defaultOwnerId={actorUserId}
+            initialOwnerId={trimParam(resolvedSearchParams?.ownerId)}
             initialAttachmentValue={initialAttachmentValue}
             initialDescription={trimParam(resolvedSearchParams?.description)}
             initialDueAt={parseDueDateParam(resolvedSearchParams?.due)}
@@ -170,6 +199,25 @@ function normalizeAttachmentValue(value: string) {
   if (!id) return "";
   if (["deal", "lead", "person", "organization"].includes(type)) return `${type}:${id}`;
   return "";
+}
+
+function dealIdFromAttachmentValue(value: string) {
+  const [type, id] = value.split(":");
+  return type === "deal" && id ? id : "";
+}
+
+function quoteEventLabel(value: string) {
+  if (value === "quote.public_link_created") return "Public link generated";
+  if (value === "quote.public_link_revoked") return "Public link revoked";
+  if (value === "quote.public_accepted" || value === "quote.accepted") return "Quote accepted";
+  if (value === "quote.declined") return "Quote declined";
+  if (value === "quote.deal_value_sync_conflict") return "Deal-value sync needs review";
+  if (value === "quote.deal_value_sync_reviewed") return "Deal-value sync reviewed";
+  if (value === "deal.value_synced_from_quote") return "Deal value synced";
+  if (value.startsWith("quote_item.")) return "Quote line items changed";
+  if (value === "quote.adjustments_updated") return "Quote pricing changed";
+  if (value === "quote.sent") return "Quote sent";
+  return "Quote lifecycle event";
 }
 
 function parseActivityType(value: string | undefined) {

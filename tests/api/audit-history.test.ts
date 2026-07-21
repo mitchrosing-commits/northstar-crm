@@ -50,6 +50,10 @@ describe("audit history formatting", () => {
       label: "Synced deal value from quote",
       targetLabel: "Deal"
     });
+    expect(formatAuditEvent({ action: "quote_item.updated", entityType: "QuoteItem" })).toMatchObject({
+      label: "Updated quote line item",
+      targetLabel: "Quote Item"
+    });
     expect(formatAuditEvent({ action: "email_log.created", entityType: "EmailLog" })).toMatchObject({
       label: "Logged manual email",
       targetLabel: "Email log"

@@ -8,6 +8,8 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import type { AssistantDraftAction } from "@/lib/services/assistant/assistant-draft-action-service";
 import {
   applyAssistantActionRequest,
+  cancelAssistantConversationDraftClarification,
+  clarifyAssistantConversationDraft,
   createCrmChangeProposalFromAssistantDraft,
   createAssistantActionRequest,
   hideAssistantTodayCommandCenterItem,
@@ -56,6 +58,50 @@ export async function saveAssistantDraftActionRequest(formData: FormData) {
 
   revalidatePath("/assistant");
   redirect(assistantRedirect("saved", returnCommand, "pending"));
+}
+
+export async function clarifyAssistantDraftAction(formData: FormData) {
+  const draftAction = parseDraftAction(formData.get("draftAction"));
+  const conversationId = stringValue(formData.get("conversationId"), 160);
+  const candidateId = stringValue(formData.get("candidateId"), 160);
+  const candidateType = stringValue(formData.get("candidateType"), 40);
+  const { actor } = await getCurrentWorkspaceContext();
+  let resolvedConversationId = conversationId;
+
+  try {
+    const conversation = await clarifyAssistantConversationDraft(actor, {
+      candidateId,
+      candidateType,
+      conversationId,
+      draftAction
+    });
+    resolvedConversationId = conversation.id;
+  } catch {
+    redirect(assistantChatRedirect("error", conversationId));
+  }
+
+  revalidatePath("/assistant");
+  redirect(assistantChatRedirect("sent", resolvedConversationId));
+}
+
+export async function cancelAssistantDraftClarificationAction(formData: FormData) {
+  const draftAction = parseDraftAction(formData.get("draftAction"));
+  const conversationId = stringValue(formData.get("conversationId"), 160);
+  const { actor } = await getCurrentWorkspaceContext();
+  let resolvedConversationId = conversationId;
+
+  try {
+    const conversation = await cancelAssistantConversationDraftClarification(actor, {
+      conversationId,
+      draftAction
+    });
+    resolvedConversationId = conversation.id;
+  } catch {
+    redirect(assistantChatRedirect("error", conversationId));
+  }
+
+  revalidatePath("/assistant");
+  redirect(assistantChatRedirect("sent", resolvedConversationId));
 }
 
 export async function rejectAssistantActionRequestAction(formData: FormData) {

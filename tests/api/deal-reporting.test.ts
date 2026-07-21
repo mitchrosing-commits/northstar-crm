@@ -246,6 +246,8 @@ describe("Deal Reporting v1", () => {
     expect(primaryNav).toContain("appShellNavigationManifest");
     expect(navigation).toContain('href: "/reports"');
     expect(navigation).toContain('label: "Reports"');
+    expect(navigation).toContain('helper: "Metrics"');
+    expect(navigation).not.toContain("primary: false,\n    searchDescription: \"Review sales operating metrics.\"");
     expect(reportsPage).toContain("getDealReport(actor");
     expect(reportsPage).toContain("parseListViewState(params");
     expect(reportsPage).toContain(
@@ -304,9 +306,10 @@ describe("Deal Reporting v1", () => {
     expect(reportsPage).toContain("const createFollowUpLabel = \"Create follow-up activity from reports\"");
     expect(reportsPage).toContain("aria-label={createFollowUpLabel}");
     expect(reportsPage).toContain("title={createFollowUpLabel}");
-    expect(reportsPage).toContain("const findQuotesLabel = \"Find deals with quotes from reports\"");
+    expect(reportsPage).toContain("const findQuotesLabel = \"Find quotes from reports\"");
     expect(reportsPage).toContain("aria-label={findQuotesLabel}");
     expect(reportsPage).toContain("title={findQuotesLabel}");
+    expect(reportsPage).toContain('href="/quotes"');
     expect(reportsPage).toContain("const viewTopOpenDealsLabel = \"View top open deals from reports\"");
     expect(reportsPage).toContain("aria-label={viewTopOpenDealsLabel}");
     expect(reportsPage).toContain("title={viewTopOpenDealsLabel}");

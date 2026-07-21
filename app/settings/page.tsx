@@ -10,6 +10,7 @@ import { FormActionBar } from "@/components/form-action-bar";
 import { FormFieldLabel } from "@/components/form-field-label";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { formatDate } from "@/components/format";
+import { GmailSyncHealthDetails } from "@/components/gmail-sync-health-details";
 import { InlineEmptyStateText } from "@/components/inline-empty-state-text";
 import { PageHeader } from "@/components/page-header";
 import { PanelTitleRow } from "@/components/panel-title-row";
@@ -23,11 +24,13 @@ import {
   getSupplyChainVerticalSetupStatus,
   isTokenEncryptionConfigured,
   listEmailConnectionProviderCards,
+  listGmailInboxAccounts,
   listEmailTemplates,
   listPendingWorkspaceInvitations,
   listPipelines,
 } from "@/lib/services/crm";
 import type { EmailProviderCard } from "@/lib/services/crm";
+import type { EmailSyncHealth, GmailInboxAccountSummary } from "@/lib/services/email-connection-service";
 import {
   removeWorkspaceMemberAction,
   revokeWorkspaceInvitationAction,
@@ -67,12 +70,14 @@ export default async function SettingsPage({
     summary,
     emailTemplates,
     emailProviderCards,
+    gmailInboxAccounts,
     pipelines,
     supplyChainSetupStatus,
   ] = await Promise.all([
     getWorkspaceMembershipSummary(actor),
     listEmailTemplates(actor),
     listEmailConnectionProviderCards(actor),
+    listGmailInboxAccounts(actor),
     listPipelines(actor),
     getSupplyChainVerticalSetupStatus(actor),
   ]);
@@ -208,6 +213,7 @@ export default async function SettingsPage({
       />
       <EmailConnectionsPanel
         createdCount={resolvedSearchParams?.created}
+        gmailAccounts={gmailInboxAccounts}
         providers={emailProviderCards}
         status={resolvedSearchParams?.emailConnection}
       />
@@ -398,6 +404,62 @@ export default async function SettingsPage({
       </section>
     </AppShell>
   );
+}
+
+type EmailSyncMetricSource = {
+  lastSyncDuplicateCount?: number | null;
+  lastSyncImportedCount?: number | null;
+  lastSyncMessageSkipCount?: number | null;
+  lastSyncMode?: string | null;
+  lastSyncSkippedCount?: number | null;
+  lastSyncTotalFetched?: number | null;
+};
+
+function emailSyncMetricText(source: EmailSyncMetricSource) {
+  if (
+    source.lastSyncImportedCount === null ||
+    source.lastSyncImportedCount === undefined
+  ) {
+    return null;
+  }
+
+  const skipped =
+    (source.lastSyncSkippedCount ?? 0) +
+    (source.lastSyncMessageSkipCount ?? 0);
+  const parts = [
+    `imported ${source.lastSyncImportedCount}`,
+    `duplicates ${source.lastSyncDuplicateCount ?? 0}`,
+    skipped > 0 ? `skipped ${skipped}` : null,
+  ].filter(Boolean);
+  const fetched =
+    source.lastSyncTotalFetched !== null &&
+    source.lastSyncTotalFetched !== undefined
+      ? ` from ${source.lastSyncTotalFetched} fetched`
+      : "";
+  return `${emailSyncModeLabel(source.lastSyncMode)} result: ${parts.join(", ")}${fetched}.`;
+}
+
+function gmailSyncButtonLabel(
+  health: EmailSyncHealth | null | undefined,
+  defaultLabel: string,
+) {
+  if (!health) return defaultLabel;
+  if (
+    health.currentState === "dead_lettered" ||
+    health.currentState === "failed"
+  ) {
+    return health.canRetryNow ? "Retry now" : "Retry waiting";
+  }
+  if (health.currentState === "running") return "Sync running";
+  if (health.currentState === "queued" || health.currentState === "delayed")
+    return "Sync already queued";
+  return defaultLabel;
+}
+
+function emailSyncModeLabel(mode: string | null | undefined) {
+  if (mode === "older") return "Load older";
+  if (mode === "thread") return "Thread refresh";
+  return "Last sync";
 }
 
 type WorkspaceMemberSummary = Awaited<
@@ -765,20 +827,24 @@ function buildAdminReadinessStatuses() {
 
 function EmailConnectionsPanel({
   createdCount,
+  gmailAccounts,
   providers,
   status,
 }: {
   createdCount?: string;
+  gmailAccounts: GmailInboxAccountSummary[];
   providers: EmailProviderCard[];
   status?: string;
 }) {
   const statusCopy =
     status === "gmail-connected"
-      ? "Gmail connection saved. Use Sync recent Gmail to import matched messages from known contacts."
+      ? "Gmail connection saved. Use Sync recent Gmail to queue the Full Inbox background sync."
       : status === "microsoft-connected"
         ? "Microsoft connection saved. Use Sync recent Microsoft mail to import matched messages from known contacts."
-        : status === "gmail-synced"
-          ? `Recent Gmail sync finished. Imported ${createdCount ?? "0"} matched message${createdCount === "1" ? "" : "s"}.`
+        : status === "gmail-sync-queued"
+          ? "Gmail sync was queued. The provider sync is not complete until the background worker finishes the job."
+          : status === "gmail-synced"
+            ? `Recent Gmail sync finished. Imported ${createdCount ?? "0"} matched message${createdCount === "1" ? "" : "s"}.`
           : status === "microsoft-synced"
             ? `Recent Microsoft mail sync finished. Imported ${createdCount ?? "0"} matched message${createdCount === "1" ? "" : "s"}.`
             : status === "gmail-sync-error"
@@ -802,8 +868,8 @@ function EmailConnectionsPanel({
         today. Password reset delivery runs through the background job queue
         when webhook email is configured. Gmail / Google Workspace and Microsoft
         365 / Outlook can connect when OAuth env and encrypted token storage are
-        configured. Manual sync imports recent matched metadata/snippets from
-        known contacts only.
+        configured. Gmail sync runs through the durable Full Inbox background job
+        path; Microsoft manual sync remains metadata-focused for known contacts.
       </p>
       {statusCopy ? (
         <FormIntroCallout
@@ -818,7 +884,20 @@ function EmailConnectionsPanel({
           const providerActionsLabel = `${provider.name} provider actions`;
           const providerPrimaryActionLabel = `${provider.actionLabel}: ${provider.name} provider setup`;
           const providerSyncLabel = provider.syncLabel ?? "Sync recent Gmail";
-          const providerSyncActionLabel = `${providerSyncLabel}: import recent matched ${provider.name} messages`;
+          const providerSyncHealth = provider.syncHealth ?? null;
+          const providerSyncCanSubmit =
+            provider.provider !== "GOOGLE_WORKSPACE" ||
+            !providerSyncHealth ||
+            providerSyncHealth.canRetryNow;
+          const providerSyncButtonLabel =
+            provider.provider === "GOOGLE_WORKSPACE" && providerSyncHealth
+              ? gmailSyncButtonLabel(providerSyncHealth, providerSyncLabel)
+              : providerSyncLabel;
+          const providerSyncActionLabel =
+            provider.provider === "GOOGLE_WORKSPACE"
+              ? `${providerSyncButtonLabel}: queue Full Inbox sync for ${provider.name}`
+              : `${providerSyncLabel}: import recent matched ${provider.name} messages`;
+          const providerSyncMetricText = emailSyncMetricText(provider);
 
           return (
             <div className="provider-card" key={provider.name}>
@@ -832,6 +911,10 @@ function EmailConnectionsPanel({
               ) : null}
               {provider.lastSyncAt ? (
                 <p>Last sync: {formatDate(provider.lastSyncAt)}</p>
+              ) : null}
+              {providerSyncMetricText ? <p>{providerSyncMetricText}</p> : null}
+              {providerSyncHealth ? (
+                <GmailSyncHealthDetails health={providerSyncHealth} />
               ) : null}
               {provider.lastError ? (
                 <p>Last sync issue: {provider.lastError}</p>
@@ -870,13 +953,22 @@ function EmailConnectionsPanel({
                           : syncRecentGmailAction
                       }
                     >
+                        {provider.provider === "GOOGLE_WORKSPACE" &&
+                        provider.connectionId ? (
+                          <input
+                            name="connectionId"
+                            type="hidden"
+                            value={provider.connectionId}
+                          />
+                        ) : null}
                       <button
                         aria-label={providerSyncActionLabel}
                         className="button-secondary button-compact"
+                        disabled={!providerSyncCanSubmit}
                         title={providerSyncActionLabel}
                         type="submit"
                       >
-                        {providerSyncLabel}
+                        {providerSyncButtonLabel}
                       </button>
                     </form>
                   ) : null}
@@ -886,6 +978,65 @@ function EmailConnectionsPanel({
           );
         })}
       </div>
+      {gmailAccounts.length > 0 ? (
+        <div className="email-connection-health-list section-spaced">
+          <CompactTitleRow
+            actions={
+              <Badge>
+                {gmailAccounts.length === 1
+                  ? "1 Gmail inbox"
+                  : `${gmailAccounts.length} Gmail inboxes`}
+              </Badge>
+            }
+            title="Gmail Sync Health"
+          />
+          {gmailAccounts.map((account) => (
+            <div className="email-connection-health-row" key={account.connectionId}>
+              <div>
+                <strong>{account.accountEmail ?? account.connectionRef}</strong>
+                <span>Ref {account.connectionRef}</span>
+              </div>
+              <GmailSyncHealthDetails health={account.syncHealth} />
+              <ActionGroup
+                className="filter-actions"
+                label={`${account.accountEmail ?? account.connectionRef} Gmail sync recovery actions`}
+              >
+                <Badge>{account.syncHealth.currentStateLabel}</Badge>
+                {account.syncHealth.recoveryAction === "reconnect_gmail" ? (
+                  <Link
+                    className="button-secondary button-compact"
+                    href="/api/email-connections/google/connect"
+                  >
+                    Reconnect Gmail
+                  </Link>
+                ) : account.syncAvailable ? (
+                  <form action={syncRecentGmailAction}>
+                    <input
+                      name="connectionId"
+                      type="hidden"
+                      value={account.connectionId}
+                    />
+                    <button
+                      className="button-secondary button-compact"
+                      disabled={!account.syncHealth.canRetryNow}
+                      type="submit"
+                    >
+                      {gmailSyncButtonLabel(account.syncHealth, "Sync now")}
+                    </button>
+                  </form>
+                ) : (
+                  <Link
+                    className="button-secondary button-compact"
+                    href="/api/email-connections/google/connect"
+                  >
+                    Reconnect Gmail
+                  </Link>
+                )}
+              </ActionGroup>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }

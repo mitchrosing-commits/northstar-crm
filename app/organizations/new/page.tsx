@@ -5,6 +5,7 @@ import { FormHeaderActions } from "@/components/form-header-actions";
 import { OrganizationForm } from "@/components/organization-form";
 import { PageHeader } from "@/components/page-header";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
+import { parseReturnToHref } from "@/lib/return-to";
 import { getWorkspace } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export default async function NewOrganizationPage({
     name: membership.user.name ?? membership.user.email
   }));
   const defaultName = firstSearchParam(resolvedSearchParams?.name);
-  const returnTo = leadReturnToParam(resolvedSearchParams?.returnTo);
+  const returnTo = leadOrActivityReturnToParam(resolvedSearchParams?.returnTo);
   const hasPrefill = Boolean(defaultName);
 
   return (
@@ -41,7 +42,7 @@ export default async function NewOrganizationPage({
         owners={owners}
         prefillNotice={
           returnTo
-            ? "Create this organization, then Northstar will return to the lead form with the company selected."
+            ? "Create this organization, then Northstar will return to the source form with the company selected."
             : hasPrefill
             ? "We prefilled this organization from your search shortcut. Review the details, then create the account."
             : undefined
@@ -58,10 +59,12 @@ function firstSearchParam(value: string | string[] | undefined) {
   return first?.slice(0, 160);
 }
 
-function leadReturnToParam(value: string | string[] | undefined) {
+function leadOrActivityReturnToParam(value: string | string[] | undefined) {
   const first = Array.isArray(value) ? value[0] : value;
   const returnTo = first?.slice(0, 700);
   if (!returnTo) return null;
+  const activityReturnTo = parseReturnToHref(returnTo, "/organizations");
+  if (String(activityReturnTo).startsWith("/activities/new")) return activityReturnTo;
   if (returnTo === "/leads/new" || returnTo.startsWith("/leads/new?")) return returnTo;
   if (/^\/leads\/[^/?#]+\/edit(?:\?.*)?$/.test(returnTo)) return returnTo;
   return null;

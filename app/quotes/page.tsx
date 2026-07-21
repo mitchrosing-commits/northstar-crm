@@ -12,6 +12,7 @@ import { ListSortControls } from "@/components/list-sort-controls";
 import { ListViewStatus } from "@/components/list-view-status";
 import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
+import { QuoteCreateFromDealPanel } from "@/components/quote-create-from-deal-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { TableLinkedRecordCell } from "@/components/table-linked-record-cell";
 import { TableOwnerCell } from "@/components/table-owner-cell";
@@ -26,7 +27,7 @@ import {
   type ListSearchParams
 } from "@/lib/list-page-query";
 import { formatPersonName } from "@/lib/person-name";
-import { listQuotesPage } from "@/lib/services/crm";
+import { listDealsPage, listQuotesPage } from "@/lib/services/crm";
 
 export const dynamic = "force-dynamic";
 
@@ -49,17 +50,30 @@ export default async function QuotesPage({ searchParams }: PageProps) {
   const { workspace, actorUserId } = await getCurrentWorkspaceContext();
   const actor = { workspaceId: workspace.id, actorUserId };
   const query = getSearchParam(params, "q");
+  const dealQuery = getSearchParam(params, "dealQ");
   const pagination = parsePagination(params);
-  const quotePage = await listQuotesPage(
-    actor,
-    {
-      q: query || undefined,
-      status: enumSearchParam(params, "status", quoteStatuses),
-      sortBy: enumSearchParam(params, "sortBy", quoteSorts),
-      sortDirection: enumSearchParam(params, "sortDirection", sortDirections)
-    },
-    pagination
-  );
+  const [quotePage, quoteCreationDeals] = await Promise.all([
+    listQuotesPage(
+      actor,
+      {
+        q: query || undefined,
+        status: enumSearchParam(params, "status", quoteStatuses),
+        sortBy: enumSearchParam(params, "sortBy", quoteSorts),
+        sortDirection: enumSearchParam(params, "sortDirection", sortDirections)
+      },
+      pagination
+    ),
+    listDealsPage(
+      actor,
+      {
+        q: dealQuery || undefined,
+        status: "OPEN",
+        sortBy: "updatedAt",
+        sortDirection: "desc"
+      },
+      { page: 1, pageSize: 8 }
+    )
+  ]);
   const hasActiveFilters = hasActiveListFilters(params, ["q", "status", "sortBy", "sortDirection"]);
 
   return (
@@ -71,6 +85,8 @@ export default async function QuotesPage({ searchParams }: PageProps) {
       >
         <ListViewStatus active={hasActiveFilters} label="Filtered quotes view active" resetHref="/quotes" />
       </PageHeader>
+
+      <QuoteCreateFromDealPanel dealQuery={dealQuery} deals={quoteCreationDeals.items} workspaceId={workspace.id} />
 
       <FilterPanel action="/quotes" legend="Quote filters" pageSize={pagination.pageSize} resetHref="/quotes">
         <label className="form-field">
@@ -170,6 +186,48 @@ export default async function QuotesPage({ searchParams }: PageProps) {
                             href: `/deals/${quote.dealId}/quotes/${quote.id}`,
                             label: "Open quote",
                             ariaLabel: `Open quote ${quote.number}`
+                          },
+                          ...(quote.status === "DRAFT"
+                            ? [
+                                {
+                                  href: `/deals/${quote.dealId}/quotes/${quote.id}#quote-items`,
+                                  label: "Manage items",
+                                  ariaLabel: `Manage draft line items for ${quote.number}`
+                                },
+                                {
+                                  href: `/deals/${quote.dealId}/quotes/${quote.id}#quote-adjustments`,
+                                  label: "Edit draft",
+                                  ariaLabel: `Edit draft totals for ${quote.number}`
+                                }
+                              ]
+                            : []),
+                          ...(quote.status === "SENT"
+                            ? [
+                                {
+                                  href: `/deals/${quote.dealId}/quotes/${quote.id}#public-link`,
+                                  label: "Public link",
+                                  ariaLabel: `Manage public link for ${quote.number}`
+                                },
+                                {
+                                  href: `/deals/${quote.dealId}/quotes/${quote.id}#quote-status`,
+                                  label: "Review status",
+                                  ariaLabel: `Review acceptance status for ${quote.number}`
+                                }
+                              ]
+                            : []),
+                          ...(quote.status === "ACCEPTED"
+                            ? [
+                                {
+                                  href: `/deals/${quote.dealId}/quotes/${quote.id}#deal-value-sync`,
+                                  label: "Sync status",
+                                  ariaLabel: `Review deal value sync for ${quote.number}`
+                                }
+                              ]
+                            : []),
+                          {
+                            href: `/deals/${quote.dealId}/quotes/${quote.id}/pdf`,
+                            label: "PDF",
+                            ariaLabel: `Download PDF for ${quote.number}`
                           },
                           {
                             href: `/deals/${quote.dealId}`,

@@ -123,9 +123,12 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("conversion: ${conversionDisplay(metadata.conversionMode)}");
     for (const titleRow of [
       'title="Meeting Log"',
+      'title="Transcript Review"',
       'title="Matches and Warnings"',
+      'title="Association Confidence"',
       'title="Proposed Notes"',
       'title="Relationship Memory Updates"',
+      'title="CRM Change Proposals"',
       'title="Follow-Ups"',
       'title="Normalized Markdown"',
       'title="Apply Summary"',
@@ -154,6 +157,18 @@ describe("meeting intelligence UX", () => {
     expect(meetingIntelligenceReview).toContain("meeting-proposal-evidence");
     expect(meetingIntelligenceReview).toContain("Structured summary");
     expect(meetingIntelligenceReview).toContain("section.evidenceType === \"explicit\"");
+    expect(meetingIntelligenceReview).toContain("Search transcript");
+    expect(meetingIntelligenceReview).toContain("Transcript segment navigation");
+    expect(meetingIntelligenceReview).toContain("Transcription confidence is low or uncertain");
+    expect(meetingIntelligenceReview).toContain("Choose association");
+    expect(meetingIntelligenceReview).toContain("Search existing CRM records");
+    expect(meetingIntelligenceReview).toContain("Mark unmatched");
+    expect(meetingIntelligenceReview).toContain("Confirm correction");
+    expect(meetingIntelligenceReview).toContain("Association correction saved.");
+    expect(meetingIntelligenceReview).toContain("Contact and organization data changes remain separate CRM Change Proposals");
+    expect(meetingIntelligenceReview).toContain("CrmChangeProposalReviewList");
+    expect(meetingIntelligenceReview).toContain("No CRM change proposals");
+    expect(meetingIntelligenceService).toContain("/crm-change-proposals/${proposal.id}?source=meeting-intelligence");
     expect(meetingIntelligenceReview).toContain("{selectedUpdateCount} selected");
     expect(meetingIntelligenceReview).toContain("Review-first safety");
     expect(meetingIntelligenceReview).toContain("Nothing is written to notes, activities, associations, or Relationship Memory fields");

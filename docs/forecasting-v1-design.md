@@ -28,7 +28,7 @@ Implemented MVP behavior:
 - Stage probability: `PipelineStage.probability Int?` exists and is validated by stage API schemas as an optional `0..100` integer.
 - Expected close date: `Deal.expectedCloseAt DateTime?` exists and is supported by deal create/edit/import/export/list sorting.
 - Owner: `Deal.ownerId` exists and resolves to the existing safe display user select through deal services.
-- Quote-derived value: accepted quote totals affect forecasting only after a user manually syncs the accepted quote to `Deal.valueCents` and `Deal.currency`.
+- Quote-derived value: accepted quote totals affect forecasting after accepted-quote sync updates `Deal.valueCents` and `Deal.currency`; normal acceptance syncs automatically when the deal value has not changed since send, while conflicts require review.
 - Products and line items: `DealLineItem` and `QuoteItem` exist, but line-item totals intentionally do not overwrite `Deal.valueCents`; they should be deferred as direct forecast inputs.
 
 ## Forecast Calculations
@@ -87,7 +87,7 @@ Forecasting v1 can remain schema-stable as long as it stays an open-deal forecas
 - No background jobs.
 - No probability editing unless an existing pipeline/stage admin surface is intentionally extended in a separate slice.
 - No quote or line-item calculation changes.
-- No automatic quote-to-deal sync.
+- No direct forecast-specific quote-to-deal sync path; forecasting reads the normal accepted-quote sync state on `Deal.valueCents`.
 - No changes to deal close/reopen semantics.
 
 ## Proposed UX
@@ -155,4 +155,4 @@ Browser smoke:
 
 ## Recommended Next Slice
 
-Forecasting v1 is implemented. A future slice should stay validation-focused unless product requirements change: test more real-world open-pipeline samples, verify stage-probability copy with users, and keep forecasting separate from Goals v1 until a deliberate goal/forecast design exists. Do not add charts, saved reports, scheduled reports, forecast history, background jobs, schema changes, quote auto-sync, direct line-item forecast inputs, or probability editing as part of a cleanup pass.
+Forecasting v1 is implemented. A future slice should stay validation-focused unless product requirements change: test more real-world open-pipeline samples, verify stage-probability copy with users, and keep forecasting separate from Goals v1 until a deliberate goal/forecast design exists. Do not add charts, saved reports, scheduled reports, forecast history, background jobs, schema changes, forecast-specific quote sync paths, direct line-item forecast inputs, or probability editing as part of a cleanup pass.

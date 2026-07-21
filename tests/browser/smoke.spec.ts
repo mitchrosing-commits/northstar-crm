@@ -15,6 +15,11 @@ const prisma = new PrismaClient();
 const browserBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3100";
 const activeWorkspaceCookieName = "northstar_workspace";
 const smokeIds = {
+  conflictDealId: "",
+  conflictDealLineItemId: "",
+  conflictProductId: "",
+  conflictQuoteId: "",
+  conflictQuoteItemId: "",
   dealLineItemId: "",
   productId: "",
   publicLinkId: "",
@@ -22,6 +27,11 @@ const smokeIds = {
   quoteItemId: "",
   schedulerActivityId: "",
   schedulerLinkId: "",
+  workflowDealId: "",
+  workflowDealLineItemId: "",
+  workflowProductId: "",
+  workflowProductAddOnId: "",
+  workflowQuoteId: "",
   webFormId: "",
   webFormLeadId: ""
 };
@@ -264,7 +274,7 @@ test.describe("Northstar CRM browser smoke", () => {
         expect(overflowingProductCards, "Expected product card text and edit controls to stay inside their cards").toBe(0);
       }
       if (path === "/settings") {
-        await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
+        await expect(page.getByRole("heading", { exact: true, name: "Account" })).toBeVisible();
         await expect(page.locator("#account-display-name")).toBeVisible();
         await expect(page.locator("#account-email")).toBeVisible();
         await expect(page.getByRole("heading", { name: "Email Connections" })).toBeVisible();
@@ -286,7 +296,7 @@ test.describe("Northstar CRM browser smoke", () => {
           expect(exportResponse.headers()["cache-control"]).toContain("private, no-store");
           expect(exportResponse.headers()["x-content-type-options"]).toBe("nosniff");
           const csv = await exportResponse.text();
-          expect(csv).toContain("createdAt");
+          expect(csv).toContain("Created At");
           expect(csv.split("\n").length, `Expected ${resource} export to include seeded rows`).toBeGreaterThan(1);
         }
       }
@@ -317,14 +327,37 @@ test.describe("Northstar CRM browser smoke", () => {
 
   test("renders a ready Meeting Intelligence review draft", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
+    const associationSuffix = registerBrowserFlowSuffix();
+    const originalContact = await prisma.person.create({
+      data: {
+        email: `browser-flow-${associationSuffix}@example.test`,
+        firstName: "Browser",
+        lastName: `Association ${associationSuffix}`,
+        ownerId: smokeAuth.actorUserId,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    const correctedContact = await prisma.person.create({
+      data: {
+        email: `browser-flow-meeting-prep-${associationSuffix}@example.test`,
+        firstName: "Browser",
+        lastName: `Correction ${associationSuffix}`,
+        ownerId: smokeAuth.actorUserId,
+        workspaceId: smokeAuth.workspaceId
+      }
+    });
+    const originalContactName = `${originalContact.firstName} ${originalContact.lastName}`;
+    const correctedContactName = `${correctedContact.firstName} ${correctedContact.lastName}`;
     const intake = await createMeetingIntake(
       { actorUserId: smokeAuth.actorUserId, workspaceId: smokeAuth.workspaceId },
       {
         contextText: "Meeting date: 2030-05-01",
-        hints: { dealId: smokeQuote.dealId },
+        hints: { dealId: smokeQuote.dealId, personIds: [originalContact.id] },
         originalFilename: `browser-review-${uniqueSmokeSuffix()}.txt`,
         text: [
           "Meeting date: 2030-05-01",
+          `${originalContactName} prefers concise implementation updates.`,
+          "[00:01] Smoke Buyer: The smoke quote deal needs a pricing recap and implementation plan.",
           "The smoke quote deal needs a pricing recap and implementation plan.",
           "Action: send implementation recap by 2030-05-04."
         ].join("\n")
@@ -339,8 +372,20 @@ test.describe("Northstar CRM browser smoke", () => {
     await expect(page.getByLabel("Meeting Intelligence review summary")).toBeVisible();
     await expect(page.getByText("Editable proposals only until you apply.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Meeting Log" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Transcript Review" })).toBeVisible();
+    await expect(page.getByLabel("Search transcript")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Matches and Warnings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Association Confidence" })).toBeVisible();
+    const associationRow = page.locator(".compact-list-item", { hasText: originalContactName }).filter({ hasText: "Choose association" }).first();
+    await associationRow.getByText("Choose association").click();
+    await associationRow.getByLabel(`Search CRM records for ${originalContactName}`).fill(correctedContact.lastName ?? "");
+    await associationRow.getByLabel(`Selected association for ${originalContactName}`).selectOption({ label: `Contact: ${correctedContactName}` });
+    const correctionResponse = waitForWorkspaceApiResponse(page, "PATCH", `/meeting-intakes/${intake.id}/associations`);
+    await associationRow.getByRole("button", { name: "Confirm correction" }).click();
+    await expectApiOk(correctionResponse, "Expected Meeting Intelligence association correction API to succeed");
+    await expect(page.getByText("User corrected").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Proposed Notes" })).toBeVisible();
+    await expect(page.getByRole("heading", { exact: true, name: "CRM Change Proposals" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Follow-Ups" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Normalized Markdown" })).toBeVisible();
     await expect(page.getByText("Review-first safety").first()).toBeVisible();
@@ -492,7 +537,7 @@ test.describe("Northstar CRM browser smoke", () => {
       `/deals/${smokeQuote.dealId}`
     ]) {
       await expectPageReady(page, recordPath);
-      await expect(page.locator('a[href="#meeting-prep-brief"]')).toBeVisible();
+      await expect(page.locator('a.record-panel-jump-link[href="#meeting-prep-brief"]')).toBeVisible();
       await expect(page.locator("#meeting-prep-brief").getByRole("heading", { name: activityTitle })).toBeVisible();
     }
 
@@ -896,13 +941,20 @@ test.describe("Northstar CRM browser smoke", () => {
 
     const quotePath = `/deals/${smokeQuote.dealId}/quotes/${smokeQuote.quoteId}`;
     await expectPageReady(page, quotePath);
-    await expectRecordSectionNav(page, ["#quote-overview", "#quote-context", "#quote-totals", "#quote-readiness", "#quote-status", "#public-link", "#quote-items"], "#quote-items");
+    await expectRecordSectionNav(page, ["#quote-overview", "#quote-context", "#quote-totals", "#quote-readiness", "#quote-status", "#public-link", "#quote-lifecycle", "#quote-items"], "#quote-items");
     await expect(page.getByRole("heading", { name: /Q-SMOKE-/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Quote Workflow" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Quote Overview" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Customer and Deal Context" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Totals and Adjustments" })).toBeVisible();
     await expect(page.getByText("Internal quote", { exact: true })).toBeVisible();
-    await expect(page.getByText("Internal tracking only")).toBeVisible();
+    await expect(page.getByText("Awaiting response", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Manage public link" })).toBeVisible();
+    await expect(page.getByText("Snapshot pricing")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 860 });
+    const quoteOverflow = await page.locator("body").evaluate((body) => body.scrollWidth > body.clientWidth + 1);
+    expect(quoteOverflow, "Expected quote detail to avoid horizontal overflow on narrow screens").toBe(false);
+    await page.setViewportSize({ width: 1280, height: 900 });
 
     await expectPageReady(page, `${quotePath}/print`, { requireAppShell: false });
     await expect(page.locator("main.quote-print-page")).toBeVisible();
@@ -936,6 +988,217 @@ test.describe("Northstar CRM browser smoke", () => {
         })
       )
       .toBe(1);
+  });
+
+  test("creates, edits, sends, shares, and accepts a quote from the Quotes page", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const fixture = await createSmokeQuoteWorkflowFixture();
+    const expectedAcceptedTotalCents = 250000;
+
+    await expectPageReady(page, `/quotes?dealQ=${encodeURIComponent(fixture.dealTitle)}`);
+    await expect(page.getByRole("heading", { name: "Create Quote" })).toBeVisible();
+    await expect(page.getByText("Quotes remain associated with deals")).toBeVisible();
+    await page.locator("#create-quote select").selectOption({ label: `${fixture.dealTitle} · 1 line items · $1,000` });
+    await page.getByRole("button", { name: "Create quote draft" }).click();
+    await page.waitForURL(/\/deals\/.+\/quotes\/.+\?created=1#quote-items$/);
+
+    const quoteUrl = new URL(page.url());
+    const quotePath = `${quoteUrl.pathname}${quoteUrl.search}`;
+    const quoteId = quoteUrl.pathname.split("/").at(-1) ?? "";
+    smokeIds.workflowQuoteId = quoteId;
+    await expect(page.getByRole("heading", { name: /Q-/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Quote Items" })).toBeVisible();
+    await page.getByLabel(`Quantity for ${fixture.productName}`).fill("2");
+    const updateItemResponse = waitForWorkspaceApiResponse(page, "PATCH", "/quote-items/");
+    await page.locator("tr", { hasText: fixture.productName }).getByRole("button", { name: "Save" }).click();
+    await expectApiOk(updateItemResponse, "Expected draft quote item update API to succeed");
+    await expect
+      .poll(() =>
+        prisma.quoteItem.findFirstOrThrow({
+          where: { name: fixture.productName, quoteId },
+          select: { lineTotalCents: true, quantity: true }
+        })
+      )
+      .toEqual({ lineTotalCents: 200000, quantity: 2 });
+    await page.reload();
+    await expect(page.locator("#quote-items").getByText("$2,000")).toBeVisible();
+    const addItemForm = page.locator("#quote-items form");
+    await addItemForm.getByLabel("Product").selectOption({ label: `${fixture.addOnProductName} · $500` });
+    await addItemForm.locator('input[type="number"]').fill("1");
+    await addItemForm.locator("input:not([type])").fill("Browser-created add-on quote item");
+    const addItemResponse = waitForWorkspaceApiResponse(page, "POST", `/quotes/${quoteId}/items`);
+    await page.getByRole("button", { name: "Add quote item" }).click();
+    await expectApiOk(addItemResponse, "Expected draft quote item create API to succeed");
+    await expect
+      .poll(() =>
+        prisma.quote.findUniqueOrThrow({
+          where: { id: quoteId },
+          select: { totalCents: true }
+        })
+      )
+      .toEqual({ totalCents: expectedAcceptedTotalCents });
+    await page.reload();
+    await expect(page.locator("#quote-overview").getByText("$2,500")).toBeVisible();
+
+    const markSentResponse = waitForWorkspaceApiResponse(page, "POST", `/quotes/${quoteId}/mark-sent`);
+    await page.getByRole("button", { name: /Mark sent for/ }).click();
+    await expectApiOk(markSentResponse, "Expected quote mark-sent API to succeed");
+    await expect
+      .poll(() =>
+        prisma.quote.findUniqueOrThrow({
+          where: { id: quoteId },
+          select: { status: true }
+        })
+      )
+      .toEqual({ status: "SENT" });
+    await page.reload();
+    await expect(page.getByRole("button", { name: /Generate public quote link for/ })).toBeVisible();
+    const publicLinkResponse = waitForWorkspaceApiResponse(page, "POST", `/quotes/${quoteId}/public-link`);
+    await page.getByRole("button", { name: /Generate public quote link for/ }).click();
+    await expectApiOk(publicLinkResponse, "Expected public quote link API to succeed");
+    const publicLink = await prisma.quotePublicLink.findFirstOrThrow({
+      where: { quoteId, revokedAt: null },
+      select: { token: true }
+    });
+    const publicPath = `/q/${publicLink.token}`;
+    await page.reload();
+    await expect(page.getByLabel("Public URL")).toHaveValue(publicPath);
+
+    await expectPageReady(page, publicPath, { requireAppShell: false });
+    await expect(page.getByRole("heading", { name: /Q-/ })).toBeVisible();
+    await expect(page.getByText("Customer-facing quote view")).toBeVisible();
+    await expect(page.locator(".quote-print-totals").getByText("$2,500").first()).toBeVisible();
+    await page.getByRole("button", { name: "Accept Quote" }).click();
+    await page.waitForURL(new RegExp(`${publicPath.replace("/", "\\/")}\\?accepted=1$`));
+    await expect(page.getByText("Quote accepted")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Accept Quote" })).toHaveCount(0);
+    await page.goto(`${browserBaseUrl}${publicPath}`);
+    await expect(page.getByText("Quote accepted")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Accept Quote" })).toHaveCount(0);
+
+    const acceptedQuote = await prisma.quote.findUniqueOrThrow({
+      where: { id: quoteId },
+      select: { dealValueSyncedAt: true, status: true, totalCents: true }
+    });
+    const syncedDeal = await prisma.deal.findUniqueOrThrow({
+      where: { id: fixture.dealId },
+      select: { valueCents: true }
+    });
+    const publicAcceptedAuditCount = await prisma.auditLog.count({
+      where: { action: "quote.public_accepted", entityId: quoteId }
+    });
+    expect(acceptedQuote).toMatchObject({ status: "ACCEPTED", totalCents: expectedAcceptedTotalCents });
+    expect(acceptedQuote.dealValueSyncedAt).toBeTruthy();
+    expect(syncedDeal.valueCents).toBe(expectedAcceptedTotalCents);
+    expect(publicAcceptedAuditCount).toBe(1);
+
+    await expectPageReady(page, quotePath);
+    await expect(page.getByText("Sent, accepted, and declined quotes preserve their line-item snapshot.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 860 });
+    await expectNoPageHorizontalOverflow(page, quotePath);
+    await page.setViewportSize({ width: 1280, height: 900 });
+  });
+
+  test("renders the accepted quote sync conflict review panel", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const conflictQuote = await createSmokeQuoteSyncConflict();
+    const quotePath = `/deals/${conflictQuote.dealId}/quotes/${conflictQuote.quoteId}`;
+    const syncPanel = page.locator("#deal-value-sync");
+
+    await expectPageReady(page, quotePath);
+    await expectRecordSectionNav(
+      page,
+      ["#quote-overview", "#quote-context", "#quote-totals", "#quote-readiness", "#quote-status", "#public-link", "#deal-value-sync", "#quote-lifecycle", "#quote-items"],
+      "#deal-value-sync"
+    );
+    await expect(page.getByRole("heading", { name: /Q-SYNC-CONFLICT-/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Quote Workflow" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Review conflict" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Deal Value Sync" })).toBeVisible();
+    await expect(page.getByLabel("Quote lifecycle current state summary")).toBeVisible();
+    await expect(page.getByText("Sent-time deal value", { exact: true })).toBeVisible();
+    await expect(page.getByText("Current deal value", { exact: true })).toBeVisible();
+    await expect(page.getByText("Accepted quote total", { exact: true })).toBeVisible();
+    await expect(syncPanel.getByText("Review needed", { exact: true })).toBeVisible();
+    await expect(syncPanel.getByText("Deal value changed after this quote was sent")).toBeVisible();
+    await expectPageReady(page, `${quotePath}?history=deal-sync#quote-lifecycle`);
+    await expect(page.locator(".quote-timeline-source-sync").getByText("Deal sync needs review")).toBeVisible();
+    await expectPageReady(page, `${quotePath}?history=needs-attention#quote-lifecycle`);
+    await expect(page.locator(".quote-timeline-needs-attention").getByText("Needs attention")).toBeVisible();
+    await expect(page.locator(".quote-timeline-needs-attention").getByRole("link", { name: "Open section" })).toHaveAttribute("href", "#deal-value-sync");
+    await expect(page.locator(".quote-timeline-needs-attention").getByRole("link", { name: "Open deal" })).toHaveAttribute("href", `/deals/${conflictQuote.dealId}`);
+    await expectPageReady(page, `/deals/${conflictQuote.dealId}#quotes`);
+    const dealQuoteCard = page.locator(".quote-draft-item", { hasText: /Q-SYNC-CONFLICT-/ });
+    await expect(page.getByText("1 quote awaiting follow-up")).toBeVisible();
+    await expect(dealQuoteCard.getByText("No open quote follow-up")).toBeVisible();
+    await expect(dealQuoteCard.getByRole("link", { name: /Create follow-up draft for quote Q-SYNC-CONFLICT-/ })).toBeVisible();
+    await dealQuoteCard.getByRole("link", { name: /Create follow-up draft for quote Q-SYNC-CONFLICT-/ }).click();
+    await page.waitForURL(/\/activities\/new\?/);
+    expect(new URL(page.url()).searchParams.get("returnTo")).toBe(`/deals/${conflictQuote.dealId}#quotes`);
+    await expect(page.getByText("Suggested quote follow-up draft")).toBeVisible();
+    await expect(page.getByText("Nothing has been created yet.")).toBeVisible();
+    await expect(page.getByLabel("Related record")).toHaveValue(`deal:${conflictQuote.dealId}`);
+    await expect(page.getByLabel("Title")).toHaveValue("Resolve accepted quote value conflict");
+    await expectPageReady(page, `${quotePath}?history=needs-attention#quote-lifecycle`);
+    const activityCountBeforeDraft = await prisma.activity.count({ where: { workspaceId: smokeAuth.workspaceId, dealId: conflictQuote.dealId } });
+    await page.locator(".quote-timeline-needs-attention").getByRole("link", { name: "Create follow-up" }).click();
+    await page.waitForURL(/\/activities\/new\?/);
+    await expect(page.getByText("Suggested quote follow-up draft")).toBeVisible();
+    await expect(page.getByText("Nothing has been created yet.")).toBeVisible();
+    await expect(page.getByLabel("Related record")).toHaveValue(`deal:${conflictQuote.dealId}`);
+    await expect(page.getByLabel("Title")).toHaveValue("Resolve accepted quote value conflict");
+    await expect(page.getByLabel("Description")).toHaveValue(/Review the accepted quote value conflict/);
+    await expect(prisma.activity.count({ where: { workspaceId: smokeAuth.workspaceId, dealId: conflictQuote.dealId } })).resolves.toBe(activityCountBeforeDraft);
+    const createActivityResponse = waitForWorkspaceApiResponse(page, "POST", "/activities");
+    await page.getByRole("button", { name: "Create activity" }).click();
+    await expectApiOk(createActivityResponse, "Expected quote follow-up activity create API to succeed");
+    await expect(page).toHaveURL(new RegExp(`/deals/${conflictQuote.dealId}/quotes/${conflictQuote.quoteId}\\?history=needs-attention#quote-timeline-`));
+    await expect(page.getByRole("heading", { name: /Q-SYNC-CONFLICT-/ })).toBeVisible();
+    await page.getByRole("link", { name: "Create reviewed follow-up draft" }).click();
+    await page.waitForURL(/\/activities\/new\?/);
+    await expect(page.getByText("Similar open follow-up exists")).toBeVisible();
+    await expectPageReady(page, `/deals/${conflictQuote.dealId}#quotes`);
+    await expect(page.getByText("All active quotes covered")).toBeVisible();
+    await expect(dealQuoteCard.getByText("Follow-up scheduled")).toBeVisible();
+    await expect(dealQuoteCard.getByRole("link", { name: "Resolve accepted quote value conflict" })).toBeVisible();
+    await expect(dealQuoteCard.getByText("Similar open follow-up exists")).toBeVisible();
+    await expect(dealQuoteCard.getByRole("link", { name: "Review follow-up" })).toHaveAttribute(
+      "href",
+      new RegExp(`/activities/.+/edit\\?returnTo=${encodeURIComponent(`/deals/${conflictQuote.dealId}#quotes`)}`)
+    );
+    await expect(dealQuoteCard.getByRole("link", { name: "Open quote" })).toHaveAttribute("href", `/deals/${conflictQuote.dealId}/quotes/${conflictQuote.quoteId}`);
+    await dealQuoteCard.getByRole("link", { name: "Review follow-up" }).click();
+    await page.waitForURL(new RegExp(`/activities/.+/edit\\?returnTo=${encodeURIComponent(`/deals/${conflictQuote.dealId}#quotes`)}$`));
+    await expect(page.getByRole("heading", { name: "Edit activity" })).toBeVisible();
+    await page.getByRole("button", { name: "Save activity" }).click();
+    await page.waitForURL(new RegExp(`/deals/${conflictQuote.dealId}#quotes$`));
+    await expect(page.getByText("All active quotes covered")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 860 });
+    await expectNoPageHorizontalOverflow(page, `/deals/${conflictQuote.dealId}#quotes`);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`${browserBaseUrl}${quotePath}?history=needs-attention#quote-lifecycle`);
+    await expect(page.getByRole("heading", { name: /Q-SYNC-CONFLICT-/ })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 860 });
+    const lifecycleOverflow = await page.locator("body").evaluate((body) => body.scrollWidth > body.clientWidth + 1);
+    expect(lifecycleOverflow, "Expected quote lifecycle filters to avoid horizontal overflow on narrow screens").toBe(false);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect(page.getByLabel("Update deal value to the accepted quote total")).toBeDisabled();
+    await page.getByRole("checkbox", { name: "Confirm that the deal should use the accepted quote total." }).setChecked(true);
+    await expect(page.getByRole("checkbox", { name: "Confirm that the deal should use the accepted quote total." })).toBeChecked();
+    await expect(page.getByLabel("Update deal value to the accepted quote total")).toBeEnabled();
+    await expect(page.getByLabel("Keep current deal value and mark this quote sync conflict reviewed")).toBeVisible();
+    await expect(syncPanel.getByRole("link", { name: "Open deal" })).toHaveAttribute("href", new RegExp(`/deals/${conflictQuote.dealId}\\?returnTo=`));
+    const keepReviewResponse = page.waitForResponse(
+      (response) => response.url().includes(`/quotes/${conflictQuote.quoteId}/sync-review`) && response.request().method() === "POST"
+    );
+    await page.getByLabel("Keep current deal value and mark this quote sync conflict reviewed").click();
+    await expectApiOk(keepReviewResponse, "Expected quote sync conflict review API to succeed");
+    await expect(syncPanel.getByText("Conflict reviewed. Current deal value was kept.")).toBeVisible();
+    await expect(page).toHaveURL(/#deal-value-sync$/);
+    await expect(page.getByRole("heading", { name: "Quote Lifecycle" })).toBeVisible();
+    await expect(page.getByText("Deal sync conflict created", { exact: true })).toBeVisible();
+    await expect(page.getByText("Conflict reviewed", { exact: true })).toBeVisible();
   });
 
   test("creates and submits a public web form lead capture flow", async ({ page }) => {
@@ -1893,6 +2156,204 @@ async function createSmokeQuote() {
   return { dealId: deal.id, quoteId: quote.id, token: publicLink.token };
 }
 
+async function createSmokeQuoteSyncConflict() {
+  const workspace = await prisma.workspace.findUniqueOrThrow({
+    where: { slug: "northstar-revenue" },
+    select: { id: true }
+  });
+  const stage = await prisma.pipelineStage.findFirstOrThrow({
+    where: { pipeline: { workspaceId: workspace.id, deletedAt: null }, deletedAt: null },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, pipelineId: true }
+  });
+  const suffix = uniqueSmokeSuffix();
+  const product = await prisma.product.create({
+    data: {
+      workspaceId: workspace.id,
+      name: `Smoke sync conflict product ${suffix}`,
+      description: "Browser smoke sync conflict product",
+      unitPriceCents: 220000,
+      currency: "USD"
+    }
+  });
+  smokeIds.conflictProductId = product.id;
+
+  const deal = await prisma.deal.create({
+    data: {
+      workspaceId: workspace.id,
+      pipelineId: stage.pipelineId,
+      stageId: stage.id,
+      title: `Browser sync conflict deal ${suffix}`,
+      valueCents: 150000,
+      currency: "USD"
+    }
+  });
+  smokeIds.conflictDealId = deal.id;
+
+  const lineItem = await prisma.dealLineItem.create({
+    data: {
+      workspaceId: workspace.id,
+      dealId: deal.id,
+      productId: product.id,
+      productName: product.name,
+      description: product.description,
+      quantity: 1,
+      unitPriceCents: product.unitPriceCents,
+      lineTotalCents: product.unitPriceCents,
+      currency: product.currency
+    }
+  });
+  smokeIds.conflictDealLineItemId = lineItem.id;
+
+  const quote = await prisma.quote.create({
+    data: {
+      workspaceId: workspace.id,
+      dealId: deal.id,
+      number: `Q-SYNC-CONFLICT-${suffix}`,
+      status: "ACCEPTED",
+      currency: "USD",
+      subtotalCents: lineItem.lineTotalCents,
+      totalCents: lineItem.lineTotalCents,
+      sentDealValueCents: 100000,
+      sentDealCurrency: "USD",
+      dealValueSyncConflict: "Deal value changed after this quote was sent. Review before syncing this accepted quote total."
+    }
+  });
+  smokeIds.conflictQuoteId = quote.id;
+
+  const quoteItem = await prisma.quoteItem.create({
+    data: {
+      workspaceId: workspace.id,
+      quoteId: quote.id,
+      dealLineItemId: lineItem.id,
+      productId: product.id,
+      name: lineItem.productName,
+      description: lineItem.description,
+      quantity: lineItem.quantity,
+      unitPriceCents: lineItem.unitPriceCents,
+      lineTotalCents: lineItem.lineTotalCents,
+      currency: lineItem.currency
+    }
+  });
+  smokeIds.conflictQuoteItemId = quoteItem.id;
+
+  await prisma.auditLog.createMany({
+    data: [
+      {
+        workspaceId: workspace.id,
+        action: "quote.created",
+        entityType: "Quote",
+        entityId: quote.id,
+        metadata: { dealId: deal.id, number: quote.number }
+      },
+      {
+        workspaceId: workspace.id,
+        action: "quote.sent",
+        entityType: "Quote",
+        entityId: quote.id,
+        metadata: { dealId: deal.id, number: quote.number, nextStatus: "SENT" }
+      },
+      {
+        workspaceId: workspace.id,
+        action: "quote.accepted",
+        entityType: "Quote",
+        entityId: quote.id,
+        metadata: { dealId: deal.id, number: quote.number, nextStatus: "ACCEPTED" }
+      },
+      {
+        workspaceId: workspace.id,
+        action: "quote.deal_value_sync_conflict",
+        entityType: "Quote",
+        entityId: quote.id,
+        metadata: {
+          quoteId: quote.id,
+          quoteNumber: quote.number,
+          dealId: deal.id,
+          reason: quote.dealValueSyncConflict,
+          quoteTotalCents: quote.totalCents,
+          quoteCurrency: quote.currency,
+          currentDealValueCents: deal.valueCents,
+          currentDealCurrency: deal.currency
+        }
+      }
+    ]
+  });
+
+  return { dealId: deal.id, quoteId: quote.id };
+}
+
+async function createSmokeQuoteWorkflowFixture() {
+  const workspace = await prisma.workspace.findUniqueOrThrow({
+    where: { slug: "northstar-revenue" },
+    select: { id: true }
+  });
+  const stage = await prisma.pipelineStage.findFirstOrThrow({
+    where: { pipeline: { workspaceId: workspace.id, deletedAt: null }, deletedAt: null },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, pipelineId: true }
+  });
+  const suffix = uniqueSmokeSuffix();
+  const productName = `Smoke quote workflow base ${suffix}`;
+  const addOnProductName = `Smoke quote workflow add-on ${suffix}`;
+  const [product, addOnProduct] = await prisma.$transaction([
+    prisma.product.create({
+      data: {
+        workspaceId: workspace.id,
+        name: productName,
+        description: "Browser quote workflow base product",
+        unitPriceCents: 100000,
+        currency: "USD"
+      }
+    }),
+    prisma.product.create({
+      data: {
+        workspaceId: workspace.id,
+        name: addOnProductName,
+        description: "Browser quote workflow add-on product",
+        unitPriceCents: 50000,
+        currency: "USD"
+      }
+    })
+  ]);
+  smokeIds.workflowProductId = product.id;
+  smokeIds.workflowProductAddOnId = addOnProduct.id;
+
+  const dealTitle = `Browser quote workflow deal ${suffix}`;
+  const deal = await prisma.deal.create({
+    data: {
+      workspaceId: workspace.id,
+      pipelineId: stage.pipelineId,
+      stageId: stage.id,
+      title: dealTitle,
+      valueCents: 100000,
+      currency: "USD"
+    }
+  });
+  smokeIds.workflowDealId = deal.id;
+
+  const lineItem = await prisma.dealLineItem.create({
+    data: {
+      workspaceId: workspace.id,
+      dealId: deal.id,
+      productId: product.id,
+      productName: product.name,
+      description: product.description,
+      quantity: 1,
+      unitPriceCents: product.unitPriceCents,
+      lineTotalCents: product.unitPriceCents,
+      currency: product.currency
+    }
+  });
+  smokeIds.workflowDealLineItemId = lineItem.id;
+
+  return {
+    addOnProductName,
+    dealId: deal.id,
+    dealTitle,
+    productName
+  };
+}
+
 async function communicationDealDetailPath() {
   const workspace = await prisma.workspace.findUniqueOrThrow({
     where: { slug: "northstar-revenue" },
@@ -2015,6 +2476,30 @@ async function demoWorkspaceId() {
 }
 
 async function cleanupSmokeQuote() {
+  if (smokeIds.conflictQuoteId || smokeIds.conflictDealId) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        OR: [
+          { entityType: "Quote", entityId: smokeIds.conflictQuoteId || "__none__" },
+          { entityType: "Deal", entityId: smokeIds.conflictDealId || "__none__" }
+        ]
+      }
+    });
+  }
+  if (smokeIds.conflictQuoteItemId) await prisma.quoteItem.deleteMany({ where: { id: smokeIds.conflictQuoteItemId } });
+  if (smokeIds.conflictQuoteId) await prisma.quote.deleteMany({ where: { id: smokeIds.conflictQuoteId } });
+  if (smokeIds.conflictDealId) await prisma.activity.deleteMany({ where: { dealId: smokeIds.conflictDealId } });
+  if (smokeIds.conflictDealLineItemId) await prisma.dealLineItem.deleteMany({ where: { id: smokeIds.conflictDealLineItemId } });
+  if (smokeIds.conflictDealId) await prisma.deal.deleteMany({ where: { id: smokeIds.conflictDealId } });
+  if (smokeIds.conflictProductId) await prisma.product.deleteMany({ where: { id: smokeIds.conflictProductId } });
+  if (smokeIds.workflowQuoteId) await prisma.quotePublicLink.deleteMany({ where: { quoteId: smokeIds.workflowQuoteId } });
+  if (smokeIds.workflowQuoteId) await prisma.quoteItem.deleteMany({ where: { quoteId: smokeIds.workflowQuoteId } });
+  if (smokeIds.workflowQuoteId) await prisma.quote.deleteMany({ where: { id: smokeIds.workflowQuoteId } });
+  if (smokeIds.workflowDealLineItemId) await prisma.dealLineItem.deleteMany({ where: { id: smokeIds.workflowDealLineItemId } });
+  if (smokeIds.workflowDealId) await prisma.auditLog.deleteMany({ where: { entityType: "Deal", entityId: smokeIds.workflowDealId } });
+  if (smokeIds.workflowDealId) await prisma.deal.deleteMany({ where: { id: smokeIds.workflowDealId } });
+  if (smokeIds.workflowProductAddOnId) await prisma.product.deleteMany({ where: { id: smokeIds.workflowProductAddOnId } });
+  if (smokeIds.workflowProductId) await prisma.product.deleteMany({ where: { id: smokeIds.workflowProductId } });
   if (smokeIds.publicLinkId) await prisma.quotePublicLink.deleteMany({ where: { id: smokeIds.publicLinkId } });
   if (smokeIds.quoteItemId) await prisma.quoteItem.deleteMany({ where: { id: smokeIds.quoteItemId } });
   if (smokeIds.quoteId) await prisma.quote.deleteMany({ where: { id: smokeIds.quoteId } });

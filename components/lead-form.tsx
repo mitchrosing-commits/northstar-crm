@@ -11,6 +11,7 @@ import { FormFieldLabel } from "@/components/form-field-label";
 import { FormIntroCallout } from "@/components/form-intro-callout";
 import { FormPrefillNotice } from "@/components/form-prefill-notice";
 import { FormRelatedRecordCallout } from "@/components/form-related-record-callout";
+import { FormSection } from "@/components/form-section";
 import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type LeadStatus = "NEW" | "QUALIFIED" | "DISQUALIFIED";
@@ -43,6 +44,10 @@ type LeadFormProps = {
   defaultStatus?: LeadStatus;
   defaultTitle?: string;
   prefillNotice?: string;
+  returnTo?: {
+    href: string;
+    paramName: "leadId";
+  };
   initialLead?: LeadFormInitial;
   cancelHref: Route;
 };
@@ -60,6 +65,7 @@ export function LeadForm({
   defaultStatus,
   defaultTitle,
   prefillNotice,
+  returnTo,
   initialLead,
   cancelHref
 }: LeadFormProps) {
@@ -132,7 +138,7 @@ export function LeadForm({
     }
 
     const lead = await response.json();
-    router.push(`/leads/${lead.id}`);
+    router.push((mode === "create" && returnTo ? appendReturnParam(returnTo.href, returnTo.paramName, lead.id) : `/leads/${lead.id}`) as Route);
     router.refresh();
   }
 
@@ -157,81 +163,93 @@ export function LeadForm({
           Leads can start without a contact or organization. Add one first if you already know the buyer or company.
         </FormRelatedRecordCallout>
       ) : null}
-      <div className="form-grid">
-        <label className="form-field form-field-wide">
-          <FormFieldLabel required>Title</FormFieldLabel>
-          <input onChange={(event) => setTitle(event.target.value)} required value={title} />
-        </label>
+      <FormSection
+        description="Capture the early opportunity name, source, status, and owner before qualification."
+        title="Lead details"
+      >
+        <div className="form-grid">
+          <label className="form-field form-field-wide">
+            <FormFieldLabel required>Title</FormFieldLabel>
+            <input onChange={(event) => setTitle(event.target.value)} required value={title} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Source</FormFieldLabel>
-          <input onChange={(event) => setSource(event.target.value)} value={source} />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Source</FormFieldLabel>
+            <input onChange={(event) => setSource(event.target.value)} value={source} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Status</FormFieldLabel>
-          <select onChange={(event) => setStatus(event.target.value as LeadStatus)} value={status}>
-            <option value="NEW">New</option>
-            <option value="QUALIFIED">Qualified</option>
-            <option value="DISQUALIFIED">Disqualified</option>
-          </select>
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Status</FormFieldLabel>
+            <select onChange={(event) => setStatus(event.target.value as LeadStatus)} value={status}>
+              <option value="NEW">New</option>
+              <option value="QUALIFIED">Qualified</option>
+              <option value="DISQUALIFIED">Disqualified</option>
+            </select>
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Assigned to</FormFieldLabel>
-          <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
-            {owners.map((owner) => (
-              <option key={owner.id} value={owner.id}>
-                {owner.name}
-              </option>
-            ))}
-          </select>
-          <OwnerAssignmentHint owners={owners} />
-        </label>
-
-        <div className="form-field">
-          <label>
-            <FormFieldLabel>Person</FormFieldLabel>
-            <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
-              <option value="">{people.length === 0 ? "No contacts yet - save lead without contact" : "None"}</option>
-              {people.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.name}
+          <label className="form-field">
+            <FormFieldLabel>Assigned to</FormFieldLabel>
+            <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
+              <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
+              {owners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name}
                 </option>
               ))}
             </select>
+            <OwnerAssignmentHint owners={owners} />
           </label>
-          <div className="form-related-record-actions">
-            <Link className="inline-link" href={createContactHref}>
-              Create contact
-            </Link>
-            <small className="form-hint">Create a contact, then return here with it selected for this lead.</small>
-          </div>
-          {people.length === 0 ? <small className="form-hint">Add a contact later when the lead is clearer.</small> : null}
         </div>
+      </FormSection>
 
-        <div className="form-field">
-          <label>
-            <FormFieldLabel>Organization</FormFieldLabel>
-            <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
-              <option value="">{organizations.length === 0 ? "No organizations yet - save lead without one" : "None"}</option>
-              {organizations.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-related-record-actions">
-            <Link className="inline-link" href={createOrganizationHref}>
-              Create organization
-            </Link>
-            <small className="form-hint">Create a company, then return here with it selected for this lead.</small>
+      <FormSection
+        description="Link a known buyer or company, or create one and return with this lead draft preserved."
+        title="Related records"
+      >
+        <div className="form-grid">
+          <div className="form-field">
+            <label>
+              <FormFieldLabel>Person</FormFieldLabel>
+              <select onChange={(event) => setPersonId(event.target.value)} value={personId}>
+                <option value="">{people.length === 0 ? "No contacts yet - save lead without contact" : "None"}</option>
+                {people.map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="form-related-record-actions">
+              <Link className="inline-link" href={createContactHref}>
+                Create contact
+              </Link>
+              <small className="form-hint">Create a contact, then return here with it selected for this lead.</small>
+            </div>
+            {people.length === 0 ? <small className="form-hint">Add a contact later when the lead is clearer.</small> : null}
           </div>
-          {organizations.length === 0 ? <small className="form-hint">Add the company later or create it before saving.</small> : null}
+
+          <div className="form-field">
+            <label>
+              <FormFieldLabel>Organization</FormFieldLabel>
+              <select onChange={(event) => setOrganizationId(event.target.value)} value={organizationId}>
+                <option value="">{organizations.length === 0 ? "No organizations yet - save lead without one" : "None"}</option>
+                {organizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="form-related-record-actions">
+              <Link className="inline-link" href={createOrganizationHref}>
+                Create organization
+              </Link>
+              <small className="form-hint">Create a company, then return here with it selected for this lead.</small>
+            </div>
+            {organizations.length === 0 ? <small className="form-hint">Add the company later or create it before saving.</small> : null}
+          </div>
         </div>
-      </div>
+      </FormSection>
 
       <FormActionBar
         cancelHref={cancelHref}
@@ -287,4 +305,12 @@ function relatedRecordCreateHref(path: "/contacts/new" | "/organizations/new", p
   }
   const queryText = query.toString();
   return `${path}${queryText ? `?${queryText}` : ""}` as Route;
+}
+
+function appendReturnParam(returnTo: string, paramName: "leadId", id: string) {
+  const [path, query = ""] = returnTo.split("?");
+  const params = new URLSearchParams(query);
+  params.set(paramName, id);
+  const nextQuery = params.toString();
+  return `${path}${nextQuery ? `?${nextQuery}` : ""}`;
 }

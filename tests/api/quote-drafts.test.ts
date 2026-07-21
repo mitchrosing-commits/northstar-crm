@@ -71,6 +71,14 @@ const quotePanel = readFileSync(
   join(process.cwd(), "components/quote-drafts-panel.tsx"),
   "utf8",
 );
+const downloadAction = readFileSync(
+  join(process.cwd(), "components/download-action.tsx"),
+  "utf8",
+);
+const quoteLineItemsPanel = readFileSync(
+  join(process.cwd(), "components/quote-line-items-panel.tsx"),
+  "utf8",
+);
 const quotePublicLinkControls = readFileSync(
   join(process.cwd(), "components/quote-public-link-controls.tsx"),
   "utf8",
@@ -618,9 +626,19 @@ describe("quote draft MVP", () => {
     expect(dealPage).toContain('countKey: "quotes"');
     expect(dealPage).toContain('countLabel: { singular: "quote", plural: "quotes" }');
     expect(dealPage).toContain("quotes={deal.quotes}");
+    expect(dealPage).toContain("activities={deal.activities}");
+    expect(dealPage).toContain("dealTitle={deal.title}");
     expect(quotePanel).toContain("Create quote draft");
     expect(quotePanel).toContain("quoteLifecycleStatuses");
-    expect(quotePanel).toContain("Add quote follow-up");
+    expect(quotePanel).toContain("Create follow-up");
+    expect(quotePanel).toContain("Quote follow-up attention summary");
+    expect(quotePanel).toContain("quoteFollowUpStatus");
+    expect(quotePanel).toContain("No open quote follow-up");
+    expect(quotePanel).toContain("Follow-up overdue");
+    expect(quotePanel).toContain("Review or reschedule");
+    expect(quotePanel).toContain("Similar open follow-up exists");
+    expect(quotePanel).toContain("Open quote");
+    expect(quotePanel).toContain("returnTo: `/deals/${dealId}#quotes`");
     expect(quotePanel).toContain("internal snapshots of current line items");
     expect(quotePanel).toContain("Status changes are internal tracking only");
     expect(quotePanel).toContain(
@@ -696,12 +714,16 @@ describe("quote draft MVP", () => {
     expect(quotePanel).toContain("aria-label={`View quote ${quote.number}`}");
     expect(quotePanel).toContain("title={`View quote ${quote.number}`}");
     expect(quotePanel).toContain(
-      "aria-label={`Add follow-up for quote ${quote.number}`}",
+      "aria-label={`Create follow-up draft for quote ${quote.number}`}",
     );
     expect(quotePanel).toContain(
-      "title={`Add follow-up for quote ${quote.number}`}",
+      "title={`Create follow-up draft for quote ${quote.number}`}",
     );
     expect(quotePanel).toContain("/deals/${dealId}/quotes");
+    expect(quotePanel).toContain('import { DownloadAction } from "@/components/download-action"');
+    expect(quotePanel).toContain("<DownloadAction");
+    expect(quotePanel).toContain("actionLabel={`Download PDF for quote ${quote.number}`}");
+    expect(quotePanel).toContain('pendingLabel="Preparing..."');
     expect(quotePanel).toContain(
       "formatMoney(quote.totalCents, quote.currency)",
     );
@@ -737,11 +759,14 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain("title={quoteFollowUpActionLabel}");
     expect(quoteDetailPage).toContain("aria-label={quotePrintActionLabel}");
     expect(quoteDetailPage).toContain("title={quotePrintActionLabel}");
-    expect(quoteDetailPage).toContain("aria-label={quotePdfActionLabel}");
-    expect(quoteDetailPage).toContain("title={quotePdfActionLabel}");
+    expect(quoteDetailPage).toContain("actionLabel={quotePdfActionLabel}");
+    expect(quoteDetailPage).toContain('import { DownloadAction } from "@/components/download-action"');
+    expect(quoteDetailPage).toContain("<DownloadAction");
+    expect(quoteDetailPage).toContain("filename={`quote-${quote.number}.pdf`}");
+    expect(quoteDetailPage).toContain('pendingLabel="Preparing PDF..."');
     expect(quoteDetailPage).toContain("aria-label={backToDealActionLabel}");
     expect(quoteDetailPage).toContain("title={backToDealActionLabel}");
-    expect(quoteDetailPage).toContain("buildActivityFollowUpHref");
+    expect(quoteDetailPage).toContain("buildQuoteFollowUpHref");
     expect(quoteDetailPage).toContain("<QuoteAdjustmentsForm");
     expect(quoteDetailPage).toContain('id="quote-adjustments"');
     expect(quoteDetailPage).toContain("<QuotePublicLinkControls");
@@ -759,9 +784,18 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain('quote.status === "ACCEPTED"');
     expect(quoteDetailPage).toContain("<QuoteDealValueSyncAction");
     expect(quoteDetailPage).toContain("Quote Overview");
+    expect(quoteDetailPage).toContain("Quote Workflow");
+    expect(quoteDetailPage).toContain("buildQuoteWorkflowSummary");
+    expect(quoteDetailPage).toContain("quote-workflow-summary");
+    expect(quoteDetailPage).toContain("quote-workflow-grid");
+    expect(quoteDetailPage).toContain("Editable draft");
+    expect(quoteDetailPage).toContain("Snapshot locked");
+    expect(quoteDetailPage).toContain("Review conflict");
+    expect(quoteDetailPage).toContain("Manage public link");
     expect(quoteDetailPage).toContain("Customer and Deal Context");
     expect(quoteDetailPage).toContain("Totals and Adjustments");
-    expect(quoteDetailPage).toContain("Quote Items");
+    expect(quoteDetailPage).toContain("<QuoteLineItemsPanel");
+    expect(quoteDetailPage).toContain("quoteCurrency={quote.currency}");
     expect(quoteDetailPage).toContain('className="data-card quote-overview-summary" id="quote-overview"');
     expect(quoteDetailPage).toContain('className="detail-grid quote-detail-overview" id="quote-context"');
     expect(quoteDetailPage).toContain('className="detail-grid quote-detail-overview" id="quote-totals"');
@@ -774,37 +808,38 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain('emptyLabel: "No contact"');
     expect(quoteDetailPage).toContain('emptyLabel: "No organization"');
     expect(quoteDetailPage).toContain("PanelTitleRow");
-    expect(quoteDetailPage).toContain(
-      'actions={<Badge>Internal tracking only</Badge>}',
+    expect(quoteLineItemsPanel).toContain('title="Quote Items"');
+    expect(quoteLineItemsPanel).toContain(
+      "Draft quote item edits change this quote snapshot only",
     );
-    expect(quoteDetailPage).toContain('title="Quote Items"');
-    expect(quoteDetailPage).toContain(
-      "These line items are copied from product-backed deal line items",
+    expect(quoteLineItemsPanel).toContain(
+      "This draft quote has no line items. Add a product-backed quote item",
     );
-    expect(quoteDetailPage).toContain(
-      "This quote has no line items. Add product-backed line items to the deal, then create a fresh quote draft.",
-    );
-    expect(quoteDetailPage).not.toContain(
+    expect(quoteLineItemsPanel).not.toContain(
       '<h2 className="panel-title">Quote Items</h2>',
     );
-    expect(quoteDetailPage).toContain('className="data-card section-spaced quote-items-panel" id="quote-items"');
-    expect(quoteDetailPage).not.toContain("panel-intro-copy");
-    expect(quoteDetailPage).toContain("<TableScroll");
-    expect(quoteDetailPage).toContain(
-      "aria-label={`${quote.number} quote detail items table`}",
+    expect(quoteLineItemsPanel).toContain('className="data-card section-spaced quote-items-panel" id="quote-items"');
+    expect(quoteLineItemsPanel).not.toContain("panel-intro-copy");
+    expect(quoteLineItemsPanel).toContain("<TableScroll");
+    expect(quoteLineItemsPanel).toContain(
+      "aria-label={`${quoteNumber} quote detail items table`}",
     );
-    expect(quoteDetailPage).toContain('className="table crm-list-table"');
-    for (const dataLabel of ["Item", "Qty", "Unit price", "Total"]) {
-      expect(quoteDetailPage).toContain(`data-label="${dataLabel}"`);
+    expect(quoteLineItemsPanel).toContain('className="table crm-list-table"');
+    for (const dataLabel of ["Item", "Qty", "Unit price", "Total", "Action"]) {
+      expect(quoteLineItemsPanel).toContain(`data-label="${dataLabel}"`);
     }
-    expect(quoteDetailPage).toContain('className="table-primary-cell"');
-    expect(quoteDetailPage).toContain('className="table-secondary-text"');
+    expect(quoteLineItemsPanel).toContain('className="table-primary-cell"');
+    expect(quoteLineItemsPanel).toContain('className="table-secondary-text"');
     expect(quoteDetailPage).toContain(
       "href={`/deals/${quote.dealId}/quotes/${quote.id}/print`}",
     );
     expect(quoteDetailPage).toContain(
       "href={`/deals/${quote.dealId}/quotes/${quote.id}/pdf`}",
     );
+    expect(downloadAction).toContain("if (disabled || isPreparing) return");
+    expect(downloadAction).toContain("downloadFailureMessage(response.status)");
+    expect(downloadAction).toContain("Download started");
+    expect(downloadAction).toContain('role="alert"');
     expect(quoteDetailPage).toContain(
       "formatMoney(quote.subtotalCents, quote.currency)",
     );
@@ -815,13 +850,15 @@ describe("quote draft MVP", () => {
     expect(quoteDetailPage).toContain(
       "formatMoney(quote.totalCents, quote.currency)",
     );
-    expect(quoteDetailPage).toContain(
+    expect(quoteLineItemsPanel).toContain(
       "formatMoney(item.unitPriceCents, item.currency)",
     );
-    expect(quoteDetailPage).toContain(
+    expect(quoteLineItemsPanel).toContain(
       "formatMoney(item.lineTotalCents, item.currency)",
     );
     expect(globalStyles).toContain(".quote-overview-summary");
+    expect(globalStyles).toContain(".quote-workflow-grid");
+    expect(globalStyles).toContain(".quote-workflow-item-warning");
     expect(globalStyles).toContain(".quote-summary-grid");
     expect(globalStyles).toContain(".quote-items-panel .table-primary-cell");
     expect(commercialPanel).toContain("Quote readiness");
@@ -844,11 +881,14 @@ describe("quote draft MVP", () => {
       'description="Public links are customer-facing quote views',
     );
     expect(quotePublicLinkControls).not.toContain("panel-intro-copy");
-    expect(quotePublicLinkControls).toContain("FormIntroCallout");
+    expect(quotePublicLinkControls).toContain("FormSuccessMessage");
     expect(quotePublicLinkControls).toContain(
       'className="quote-public-link-notice"',
     );
-    expect(quotePublicLinkControls).toContain('title="Link status"');
+    expect(quotePublicLinkControls).toContain("Public quote link copied.");
+    expect(quotePublicLinkControls).toContain("Could not copy the public quote link.");
+    expect(quotePublicLinkControls).toContain("disabled={isCopying || isSaving}");
+    expect(quotePublicLinkControls).toContain("preservePublicLinkAnchor()");
     expect(quotePublicLinkControls).not.toContain(
       '{notice ? <p className="empty-copy">{notice}</p> : null}',
     );
@@ -1096,43 +1136,35 @@ describe("quote draft MVP", () => {
     );
   });
 
-  it("renders manual accepted-quote deal value sync controls", () => {
+  it("renders accepted-quote deal value sync and conflict controls", () => {
     expect(quoteValueSyncAction).toContain(
-      "/quotes/${quoteId}/sync-deal-value",
+      "/quotes/${quoteId}/sync-review",
     );
     expect(quoteValueSyncAction).toContain(
       'className="data-card section-spaced"',
     );
     expect(quoteValueSyncAction).toContain("PanelTitleRow");
     expect(quoteValueSyncAction).toContain('import { Badge } from "@/components/badge"');
-    expect(quoteValueSyncAction).toContain(
-      'actions={<Badge label="Deal value sync is a manual action">Manual</Badge>}',
-    );
+    expect(quoteValueSyncAction).toContain("Deal value is synced from the accepted quote");
+    expect(quoteValueSyncAction).toContain("Deal value changed after this quote was sent");
     expect(quoteValueSyncAction).toContain('title="Deal Value Sync"');
-    expect(quoteValueSyncAction).toContain("const syncActionLabel = alreadySynced");
-    expect(quoteValueSyncAction).toContain("Deal value is already synced to this accepted quote");
-    expect(quoteValueSyncAction).toContain("Sync accepted quote total to deal value");
-    expect(quoteValueSyncAction).toContain("aria-label={syncActionLabel}");
-    expect(quoteValueSyncAction).toContain("title={syncActionLabel}");
+    expect(quoteValueSyncAction).toContain("const requiresReview = Boolean(dealValueSyncConflict) && !persistedSynced && !reviewed");
+    expect(quoteValueSyncAction).toContain("This accepted quote sync state has already been reviewed.");
+    expect(quoteValueSyncAction).toContain("Update deal value to the accepted quote total");
+    expect(quoteValueSyncAction).toContain("aria-label={updateActionLabel}");
+    expect(quoteValueSyncAction).toContain("title={updateActionLabel}");
     expect(quoteValueSyncAction).toContain(
-      'description="Syncing is manual, including after customer acceptance.',
+      "Accepted quote totals sync to the deal automatically",
     );
     expect(quoteValueSyncAction).not.toContain("panel-intro-copy");
     expect(quoteValueSyncAction).toContain("panel-metric-strip");
-    expect(quoteValueSyncAction).toContain("Sync quote total to deal value");
     expect(quoteValueSyncAction).toContain("Current deal value");
     expect(quoteValueSyncAction).toContain("Accepted quote total");
-    expect(quoteValueSyncAction).toContain(
-      "Syncing is manual, including after customer acceptance.",
-    );
-    expect(quoteValueSyncAction).toContain(
-      "Public acceptance does not run this step automatically",
-    );
-    expect(quoteValueSyncAction).toContain(
-      "reports and exports use the accepted total",
-    );
+    expect(quoteValueSyncAction).toContain("Sync state");
     expect(quoteValueSyncAction).toContain("alreadySynced");
-    expect(quoteValueSyncAction).toContain("Deal value synced");
+    expect(quoteValueSyncAction).toContain("Deal value updated from the accepted quote.");
+    expect(quoteValueSyncAction).toContain("Conflict reviewed. Current deal value was kept.");
+    expect(quoteValueSyncAction).toContain("preserveDealValueSyncAnchor()");
     expect(quoteAdjustmentsForm).toContain("PanelTitleRow");
     expect(quoteAdjustmentsForm).toContain('import { Badge } from "@/components/badge"');
     expect(quoteAdjustmentsForm).toContain('title="Quote Adjustments"');
@@ -1144,6 +1176,9 @@ describe("quote draft MVP", () => {
     );
     expect(quoteAdjustmentsForm).not.toContain("panel-intro-copy");
     expect(quoteAdjustmentsForm).toContain("FormActionBar");
+    expect(quoteAdjustmentsForm).toContain("FormSuccessMessage");
+    expect(quoteAdjustmentsForm).toContain("Quote adjustments saved. Draft totals refreshed.");
+    expect(quoteAdjustmentsForm).toContain("preserveQuoteAdjustmentsAnchor()");
     expect(quoteAdjustmentsForm).toContain("import { FormFieldLabel }");
     expect(quoteAdjustmentsForm).toContain(
       "<FormFieldLabel>{label} type</FormFieldLabel>",
@@ -1186,8 +1221,11 @@ describe("quote draft MVP", () => {
     expect(quotePrintPage).toContain("const printQuoteActionLabel = `Print quote ${quote.number}`");
     expect(quotePrintPage).toContain("aria-label={backToQuoteActionLabel}");
     expect(quotePrintPage).toContain("title={backToQuoteActionLabel}");
-    expect(quotePrintPage).toContain("aria-label={quotePdfActionLabel}");
-    expect(quotePrintPage).toContain("title={quotePdfActionLabel}");
+    expect(quotePrintPage).toContain("actionLabel={quotePdfActionLabel}");
+    expect(quotePrintPage).toContain('import { DownloadAction } from "@/components/download-action"');
+    expect(quotePrintPage).toContain("<DownloadAction");
+    expect(quotePrintPage).toContain("filename={`quote-${quote.number}.pdf`}");
+    expect(quotePrintPage).toContain('pendingLabel="Preparing PDF..."');
     expect(quotePrintPage).toContain("<PrintButton actionLabel={printQuoteActionLabel} label=\"Print quote\" />");
     expect(quotePrintPage).toContain("workspace.name");
     expect(quotePrintPage).toContain("quote.deal.organization?.name");

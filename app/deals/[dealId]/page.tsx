@@ -29,6 +29,7 @@ import { PanelTitleRow } from "@/components/panel-title-row";
 import { LockedPanelNotice } from "@/components/locked-panel-notice";
 import { QuoteDraftsPanel } from "@/components/quote-drafts-panel";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { RecordContextStrip, recordContextCount } from "@/components/record-context-strip";
 import { RecordNextActivitySummary } from "@/components/record-next-activity-summary";
 import { RecordHeaderActions } from "@/components/record-header-actions";
 import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
@@ -45,23 +46,19 @@ import { closedDealLockedLabel, closedDealLockMessage } from "@/lib/record-lock-
 import { formatPersonName } from "@/lib/person-name";
 import { recordSubtitle } from "@/lib/record-subtitle";
 import { buildDealAttentionBadges, type DealAttentionBadge } from "@/lib/sales-assistant";
-import {
-  buildAiRecordBrief,
-  buildDealAssistantContext,
-  buildMeetingPrepBriefForRecord,
-  buildNorthstarAssistantInsight,
-  getAiPreferences,
-  getDeal,
-  getRecordTimeline,
-  getWorkspace,
-  listDealContractSteps,
-  listDealCustomFields,
-  listEmailLogsForRecord,
-  listEmailTemplates,
-  listProducts,
-  listStages,
-  type AutomationTemplateId
-} from "@/lib/services/crm";
+import { getAiPreferences } from "@/lib/services/ai-preferences-service";
+import { buildAiRecordBrief } from "@/lib/services/ai-record-brief-service";
+import { type AutomationTemplateId } from "@/lib/services/automation-template-service";
+import { listDealContractSteps } from "@/lib/services/contract-workflow-service";
+import { listDealCustomFields } from "@/lib/services/custom-field-service";
+import { getDeal } from "@/lib/services/deal-service";
+import { listEmailLogsForRecord, listEmailTemplates } from "@/lib/services/email-service";
+import { buildMeetingPrepBriefForRecord } from "@/lib/services/meeting-prep-brief-service";
+import { buildDealAssistantContext, buildNorthstarAssistantInsight } from "@/lib/services/northstar-ai-service";
+import { listStages } from "@/lib/services/pipeline-service";
+import { listProducts } from "@/lib/services/product-service";
+import { getRecordTimeline } from "@/lib/services/timeline-service";
+import { getWorkspace } from "@/lib/services/workspace-service";
 
 export const dynamic = "force-dynamic";
 
@@ -145,6 +142,9 @@ export default async function DealDetailPage({ params }: PageProps) {
     ...deal,
     contractSteps
   });
+  const assistantDealHref = `/assistant?command=${encodeURIComponent(`Summarize this deal /deals/${deal.id}`)}` as Route;
+  const assistantDealActionPlanHref = `/assistant?command=${encodeURIComponent(`Build an action plan for this deal /deals/${deal.id}`)}` as Route;
+  const assistantDealLatestChangesHref = `/assistant?command=${encodeURIComponent(`Give me the latest deal update /deals/${deal.id}`)}` as Route;
 
   return (
     <AppShell workspace={workspace}>
@@ -164,6 +164,15 @@ export default async function DealDetailPage({ params }: PageProps) {
             noteLockedLabel="Notes locked"
             leadingActions={
               <>
+                <Link className="button-secondary button-compact" href={assistantDealHref}>
+                  Ask Assistant about this deal
+                </Link>
+                <Link className="button-secondary button-compact" href={assistantDealActionPlanHref}>
+                  Action plan
+                </Link>
+                <Link className="button-secondary button-compact" href={assistantDealLatestChangesHref}>
+                  Latest changes
+                </Link>
                 <ContractWorkflowQuickLink alwaysShow fields={contractFields} steps={contractSteps} />
                 <StatusBadge status={deal.status} />
               </>
@@ -297,6 +306,37 @@ export default async function DealDetailPage({ params }: PageProps) {
         title="Deal workspace"
       />
 
+      <RecordContextStrip
+        ariaLabel={`${deal.title} current deal context`}
+        items={[
+          {
+            href: nextActivity ? undefined : "#activities" as Route,
+            label: "Next follow-up",
+            tone: nextActivity ? "default" : deal.status === "OPEN" ? "warning" : "muted",
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel={deal.status === "OPEN" ? "Needs follow-up" : undefined} emptyLabel="No open deal follow-up" />
+          },
+          {
+            href: "#notes" as Route,
+            label: "Recent notes",
+            tone: deal.notes.length > 0 ? "default" : "muted",
+            value: recordContextCount(deal.notes.length, "note", "notes")
+          },
+          {
+            href: meetingPrepBrief ? "#meeting-prep-brief" as Route : "#activities" as Route,
+            label: "Meeting prep",
+            meta: meetingPrepBrief ? "Review before the next meeting" : "Create a meeting activity to prepare",
+            tone: meetingPrepBrief ? "success" : "muted",
+            value: meetingPrepBrief ? "Ready" : "No upcoming meeting"
+          },
+          {
+            href: "#ai-record-brief" as Route,
+            label: "Relationship context",
+            tone: northstarInsight.findings.length > 0 ? "default" : "muted",
+            value: recordContextCount(northstarInsight.findings.length, "finding", "findings")
+          }
+        ]}
+      />
+
       {meetingPrepBrief ? <MeetingPrepBriefCard brief={meetingPrepBrief} /> : null}
 
       <AiRecordBriefCard brief={aiRecordBrief} />
@@ -398,9 +438,12 @@ export default async function DealDetailPage({ params }: PageProps) {
       />
 
       <QuoteDraftsPanel
+        activities={deal.activities}
         canCreate={deal.status === "OPEN" && deal.lineItems.length > 0}
         dealId={deal.id}
+        dealTitle={deal.title}
         disabledReason={deal.status === "OPEN" ? undefined : closedDealLockMessage("quoteDrafts")}
+        followUpReferenceDate={new Date().toISOString()}
         quotes={deal.quotes}
         workspaceId={workspace.id}
       />

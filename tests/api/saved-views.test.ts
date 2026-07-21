@@ -27,6 +27,7 @@ const dealsPage = readFileSync(join(process.cwd(), "app/deals/page.tsx"), "utf8"
 const leadsPage = readFileSync(join(process.cwd(), "app/leads/page.tsx"), "utf8");
 const organizationsPage = readFileSync(join(process.cwd(), "app/organizations/page.tsx"), "utf8");
 const savedViewsPanel = readFileSync(join(process.cwd(), "components/saved-views-panel.tsx"), "utf8");
+const formSubmitButton = readFileSync(join(process.cwd(), "components/form-submit-button.tsx"), "utf8");
 const dealSavedViewsPanel = readFileSync(join(process.cwd(), "components/deal-saved-views-panel.tsx"), "utf8");
 const listViewStatus = readFileSync(join(process.cwd(), "components/list-view-status.tsx"), "utf8");
 const contactActions = readFileSync(join(process.cwd(), "app/contacts/actions.ts"), "utf8");
@@ -374,6 +375,7 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(savedViewsPanel).toContain("deleteLeadSavedViewAction");
     expect(savedViewsPanel).toContain("PanelTitleRow");
     expect(savedViewsPanel).toContain("import { EmptyState }");
+    expect(savedViewsPanel).toContain('import { FormSubmitButton } from "@/components/form-submit-button"');
     expect(savedViewsPanel).toContain("Save the current search, filters, and sort as a reusable workspace view.");
     expect(savedViewsPanel).toContain("serializeListViewState(listState)");
     expect(savedViewsPanel).toContain("maxLength={savedViewNameMaxLength}");
@@ -381,8 +383,11 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(savedViewsPanel).toContain("const headingId = `${inputId}-title`");
     expect(savedViewsPanel).toContain("<section aria-labelledby={headingId} className=\"panel saved-views-panel\">");
     expect(savedViewsPanel).toContain("titleId={headingId}");
-    expect(savedViewsPanel).toContain("aria-label={saveActionLabel}");
+    expect(savedViewsPanel).toContain("ariaLabel={saveActionLabel}");
     expect(savedViewsPanel).toContain("title={saveActionLabel}");
+    expect(savedViewsPanel).toContain("<FormSubmitButton");
+    expect(savedViewsPanel).toContain('label="Save view"');
+    expect(savedViewsPanel).toContain('pendingLabel="Saving view..."');
     expect(savedViewsPanel).toContain("aria-label={`${title} list`}");
     expect(savedViewsPanel).toContain("href={view.href as Route}");
     expect(savedViewsPanel).toContain("const openActionLabel = `Open saved view ${view.name}`");
@@ -390,8 +395,17 @@ describe("Deals, Leads, Contacts, and Organizations saved views MVP", () => {
     expect(savedViewsPanel).toContain("title={openActionLabel}");
     expect(savedViewsPanel).toContain("Delete view");
     expect(savedViewsPanel).toContain("const deleteActionLabel = `Delete saved view ${view.name}`");
-    expect(savedViewsPanel).toContain("aria-label={deleteActionLabel}");
+    expect(savedViewsPanel).toContain("ariaLabel={deleteActionLabel}");
     expect(savedViewsPanel).toContain("title={deleteActionLabel}");
+    expect(savedViewsPanel).toContain('pendingLabel="Deleting view..."');
+    expect(formSubmitButton).toContain("\"use client\"");
+    expect(formSubmitButton).toContain("useFormStatus");
+    expect(formSubmitButton).toContain("const { pending } = useFormStatus()");
+    expect(formSubmitButton).toContain("disabled={pending}");
+    expect(formSubmitButton).toContain("const resolvedLabel = pending ? resolvedPendingLabel : label");
+    expect(formSubmitButton).toContain("const resolvedAriaLabel = pending ? resolvedPendingLabel : ariaLabel ?? label");
+    expect(formSubmitButton).toContain('return "Saving..."');
+    expect(formSubmitButton).toContain('return "Deleting..."');
     expect(savedViewsPanel).toContain("Saved contact views");
     expect(savedViewsPanel).toContain("Saved deal views");
     expect(savedViewsPanel).toContain("Saved lead views");

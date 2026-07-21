@@ -61,10 +61,15 @@ const actionLabels: Record<string, string> = {
   "quote.adjustments_updated": "Updated quote adjustments",
   "quote.created": "Created quote",
   "quote.declined": "Declined quote",
+  "quote.deal_value_sync_conflict": "Deal value sync conflict created",
+  "quote.deal_value_sync_reviewed": "Reviewed deal value sync conflict",
   "quote.public_accepted": "Customer accepted public quote",
   "quote.public_link_created": "Created public quote link",
   "quote.public_link_revoked": "Revoked public quote link",
   "quote.sent": "Sent quote",
+  "quote_item.created": "Added quote line item",
+  "quote_item.removed": "Removed quote line item",
+  "quote_item.updated": "Updated quote line item",
   "stage.created": "Created pipeline stage",
   "stage.deleted": "Removed pipeline stage",
   "stage.updated": "Updated pipeline stage",
@@ -136,6 +141,14 @@ function metadataSummary(metadata: unknown) {
   if (typeof metadata.previousStatus === "string" && typeof metadata.nextStatus === "string") {
     return `${metadata.previousStatus} to ${metadata.nextStatus}`;
   }
+
+  if (typeof metadata.resolution === "string" && metadata.resolution.trim()) {
+    if (metadata.resolution === "KEEP_CURRENT_DEAL") return "Kept current deal value";
+    if (metadata.resolution === "UPDATE_DEAL_TO_QUOTE") return "Updated deal to accepted quote value";
+    return metadata.resolution.trim();
+  }
+
+  if (typeof metadata.reason === "string" && metadata.reason.trim()) return metadata.reason.trim();
 
   if (typeof metadata.title === "string" && metadata.title.trim()) return metadata.title.trim();
   if (typeof metadata.name === "string" && metadata.name.trim()) return metadata.name.trim();

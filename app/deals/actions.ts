@@ -7,7 +7,8 @@ import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { dealListStateOptions } from "@/lib/deal-list-state";
 import { parseListViewState, type ListSearchParams } from "@/lib/list-page-query";
 import { ignoreMissingSavedView } from "@/lib/saved-view-action-utils";
-import { createAutomationTemplateActivity, createDealSavedView, deleteDealSavedView, type AutomationTemplateId } from "@/lib/services/crm";
+import { createAutomationTemplateActivity, type AutomationTemplateId } from "@/lib/services/automation-template-service";
+import { createDealSavedView, deleteDealSavedView } from "@/lib/services/saved-view-service";
 
 export async function createDealSavedViewAction(formData: FormData) {
   const { actor } = await getCurrentWorkspaceContext();
@@ -36,7 +37,7 @@ export async function createDealAutomationActivityAction(formData: FormData) {
   await createAutomationTemplateActivity(actor, { templateId, dealId });
   revalidatePath(`/deals/${dealId}`);
   revalidatePath("/dashboard");
-  redirect(`/deals/${dealId}?automation=activity-created#add-activity`);
+  redirect(`/deals/${dealId}?automation=activity-created#activities`);
 }
 
 function formDataToSearchParams(formData: FormData): ListSearchParams {

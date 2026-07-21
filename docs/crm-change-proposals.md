@@ -9,6 +9,7 @@ CRM change proposals are reusable review-first infrastructure for AI-producing s
 - `CREATE_ORGANIZATION`: create one organization.
 - `UPDATE_ORGANIZATION`: update supported fields on one existing organization.
 - `LINK_PERSON_ORGANIZATION`: link one existing contact to one existing organization.
+- `COMPOUND_PERSON_ORGANIZATION`: review one related contact/organization outcome, such as creating an organization and creating or linking a contact to it.
 
 ## Data Model
 
@@ -30,7 +31,7 @@ Server-side apply uses AI action permissions:
 
 ## Supported Fields
 
-Contacts support `firstName`, `lastName`, `email`, `phone`, `organizationId`, `ownerId`, and Relationship Memory fields.
+Contacts support `firstName`, `lastName`, `title`, `email`, `phone`, `organizationId`, `ownerId`, and Relationship Memory fields.
 
 Organizations support `name`, `domain`, and `ownerId`.
 
@@ -48,6 +49,8 @@ Duplicate candidates are stored on the proposal and block apply. They are not me
 
 Updates and links fail when the target record changed after proposal creation or became unavailable/deleted.
 
+Compound contact/organization proposals validate every included step, store snapshots for existing contact and organization records, check duplicate contact email and organization domain/name candidates, and apply inside one database transaction. If any included create, update, link, permission, workspace, stale, or duplicate check fails, the related CRM records are not partially mutated.
+
 ## Idempotency
 
 Producers should provide a stable idempotency key per source suggestion. If omitted, Northstar derives one from the normalized proposal input. Repeated creation with the same workspace/key returns the existing proposal.
@@ -56,7 +59,7 @@ Repeated apply of an already applied proposal returns the applied result without
 
 ## Producer Contract
 
-Assistant, Meeting Intelligence, or another producer should call `createCrmChangeProposal` with a supported `proposalType`, structured `proposedPayload`, source metadata, rationale, and evidence. Producers must not directly create or update contacts or organizations for AI-generated suggestions.
+Assistant, Meeting Intelligence, or another producer should call `createCrmChangeProposal` with a supported `proposalType`, structured `proposedPayload`, source metadata, rationale, and evidence. For related contact/organization outcomes, producers should prefer `createContactOrganizationChangeProposal` so the compound payload is normalized consistently. Producers must not directly create or update contacts or organizations for AI-generated suggestions.
 
 ## Assistant Supported Actions
 
@@ -67,6 +70,7 @@ Assistant, Meeting Intelligence, or another producer should call `createCrmChang
 - creating an organization
 - updating supported organization fields
 - linking one existing contact to one existing organization
+- creating an organization and linking a reviewed existing contact to it as one compound proposal when the draft has a clear contact target
 
 Examples include "Create a contact for Jane Doe at Acme", "Add Jane's phone number", "Create an organization for Northwind", and "Link Sarah to Northwind". The Assistant only uses supported schema fields and grounded conversation or CRM context. Unsupported fields, weak evidence, duplicate risks, and ambiguous matches are surfaced as warnings or clarification needs instead of guessed writes.
 
@@ -78,4 +82,4 @@ Ambiguous entity resolution is conservative: exact record context and identifier
 
 This slice does not add transcript extraction, prompt changes, automatic email-based record creation, broad duplicate merge, custom-field redesign, provider sync, workflow automation, or Assistant autonomous apply.
 
-Unsupported Assistant actions remain deferred: contact titles/custom fields, arbitrary generated field names, deal/quote/lead creation or mutation, email sending, Gmail/provider mutation, relationship-memory mutation through this proposal flow, destructive changes, merge operations, and autonomous background scheduling.
+Unsupported Assistant actions remain deferred: custom fields, arbitrary generated field names, deal/quote/lead creation or mutation, email sending, Gmail/provider mutation, relationship-memory mutation through this proposal flow, destructive changes, merge operations, and autonomous background scheduling.

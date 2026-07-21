@@ -12,6 +12,8 @@ const returnTo = readFileSync(join(process.cwd(), "lib/return-to.ts"), "utf8");
 const contactPage = readFileSync(join(process.cwd(), "app/contacts/[personId]/page.tsx"), "utf8");
 const organizationPage = readFileSync(join(process.cwd(), "app/organizations/[organizationId]/page.tsx"), "utf8");
 const leadPage = readFileSync(join(process.cwd(), "app/leads/[leadId]/page.tsx"), "utf8");
+const dealActions = readFileSync(join(process.cwd(), "app/deals/actions.ts"), "utf8");
+const leadActions = readFileSync(join(process.cwd(), "app/leads/actions.ts"), "utf8");
 const recordHeaderActions = readFileSync(join(process.cwd(), "components/record-header-actions.tsx"), "utf8");
 const quotePage = readFileSync(join(process.cwd(), "app/deals/[dealId]/quotes/[quoteId]/page.tsx"), "utf8");
 const quotePanel = readFileSync(join(process.cwd(), "components/quote-drafts-panel.tsx"), "utf8");
@@ -76,8 +78,10 @@ describe("rapid completion sprint 3 polish", () => {
     expect(leadPage).toContain("formId=\"add-activity\"");
     expect(leadPage).toContain("Linked activities, notes, and email logs will");
     expect(leadPage).toContain("move to the new deal timeline, then Northstar opens the converted deal");
-    expect(quotePage).toContain("related: { type: \"deal\", id: quote.dealId }");
-    expect(quotePage).toContain("returnTo: `/deals/${quote.dealId}/quotes/${quote.id}`");
+    expect(dealActions).toContain("redirect(`/deals/${dealId}?automation=activity-created#activities`)");
+    expect(leadActions).toContain("redirect(`/leads/${leadId}?automation=activity-created#activities`)");
+    expect(quotePage).toContain("buildQuoteFollowUpHref");
+    expect(quotePage).toContain('returnHash: "quote-lifecycle"');
     expect(emailPage).toContain("buildEmailFollowUpDraftFromEmailLog(emailLog)");
     expect(emailPage).toContain("<EmailFollowUpPanel");
     expect(emailFollowUpPanel).toContain("Nothing is created until you save this follow-up.");
@@ -86,8 +90,9 @@ describe("rapid completion sprint 3 polish", () => {
 
   it("makes quote and contract workflows more actionable without fake document features", () => {
     expect(quotePanel).toContain("quoteLifecycleStatuses");
-    expect(quotePanel).toContain("Add quote follow-up");
-    expect(quotePanel).toContain("returnTo: `/deals/${dealId}`");
+    expect(quotePanel).toContain("Create follow-up");
+    expect(quotePanel).toContain("quoteFollowUpStatus");
+    expect(quotePanel).toContain("returnTo: `/deals/${dealId}#quotes`");
     expect(quotePanel).toContain("Status changes are internal tracking only");
     expect(contractPanel).toContain("Add contract follow-up");
     expect(contractPanel).toContain("returnTo: `/deals/${dealId}`");

@@ -11,7 +11,7 @@ import {
   hasExportScopeSearchParams,
   hasExportSearchParams,
   hasExportSortParams,
-} from "@/components/list-export-link";
+} from "@/lib/list-export-href";
 import { formatCsv, parseCsv } from "@/lib/csv";
 import {
   formatImportParseError,
@@ -115,6 +115,14 @@ const activitiesPage = readFileSync(
 );
 const listExportLink = readFileSync(
   join(process.cwd(), "components/list-export-link.tsx"),
+  "utf8",
+);
+const listExportHref = readFileSync(
+  join(process.cwd(), "lib/list-export-href.ts"),
+  "utf8",
+);
+const downloadAction = readFileSync(
+  join(process.cwd(), "components/download-action.tsx"),
   "utf8",
 );
 const listPageHeaderActions = readFileSync(
@@ -376,28 +384,34 @@ describe("Import/export MVP", () => {
     expect(exportService).toContain("northstar-activities.csv");
     expect(exportService).toContain("northstar-products.csv");
     expect(exportService).toContain("northstar-quotes.csv");
-    expect(exportService).toContain('{ header: "title"');
-    expect(exportService).toContain('{ header: "status"');
-    expect(exportService).toContain('{ header: "value"');
-    expect(exportService).toContain('{ header: "currency"');
-    expect(exportService).toContain('{ header: "pipeline"');
-    expect(exportService).toContain('{ header: "stage"');
-    expect(exportService).toContain('{ header: "expectedCloseAt"');
-    expect(exportService).toContain('{ header: "contactName"');
-    expect(exportService).toContain('{ header: "contactEmail"');
-    expect(exportService).toContain('{ header: "organizationName"');
-    expect(exportService).toContain('{ header: "ownerEmail"');
-    expect(exportService).toContain('{ header: "lineItemCount"');
-    expect(exportService).toContain('{ header: "quoteCount"');
-    expect(exportService).toContain('{ header: "latestQuoteStatus"');
-    expect(exportService).toContain('{ header: "createdAt"');
-    expect(exportService).toContain('{ header: "updatedAt"');
-    expect(exportService).toContain('{ header: "dueAt"');
-    expect(exportService).toContain('{ header: "completedAt"');
-    expect(exportService).toContain('{ header: "unitPrice"');
-    expect(exportService).toContain('{ header: "number"');
-    expect(exportService).toContain('{ header: "total"');
-    expect(exportService).toContain('{ header: "itemCount"');
+    expect(exportService).toContain('{ header: "Deal Title"');
+    expect(exportService).toContain('{ header: "Status"');
+    expect(exportService).toContain('{ header: "Deal Value"');
+    expect(exportService).toContain('{ header: "Currency"');
+    expect(exportService).toContain('{ header: "Pipeline"');
+    expect(exportService).toContain('{ header: "Stage"');
+    expect(exportService).toContain('{ header: "Expected Close"');
+    expect(exportService).toContain('{ header: "Contact Name"');
+    expect(exportService).toContain('{ header: "Contact Email"');
+    expect(exportService).toContain('{ header: "Organization Name"');
+    expect(exportService).toContain('{ header: "Owner Email"');
+    expect(exportService).toContain('{ header: "Line Item Count"');
+    expect(exportService).toContain('{ header: "Quote Count"');
+    expect(exportService).toContain('{ header: "Latest Quote Number"');
+    expect(exportService).toContain('{ header: "Latest Quote Status"');
+    expect(exportService).toContain('{ header: "Created At"');
+    expect(exportService).toContain('{ header: "Updated At"');
+    expect(exportService).toContain('{ header: "Due At"');
+    expect(exportService).toContain('{ header: "Completed At"');
+    expect(exportService).toContain('{ header: "Unit Price"');
+    expect(exportService).toContain('{ header: "Quote Number"');
+    expect(exportService).toContain('{ header: "Total"');
+    expect(exportService).toContain('{ header: "Item Count"');
+    expect(exportService).toContain("formatExportDate");
+    expect(exportService).toContain("formatExportDateTime");
+    expect(exportService).toContain("formatExportStatus");
+    expect(exportService).toContain('activity.completedAt ? "Completed" : "Open"');
+    expect(exportService).toContain('product.active ? "Yes" : "No"');
     expect(exportService).not.toContain("authorId");
     expect(exportService).not.toContain("membership");
   });
@@ -412,12 +426,15 @@ describe("Import/export MVP", () => {
     expect(workspaceRoute).toContain(
       '"content-type": "text/csv; charset=utf-8"',
     );
-    expect(listExportLink).toContain("buildListExportHref");
+    expect(listExportLink).toContain('from "@/lib/list-export-href"');
+    expect(listExportHref).toContain("export function buildListExportHref");
+    expect(listExportLink).toContain('"use client";');
     expect(listExportLink).toContain('import { useId } from "react";');
-    expect(listExportLink).toContain("ignoredExportParams");
-    expect(listExportLink).toContain("ignoredExportScopeParams");
-    expect(listExportLink).toContain('"page", "pageSize"');
-    expect(listExportLink).toContain(
+    expect(listExportLink).toContain('import { DownloadAction } from "@/components/download-action"');
+    expect(listExportHref).toContain("ignoredExportParams");
+    expect(listExportHref).toContain("ignoredExportScopeParams");
+    expect(listExportHref).toContain('"page", "pageSize"');
+    expect(listExportHref).toContain(
       "/api/v1/workspaces/${encodeURIComponent(workspaceId)}/exports/${resource}",
     );
     expect(listExportLink).toContain("matchingCount");
@@ -431,7 +448,7 @@ describe("Import/export MVP", () => {
       "const helperId = `${generatedHelperId}-${resource}-export-helper`",
     );
     expect(listExportLink).toContain("listResourcePluralLabel");
-    expect(listExportLink).toContain("listResultSingularLabel");
+    expect(listExportHref).toContain("listResultSingularLabel");
     expect(listResourceLabels).toContain("export function listResourcePluralLabel");
     expect(listResourceLabels).toContain("export function listResultSingularLabel");
     expect(listResourceLabels).toContain("createNoun: \"a deal\"");
@@ -441,24 +458,36 @@ describe("Import/export MVP", () => {
     expect(listExportLink).toContain(
       "const exportActionLabel = `${label} for ${listResourcePluralLabel(resource)}: ${helperText}`",
     );
-    expect(listExportLink).toContain("aria-describedby={helperId}");
-    expect(listExportLink).toContain("aria-label={exportActionLabel}");
-    expect(listExportLink).toContain("title={exportActionLabel}");
+    expect(listExportLink).toContain("helperId={helperId}");
+    expect(listExportLink).toContain("actionLabel={exportActionLabel}");
+    expect(listExportLink).toContain('pendingLabel="Preparing CSV..."');
+    expect(listExportLink).toContain('preparedLabel="Export prepared"');
     expect(listExportLink).toContain('className="list-export-helper"');
     expect(listExportLink).toContain("id={helperId}");
-    expect(listExportLink).toContain("No ${pluralLabel} yet; downloads a header-only CSV");
-    expect(listExportLink).toContain("No matching ${pluralLabel}; downloads a header-only CSV");
-    expect(listExportLink).toContain("export function fullWorkspaceExportHelperText");
-    expect(listExportLink).toContain("export function exportRowCountLabel");
-    expect(listExportLink).toContain(
+    expect(downloadAction).toContain("export function DownloadAction");
+    expect(downloadAction).toContain("if (disabled || isPreparing) return");
+    expect(downloadAction).toContain('fetch(href, { method: "GET" })');
+    expect(downloadAction).toContain("filenameFromContentDisposition");
+    expect(downloadAction).toContain("downloadFailureMessage(response.status)");
+    expect(downloadAction).toContain("You do not have permission to download this file.");
+    expect(downloadAction).toContain("This download is no longer available.");
+    expect(downloadAction).toContain("Download started");
+    expect(downloadAction).toContain("Could not start the download. Try again.");
+    expect(downloadAction).toContain('aria-live="polite"');
+    expect(downloadAction).toContain('role="alert"');
+    expect(listExportHref).toContain("No ${pluralLabel} yet; downloads a header-only CSV");
+    expect(listExportHref).toContain("No matching ${pluralLabel}; downloads a header-only CSV");
+    expect(listExportHref).toContain("export function fullWorkspaceExportHelperText");
+    expect(listExportHref).toContain("export function exportRowCountLabel");
+    expect(listExportHref).toContain(
       "Downloads a CSV of all matching ${pluralLabel}${sortCopy}, not just this page",
     );
-    expect(listExportLink).toContain("Downloads a CSV with 1 matching ${singularLabel}");
-    expect(listExportLink).toContain("Downloads a CSV with 1 ${singularLabel}");
-    expect(listExportLink).toContain(
+    expect(listExportHref).toContain("Downloads a CSV with 1 matching ${singularLabel}");
+    expect(listExportHref).toContain("Downloads a CSV with 1 ${singularLabel}");
+    expect(listExportHref).toContain(
       "Downloads a CSV with all ${matchingCount} matching ${pluralLabel}${sortCopy}, not just this page",
     );
-    expect(listExportLink).toContain("Downloads a CSV with all ${matchingCount} ${pluralLabel}${sortCopy}");
+    expect(listExportHref).toContain("Downloads a CSV with all ${matchingCount} ${pluralLabel}${sortCopy}");
     expect(listPageHeaderActions).toContain(
       "export function ListPageHeaderActions",
     );
@@ -572,16 +601,17 @@ describe("Import/export MVP", () => {
       "<Badge label={customFieldBadgeLabel}>",
     );
     expect(importExportPage).toContain('className="import-export-card-meta"');
-    expect(listExportLink).toContain('if (rowCount === 0) return "No rows"');
-    expect(listExportLink).toContain('if (rowCount === 1) return "1 row"');
-    expect(listExportLink).toContain("`${rowCount} rows`");
+    expect(listExportHref).toContain('if (rowCount === 0) return "No rows"');
+    expect(listExportHref).toContain('if (rowCount === 1) return "1 row"');
+    expect(listExportHref).toContain("`${rowCount} rows`");
     expect(importExportPage).toContain("description={label.description}");
     expect(importExportPage).toContain("title={label.title}");
     expect(importExportPage).toContain(
       "const exportActionLabel = `Download ${label.title} full workspace CSV`;",
     );
-    expect(importExportPage).toContain("aria-label={exportActionLabel}");
-    expect(importExportPage).toContain("title={exportActionLabel}");
+    expect(importExportPage).toContain("actionLabel={exportActionLabel}");
+    expect(importExportPage).toContain('pendingLabel="Preparing CSV..."');
+    expect(importExportPage).toContain('preparedLabel="Export prepared"');
     expect(importExportPage).toContain(
       "helper={fullWorkspaceExportHelperText(overview)}",
     );
@@ -612,7 +642,7 @@ describe("Import/export MVP", () => {
     expect(importExportPage).toContain(
       "Settings exports download full workspace snapshots with core columns and workspace custom fields.",
     );
-    expect(listExportLink).toContain(
+    expect(listExportHref).toContain(
       "Full workspace export. List-page exports preserve search, filters, and sort.",
     );
     for (const [formSource, tableLabel, dataLabels] of [
@@ -1219,11 +1249,11 @@ describe("Import/export MVP", () => {
     expect(
       hasExportScopeSearchParams({ q: { value: "acme" } as never, status: "" }),
     ).toBe(false);
-    expect(listExportLink).toContain("ignoredExportParams.has(key)");
-    expect(listExportLink).toContain("ignoredExportScopeParams");
-    expect(listExportLink).toContain("stringSearchParamValues(rawValue)");
-    expect(listExportLink).toContain('typeof value === "string"');
-    expect(listExportLink).toContain(
+    expect(listExportHref).toContain("ignoredExportParams.has(key)");
+    expect(listExportHref).toContain("ignoredExportScopeParams");
+    expect(listExportHref).toContain("stringSearchParamValues(rawValue)");
+    expect(listExportHref).toContain('typeof value === "string"');
+    expect(listExportHref).toContain(
       "Downloads a CSV with all ${matchingCount} matching ${pluralLabel}${sortCopy}, not just this page",
     );
     expect(exportHelperText("deals", undefined, false)).toBe("Downloads a CSV of all deals");

@@ -22,6 +22,7 @@ const relatedRecordsTable = readFileSync(join(process.cwd(), "components/related
 const tableScroll = readFileSync(join(process.cwd(), "components/table-scroll.tsx"), "utf8");
 const personName = readFileSync(join(process.cwd(), "lib/person-name.ts"), "utf8");
 const recordSubtitleSource = readFileSync(join(process.cwd(), "lib/record-subtitle.ts"), "utf8");
+const relationshipBriefPanel = readFileSync(join(process.cwd(), "components/relationship-brief-panel.tsx"), "utf8");
 
 describe("contact and organization detail pages", () => {
   it("uses existing workspace-scoped person and organization services with related records", () => {
@@ -32,6 +33,14 @@ describe("contact and organization detail pages", () => {
     expect(service).toContain("noteAttachmentRelationsWhere(actor.workspaceId)");
     expect(service).toContain("entityType: \"Person\"");
     expect(service).toContain("entityType: \"Organization\"");
+  });
+
+  it("keeps client relationship brief history dates deterministic for hydration", () => {
+    expect(relationshipBriefPanel).toContain('toLocaleDateString("en-US"');
+    expect(relationshipBriefPanel).toContain('toLocaleString("en-US"');
+    expect(relationshipBriefPanel).toContain('timeZone: "UTC"');
+    expect(relationshipBriefPanel).not.toContain("toLocaleDateString(undefined");
+    expect(relationshipBriefPanel).not.toContain("toLocaleString(undefined");
   });
 
   it("adds read-only detail pages with not-found handling", () => {
@@ -246,9 +255,11 @@ describe("contact and organization detail pages", () => {
     expect(contactPage).toContain("getNextOpenActivity(person.activities)");
     expect(contactPage).toContain("RecordNextActivitySummary activity={nextActivity}");
     expect(contactPage).toContain("Next follow-up");
+    expect(contactPage).toContain('href: nextActivity ? undefined : "#activities" as Route');
     expect(organizationPage).toContain("getNextOpenActivity(organization.activities)");
     expect(organizationPage).toContain("RecordNextActivitySummary activity={nextActivity}");
     expect(organizationPage).toContain("Next follow-up");
+    expect(organizationPage).toContain('href: nextActivity ? undefined : "#activities" as Route');
 
     expect(
       getNextOpenActivity([

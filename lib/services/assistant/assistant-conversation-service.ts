@@ -16,7 +16,11 @@ import {
   buildAssistantDealRiskContext,
   buildAssistantTodayContext
 } from "./assistant-context-service";
-import type { AssistantDraftAction } from "./assistant-draft-action-service";
+import {
+  resolveAssistantCrmDraftClarification,
+  type AssistantDraftAction,
+  type AssistantDraftActionCandidate
+} from "./assistant-draft-action-service";
 
 export type AssistantConversationSource = {
   detail: string;
@@ -148,6 +152,68 @@ export async function sendAssistantConversationMessage(
       updatedAt: now
     },
     where: { id: conversation.id }
+  });
+  const updated = await getAssistantConversation(actor, conversation.id);
+  if (!updated) throw new Error("Assistant conversation could not be loaded.");
+  return updated;
+}
+
+export async function clarifyAssistantConversationDraft(
+  actor: WorkspaceActor,
+  input: { candidateId: unknown; candidateType: unknown; conversationId: unknown; draftAction: AssistantDraftAction }
+): Promise<AssistantConversationView> {
+  await ensureWorkspaceAccess(actor);
+  const conversationId = normalizeId(input.conversationId);
+  const candidateId = stringInput(input.candidateId, 160);
+  const candidateType = input.candidateType === "person" || input.candidateType === "organization" ? input.candidateType : "";
+  if (!conversationId || !candidateId || !candidateType) throw new Error("Clarification selection is incomplete.");
+  const conversation = await getExistingConversation(actor, conversationId);
+  if (!conversation) throw new Error("Assistant conversation was not found.");
+
+  const draft = await resolveAssistantCrmDraftClarification(actor, {
+    candidateId,
+    candidateType,
+    draftAction: input.draftAction
+  });
+  const resolutionKey = draft.clarification?.resolutionKey ?? "";
+  if (resolutionKey && await conversationAlreadyHasClarificationDraft(actor, conversation.id, resolutionKey)) {
+    const existing = await getAssistantConversation(actor, conversation.id);
+    if (existing) return existing;
+  }
+  const selected = input.draftAction.candidates.find((candidate) => candidate.id === candidateId && candidate.type === candidateType);
+  await appendAssistantConversationMessages(actor, conversation.id, {
+    assistant: {
+      content: draft.confidence === "high"
+        ? "I used your selected record and resumed the original request as a review-first draft. Review the values before saving it to CRM Change Proposals."
+        : "I tried to use your selected record, but the draft still needs review before it can continue.",
+      draftActions: [draft],
+      sources: selected ? [candidateSource(selected)] : [],
+      title: draft.confidence === "high" ? "Clarification applied" : "Clarification still needed"
+    },
+    user: `Selected ${selected?.label ?? "a candidate"} for ${candidateType === "person" ? "contact" : "organization"} clarification.`
+  });
+  const updated = await getAssistantConversation(actor, conversation.id);
+  if (!updated) throw new Error("Assistant conversation could not be loaded.");
+  return updated;
+}
+
+export async function cancelAssistantConversationDraftClarification(
+  actor: WorkspaceActor,
+  input: { conversationId: unknown; draftAction: AssistantDraftAction }
+): Promise<AssistantConversationView> {
+  await ensureWorkspaceAccess(actor);
+  const conversationId = normalizeId(input.conversationId);
+  if (!conversationId) throw new Error("Assistant conversation was not found.");
+  const conversation = await getExistingConversation(actor, conversationId);
+  if (!conversation) throw new Error("Assistant conversation was not found.");
+  await appendAssistantConversationMessages(actor, conversation.id, {
+    assistant: {
+      content: "Clarification canceled. I did not create a CRM Change Proposal or mutate any records.",
+      draftActions: [],
+      sources: [],
+      title: "Clarification canceled"
+    },
+    user: `Canceled clarification for ${input.draftAction.title}.`
   });
   const updated = await getAssistantConversation(actor, conversation.id);
   if (!updated) throw new Error("Assistant conversation could not be loaded.");
@@ -679,6 +745,60 @@ function commandResultToConversationReply(answer: AssistantCommandResult): Conve
   };
 }
 
+async function appendAssistantConversationMessages(
+  actor: WorkspaceActor,
+  conversationId: string,
+  messages: {
+    assistant: { content: string; draftActions: AssistantDraftAction[]; sources: AssistantConversationSource[]; title: string };
+    user: string;
+  }
+) {
+  await prisma.assistantConversationMessage.create({
+    data: {
+      content: sanitizeConversationText(messages.user),
+      conversationId,
+      role: "user",
+      workspaceId: actor.workspaceId
+    }
+  });
+  await prisma.assistantConversationMessage.create({
+    data: {
+      content: sanitizeAssistantText(messages.assistant.content),
+      conversationId,
+      draftActions: jsonArrayOrNull(messages.assistant.draftActions),
+      role: "assistant",
+      sources: jsonArrayOrNull(messages.assistant.sources),
+      title: safeText(messages.assistant.title, 160),
+      workspaceId: actor.workspaceId
+    }
+  });
+  await prisma.assistantConversation.update({
+    data: { updatedAt: new Date() },
+    where: { id: conversationId }
+  });
+}
+
+async function conversationAlreadyHasClarificationDraft(actor: WorkspaceActor, conversationId: string, resolutionKey: string) {
+  const recent = await prisma.assistantConversationMessage.findMany({
+    orderBy: { createdAt: "desc" },
+    select: { draftActions: true },
+    take: maxConversationMessages,
+    where: { conversationId, workspaceId: actor.workspaceId }
+  });
+  return recent.some((message) =>
+    parseDraftActions(message.draftActions).some((draft) => draft.clarification?.resolutionKey === resolutionKey)
+  );
+}
+
+function candidateSource(candidate: AssistantDraftActionCandidate): AssistantConversationSource {
+  return {
+    detail: candidate.detail ?? "Selected candidate",
+    href: candidate.href as Route,
+    label: candidate.label,
+    recordType: candidate.type === "person" ? "Contact" : "Organization"
+  };
+}
+
 function itemSource(item: AssistantAnswerItem): AssistantConversationSource {
   return {
     detail: item.detail,
@@ -851,8 +971,12 @@ function sanitizeAssistantText(value: string) {
   return safeText(value, maxAssistantMessageLength);
 }
 
-function normalizeId(value: string | undefined) {
+function normalizeId(value: unknown) {
   return typeof value === "string" ? value.trim().slice(0, 160) : "";
+}
+
+function stringInput(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 function normalizeSearchTerm(value: string) {

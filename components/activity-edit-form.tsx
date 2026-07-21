@@ -9,6 +9,7 @@ import { ActivityDueDateHint, ActivityManualFollowUpHint } from "@/components/ac
 import { FormActionBar } from "@/components/form-action-bar";
 import { FormErrorMessage } from "@/components/form-error-message";
 import { FormFieldLabel } from "@/components/form-field-label";
+import { FormSection } from "@/components/form-section";
 import { OwnerAssignmentHint } from "@/components/owner-assignment-hint";
 
 type ActivityType = "CALL" | "EMAIL" | "MEETING" | "TASK";
@@ -85,48 +86,49 @@ export function ActivityEditForm({
   return (
     <form className="inline-form" onSubmit={onSubmit}>
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : null}
-      <ActivityManualFollowUpHint />
-      <div className="form-grid">
-        <label className="form-field form-field-wide">
-          <FormFieldLabel required>Title</FormFieldLabel>
-          <input onChange={(event) => setTitle(event.target.value)} required value={title} />
-        </label>
+      <FormSection description={<ActivityManualFollowUpHint />} title="Activity details">
+        <div className="form-grid">
+          <label className="form-field form-field-wide">
+            <FormFieldLabel required>Title</FormFieldLabel>
+            <input onChange={(event) => setTitle(event.target.value)} required value={title} />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Type</FormFieldLabel>
-          <select onChange={(event) => setType(event.target.value as ActivityType)} value={type}>
-            <option value="TASK">Task</option>
-            <option value="CALL">Call</option>
-            <option value="EMAIL">Email</option>
-            <option value="MEETING">Meeting</option>
-          </select>
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Type</FormFieldLabel>
+            <select onChange={(event) => setType(event.target.value as ActivityType)} value={type}>
+              <option value="TASK">Task</option>
+              <option value="CALL">Call</option>
+              <option value="EMAIL">Email</option>
+              <option value="MEETING">Meeting</option>
+            </select>
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Due date</FormFieldLabel>
-          <input onChange={(event) => setDueAt(event.target.value)} type="date" value={dueAt} />
-          <ActivityDueDateShortcuts onSelect={setDueAt} />
-          <ActivityDueDateHint />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Due date</FormFieldLabel>
+            <input onChange={(event) => setDueAt(event.target.value)} type="date" value={dueAt} />
+            <ActivityDueDateShortcuts onSelect={setDueAt} />
+            <ActivityDueDateHint />
+          </label>
 
-        <label className="form-field">
-          <FormFieldLabel>Assigned to</FormFieldLabel>
-          <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
-            <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
-            {owners.map((owner) => (
-              <option key={owner.id} value={owner.id}>
-                {owner.name}
-              </option>
-            ))}
-          </select>
-          <OwnerAssignmentHint owners={owners} />
-        </label>
+          <label className="form-field">
+            <FormFieldLabel>Assigned to</FormFieldLabel>
+            <select onChange={(event) => setOwnerId(event.target.value)} value={ownerId}>
+              <option value="">{owners.length === 0 ? "No workspace members available" : "Unassigned"}</option>
+              {owners.map((owner) => (
+                <option key={owner.id} value={owner.id}>
+                  {owner.name}
+                </option>
+              ))}
+            </select>
+            <OwnerAssignmentHint owners={owners} />
+          </label>
 
-        <label className="form-field form-field-wide">
-          <FormFieldLabel>Description</FormFieldLabel>
-          <textarea onChange={(event) => setDescription(event.target.value)} rows={3} value={description} />
-        </label>
-      </div>
+          <label className="form-field form-field-wide">
+            <FormFieldLabel>Description</FormFieldLabel>
+            <textarea onChange={(event) => setDescription(event.target.value)} rows={3} value={description} />
+          </label>
+        </div>
+      </FormSection>
 
       <FormActionBar
         cancelHref={redirectTo}

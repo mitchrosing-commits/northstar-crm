@@ -122,6 +122,11 @@ describe("deal note creation behavior", () => {
     expect(noteForm).toContain("personId");
     expect(noteForm).toContain("organizationId");
     expect(noteForm).toContain("body: body.trim()");
+    expect(noteForm).toContain('router.replace(currentPathWithHash("notes"), { scroll: true })');
+    expect(noteForm).toContain('import { FormSuccessMessage } from "@/components/form-success-message"');
+    expect(noteForm).toContain("Note saved. Recent notes refreshed.");
+    expect(noteForm).toContain("<FormSuccessMessage compact>{success}</FormSuccessMessage>");
+    expect(noteForm).toContain("function currentPathWithHash");
   });
 
   it("adds soft-delete actions for notes in shared note panels", () => {

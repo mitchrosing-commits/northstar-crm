@@ -1,4 +1,4 @@
-import { JobStatus, MeetingIntakeSourceType, MeetingIntakeStatus, Prisma } from "@prisma/client";
+import { CrmChangeProposalStatus, CrmChangeProposalType, JobStatus, MeetingIntakeSourceType, MeetingIntakeStatus, Prisma } from "@prisma/client";
 
 import { ApiError } from "@/lib/api/responses";
 import { prisma } from "@/lib/db/prisma";
@@ -49,10 +49,12 @@ import type {
   CrmTarget,
   ExtractedMeetingText,
   MatchedCrmObject,
+  MeetingAssociationReview,
   MeetingIntelligenceDraft,
   MeetingSourceConversionMode,
   MeetingSourceProviderRequirement,
   ProcessorCapability,
+  MeetingCrmChangeProposalSummary,
   ProposedRelationshipBriefFact,
   ProposedRelationshipBriefUpdate,
   RelationshipBriefChangeSummary,
@@ -65,6 +67,7 @@ import { redactSensitiveText } from "@/lib/security/redaction";
 
 import { createActivity } from "./activity-service";
 import { createNote } from "./note-service";
+import { createCrmChangeProposal, type CrmChangeProposalView } from "./crm-change-proposal-service";
 import { enqueueJob } from "./job-service";
 import { updatePerson } from "./contact-service";
 import { userDisplaySelect } from "./user-select";
@@ -1134,6 +1137,7 @@ async function finishMeetingIntakeExtraction(
   const relationshipSemanticExtraction = await enrichRelationshipBriefDraft(analyzedDraft, analysisInput, options);
   const draft = await hydrateRelationshipBriefProposals(actor, relationshipSemanticExtraction.draft);
   draft.warnings = [...extracted.warnings, ...relationshipSemanticExtraction.warnings, ...draft.warnings];
+  const draftWithCrmProposals = await attachMeetingCrmChangeProposals(actor, intakeId, draft, normalized.markdown);
   return prisma.meetingIntake.update({
     where: { id: intakeId },
     data: {
@@ -1145,7 +1149,7 @@ async function finishMeetingIntakeExtraction(
         relationshipSemanticExtraction: relationshipSemanticExtraction.status,
         sections: normalized.sections
       }),
-      proposedChangesJson: toJson(draft),
+      proposedChangesJson: toJson(draftWithCrmProposals),
       status: MeetingIntakeStatus.READY_FOR_REVIEW
     }
   });
@@ -1238,6 +1242,231 @@ export async function applyMeetingIntake(actor: WorkspaceActor, intakeId: string
     skippedCount: result.skipped.length
   });
   return result;
+}
+
+export async function updateMeetingIntakeAssociation(actor: WorkspaceActor, intakeId: string, data: unknown) {
+  await ensureWorkspaceAccess(actor);
+  const intake = await getMeetingIntake(actor, intakeId);
+  if (intake.status !== MeetingIntakeStatus.READY_FOR_REVIEW) {
+    throw new ApiError("MEETING_INTAKE_NOT_READY", "Meeting intake associations can only be corrected before apply.", 409);
+  }
+
+  const draft = parseDraft(intake.proposedChangesJson);
+  const correction = await normalizeAssociationCorrection(actor, data);
+  const associationIndex = (draft.associationReviews ?? []).findIndex((review) => review.id === correction.associationId);
+  if (associationIndex < 0) {
+    throw new ApiError("VALIDATION_ERROR", "Meeting association was not found on this intake.", 422);
+  }
+
+  const association = (draft.associationReviews ?? [])[associationIndex];
+  if (!association) throw new ApiError("VALIDATION_ERROR", "Meeting association was not found on this intake.", 422);
+  if (association.targetType !== "person" && association.targetType !== "organization" && !correction.target) {
+    throw new ApiError("VALIDATION_ERROR", "Only attendee and organization associations can be corrected here.", 422);
+  }
+  if (correction.target && correction.target.type !== "person" && correction.target.type !== "organization") {
+    throw new ApiError("VALIDATION_ERROR", "Meeting association corrections can only target contacts or organizations.", 422);
+  }
+  if (
+    correction.target &&
+    (association.targetType === "person" || association.targetType === "organization") &&
+    correction.target.type !== association.targetType
+  ) {
+    throw new ApiError("VALIDATION_ERROR", "Choose a CRM record with the same association type.", 422);
+  }
+
+  const previousTarget = association.selectedTarget;
+  const correctedAssociation: MeetingAssociationReview = {
+    ...association,
+    correctionUpdatedAt: new Date().toISOString(),
+    matchedReason: correction.target ? "User-corrected meeting association" : association.matchedReason,
+    resolutionStatus: correction.target
+      ? targetSame(correction.target, association.originalTarget ?? null)
+        ? "confirmed"
+        : "user_corrected"
+      : "unmatched",
+    selectedTarget: correction.target,
+    targetType: correction.target?.type ?? association.targetType,
+    warning: correction.target
+      ? undefined
+      : "Reviewer marked this mention as unmatched. Meeting outputs will not be attached to this mention."
+  };
+  const nextDraft = applyAssociationCorrectionToDraft(draft, association, correctedAssociation, previousTarget, correction.target);
+  const hydrated = await hydrateRelationshipBriefProposals(actor, nextDraft);
+  const withProposals = await attachMeetingCrmChangeProposals(actor, intake.id, hydrated, intake.markdownText ?? hydrated.markdown, {
+    reconcileSourceProposals: true
+  });
+  const updated = await prisma.meetingIntake.update({
+    where: { id: intake.id },
+    data: { proposedChangesJson: toJson(withProposals) }
+  });
+  await writeAuditLog(actor, "meeting_intake.association_corrected", "MeetingIntake", intake.id, {
+    associationId: association.id,
+    fromTarget: previousTarget,
+    resolutionStatus: correctedAssociation.resolutionStatus,
+    toTarget: correction.target
+  });
+  return {
+    draft: parseDraft(updated.proposedChangesJson),
+    resolutionStatus: correctedAssociation.resolutionStatus
+  };
+}
+
+type AssociationCorrectionInput = {
+  associationId: string;
+  target: CrmTarget | null;
+};
+
+async function normalizeAssociationCorrection(actor: WorkspaceActor, data: unknown): Promise<AssociationCorrectionInput> {
+  const input = objectInput(data);
+  const associationId = normalizeOptionalText(input.associationId, 160);
+  if (!associationId) throw new ApiError("VALIDATION_ERROR", "Meeting association id is required.", 422);
+  if (input.target === null) return { associationId, target: null };
+  const target = normalizeTarget(input.target, null);
+  if (!target) throw new ApiError("VALIDATION_ERROR", "Choose an existing contact or organization, or mark the association unmatched.", 422);
+  const validation = await validateApplyTarget(actor, target);
+  if (!validation.target) {
+    throw new ApiError(
+      "MEETING_ASSOCIATION_TARGET_STALE",
+      `${validation.reason ?? "Selected target is not available in this workspace."} Choose another workspace record or mark the association unmatched.`,
+      409
+    );
+  }
+  if (validation.target.type !== "person" && validation.target.type !== "organization") {
+    throw new ApiError("VALIDATION_ERROR", "Meeting association corrections can only target contacts or organizations.", 422);
+  }
+  return { associationId, target: validation.target };
+}
+
+function applyAssociationCorrectionToDraft(
+  draft: MeetingIntelligenceDraft,
+  previousAssociation: MeetingAssociationReview,
+  correctedAssociation: MeetingAssociationReview,
+  previousTarget: CrmTarget | null,
+  nextTarget: CrmTarget | null
+): MeetingIntelligenceDraft {
+  return {
+    ...draft,
+    associationReviews: (draft.associationReviews ?? []).map((review) =>
+      review.id === previousAssociation.id ? correctedAssociation : review
+    ),
+    matchedObjects: correctedMatchedObjects(draft, previousAssociation, correctedAssociation, nextTarget),
+    meetingActivity: draft.meetingActivity
+      ? correctMeetingActivityAssociation(draft.meetingActivity, previousAssociation, previousTarget, nextTarget)
+      : null,
+    nextStepActivities: draft.nextStepActivities.map((activity) =>
+      correctTargetedProposal(activity, previousAssociation, previousTarget, nextTarget)
+    ),
+    notes: draft.notes.map((note) => correctTargetedProposal(note, previousAssociation, previousTarget, nextTarget)),
+    relationshipBriefUpdates: (draft.relationshipBriefUpdates ?? []).map((proposal) =>
+      correctRelationshipBriefProposal(proposal, previousAssociation, previousTarget, nextTarget)
+    )
+  };
+}
+
+function correctMeetingActivityAssociation(
+  activity: NonNullable<MeetingIntelligenceDraft["meetingActivity"]>,
+  association: MeetingAssociationReview,
+  previousTarget: CrmTarget | null,
+  nextTarget: CrmTarget | null
+) {
+  const shouldRewritePrimary = shouldRewriteProposalTarget(activity.target, activity.evidence, association, previousTarget);
+  return {
+    ...activity,
+    associatedTargets: correctAssociatedTargets(activity.associatedTargets ?? [], association, previousTarget, nextTarget),
+    target: shouldRewritePrimary ? nextTarget : activity.target,
+    targetWarning: shouldRewritePrimary && !nextTarget ? "Reviewer marked the associated CRM mention as unmatched." : activity.targetWarning
+  };
+}
+
+function correctAssociatedTargets(
+  targets: CrmTarget[],
+  association: MeetingAssociationReview,
+  previousTarget: CrmTarget | null,
+  nextTarget: CrmTarget | null
+) {
+  const withoutPrevious = previousTarget ? targets.filter((target) => !targetSame(target, previousTarget)) : targets;
+  const shouldAdd = nextTarget && (previousTarget ? targets.some((target) => targetSame(target, previousTarget)) : true);
+  return uniqueTargets([...withoutPrevious, ...(shouldAdd ? [nextTarget] : [])]);
+}
+
+function correctTargetedProposal<T extends { evidence?: string[]; target: CrmTarget | null; targetWarning?: string }>(
+  proposal: T,
+  association: MeetingAssociationReview,
+  previousTarget: CrmTarget | null,
+  nextTarget: CrmTarget | null
+): T {
+  if (!shouldRewriteProposalTarget(proposal.target, proposal.evidence ?? [], association, previousTarget)) return proposal;
+  return {
+    ...proposal,
+    target: nextTarget,
+    targetWarning: nextTarget ? undefined : "Reviewer marked the associated CRM mention as unmatched."
+  };
+}
+
+function correctRelationshipBriefProposal(
+  proposal: ProposedRelationshipBriefUpdate,
+  association: MeetingAssociationReview,
+  previousTarget: CrmTarget | null,
+  nextTarget: CrmTarget | null
+): ProposedRelationshipBriefUpdate {
+  if (nextTarget && nextTarget.type !== "person") return proposal;
+  return correctTargetedProposal(proposal, association, previousTarget, nextTarget);
+}
+
+function shouldRewriteProposalTarget(
+  currentTarget: CrmTarget | null,
+  evidence: string[],
+  association: MeetingAssociationReview,
+  previousTarget: CrmTarget | null
+) {
+  if (previousTarget && targetSame(currentTarget, previousTarget)) return true;
+  if (!previousTarget && !currentTarget && evidenceMentionsAssociation(evidence, association)) return true;
+  return false;
+}
+
+function evidenceMentionsAssociation(evidence: string[], association: MeetingAssociationReview) {
+  const haystack = `${association.evidence}\n${evidence.join("\n")}`;
+  return lineMentionsName(haystack, association.mention);
+}
+
+function correctedMatchedObjects(
+  draft: MeetingIntelligenceDraft,
+  previousAssociation: MeetingAssociationReview,
+  correctedAssociation: MeetingAssociationReview,
+  nextTarget: CrmTarget | null
+): MatchedCrmObject[] {
+  const existing = draft.matchedObjects.filter((match) => !matchesAssociation(match, previousAssociation));
+  if (!nextTarget) return existing;
+  return dedupeMatchesForDraft([
+    ...existing,
+    {
+      confidence: correctedAssociation.resolutionStatus === "confirmed" ? confidenceForCorrectedAssociation(previousAssociation) : "high",
+      displayName: nextTarget.label ?? correctedAssociation.mention,
+      evidenceExcerpt: correctedAssociation.evidence,
+      id: nextTarget.id,
+      matchedReason: correctedAssociation.resolutionStatus === "confirmed" ? previousAssociation.matchedReason ?? "Reviewer confirmed association" : "User-corrected meeting association",
+      objectType: nextTarget.type
+    }
+  ]);
+}
+
+function matchesAssociation(match: MatchedCrmObject, association: MeetingAssociationReview) {
+  return match.objectType === association.targetType &&
+    (match.id === association.selectedTarget?.id || match.id === association.originalTarget?.id || match.displayName === association.mention);
+}
+
+function confidenceForCorrectedAssociation(association: MeetingAssociationReview): MatchedCrmObject["confidence"] {
+  return association.confidence === "unmatched" ? "high" : association.confidence;
+}
+
+function dedupeMatchesForDraft(matches: MatchedCrmObject[]) {
+  const seen = new Set<string>();
+  return matches.filter((match) => {
+    const key = `${match.objectType}:${match.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 type RelationshipSemanticExtractionStatus = {
@@ -1439,6 +1668,440 @@ async function hydrateRelationshipBriefProposals(actor: WorkspaceActor, draft: M
       };
     })
   };
+}
+
+type MeetingCrmChangeProposalCandidate = {
+  confidence: "high" | "low" | "medium";
+  evidence: string[];
+  id: string;
+  proposedPayload: { fields?: Record<string, string>; organizationId?: string };
+  proposalType: CrmChangeProposalType;
+  rationale: string;
+  targetEntityId?: string | null;
+  warnings?: string[];
+};
+
+async function attachMeetingCrmChangeProposals(
+  actor: WorkspaceActor,
+  intakeId: string,
+  draft: MeetingIntelligenceDraft,
+  markdown: string,
+  options: { reconcileSourceProposals?: boolean } = {}
+): Promise<MeetingIntelligenceDraft> {
+  const candidates = await meetingCrmChangeProposalCandidates(actor, draft, markdown);
+  if (options.reconcileSourceProposals) await reconcileMeetingCrmProposalRecords(actor, intakeId, candidates);
+  if (candidates.length === 0) return { ...draft, crmChangeProposals: [] };
+
+  const proposalSummaries: MeetingCrmChangeProposalSummary[] = [];
+  const warnings: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const proposal = await createCrmChangeProposal(actor, {
+        confidence: candidate.confidence,
+        evidence: candidate.evidence,
+        idempotencyKey: meetingCrmProposalIdempotencyKey(intakeId, candidate),
+        proposedPayload: candidate.proposedPayload,
+        proposalType: candidate.proposalType,
+        rationale: candidate.rationale,
+        sourceId: intakeId,
+        sourceLabel: "Meeting Intelligence intake",
+        sourceType: "meeting_intelligence",
+        targetEntityId: candidate.targetEntityId,
+        warnings: candidate.warnings ?? []
+      });
+      proposalSummaries.push(meetingCrmProposalSummary(proposal));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        warnings.push(`CRM change proposal skipped by AI Preferences: ${error.message}`);
+        continue;
+      }
+      warnings.push(formatMeetingIntakeFailureMessage(error, "Could not create a CRM change proposal from meeting evidence."));
+    }
+  }
+
+  return {
+    ...draft,
+    crmChangeProposals: proposalSummaries,
+    warnings: uniqueStrings([...draft.warnings, ...warnings])
+  };
+}
+
+async function reconcileMeetingCrmProposalRecords(
+  actor: WorkspaceActor,
+  intakeId: string,
+  candidates: MeetingCrmChangeProposalCandidate[]
+) {
+  const activeKeys = candidates.map((candidate) => meetingCrmProposalIdempotencyKey(intakeId, candidate));
+  if (activeKeys.length > 0) {
+    await prisma.crmChangeProposal.updateMany({
+      data: { status: CrmChangeProposalStatus.PENDING },
+      where: {
+        idempotencyKey: { in: activeKeys },
+        sourceId: intakeId,
+        sourceType: "meeting_intelligence",
+        status: CrmChangeProposalStatus.SUPERSEDED,
+        workspaceId: actor.workspaceId
+      }
+    });
+  }
+  await prisma.crmChangeProposal.updateMany({
+    data: { status: CrmChangeProposalStatus.SUPERSEDED },
+    where: {
+      sourceId: intakeId,
+      sourceType: "meeting_intelligence",
+      status: CrmChangeProposalStatus.PENDING,
+      workspaceId: actor.workspaceId,
+      ...(activeKeys.length > 0 ? { idempotencyKey: { notIn: activeKeys } } : {})
+    }
+  });
+}
+
+function meetingCrmProposalIdempotencyKey(intakeId: string, candidate: MeetingCrmChangeProposalCandidate) {
+  return `meeting-intelligence:${intakeId}:${candidate.id}`;
+}
+
+async function meetingCrmChangeProposalCandidates(
+  actor: WorkspaceActor,
+  draft: MeetingIntelligenceDraft,
+  markdown: string
+): Promise<MeetingCrmChangeProposalCandidate[]> {
+  const [people, organizations] = await Promise.all([
+    prisma.person.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      select: { email: true, firstName: true, id: true, lastName: true, organizationId: true, phone: true, title: true }
+    }),
+    prisma.organization.findMany({
+      where: { workspaceId: actor.workspaceId, ...activeWhere },
+      select: { domain: true, id: true, name: true }
+    })
+  ]);
+  const peopleById = new Map(people.map((person) => [person.id, person]));
+  const organizationsById = new Map(organizations.map((organization) => [organization.id, organization]));
+  const candidates: MeetingCrmChangeProposalCandidate[] = [];
+  const lines = evidenceLines(markdown);
+  const effectiveMatches = effectiveCrmMatchesForMeetingProposals(draft);
+  const matchedPeople = effectiveMatches.filter((match) => match.objectType === "person" && match.confidence !== "ambiguous");
+  const matchedOrganizations = effectiveMatches.filter((match) => match.objectType === "organization" && match.confidence !== "ambiguous");
+  const reviewerUnmatchedMentions = new Set(
+    (draft.associationReviews ?? [])
+      .filter((review) => !review.selectedTarget && review.resolutionStatus === "unmatched" && review.correctionUpdatedAt)
+      .map((review) => review.mention)
+  );
+
+  for (const match of matchedPeople) {
+    const person = peopleById.get(match.id);
+    if (!person) continue;
+    const personLines = lines.filter((line) => lineMentionsName(line, match.displayName));
+    const email = firstLineValue(personLines, extractEmail);
+    const phone = firstLineValue(personLines, extractPhone);
+    const title = firstLineValue(personLines, extractTitle);
+    const fields: Record<string, string> = {};
+    if (email && normalizeEmail(person.email) !== email) fields.email = email;
+    if (phone && normalizePhone(person.phone) !== normalizePhone(phone)) fields.phone = phone;
+    if (title && normalizeMeetingText(person.title ?? "") !== normalizeMeetingText(title)) fields.title = title;
+    if (Object.keys(fields).length > 0) {
+      candidates.push({
+        confidence: match.confidence === "high" ? "high" : "medium",
+        evidence: proposalEvidence([match.evidenceExcerpt, ...personLines]),
+        id: `update-person-${person.id}-${Object.keys(fields).sort().join("-")}`,
+        proposalType: CrmChangeProposalType.UPDATE_PERSON,
+        proposedPayload: { fields },
+        rationale: "Meeting evidence explicitly states updated contact details.",
+        targetEntityId: person.id
+      });
+    }
+
+    const organizationMatch = matchedOrganizations.find((organization) =>
+      personLines.some((line) => lineMentionsName(line, organization.displayName) && /\b(at|with|from|joined|moved to|now at|now with)\b/i.test(line))
+    );
+    if (organizationMatch && person.organizationId !== organizationMatch.id && organizationsById.has(organizationMatch.id)) {
+      candidates.push({
+        confidence: match.confidence === "high" && organizationMatch.confidence === "high" ? "high" : "medium",
+        evidence: proposalEvidence([...personLines, organizationMatch.evidenceExcerpt]),
+        id: `link-person-org-${person.id}-${organizationMatch.id}`,
+        proposalType: CrmChangeProposalType.LINK_PERSON_ORGANIZATION,
+        proposedPayload: { organizationId: organizationMatch.id },
+        rationale: "Meeting evidence explicitly connects this contact to the selected organization.",
+        targetEntityId: person.id
+      });
+    }
+  }
+
+  for (const match of matchedOrganizations) {
+    const organization = organizationsById.get(match.id);
+    if (!organization) continue;
+    const organizationLines = lines.filter((line) => lineMentionsName(line, match.displayName));
+    const domain = firstLineValue(organizationLines, extractDomain);
+    if (domain && normalizeDomainValue(organization.domain) !== domain) {
+      candidates.push({
+        confidence: match.confidence === "high" ? "high" : "medium",
+        evidence: proposalEvidence([match.evidenceExcerpt, ...organizationLines]),
+        id: `update-organization-${organization.id}-domain`,
+        proposalType: CrmChangeProposalType.UPDATE_ORGANIZATION,
+        proposedPayload: { fields: { domain } },
+        rationale: "Meeting evidence explicitly states an organization domain.",
+        targetEntityId: organization.id
+      });
+    }
+  }
+
+  for (const contact of extractContactMentions(lines)) {
+    if (Array.from(reviewerUnmatchedMentions).some((mention) => lineMentionsName(contact.name, mention))) continue;
+    if (matchedPeople.some((match) => lineMentionsName(contact.name, match.displayName))) continue;
+    const existingPerson = people.find((person) => normalizeEmail(person.email) === contact.email);
+    if (existingPerson) continue;
+    const name = splitPersonName(contact.name);
+    if (!name.firstName) continue;
+    const organization = contact.organizationName
+      ? organizations.find((candidate) => lineMentionsName(contact.organizationName ?? "", candidate.name))
+      : singleMatchedOrganization(matchedOrganizations, organizationsById);
+    candidates.push({
+      confidence: contact.organizationName || contact.phone ? "high" : "medium",
+      evidence: proposalEvidence([contact.evidence]),
+      id: `create-person-${contact.email}`,
+      proposalType: CrmChangeProposalType.CREATE_PERSON,
+      proposedPayload: {
+        fields: {
+          email: contact.email,
+          firstName: name.firstName,
+          ...(name.lastName ? { lastName: name.lastName } : {}),
+          ...(contact.phone ? { phone: contact.phone } : {}),
+          ...(organization ? { organizationId: organization.id } : {})
+        }
+      },
+      rationale: "Meeting evidence explicitly names a new contact and provides a reachable email address.",
+      warnings: organization ? [] : ["No reliable organization link was inferred for this new contact."]
+    });
+  }
+
+  for (const organization of extractOrganizationMentions(lines)) {
+    if (Array.from(reviewerUnmatchedMentions).some((mention) => lineMentionsName(organization.name, mention))) continue;
+    const existing = organizations.find((candidate) =>
+      normalizeDomainValue(candidate.domain) === organization.domain ||
+      candidate.name.toLowerCase() === organization.name.toLowerCase()
+    );
+    if (existing) continue;
+    candidates.push({
+      confidence: organization.domain ? "high" : "medium",
+      evidence: proposalEvidence([organization.evidence]),
+      id: `create-organization-${normalizeDomainValue(organization.domain) || organization.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      proposalType: CrmChangeProposalType.CREATE_ORGANIZATION,
+      proposedPayload: {
+        fields: {
+          name: organization.name,
+          ...(organization.domain ? { domain: organization.domain } : {})
+        }
+      },
+      rationale: "Meeting evidence explicitly names an organization that is not already matched in CRM."
+    });
+  }
+
+  return dedupeMeetingCrmProposalCandidates(candidates).slice(0, 8);
+}
+
+function effectiveCrmMatchesForMeetingProposals(draft: MeetingIntelligenceDraft) {
+  const correctedAssociationMatches = (draft.associationReviews ?? []).flatMap((review): MatchedCrmObject[] => {
+    if (!review.selectedTarget || (review.selectedTarget.type !== "person" && review.selectedTarget.type !== "organization")) return [];
+    return [{
+      confidence: review.resolutionStatus === "user_corrected" ? "high" : confidenceForCorrectedAssociation(review),
+      displayName: review.mention,
+      evidenceExcerpt: review.evidence,
+      id: review.selectedTarget.id,
+      matchedReason: review.resolutionStatus === "user_corrected" ? "User-corrected meeting association" : review.matchedReason ?? "Reviewer confirmed association",
+      objectType: review.selectedTarget.type
+    }];
+  });
+  const dealLeadMatches = draft.matchedObjects.filter((match) => match.objectType === "deal" || match.objectType === "lead");
+  const unmatchedAssociationIds = new Set(
+    (draft.associationReviews ?? [])
+      .filter((review) => !review.selectedTarget)
+      .flatMap((review) => [review.originalTarget?.id, review.mention].filter(Boolean))
+  );
+  const unreviewedPersonOrgMatches = draft.matchedObjects.filter((match) =>
+    (match.objectType === "person" || match.objectType === "organization") &&
+    !unmatchedAssociationIds.has(match.id) &&
+    !unmatchedAssociationIds.has(match.displayName) &&
+    !(draft.associationReviews ?? []).some((review) => review.originalTarget?.id === match.id || review.selectedTarget?.id === match.id)
+  );
+  return dedupeMatchesForDraft([...dealLeadMatches, ...unreviewedPersonOrgMatches, ...correctedAssociationMatches]);
+}
+
+function meetingCrmProposalSummary(proposal: CrmChangeProposalView): MeetingCrmChangeProposalSummary {
+  return {
+    canApply: proposal.canApply,
+    confidence: proposal.confidence,
+    duplicateWarnings: proposal.duplicateCandidates.map((candidate) => candidate.reason),
+    evidence: proposal.evidence,
+    href: `/crm-change-proposals/${proposal.id}?source=meeting-intelligence`,
+    id: proposal.id,
+    permissionLabel: proposal.permissionLabel,
+    permissionLevel: proposal.permissionLevel,
+    permissionReason: proposal.permissionReason,
+    proposalType: proposal.proposalType,
+    rationale: proposal.rationale,
+    status: proposal.status,
+    targetLabel: proposal.targetLabel,
+    title: proposal.title,
+    warnings: proposal.warnings
+  };
+}
+
+function evidenceLines(markdown: string) {
+  return markdown
+    .split("\n")
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter((line) => line && !/^#+\s/.test(line))
+    .filter((line) => !/^(source type|original file|mime type|extracted words|extraction method|conversion|processor|provider|warning|transcription confidence):/i.test(line))
+    .slice(0, 300);
+}
+
+function firstLineValue(lines: string[], extractor: (value: string) => string | null) {
+  for (const line of lines) {
+    const value = extractor(line);
+    if (value) return value;
+  }
+  return null;
+}
+
+function extractContactMentions(lines: string[]) {
+  const contacts: Array<{ email: string; evidence: string; name: string; organizationName?: string; phone?: string }> = [];
+  for (const line of lines) {
+    const email = extractEmail(line);
+    if (!email) continue;
+    const name = explicitPersonNameNearEmail(line, email);
+    if (!name) continue;
+    const organizationName = organizationNameFromLine(line);
+    contacts.push({
+      email,
+      evidence: line,
+      name,
+      ...(organizationName ? { organizationName } : {}),
+      phone: extractPhone(line) ?? undefined
+    });
+  }
+  return dedupeBy(contacts, (contact) => contact.email);
+}
+
+function extractOrganizationMentions(lines: string[]) {
+  const organizations: Array<{ domain?: string; evidence: string; name: string }> = [];
+  for (const line of lines) {
+    const name = organizationNameFromLine(line);
+    if (!name) continue;
+    organizations.push({
+      domain: extractDomain(line) ?? undefined,
+      evidence: line,
+      name
+    });
+  }
+  return dedupeBy(organizations, (organization) => `${organization.name.toLowerCase()}:${organization.domain ?? ""}`);
+}
+
+function explicitPersonNameNearEmail(line: string, email: string) {
+  const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const before = line.match(new RegExp(`\\b([A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,2})\\b[^\\n]{0,90}${escapedEmail}`, "i"))?.[1];
+  if (before) return cleanPersonMentionName(before);
+  const after = line.match(new RegExp(`${escapedEmail}[^\\n]{0,90}\\b(?:for|from|contact)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,2})\\b`, "i"))?.[1];
+  if (after) return cleanPersonMentionName(after);
+  return null;
+}
+
+function extractTitle(line: string) {
+  const match = line.match(/\b(?:title|role)\s+(?:is|now is|changed to|updated to)\s+([A-Za-z][A-Za-z0-9&/.' -]{1,80})(?:[.;,]|$)/i);
+  return match?.[1] ? cleanMeetingName(match[1]) : null;
+}
+
+function organizationNameFromLine(line: string) {
+  const name = line.match(/\b(?:at|from|with|joined|moved to|now at|now with)\s+([A-Z][A-Za-z0-9&.' -]{2,80}?\b(?:Logistics|Systems|Industries|Inc|LLC|Corp|Corporation|Company|Group|Labs|Works|Foods|Health|Retail|Manufacturing|Software|Solutions|Partners))\b/)?.[1];
+  return name ? cleanMeetingName(name) : null;
+}
+
+function splitPersonName(name: string) {
+  const parts = cleanMeetingName(name).split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] ?? "",
+    lastName: parts.slice(1).join(" ")
+  };
+}
+
+function singleMatchedOrganization(
+  matches: Array<{ confidence: string; id: string }>,
+  organizationsById: Map<string, { id: string; name: string }>
+) {
+  const confident = matches.filter((match) => match.confidence === "high" || match.confidence === "medium");
+  if (confident.length !== 1) return null;
+  return organizationsById.get(confident[0].id) ?? null;
+}
+
+function dedupeMeetingCrmProposalCandidates(candidates: MeetingCrmChangeProposalCandidate[]) {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.proposalType}:${candidate.targetEntityId ?? ""}:${JSON.stringify(candidate.proposedPayload)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function proposalEvidence(lines: string[]) {
+  return uniqueStrings(lines.map((line) => line.trim()).filter(Boolean)).slice(0, 5);
+}
+
+function lineMentionsName(line: string, name: string) {
+  return normalizeMeetingText(line).includes(normalizeMeetingText(name));
+}
+
+function extractEmail(value: string) {
+  return value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase() ?? null;
+}
+
+function extractPhone(value: string) {
+  return value.match(/\+?\d[\d ().-]{7,}\d/)?.[0]?.replace(/\s+/g, " ").trim() ?? null;
+}
+
+function extractDomain(value: string) {
+  const explicit = value.match(/\b(?:domain|website|site)\s*(?:is|:)?\s*(https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,})\b/i)?.[2];
+  if (explicit) return normalizeDomainValue(explicit);
+  const email = extractEmail(value);
+  return email ? normalizeDomainValue(email.split("@")[1] ?? "") : null;
+}
+
+function normalizeEmail(value: string | null) {
+  return value?.trim().toLowerCase() || null;
+}
+
+function normalizePhone(value: string | null) {
+  return value?.replace(/[^\d+]/g, "") || null;
+}
+
+function normalizeDomainValue(value: string | null | undefined) {
+  return value?.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase() || null;
+}
+
+function cleanMeetingName(value: string) {
+  return value.replace(/[.,;:]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
+function cleanPersonMentionName(value: string) {
+  return cleanMeetingName(value).replace(/\s+(?:at|can|from|with)$/i, "").trim();
+}
+
+function normalizeMeetingText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b(inc|llc|ltd|corp|corporation|company|co)\b\.?/g, " ")
+    .replace(/[^a-z0-9@.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function dedupeBy<T>(values: T[], keyFor: (value: T) => string) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = keyFor(value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function applyRelationshipBriefUpdate(
@@ -2450,6 +3113,10 @@ function uniqueTargets(targets: Array<CrmTarget | null | undefined>) {
     result.push(target);
   }
   return result;
+}
+
+function targetSame(left: CrmTarget | null | undefined, right: CrmTarget | null | undefined) {
+  return Boolean(left && right && left.id === right.id && left.type === right.type);
 }
 
 function targetHref(target: CrmTarget) {

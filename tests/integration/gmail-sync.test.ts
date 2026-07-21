@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "@/lib/api/responses";
 import { decryptEmailToken, encryptEmailToken } from "@/lib/email/token-encryption";
+import { runJobsOnce } from "@/lib/jobs/run-once";
 import {
   disconnectEmailConnection,
+  enqueueAllGmailInboxSyncJobs,
+  enqueueDueGmailInboxSyncJobs,
   diagnoseGmailConnection,
   enqueueGmailInboxSyncJob,
+  enqueueGmailInboxSyncJobForSelectedConnection,
   gmailInboxSyncJobType,
   listGmailInboxAccounts,
   listEmailInboxThreads,
@@ -154,6 +158,7 @@ describe("Gmail metadata sync", () => {
       });
       expect(syncJob.payload).toEqual({
         connectionId: connection.id,
+        source: "manual",
         workspaceId: fixture.workspaceA.id
       });
       expect(JSON.stringify(syncJob.payload)).not.toContain("gmail-access-token");
@@ -1648,6 +1653,7 @@ describe("Gmail metadata sync", () => {
       });
       expect(job.payload).toEqual({
         connectionId: connection.id,
+        source: "manual",
         workspaceId: fixture.workspaceA.id
       });
       expect(JSON.stringify(job.payload)).not.toContain("access-token");
@@ -1692,19 +1698,350 @@ describe("Gmail metadata sync", () => {
       });
       expect(reloadedConnection).toMatchObject({
         lastError: null,
-        lastSyncCursor: "historyId:1001"
+        lastSyncCursor: "historyId:1001",
+        lastSyncDuplicateCount: 0,
+        lastSyncImportedCount: 1,
+        lastSyncMessageSkipCount: 0,
+        lastSyncMode: "recent",
+        lastSyncSkippedCount: 0,
+        lastSyncTotalFetched: 1
       });
+      expect(reloadedConnection.lastSyncAttemptedAt).toBeInstanceOf(Date);
 
       const providerCard = (await listEmailConnectionProviderCards(fixture.actorA, env)).find(
         (provider) => provider.provider === "GOOGLE_WORKSPACE"
       );
       expect(providerCard).toMatchObject({
+        lastSyncDuplicateCount: 0,
+        lastSyncImportedCount: 1,
+        lastSyncMessageSkipCount: 0,
+        lastSyncMode: "recent",
+        lastSyncSkippedCount: 0,
+        lastSyncTotalFetched: 1,
         syncAvailable: true,
-        syncStatusLabel: "Sync queued",
         syncStatusUpdatedAt: expect.any(Date)
       });
+      expect(["Sync queued", "Sync retry scheduled"]).toContain(providerCard?.syncStatusLabel);
+      expect(providerCard?.syncStatusLabel).not.toBe("Sync complete");
       expect(JSON.stringify(providerCard)).not.toContain("access-token");
       expect(JSON.stringify(providerCard)).not.toContain("refresh-token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("queues selected, all, and due Gmail inbox sync jobs without duplicate provider work", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date("2031-01-01T00:00:00.000Z")
+      });
+
+      const selected = await enqueueGmailInboxSyncJobForSelectedConnection(fixture.actorA, connection.id);
+      const all = await enqueueAllGmailInboxSyncJobs(fixture.actorA, env);
+      const dueWhileActive = await enqueueDueGmailInboxSyncJobs({
+        now: new Date("2030-07-01T12:00:00.000Z")
+      });
+
+      expect(selected).toMatchObject({
+        dedupeKey: `gmail-inbox-sync:${connection.id}`,
+        payload: {
+          connectionId: connection.id,
+          source: "manual",
+          workspaceId: fixture.workspaceA.id
+        },
+        status: JobStatus.PENDING,
+        type: gmailInboxSyncJobType,
+        workspaceId: fixture.workspaceA.id
+      });
+      expect(all).toMatchObject({ queued: 1 });
+      expect(all.jobs[0]).toEqual({ connectionId: connection.id, id: selected.id });
+      expect(dueWhileActive).toEqual({ jobs: [], queued: 0 });
+      expect(JSON.stringify(selected.payload)).not.toContain("access-token");
+      expect(JSON.stringify(all)).not.toContain("access-token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("auto-enqueues due Gmail sync through the existing job runner and stores synced messages", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date("2031-01-01T00:00:00.000Z")
+      });
+      const fetchImpl = gmailFetchMock({
+        accessToken: "access-token",
+        expectedMaxResults: "100",
+        messages: [
+          {
+            bodyText: "Auto-sync body for CRM review.",
+            headers: {
+              Date: "Fri, 26 Jun 2026 16:00:00 -0400",
+              From: "Alpha Contact <alpha@example.test>",
+              Subject: "Auto sync",
+              To: "Alex <alex@example.test>"
+            },
+            historyId: "1201",
+            id: "gmail-auto-sync-1",
+            labelIds: ["INBOX"],
+            snippet: "Auto-sync body"
+          }
+        ]
+      });
+
+      const result = await runJobsOnce({
+        handlers: {
+          [gmailInboxSyncJobType]: async ({ payload }) => {
+            await processGmailInboxSyncJob(payload, { env, fetchImpl });
+          }
+        },
+        now: new Date("2030-07-01T12:00:00.000Z"),
+        workspaceId: fixture.workspaceA.id,
+        workerId: "worker-gmail-auto-sync"
+      });
+
+      expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, dead: 0 });
+      const [job, log, reloadedConnection, providerCard] = await Promise.all([
+        fixture.prisma.job.findFirstOrThrow({
+          where: {
+            dedupeKey: `gmail-inbox-sync:${connection.id}`,
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
+        fixture.prisma.emailLog.findFirstOrThrow({
+          where: {
+            providerMessageId: "gmail-auto-sync-1",
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
+        fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+        listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
+          cards.find((provider) => provider.provider === "GOOGLE_WORKSPACE")
+        )
+      ]);
+      expect(job).toMatchObject({
+        attempts: 1,
+        payload: {
+          connectionId: connection.id,
+          source: "automatic",
+          workspaceId: fixture.workspaceA.id
+        },
+        status: JobStatus.SUCCEEDED,
+        workspaceId: fixture.workspaceA.id
+      });
+      expect(log).toMatchObject({
+        body: "Auto-sync body for CRM review.",
+        emailConnectionId: connection.id,
+        subject: "Auto sync"
+      });
+      expect(reloadedConnection).toMatchObject({
+        lastSyncDuplicateCount: 0,
+        lastSyncImportedCount: 1,
+        lastSyncMessageSkipCount: 0,
+        lastSyncMode: "recent",
+        lastSyncSkippedCount: 0,
+        lastSyncTotalFetched: 1
+      });
+      expect(reloadedConnection.lastSyncAttemptedAt).toBeInstanceOf(Date);
+      expect(providerCard).toMatchObject({
+        lastSyncImportedCount: 1,
+        lastSyncMode: "recent",
+        lastSyncTotalFetched: 1,
+        syncHealth: {
+          currentState: "succeeded",
+          currentStateLabel: "Sync succeeded",
+          latestJobSource: "automatic",
+          latestJobSourceLabel: "Automatic",
+          recentJobs: [
+            expect.objectContaining({
+              source: "automatic",
+              sourceLabel: "Automatic",
+              status: JobStatus.SUCCEEDED
+            })
+          ],
+          syncCounts: {
+            duplicates: 0,
+            fetched: 1,
+            imported: 1,
+            mode: "recent",
+            skipped: 0,
+            skippedMessages: 0
+          }
+        },
+        syncAvailable: true,
+        syncStatusLabel: "Sync complete"
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("does not auto-enqueue recently attempted Gmail syncs after terminal failure", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date("2031-01-01T00:00:00.000Z")
+      });
+      const job = await enqueueGmailInboxSyncJob(fixture.actorA);
+      await fixture.prisma.job.update({
+        where: { id: job.id },
+        data: {
+          failedAt: new Date("2030-07-01T11:59:00.000Z"),
+          lastError: "Gmail authorization was revoked.",
+          status: JobStatus.DEAD,
+          updatedAt: new Date("2030-07-01T11:59:00.000Z")
+        }
+      });
+
+      const result = await enqueueDueGmailInboxSyncJobs({
+        now: new Date("2030-07-01T12:00:00.000Z")
+      });
+
+      expect(result).toEqual({ jobs: [], queued: 0 });
+      await expect(
+        fixture.prisma.job.findMany({
+          where: {
+            dedupeKey: `gmail-inbox-sync:${connection.id}`,
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        })
+      ).resolves.toHaveLength(1);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("summarizes Gmail sync health, retry timing, duplicate suppression, and worker staleness safely", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      const connection = await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date("2031-01-01T00:00:00.000Z")
+      });
+      const now = new Date();
+      const staleRunAt = new Date(now.getTime() - 10 * 60 * 1000);
+      const retryRunAt = new Date(now.getTime() + 10 * 60 * 1000);
+      const job = await enqueueGmailInboxSyncJob(fixture.actorA);
+      await fixture.prisma.job.create({
+        data: {
+          dedupeKey: `gmail-inbox-sync:${connection.id}`,
+          payload: {
+            connectionId: connection.id,
+            source: "automatic",
+            workspaceId: fixture.workspaceB.id
+          },
+          status: JobStatus.DEAD,
+          type: gmailInboxSyncJobType,
+          updatedAt: new Date("2030-07-01T13:00:00.000Z"),
+          workspaceId: fixture.workspaceB.id
+        }
+      });
+      await fixture.prisma.job.update({
+        where: { id: job.id },
+        data: {
+          runAt: staleRunAt,
+          status: JobStatus.PENDING,
+          updatedAt: staleRunAt
+        }
+      });
+
+      const [queuedHealth] = await listGmailInboxAccounts(fixture.actorA, env);
+      expect(queuedHealth.syncHealth).toMatchObject({
+        activeDuplicateJobRef: expect.any(String),
+        canRetryNow: false,
+        currentState: "queued",
+        currentStateLabel: "Sync queued",
+        latestJobSource: "manual",
+        staleWorker: true
+      });
+      expect(queuedHealth.syncHealth.activeDuplicateMessage).toContain("will not create duplicate provider work");
+      expect(queuedHealth.syncHealth.staleWorkerDetail).toContain("background worker may be paused");
+      expect(JSON.stringify(queuedHealth.syncHealth)).not.toContain("access-token");
+
+      await fixture.prisma.job.update({
+        where: { id: job.id },
+        data: {
+          attempts: 1,
+          lastError: "Gmail provider timeout near bearer raw-token-secret",
+          runAt: retryRunAt,
+          status: JobStatus.PENDING,
+          updatedAt: now
+        }
+      });
+      const [delayedHealth] = await listGmailInboxAccounts(fixture.actorA, env);
+      expect(delayedHealth.syncHealth).toMatchObject({
+        currentState: "delayed",
+        currentStateLabel: "Retry scheduled",
+        failureCategory: "provider_unavailable",
+        recoveryAction: "wait",
+        retryAt: retryRunAt
+      });
+      expect(JSON.stringify(delayedHealth.syncHealth)).not.toContain("raw-token-secret");
+
+      await fixture.prisma.job.update({
+        where: { id: job.id },
+        data: {
+          failedAt: new Date("2030-07-01T12:02:00.000Z"),
+          lastError: "Gmail authorization was revoked for bearer raw-token-secret.",
+          status: JobStatus.DEAD,
+          updatedAt: new Date("2030-07-01T12:02:00.000Z")
+        }
+      });
+      const [deadHealth] = await listGmailInboxAccounts(fixture.actorA, env);
+      expect(deadHealth.syncHealth).toMatchObject({
+        canRetryNow: false,
+        currentState: "dead_lettered",
+        currentStateLabel: "Dead-lettered",
+        failureCategory: "credentials",
+        recoveryAction: "reconnect_gmail"
+      });
+      expect(deadHealth.syncHealth.recentJobs).toHaveLength(1);
+      expect(JSON.stringify(deadHealth.syncHealth)).not.toContain("raw-token-secret");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("does not auto-enqueue recently successful Gmail syncs before the sync interval", async () => {
+    const fixture = await createIntegrationFixture();
+    try {
+      await createConnectedGmailSecret(fixture, {
+        accessToken: "access-token",
+        expiresAt: new Date("2031-01-01T00:00:00.000Z")
+      });
+      await fixture.prisma.emailConnection.updateMany({
+        where: {
+          provider: "GOOGLE_WORKSPACE",
+          workspaceId: fixture.workspaceA.id
+        },
+        data: {
+          lastSyncAt: new Date("2030-07-01T11:55:00.000Z"),
+          lastSyncAttemptedAt: new Date("2030-07-01T11:55:00.000Z"),
+          lastSyncImportedCount: 3,
+          lastSyncMode: "recent",
+          lastSyncTotalFetched: 4
+        }
+      });
+
+      const result = await enqueueDueGmailInboxSyncJobs({
+        now: new Date("2030-07-01T12:00:00.000Z")
+      });
+
+      expect(result).toEqual({ jobs: [], queued: 0 });
+      await expect(
+        fixture.prisma.job.findMany({
+          where: {
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        })
+      ).resolves.toHaveLength(0);
     } finally {
       await fixture.cleanup();
     }
@@ -1717,7 +2054,6 @@ describe("Gmail metadata sync", () => {
         accessToken: "access-token",
         expiresAt: new Date(Date.now() + 60 * 60 * 1000)
       });
-      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
         expectedMaxResults: "100",
@@ -1747,7 +2083,13 @@ describe("Gmail metadata sync", () => {
 
       expect(result).toMatchObject({ created: 1, skippedDuplicates: 0, syncMode: "recent", totalFetched: 1 });
       const [job, log, providerCard] = await Promise.all([
-        fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
+        fixture.prisma.job.findFirstOrThrow({
+          where: {
+            dedupeKey: `gmail-inbox-sync:${connection.id}`,
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
         fixture.prisma.emailLog.findFirstOrThrow({
           where: {
             providerMessageId: "gmail-immediate-sync-1",
@@ -1793,7 +2135,6 @@ describe("Gmail metadata sync", () => {
         accessToken: "access-token",
         expiresAt: new Date(Date.now() + 60 * 60 * 1000)
       });
-      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
         expectedMaxResults: "100",
@@ -1843,7 +2184,13 @@ describe("Gmail metadata sync", () => {
         totalFetched: 2
       });
       const [job, importedLogs, reloadedConnection, auditLogs, providerCard] = await Promise.all([
-        fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
+        fixture.prisma.job.findFirstOrThrow({
+          where: {
+            dedupeKey: `gmail-inbox-sync:${connection.id}`,
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
         fixture.prisma.emailLog.findMany({
           where: { provider: "GOOGLE_WORKSPACE", workspaceId: fixture.workspaceA.id },
           orderBy: { providerMessageId: "asc" }
@@ -1866,10 +2213,22 @@ describe("Gmail metadata sync", () => {
       expect(reloadedConnection.lastError).toBe(
         "Gmail sync completed with warnings: 1 Gmail message could not be loaded and was skipped."
       );
+      expect(reloadedConnection).toMatchObject({
+        lastSyncDuplicateCount: 0,
+        lastSyncImportedCount: 1,
+        lastSyncMessageSkipCount: 1,
+        lastSyncMode: "recent",
+        lastSyncSkippedCount: 0,
+        lastSyncTotalFetched: 2
+      });
+      expect(reloadedConnection.lastSyncAttemptedAt).toBeInstanceOf(Date);
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
       expect(providerCard).toMatchObject({
         lastError: reloadedConnection.lastError,
+        lastSyncImportedCount: 1,
+        lastSyncMessageSkipCount: 1,
+        lastSyncTotalFetched: 2,
         status: "Connected with warnings",
         syncStatusLabel: "Sync complete"
       });
@@ -1889,7 +2248,6 @@ describe("Gmail metadata sync", () => {
         accessToken: "access-token",
         expiresAt: new Date(Date.now() + 60 * 60 * 1000)
       });
-      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
         expectedMaxResults: "100",
@@ -1935,7 +2293,13 @@ describe("Gmail metadata sync", () => {
       });
 
       const [job, reloadedConnection, reloadedSecret, providerCard, logs] = await Promise.all([
-        fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
+        fixture.prisma.job.findFirstOrThrow({
+          where: {
+            dedupeKey: `gmail-inbox-sync:${connection.id}`,
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
         fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
         fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } }),
         listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
@@ -1957,6 +2321,9 @@ describe("Gmail metadata sync", () => {
           "EMAIL_GMAIL_MESSAGES_ALL_FAILED: Gmail listed 2 inbox messages, but none could be loaded. Attempted 2; skipped 2. Reason categories: message_load_not_found=2."
         )
       );
+      expect(reloadedConnection.lastSyncAttemptedAt).toBeInstanceOf(Date);
+      expect(reloadedConnection.lastSyncAt).toBeNull();
+      expect(reloadedConnection.lastSyncImportedCount).toBeNull();
       expect(reloadedConnection.lastError).not.toContain("access-token");
       expect(reloadedConnection.lastError).not.toContain("provider-body-secret-token");
       expect(providerCard).toMatchObject({
@@ -1968,7 +2335,7 @@ describe("Gmail metadata sync", () => {
       expect(providerCard?.syncStatusDetail).toContain(
         "Gmail listed 2 inbox messages, but none could be loaded. Attempted 2; skipped 2. Reason categories: message_load_not_found=2."
       );
-      expect(providerCard?.syncStatusDetail).toContain(`job ${queuedJob.id.slice(-8)}`);
+      expect(providerCard?.syncStatusDetail).toContain(`job ${job.id.slice(-8)}`);
       expect(providerCard?.syncStatusDetail).toContain(`connection ${connection.id.slice(-8)}`);
       expect(providerCard?.syncStatusDetail).toContain("attempts 1");
       expect(providerCard?.syncStatusDetail).toContain("Retry scheduled");
@@ -1987,7 +2354,6 @@ describe("Gmail metadata sync", () => {
         accessToken: "access-token",
         expiresAt: new Date(Date.now() + 60 * 60 * 1000)
       });
-      const queuedJob = await enqueueGmailInboxSyncJob(fixture.actorA);
       const fetchImpl = gmailFetchMock({
         accessToken: "access-token",
         expectedMaxResults: "100",
@@ -2021,7 +2387,13 @@ describe("Gmail metadata sync", () => {
       });
 
       const [job, reloadedConnection, reloadedSecret, providerCard, logs] = await Promise.all([
-        fixture.prisma.job.findUniqueOrThrow({ where: { id: queuedJob.id } }),
+        fixture.prisma.job.findFirstOrThrow({
+          where: {
+            dedupeKey: `gmail-inbox-sync:${connection.id}`,
+            type: gmailInboxSyncJobType,
+            workspaceId: fixture.workspaceA.id
+          }
+        }),
         fixture.prisma.emailConnection.findUniqueOrThrow({ where: { id: connection.id } }),
         fixture.prisma.emailConnectionSecret.findUniqueOrThrow({ where: { connectionId: connection.id } }),
         listEmailConnectionProviderCards(fixture.actorA, env).then((cards) =>
@@ -2065,6 +2437,10 @@ describe("Gmail metadata sync", () => {
         refreshToken: "diagnostic-refresh-token"
       });
       const diagnosticJob = await enqueueGmailInboxSyncJob(fixture.actorA);
+      await fixture.prisma.job.update({
+        where: { id: diagnosticJob.id },
+        data: { runAt: new Date("2035-01-01T00:00:00.000Z") }
+      });
       await fixture.prisma.emailConnection.update({
         where: { id: connection.id },
         data: {
@@ -3238,6 +3614,15 @@ describe("Gmail metadata sync", () => {
         providerLabels: ["SENT"]
       });
       expect(reloadedConnection.lastSyncCursor).toBe(cursorBeforeThreadRefresh);
+      expect(reloadedConnection).toMatchObject({
+        lastSyncDuplicateCount: 2,
+        lastSyncImportedCount: 1,
+        lastSyncMessageSkipCount: 0,
+        lastSyncMode: "thread",
+        lastSyncSkippedCount: 0,
+        lastSyncTotalFetched: 3
+      });
+      expect(reloadedConnection.lastSyncAttemptedAt).toBeInstanceOf(Date);
       expect(threads.find((thread) => thread.id.endsWith(":thread-shared-refresh-1"))).toMatchObject({
         messageCount: 3
       });

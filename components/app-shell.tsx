@@ -7,7 +7,7 @@ import { PrimaryNav } from "@/components/primary-nav";
 import { SidebarCommand } from "@/components/sidebar-command";
 import { switchWorkspaceAction } from "@/app/workspaces/actions";
 import { getRequestContext } from "@/lib/auth/request-context";
-import { listWorkspaceMembershipOptions } from "@/lib/services/crm";
+import { listWorkspaceMembershipOptions } from "@/lib/services/workspace-service";
 export { appShellNavigationManifest } from "@/lib/navigation";
 
 type AppShellProps = {

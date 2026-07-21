@@ -4,8 +4,10 @@ import type {
   MatchedCrmObject,
   MeetingProposalFactCategory,
   MeetingIntelligenceDraft,
+  MeetingAssociationReview,
   MeetingSummarySection,
   MeetingSourceMetadata,
+  TranscriptSegment,
   RelationshipBriefFields,
   UnmatchedEntity
 } from "./types";
@@ -57,6 +59,7 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
   const sections = extractSections(`${input.contextText ?? ""}\n${text}`);
   const meetingDate = parseMeetingDate(input.contextText ?? text);
   const participants = parseParticipants(`${input.contextText ?? ""}\n${text}`);
+  const transcriptSegments = buildTranscriptSegments(text, input.sourceMetadata);
   const summarySections = buildStructuredSummary(lines, sections, { meetingDate, participants });
   const summary = buildSummary(summarySections, lines);
   const warnings = buildWarnings(input.matchedObjects, input.unmatchedEntities, sections.actionItems, lines, meetingDate);
@@ -90,6 +93,7 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     : null;
 
   return {
+    associationReviews: buildAssociationReviews(input.matchedObjects, input.unmatchedEntities),
     markdown: text,
     matchedObjects: input.matchedObjects,
     meetingActivity,
@@ -99,6 +103,7 @@ export function analyzeMeetingIntelligence(input: AnalyzeMeetingInput): MeetingI
     sourceMetadata: input.sourceMetadata,
     summary,
     summarySections,
+    transcriptSegments,
     unmatchedEntities: input.unmatchedEntities,
     warnings
   };
@@ -380,10 +385,46 @@ function buildWarnings(
   }
   if (unmatched.length > 0) warnings.add("Some mentioned entities were not matched to CRM records.");
   if (actionItems.some((item) => !parseDueDate(item, meetingDate))) warnings.add("Some next steps do not include a clear due date.");
+  if (lines.some((line) => /^(?:-\s*)?Transcription confidence:\s*low\b/i.test(line))) {
+    warnings.add("Transcription confidence is low. Review speaker labels and source snippets before applying CRM updates.");
+  }
   if (matches.length > 0 && lines.some((line) => protectedTraitPattern.test(line))) {
     warnings.add("Protected or sensitive trait details were excluded from curated Relationship Brief and fact-note suggestions.");
   }
   return Array.from(warnings);
+}
+
+function buildAssociationReviews(matches: MatchedCrmObject[], unmatched: UnmatchedEntity[]): MeetingAssociationReview[] {
+  return [
+    ...matches.map((match) => ({
+      confidence: match.confidence,
+      evidence: match.evidenceExcerpt,
+      id: `matched-${match.objectType}-${match.id}`,
+      matchedReason: match.matchedReason,
+      mention: match.displayName,
+      originalTarget: targetFromMatch(match),
+      resolutionStatus: match.confidence === "ambiguous" || match.confidence === "low" ? "ambiguous" as const : "confirmed" as const,
+      selectedTarget: match.confidence === "ambiguous" || match.confidence === "low" ? null : targetFromMatch(match),
+      targetType: match.objectType,
+      warning: match.warning
+    })),
+    ...unmatched.map((entity, index) => ({
+      confidence: "unmatched" as const,
+      evidence: entity.evidenceExcerpt,
+      id: `unmatched-${entity.entityType}-${index + 1}`,
+      matchedReason: entity.reason,
+      mention: entity.name,
+      originalTarget: null,
+      resolutionStatus: "unmatched" as const,
+      selectedTarget: null,
+      targetType: associationTargetType(entity.entityType),
+      warning: "No CRM record is selected for this mention."
+    }))
+  ];
+}
+
+function associationTargetType(entityType: UnmatchedEntity["entityType"]): MeetingAssociationReview["targetType"] {
+  return entityType === "person" || entityType === "organization" ? entityType : "unknown";
 }
 
 function pickPrimaryTarget(matches: MatchedCrmObject[]) {
@@ -663,6 +704,42 @@ function buildStructuredSummary(
     summarySection("open_questions", "Open questions", openQuestions, "explicit"),
     summarySection("next_steps", "Next steps", nextSteps, "explicit")
   ].filter((section) => section.items.length > 0);
+}
+
+function buildTranscriptSegments(markdown: string, metadata?: MeetingSourceMetadata): TranscriptSegment[] {
+  const confidence = metadata?.transcriptionConfidence;
+  const warnings = [
+    ...(confidence === "low" ? ["Low transcription confidence. Verify this segment before using it as CRM evidence."] : []),
+    ...(metadata?.warnings?.filter((warning) => /confidence|speaker|transcript|audio|ocr/i.test(warning)) ?? [])
+  ].slice(0, 3);
+  const lines = markdown
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !isMeetingMetadataLine(line))
+    .filter((line) => !/^#+\s/.test(line));
+  const segments: TranscriptSegment[] = [];
+  for (const line of lines) {
+    const cleaned = line.replace(/^[-*]\s*/, "").trim();
+    const timestamped = cleaned.match(/^\[?(?<time>\d{1,2}:\d{2}(?::\d{2})?)\]?\s*(?:[-–]\s*)?(?:(?<speaker>[A-Z][A-Za-z0-9 .'-]{1,60}):\s*)?(?<text>.+)$/);
+    const speakerOnly = cleaned.match(/^(?<speaker>[A-Z][A-Za-z0-9 .'-]{1,60}):\s*(?<text>.+)$/);
+    const parsed = timestamped?.groups
+      ? { speaker: timestamped.groups.speaker, startTime: timestamped.groups.time, text: timestamped.groups.text }
+      : speakerOnly?.groups
+        ? { speaker: speakerOnly.groups.speaker, startTime: undefined, text: speakerOnly.groups.text }
+        : { speaker: undefined, startTime: undefined, text: cleaned };
+    if (!parsed.text || isStructuralMeetingLine(parsed.text)) continue;
+    segments.push({
+      confidence,
+      id: `segment-${segments.length + 1}`,
+      speaker: parsed.speaker?.trim(),
+      startTime: parsed.startTime,
+      text: parsed.text.trim().slice(0, 1000),
+      warnings: warnings.length > 0 ? warnings : undefined
+    });
+    if (segments.length >= 120) break;
+  }
+  return segments;
 }
 
 function summarySection(

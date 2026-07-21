@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ActionGroup } from "@/components/action-group";
+import { DownloadAction } from "@/components/download-action";
 import {
   formatDate,
   formatMoney,
@@ -50,14 +51,14 @@ export default async function QuotePrintPage({ params }: PageProps) {
         >
           Back to quote
         </Link>
-        <Link
-          aria-label={quotePdfActionLabel}
+        <DownloadAction
+          actionLabel={quotePdfActionLabel}
           className="button-secondary button-compact"
+          filename={`quote-${quote.number}.pdf`}
           href={`/deals/${dealId}/quotes/${quoteId}/pdf`}
-          title={quotePdfActionLabel}
-        >
-          Download PDF
-        </Link>
+          label="Download PDF"
+          pendingLabel="Preparing PDF..."
+        />
         <PrintButton actionLabel={printQuoteActionLabel} label="Print quote" />
       </ActionGroup>
 

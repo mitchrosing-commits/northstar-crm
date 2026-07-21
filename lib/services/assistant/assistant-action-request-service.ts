@@ -51,9 +51,17 @@ export async function createAssistantActionRequest(
 ): Promise<AssistantActionRequestView> {
   await ensureWorkspaceAccess(actor);
   const normalized = normalizeDraftActionRequest(input.draftAction, input.sourceCommand);
-  const existing = await findDuplicatePendingRequest(actor, normalized);
+  const preferences = await getAiPreferences(actor);
+  const duplicateDecision = permissionDecisionFromRequest({
+    actionType: normalized.actionType,
+    confidence: normalized.confidence,
+    proposedPayload: normalized.proposedPayload as Prisma.JsonValue,
+    riskLevel: normalized.riskLevel,
+    status: AssistantActionRequestStatus.PENDING,
+    targetHref: normalized.targetHref
+  }, preferences.assistantActionPermissions);
+  const existing = duplicateDecision.state === "allowed_automatically" ? null : await findDuplicatePendingRequest(actor, normalized);
   if (existing) {
-    const preferences = await getAiPreferences(actor);
     return assistantActionRequestView(existing, preferences.assistantActionPermissions);
   }
   const request = await prisma.assistantActionRequest.create({
@@ -71,7 +79,6 @@ export async function createAssistantActionRequest(
     riskLevel: request.riskLevel,
     status: request.status
   });
-  const preferences = await getAiPreferences(actor);
   const view = assistantActionRequestView(request, preferences.assistantActionPermissions);
   if (view.permissionState === "allowed_automatically") {
     try {
@@ -388,10 +395,11 @@ function normalizeDraftProposal(draft: AssistantDraftAction): Prisma.InputJsonOb
 }
 
 function stableJson(value: unknown): string {
+  if (value === undefined) return "";
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
   const object = value as Record<string, unknown>;
-  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`).join(",")}}`;
+  return `{${Object.keys(object).filter((key) => object[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`).join(",")}}`;
 }
 
 function assistantActionRequestView<T extends {
@@ -440,6 +448,7 @@ function assistantActionRequestView<T extends {
 
 type ApplyActivityInput = {
   dealId?: string;
+  description?: string;
   dueAt?: Date;
   leadId?: string;
   organizationId?: string;
@@ -515,6 +524,7 @@ function activityInputFromRequest(request: {
   const title = fieldValue(fields, "Title");
   const type = normalizeApplyActivityType(fieldValue(fields, "Type"));
   const dueAt = normalizeApplyDueDate(fieldValue(fields, "Due date"));
+  const description = fieldValue(fields, "Description");
   const relation = crmRelationFromHref(targetHrefForRequest(request));
   if (!title || !relation) {
     throw new ApiError("VALIDATION_ERROR", "Assistant needs a clear activity title and related record before applying.", 422);
@@ -524,6 +534,7 @@ function activityInputFromRequest(request: {
   }
   return {
     ...relation,
+    ...(description ? { description } : {}),
     dueAt,
     title,
     type
@@ -571,8 +582,8 @@ function crmRelationFromHref(href: string) {
 }
 
 function allowedProposalFieldKeys(actionType: string) {
-  if (actionType === "contact_create") return ["email", "firstName", "lastName", "organizationId", "phone"];
-  if (actionType === "contact_update") return ["email", "firstName", "lastName", "phone"];
+  if (actionType === "contact_create") return ["email", "firstName", "lastName", "organizationId", "phone", "title"];
+  if (actionType === "contact_update") return ["email", "firstName", "lastName", "phone", "title"];
   if (actionType === "contact_organization_link") return ["organizationId"];
   if (actionType === "organization_create") return ["domain", "linkPersonId", "name"];
   if (actionType === "organization_update") return ["domain", "name"];
@@ -587,7 +598,8 @@ const allowedExpectedValueKeys = new Set([
   "linkedContactOrganizationId",
   "name",
   "organizationId",
-  "phone"
+  "phone",
+  "title"
 ]);
 
 function mergeReviewedFields(

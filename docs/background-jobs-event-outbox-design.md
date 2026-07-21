@@ -171,7 +171,7 @@ Domain services should not enqueue broad events until there is a real consumer. 
 - activity due -> later reminders, deferred.
 - activity completed -> later automation/event feed, deferred.
 - deal won/lost -> later automations, webhooks, goals notifications, deferred.
-- quote accepted -> later internal notification, webhook, or manual sync prompt, deferred.
+- quote accepted -> later internal notification, webhook, or sync-conflict review prompt, deferred.
 - import completed -> later notification or webhook, deferred.
 - product/line-item/quote changes -> later integrations, deferred.
 

@@ -6,6 +6,7 @@ import { createDealSavedViewAction, deleteDealSavedViewAction } from "@/app/deal
 import { createLeadSavedViewAction, deleteLeadSavedViewAction } from "@/app/leads/actions";
 import { createOrganizationSavedViewAction, deleteOrganizationSavedViewAction } from "@/app/organizations/actions";
 import { EmptyState } from "@/components/empty-state";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { PanelTitleRow } from "@/components/panel-title-row";
 import {
   serializeListViewState,
@@ -122,9 +123,13 @@ function SavedViewsPanel({
               Saved view name
             </label>
             <input id={inputId} name="name" placeholder="View name" maxLength={savedViewNameMaxLength} required />
-            <button aria-label={saveActionLabel} className="button-primary button-compact" title={saveActionLabel} type="submit">
-              Save view
-            </button>
+            <FormSubmitButton
+              ariaLabel={saveActionLabel}
+              className="button-primary button-compact"
+              label="Save view"
+              pendingLabel="Saving view..."
+              title={saveActionLabel}
+            />
           </form>
         }
         description="Save the current search, filters, and sort as a reusable workspace view."
@@ -144,9 +149,13 @@ function SavedViewsPanel({
                 </Link>
                 <form action={deleteAction}>
                   <input name="savedViewId" type="hidden" value={view.id} />
-                  <button aria-label={deleteActionLabel} className="button-secondary button-compact" title={deleteActionLabel} type="submit">
-                    Delete view
-                  </button>
+                  <FormSubmitButton
+                    ariaLabel={deleteActionLabel}
+                    className="button-secondary button-compact"
+                    label="Delete view"
+                    pendingLabel="Deleting view..."
+                    title={deleteActionLabel}
+                  />
                 </form>
               </li>
             );

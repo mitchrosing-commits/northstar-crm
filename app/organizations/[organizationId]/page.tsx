@@ -12,6 +12,7 @@ import { MeetingPrepBriefCard } from "@/components/meeting-prep-brief-card";
 import { NotesPanel } from "@/components/notes-panel";
 import { PageHeader } from "@/components/page-header";
 import { RecordActivitiesPanel } from "@/components/record-activities-panel";
+import { RecordContextStrip, recordContextCount } from "@/components/record-context-strip";
 import { getNextOpenActivity, RecordNextActivitySummary } from "@/components/record-next-activity-summary";
 import { RecordHeaderActions } from "@/components/record-header-actions";
 import { RecordPanelJumpNav } from "@/components/record-panel-jump-nav";
@@ -22,18 +23,15 @@ import { ApiError } from "@/lib/api/responses";
 import { getCurrentWorkspaceContext } from "@/lib/auth/request-context";
 import { recordActivitySectionCopy } from "@/lib/record-activity-copy";
 import { recordSubtitle } from "@/lib/record-subtitle";
-import {
-  buildAiRecordBrief,
-  buildMeetingPrepBriefForRecord,
-  buildNorthstarAssistantInsight,
-  buildOrganizationAssistantContext,
-  getAiPreferences,
-  getOrganization,
-  getRecordTimeline,
-  getWorkspace,
-  listEmailTemplates,
-  listOrganizationCustomFields
-} from "@/lib/services/crm";
+import { getAiPreferences } from "@/lib/services/ai-preferences-service";
+import { buildAiRecordBrief } from "@/lib/services/ai-record-brief-service";
+import { listOrganizationCustomFields } from "@/lib/services/custom-field-service";
+import { listEmailTemplates } from "@/lib/services/email-service";
+import { buildMeetingPrepBriefForRecord } from "@/lib/services/meeting-prep-brief-service";
+import { buildNorthstarAssistantInsight, buildOrganizationAssistantContext } from "@/lib/services/northstar-ai-service";
+import { getOrganization } from "@/lib/services/organization-service";
+import { getRecordTimeline } from "@/lib/services/timeline-service";
+import { getWorkspace } from "@/lib/services/workspace-service";
 
 export const dynamic = "force-dynamic";
 
@@ -189,6 +187,37 @@ export default async function OrganizationDetailPage({ params }: PageProps) {
           { label: "Notes", value: organization.notes.length }
         ]}
         title="Organization workspace"
+      />
+
+      <RecordContextStrip
+        ariaLabel={`${organization.name} current account context`}
+        items={[
+          {
+            href: nextActivity ? undefined : "#activities" as Route,
+            label: "Next follow-up",
+            tone: nextActivity ? "default" : "warning",
+            value: <RecordNextActivitySummary activity={nextActivity} emptyBadgeLabel="Needs follow-up" emptyLabel="No open organization follow-up" />
+          },
+          {
+            href: "#related-people" as Route,
+            label: "People",
+            tone: organization.people.length > 0 ? "default" : "warning",
+            value: recordContextCount(organization.people.length, "person", "people")
+          },
+          {
+            href: meetingPrepBrief ? "#meeting-prep-brief" as Route : "#activities" as Route,
+            label: "Meeting prep",
+            meta: meetingPrepBrief ? "Review before the next meeting" : "Create a meeting activity to prepare",
+            tone: meetingPrepBrief ? "success" : "muted",
+            value: meetingPrepBrief ? "Ready" : "No upcoming meeting"
+          },
+          {
+            href: "#notes" as Route,
+            label: "Recent notes",
+            tone: organization.notes.length > 0 ? "default" : "muted",
+            value: recordContextCount(organization.notes.length, "note", "notes")
+          }
+        ]}
       />
 
       {meetingPrepBrief ? <MeetingPrepBriefCard brief={meetingPrepBrief} /> : null}

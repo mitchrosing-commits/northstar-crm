@@ -60,12 +60,12 @@ describe("contact and organization create/edit behavior", () => {
     expect(newContactPage).toContain("searchParams");
     expect(newContactPage).toContain("const defaultEmail = firstSearchParam(resolvedSearchParams?.email)");
     expect(newContactPage).toContain("const defaultName = firstSearchParam(resolvedSearchParams?.name)");
-    expect(newContactPage).toContain("const returnTo = leadReturnToParam(resolvedSearchParams?.returnTo)");
+    expect(newContactPage).toContain("const returnTo = leadOrActivityReturnToParam(resolvedSearchParams?.returnTo)");
     expect(newContactPage).toContain("defaultEmail={defaultEmail}");
     expect(newContactPage).toContain("defaultName={defaultName}");
     expect(newContactPage).toContain("const hasPrefill = Boolean(defaultEmail || defaultName || defaultOrganizationId)");
     expect(newContactPage).toContain("We prefilled this contact from your search or related-record shortcut.");
-    expect(newContactPage).toContain("Northstar will return to the lead form with the contact selected.");
+    expect(newContactPage).toContain("Northstar will return to the source form with the contact selected.");
     expect(newContactPage).toContain("returnTo={returnTo ? { href: returnTo, paramName: \"personId\" } : undefined}");
     expect(newContactPage).toContain("defaultOrganizationId={organizationOptions.some((organization) => organization.id === defaultOrganizationId) ? defaultOrganizationId : undefined}");
     expect(editContactPage).toContain("getPerson(actor, personId)");
@@ -93,11 +93,11 @@ describe("contact and organization create/edit behavior", () => {
     expect(newOrganizationPage).toContain("OrganizationForm");
     expect(newOrganizationPage).toContain("searchParams?: Promise<{ name?: string; returnTo?: string }>");
     expect(newOrganizationPage).toContain("const defaultName = firstSearchParam(resolvedSearchParams?.name)");
-    expect(newOrganizationPage).toContain("const returnTo = leadReturnToParam(resolvedSearchParams?.returnTo)");
+    expect(newOrganizationPage).toContain("const returnTo = leadOrActivityReturnToParam(resolvedSearchParams?.returnTo)");
     expect(newOrganizationPage).toContain("defaultName={defaultName}");
     expect(newOrganizationPage).toContain("const hasPrefill = Boolean(defaultName)");
     expect(newOrganizationPage).toContain("We prefilled this organization from your search shortcut.");
-    expect(newOrganizationPage).toContain("Northstar will return to the lead form with the company selected.");
+    expect(newOrganizationPage).toContain("Northstar will return to the source form with the company selected.");
     expect(newOrganizationPage).toContain("returnTo={returnTo ? { href: returnTo, paramName: \"organizationId\" } : undefined}");
     expect(editOrganizationPage).toContain("getOrganization(actor, organizationId)");
     expect(organizationForm).toContain("/api/v1/workspaces/${workspaceId}/organizations");

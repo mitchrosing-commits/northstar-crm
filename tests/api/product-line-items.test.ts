@@ -244,6 +244,10 @@ describe("product catalog and deal line items MVP", () => {
     expect(productStatusButton).toContain(
       "const actionLabel = active ? `Deactivate product ${productName}` : `Reactivate product ${productName}`",
     );
+    expect(productStatusButton).toContain('import { FormSuccessMessage } from "@/components/form-success-message"');
+    expect(productStatusButton).toContain("Product deactivated. Existing deal and quote snapshots are unchanged.");
+    expect(productStatusButton).toContain("Product reactivated for new deal line items.");
+    expect(productStatusButton).toContain("<FormSuccessMessage compact>{success}</FormSuccessMessage>");
     expect(productStatusButton).toContain("aria-label={actionLabel}");
     expect(productStatusButton).toContain("title={actionLabel}");
     expect(compactTitleRow).toContain("export function CompactTitleRow");
@@ -262,6 +266,10 @@ describe("product catalog and deal line items MVP", () => {
     expect(productForm).toContain('variant?: "card" | "compact"');
     expect(productForm).toContain("product-edit-form");
     expect(productForm).toContain("FormActionBar");
+    expect(productForm).toContain('import { FormSuccessMessage } from "@/components/form-success-message"');
+    expect(productForm).toContain("Product created. It is available for new deal line items.");
+    expect(productForm).toContain("Product saved.");
+    expect(productForm).toContain('<FormSuccessMessage compact={variant === "compact"}>{success}</FormSuccessMessage>');
     expect(productForm).toContain("import { FormFieldLabel }");
     expect(productForm).toContain(
       "<FormFieldLabel required>Name</FormFieldLabel>",
@@ -309,7 +317,7 @@ describe("product catalog and deal line items MVP", () => {
       "Line items start from active Products",
     );
     expect(lineItemsPanel).toContain(
-      "They snapshot product pricing when added and stay separate from deal value until an accepted quote is manually synced.",
+      "They seed draft quotes, while accepted quote totals update deal value automatically",
     );
     expect(lineItemsPanel).toContain("Open products");
     expect(lineItemsPanel).toContain('href="/products"');
